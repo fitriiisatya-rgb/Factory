@@ -3349,7 +3349,12 @@ function renderDashStatusSubmit(tgl){
   let html = "";
   Object.keys(byFactory).sort().reverse().forEach(f=>{
     const rows = byFactory[f];
-    const tt=rows.reduce((a,r)=>a+r.target,0), ta=rows.reduce((a,r)=>a+r.aktual,0), trj=rows.reduce((a,r)=>a+r.reject,0);
+    // FG cuma verifikasi (bukan produksi baru) — kalau ikut dijumlah ke subtotal
+    // per-factory, satu batch produksi terhitung DUA KALI (produksi + FG).
+    // Baris FG sendiri tetap DITAMPILKAN di bawah (biar kelihatan sudah/belum
+    // submit), cuma tidak ikut dijumlah ke header "target · aktual" factory ini.
+    const rowsUtkTotal = rows.filter(r=>!divisiVerifikasi(r.divisi));
+    const tt=rowsUtkTotal.reduce((a,r)=>a+r.target,0), ta=rowsUtkTotal.reduce((a,r)=>a+r.aktual,0), trj=rowsUtkTotal.reduce((a,r)=>a+r.reject,0);
     const pct = fulfil(ta,trj,tt);
     html += `<div style="margin-bottom:10px"><div style="color:var(--hi);font-weight:600;margin-bottom:4px;font-family:var(--sans);font-size:11px;text-transform:uppercase;letter-spacing:.04em">${f} <span style="font-weight:400;color:var(--mute);font-size:10px;text-transform:none;letter-spacing:0">— ${fmt(tt)} target · ${fmt(ta)} aktual · ${pct==null?'-':pct+'%'}</span></div>`;
     html += rows.map(r=>{

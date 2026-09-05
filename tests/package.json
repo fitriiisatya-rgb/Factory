@@ -1,0 +1,13 @@
+{
+  "name": "amorcakes-tests",
+  "private": true,
+  "description": "Test-only tooling for amorcakes-manufacturing-v5-slate(2).html. The app itself stays a dependency-free standalone HTML file — these packages are used only to execute its script under Node for regression/UAT, never shipped or referenced by the app.",
+  "scripts": {
+    "test": "node run-tests.js",
+    "uat": "node uat.js"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1",
+    "xlsx": "^0.18.5"
+  }
+}
