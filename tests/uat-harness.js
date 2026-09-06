@@ -58,6 +58,7 @@ function loadApp({confirmAnswer=true, fetchImpl=null}={}){
     dashPipelineData, dashData, pdRingkasanHariIni, renderPdRingkasan, pdBukaDivisi, renderDashFokus, renderDashboard,
     renderInvoiceList, invBarisData, renderKPortalStats, renderKirimKpi, renderRekap, renderRekapRingkasan, renderRekapToko,
     renderKartuStok, go, goPage, dashArusBarangData, dashByFactoryData, rekapData,
+    kBukaFormBaru, adjSimpan, renderAdjHist, ksFillProdukSelect,
     get poPreview(){ return poPreview; },
     get kList(){ return kList; },
     get kFgSource(){ return kFgSource; },

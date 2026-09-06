@@ -185,10 +185,14 @@ async function main(){
   /* ===================== TEST: navigation grouping ===================== */
   const navBtns = [...api.__document.querySelectorAll(".nav > .nav-btn")].map(b=>b.dataset.p);
   check("NAV.topLevelHasCorePages", "Nav — top-level berisi Dashboard/Produksi/Kirim Toko/Laporan Omset/Invoice & Piutang/Kartu Stok/Rekap/Master",
-    true, ["p-dash","p-prod","p-kirim","p-omset","p-invoice","p-stok","p-rekap","p-master"].every(p=>navBtns.includes(p)));
+    true, ["p-po","p-dash","p-prod","p-kirim","p-omset","p-invoice","p-stok","p-rekap","p-master"].every(p=>navBtns.includes(p)));
   const moreBtns = [...api.__document.querySelectorAll(".nav-more .nav-btn")].map(b=>b.dataset.p);
-  check("NAV.secondaryStillAccessibleUnderMore", "Nav — Upload PO/Retur/Reject/Pesanan/Jual Konsumen tetap ada (di dropdown Lainnya)",
-    true, ["p-po","p-retur","p-reject","p-pesanan","p-jual"].every(p=>moreBtns.includes(p)));
+  // Upload PO dipindah KEMBALI ke primary nav (browser UAT: hilang dari nav
+  // utama itu sendiri adalah bug) — hanya Retur/Reject/Pesanan/Jual Konsumen
+  // yang sekarang ada di dropdown Lainnya. Lihat uat-nav-compact-fixes.js
+  // utk cakupan test navigasi yang lebih lengkap (NAV01-15).
+  check("NAV.secondaryStillAccessibleUnderMore", "Nav — Retur/Reject/Pesanan/Jual Konsumen tetap ada (di dropdown Lainnya)",
+    true, ["p-retur","p-reject","p-pesanan","p-jual"].every(p=>moreBtns.includes(p)));
   api.goPage("p-retur");
   check("NAV.navigatingViaMoreStillWorks", "Nav — navigasi ke halaman di dalam dropdown Lainnya tetap berfungsi (go())",
     true, api.$("p-retur").classList.contains("active"));

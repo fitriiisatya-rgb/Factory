@@ -33,10 +33,15 @@ body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12
 .nav-btn{background:none;border:none;border-bottom:2px solid transparent;padding:9px 14px 10px;font-family:var(--sans);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);cursor:pointer;white-space:nowrap}
 .nav-btn.active{color:var(--brand);border-bottom-color:var(--brand)}
 .nav-more{position:relative}
-.nav-more>summary{list-style:none}
+.nav-more>summary{list-style:none;cursor:pointer}
 .nav-more>summary::-webkit-details-marker{display:none}
-.nav-more-panel{position:absolute;top:100%;left:0;z-index:20;background:var(--bg2);border:1px solid var(--border);border-radius:3px;min-width:170px;display:flex;flex-direction:column;padding:4px;box-shadow:0 8px 20px rgba(0,0,0,.35)}
-.nav-more-panel .nav-btn{text-align:left;border-bottom:none;padding:8px 10px;border-radius:2px}
+/* position:fixed (bukan absolute) supaya panel TIDAK ikut ke-clip oleh
+   overflow-x:auto milik .nav (parent yang bisa di-scroll horizontal) — ini
+   root cause "Lainnya tidak bisa diklik/terlihat" yang ditemukan di browser
+   UAT. Posisi dihitung ulang oleh JS (navMoreReposition) setiap kali dibuka,
+   di-resize, atau di-scroll, dan selalu dijepit di dalam viewport. */
+.nav-more-panel{position:fixed;z-index:250;background:var(--bg2);border:1px solid var(--border);border-radius:3px;min-width:170px;max-width:calc(100vw - 16px);display:flex;flex-direction:column;padding:4px;box-shadow:0 8px 20px rgba(0,0,0,.35)}
+.nav-more-panel .nav-btn{text-align:left;border-bottom:none;padding:8px 10px;border-radius:2px;white-space:nowrap}
 .nav-more-panel .nav-btn.active{background:var(--bg3)}
 .nav-more.has-active>summary{color:var(--brand)}
 
@@ -98,8 +103,6 @@ tbody tr:nth-child(even) td{background:#17181d}
 tr.trow td{background:var(--bg3);color:var(--hi);font-weight:600;border-top:1px solid var(--brand-dim)}
 .chart-box{width:100%;overflow-x:auto}
 .chart-box svg{min-width:520px}
-.two-col{display:grid;grid-template-columns:1fr;gap:14px}
-@media(min-width:860px){ .two-col{grid-template-columns:1fr 1.25fr;align-items:start} }
 .grid3{display:grid;grid-template-columns:1fr;gap:12px}
 @media(min-width:860px){ .grid3{grid-template-columns:repeat(3,1fr)} }
 .three-col{display:grid;grid-template-columns:1fr;gap:14px;align-items:start}
@@ -298,7 +301,11 @@ body{font-size:14px;-webkit-font-smoothing:antialiased}
 .shell{background:rgba(15,23,42,.85);backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
 .brand{font-style:normal;font-weight:700;font-size:17px;letter-spacing:-.01em}
 .shell-sub{font-size:12px}
-.nav-btn{font-weight:500;font-size:13px;text-transform:none;letter-spacing:0;padding:10px 14px 11px;border-radius:0}
+/* Compact spacing supaya 9 item primary + "Lainnya" tetap muat dalam satu
+   baris di iPad landscape (~1024px) tanpa terpotong/overlap — horizontal
+   scroll (.nav{overflow-x:auto}) tetap jadi fallback terakhir kalau viewport
+   lebih sempit lagi. */
+.nav-btn{font-weight:500;font-size:11.5px;text-transform:none;letter-spacing:0;padding:8px 9px 9px;border-radius:0}
 .nav-btn.active{font-weight:600}
 
 /* --- kartu --- */
@@ -452,7 +459,8 @@ details.sect>summary{padding:15px 16px}
     <span class="shell-sub">by Amorgroupfinance</span>
     <div class="shell-right"><button class="btn mini ghost" id="navBackBtn" style="padding:4px 10px;font-size:10px;display:none" onclick="navBack()">← Kembali</button><button class="btn mini ghost" style="padding:4px 10px;font-size:10px" onclick="muatSemua()">⟳ Segarkan</button><div class="dot" id="dot"></div><span id="status">Lokal</span></div>
   </div>
-  <div class="nav">
+  <div class="nav" id="mainNav">
+    <button class="nav-btn" data-p="p-po" onclick="go(this)">Upload PO</button>
     <button class="nav-btn active" data-p="p-dash" onclick="go(this)">Dashboard</button>
     <button class="nav-btn" data-p="p-prod" onclick="go(this)">Produksi</button>
     <button class="nav-btn" data-p="p-kirim" onclick="go(this)">Kirim Toko</button>
@@ -461,10 +469,9 @@ details.sect>summary{padding:15px 16px}
     <button class="nav-btn" data-p="p-stok" onclick="go(this)">Kartu Stok</button>
     <button class="nav-btn" data-p="p-rekap" onclick="go(this)">Rekap</button>
     <button class="nav-btn" data-p="p-master" onclick="go(this)">Master</button>
-    <details class="nav-more">
+    <details class="nav-more" id="navMore">
       <summary class="nav-btn">Lainnya ▾</summary>
       <div class="nav-more-panel">
-        <button class="nav-btn" data-p="p-po" onclick="go(this)">Upload PO</button>
         <button class="nav-btn" data-p="p-retur" onclick="go(this)">Retur</button>
         <button class="nav-btn" data-p="p-reject" onclick="go(this)">Reject</button>
         <button class="nav-btn" data-p="p-pesanan" onclick="go(this)">Pesanan</button>
@@ -527,7 +534,7 @@ details.sect>summary{padding:15px 16px}
     <div class="note">Divisi yang belum selesai tampil lebih dulu. Klik satu baris untuk membuka ceklis produk divisi itu di bawah.</div>
   </div>
 
-  <div class="card" id="pdCard">
+  <div class="card" id="pdCard" style="display:none">
     <h3 id="pdCardTitle">Ceklis Produksi Harian</h3>
     <div id="pdFormWrap">
       <div id="pdFgFilterWrap" style="display:none">
@@ -756,17 +763,18 @@ details.sect>summary{padding:15px 16px}
   </div>
 
   <div class="tabpanel on" data-panel="do">
-  <div class="two-col">
   <div class="card" id="kFgReadyCard" style="display:none">
-    <h3>Siap Diambil Delivery</h3>
-    <div class="note">Dari Finishgood &amp; Packing — klik untuk langsung buat Delivery Order.</div>
+    <h3>Siap Diambil Delivery <span style="font-size:9px;color:var(--mute);font-weight:400">bakery canonical — KT + Cibadak digabung</span></h3>
+    <div class="note">Dari Finishgood &amp; Packing — klik "Proses Kirim" untuk langsung buat Delivery Order.</div>
     <div id="kFgReadyList" class="scrollY" style="margin-top:8px"></div>
+    <button type="button" class="btn ghost mini" style="margin-top:10px" onclick="kBukaFormBaru()">+ Buat Delivery Order Manual</button>
   </div>
   <div class="card" id="kFgReadyEmpty" style="display:none">
     <h3>Siap Diambil Delivery</h3>
     <div class="empty">Belum ada packing yang ditandai siap dari Finishgood &amp; Packing.</div>
+    <button type="button" class="btn ghost mini" style="margin-top:10px" onclick="kBukaFormBaru()">+ Buat Delivery Order Manual</button>
   </div>
-  <div class="doc" id="kCard">
+  <div class="doc" id="kCard" style="display:none">
     <div class="doc-bar">
       <span class="ttl">Delivery Order</span>
       <span class="tag" id="kDocTag">Draft</span>
@@ -869,7 +877,6 @@ details.sect>summary{padding:15px 16px}
         <button class="btn" style="margin-top:0" onclick="kBukaInvoice(lastKBatch)">Buat Invoice</button>
       </div>
     </div>
-  </div>
   </div>
   </div>
 
@@ -1449,33 +1456,35 @@ details.sect>summary{padding:15px 16px}
     <div class="note" id="ks-summary" style="color:var(--hi)"></div>
   </div>
 
-  <div class="card">
-    <h3>Catat Penyesuaian Stok</h3>
-    <div class="note">Untuk barang basi/waste, rusak, hasil stok opname, atau koreksi salah catat. Angka ini langsung mempengaruhi stok yang bisa dikirim di Delivery Order.</div>
-    <div class="row" style="margin-top:10px">
-      <div><label class="fl">Tanggal</label><input type="date" id="adj-tgl"></div>
-      <div><label class="fl">Jenis</label><select id="adj-tipe" onchange="adjHitung()">
-        <option value="waste">Waste / basi (keluar)</option>
-        <option value="rusak">Rusak / cacat (keluar)</option>
-        <option value="opname">Koreksi hasil opname</option>
-        <option value="koreksi">Koreksi pencatatan</option>
-        <option value="masuk">Barang masuk (retur layak jual / lain-lain)</option>
-      </select></div>
+  <details class="dd">
+    <summary><span>Catat Penyesuaian Stok</span></summary>
+    <div class="dd-body">
+      <div class="note">Untuk barang basi/waste, rusak, hasil stok opname, atau koreksi salah catat. Angka ini langsung mempengaruhi stok yang bisa dikirim di Delivery Order.</div>
+      <div class="row" style="margin-top:10px">
+        <div><label class="fl">Tanggal</label><input type="date" id="adj-tgl"></div>
+        <div><label class="fl">Jenis</label><select id="adj-tipe" onchange="adjHitung()">
+          <option value="waste">Waste / basi (keluar)</option>
+          <option value="rusak">Rusak / cacat (keluar)</option>
+          <option value="opname">Koreksi hasil opname</option>
+          <option value="koreksi">Koreksi pencatatan</option>
+          <option value="masuk">Barang masuk (retur layak jual / lain-lain)</option>
+        </select></div>
+      </div>
+      <label class="fl">Produk</label>
+      <select id="adj-produk" onchange="adjHitung()"></select>
+      <div class="row">
+        <div><label class="fl">Qty</label><input type="number" inputmode="numeric" id="adj-qty" placeholder="0" oninput="adjHitung()"></div>
+        <div><label class="fl">Keterangan</label><input type="text" id="adj-ket" placeholder="mis. sisa display hari sebelumnya"></div>
+      </div>
+      <div class="note" id="adj-info"></div>
+      <button class="btn" onclick="adjSimpan()">Simpan Penyesuaian</button>
+      <div class="tbar" style="margin-top:16px">
+        <input type="text" id="adj-cari" placeholder="Cari produk / keterangan…" oninput="renderAdjHist()">
+        <span class="chip" id="adj-count"></span>
+      </div>
+      <div id="adj-hist" class="scrollY"></div>
     </div>
-    <label class="fl">Produk</label>
-    <select id="adj-produk" onchange="adjHitung()"></select>
-    <div class="row">
-      <div><label class="fl">Qty</label><input type="number" inputmode="numeric" id="adj-qty" placeholder="0" oninput="adjHitung()"></div>
-      <div><label class="fl">Keterangan</label><input type="text" id="adj-ket" placeholder="mis. sisa display hari sebelumnya"></div>
-    </div>
-    <div class="note" id="adj-info"></div>
-    <button class="btn" onclick="adjSimpan()">Simpan Penyesuaian</button>
-    <div class="tbar" style="margin-top:16px">
-      <input type="text" id="adj-cari" placeholder="Cari produk / keterangan…" oninput="renderAdjHist()">
-      <span class="chip" id="adj-count"></span>
-    </div>
-    <div id="adj-hist" class="scrollY"></div>
-  </div>
+  </details>
 
   <div class="card">
     <h3>Posisi Stok Semua Produk <span style="font-size:9px;color:var(--mute);font-weight:400" id="ps-sub"></span></h3>
@@ -2329,6 +2338,8 @@ function go(btn){
   ksPopTutup();
   renderAll();
   navSyncBtn();
+  // Klik item apa pun (termasuk dari dalam dropdown "Lainnya") menutup dropdown itu.
+  const nm = $("navMore"); if(nm) nm.open = false;
 }
 
 /* ================= SYNC =================
@@ -3146,6 +3157,10 @@ function pdSisaTarget(tgl, divisi){
 }
 function prodBuildChecklist(){
   const tgl=$("pd-tgl").value, divisi=$("pd-divisi").value;
+  // Ceklis SKU TIDAK tampil sebelum divisi dipilih (baik lewat dropdown di
+  // atas maupun klik "Lihat" di baris Ringkasan/pdBukaDivisi) — sesuai temuan
+  // browser UAT bahwa checklist mendominasi halaman sebelum ada interaksi.
+  if($("pdCard")) $("pdCard").style.display = divisi ? "block" : "none";
   const isFG = divisi===SPECIAL_FG || divisi===SPECIAL_FG_CIBADAK;
   $("pdCardTitle").textContent = isFG ? "Cek Kesesuaian Barang Diterima" : "Ceklis Produksi Harian";
   $("pdColAktual").textContent = isFG ? "Diterima" : "Aktual";
@@ -3157,6 +3172,7 @@ function prodBuildChecklist(){
     pdHitungTotal();
     $("pdFormWrap").style.display="block"; $("pdDoneWrap").style.display="none"; $("pdClosedWrap").style.display="none";
     $("fgPanel").style.display="none";
+    renderPdRingkasan(); // ringkasan lintas-divisi tetap harus tampil walau divisi belum dipilih di dropdown atas
     return;
   }
   const key = ceklisKey(tgl,divisi);
@@ -4737,6 +4753,7 @@ function kUnfulfilledFilterRender(){
   }).join("") : '<div class="empty">Tidak ada yang cocok dengan filter/pencarian.</div>';
 }
 function kTarikDariFG(tgl,toko,factory){
+  if($("kCard")) $("kCard").style.display = "block"; // DO form disembunyikan by default — tampilkan begitu "Proses Kirim" diklik
   if(toko && !D.stores.includes(toko)){ D.stores.push(toko); saveD(); ensureMasterToko(); }
   $("k-tgl").value = tgl;
   fillTokoSelects();
@@ -5066,8 +5083,14 @@ function kBaru(){
   kBuildGrid();
   $("kDocTag").textContent = "Draft"; $("kDocTag").className = "tag";
   const card = $("kCard");
-  if(card) card.scrollIntoView({behavior:"smooth", block:"start"});
+  // DO form disembunyikan by default (browser UAT: form penuh tidak boleh
+  // langsung tampil) — kBaru() dipakai baik utk "Bersihkan"/"Delivery Order
+  // Baru" (form sudah kebuka) maupun utk tombol "+ Buat Delivery Order
+  // Manual" di kartu Siap Diambil Delivery (form BELUM kebuka), jadi selalu
+  // pastikan tampil di sini.
+  if(card){ card.style.display="block"; card.scrollIntoView({behavior:"smooth", block:"start"}); }
 }
+function kBukaFormBaru(){ kBaru(); }
 function kFgReadyFokus(){
   const el = $("kFgReadyCard");
   if(!el || el.style.display==="none") return toast("Belum ada packing yang ditandai siap dari Finishgood & Packing");
@@ -5981,6 +6004,34 @@ document.addEventListener("click", e=>{
   if(el && el.style.display==="block" && !el.contains(e.target)) ksPopTutup();
 });
 window.addEventListener("scroll", ksPopTutup, true);
+
+/* ================= NAV "LAINNYA" DROPDOWN =================
+   position:fixed (bukan absolute) supaya panelnya TIDAK ikut ke-clip oleh
+   overflow-x:auto milik .nav — root cause dropdown "tidak kelihatan/tidak
+   bisa diklik" yang ditemukan di browser UAT (iPad landscape). Karena fixed,
+   posisinya dihitung ulang manual di sini (viewport-relative, bukan
+   page-relative), dan dijepit supaya selalu di dalam viewport. */
+function navMoreReposition(){
+  const det = $("navMore"); if(!det || !det.open) return;
+  const summary = det.querySelector("summary");
+  const panel = det.querySelector(".nav-more-panel");
+  if(!summary || !panel) return;
+  const r = summary.getBoundingClientRect();
+  const w = panel.offsetWidth || 170;
+  let left = r.right - w; // rata kanan ke tombol "Lainnya" (item paling kanan di nav)
+  left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+  panel.style.top = Math.round(r.bottom + 4) + "px";
+  panel.style.left = Math.round(left) + "px";
+}
+(function(){
+  const det = document.getElementById("navMore");
+  if(!det) return;
+  det.addEventListener("toggle", () => { if(det.open) navMoreReposition(); });
+  window.addEventListener("resize", navMoreReposition);
+  window.addEventListener("scroll", navMoreReposition, true);
+  document.addEventListener("click", e => { if(det.open && !det.contains(e.target)) det.open = false; });
+  document.addEventListener("keydown", e => { if(e.key === "Escape" && det.open) det.open = false; });
+})();
 function kartuStokEkspor(){
   const dari = $("ks-dari").value, sampai = $("ks-sampai").value;
   const produk = $("ks-produk").value;
