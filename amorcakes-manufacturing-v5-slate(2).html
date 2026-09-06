@@ -53,6 +53,25 @@ input:focus,select:focus{outline:1px solid var(--brand)}
 .stat .lbl{font-family:var(--sans);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--mute);margin-bottom:6px}
 .stat .val{font-family:var(--serif);font-size:21px;font-weight:600;color:var(--hi);font-variant-numeric:tabular-nums}
 
+/* ===== Dashboard compact pass — presentation only, no data/logic here ===== */
+.dash-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;min-height:40px}
+.dash-toolbar h3{margin:0;font-family:var(--sans);font-size:13px;font-weight:700;color:var(--brand);letter-spacing:.03em}
+.dash-datefilter{display:flex;align-items:center;gap:6px}
+.dash-datefilter input[type=date]{width:auto;padding:6px 8px;font-size:12px}
+.dash-datefilter .arrow{color:var(--mute);font-size:12px}
+.stat-grid.compact{gap:8px;margin-bottom:10px;flex-wrap:nowrap}
+.stat-grid.compact .stat{padding:8px 10px;min-width:0}
+.stat-grid.compact .stat .lbl{font-size:9.5px;margin-bottom:3px}
+.stat-grid.compact .stat .val{font-size:18px}
+.stat-grid.compact .stat .note{font-size:9.5px;margin-top:1px}
+.alert-strip{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--warn);border-radius:2px;padding:8px 12px;margin-bottom:10px;font-size:12px}
+.alert-strip.ok{border-left-color:var(--green)}
+.alert-strip summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.alert-strip summary::-webkit-details-marker{display:none}
+.alert-strip .alert-toggle{font-family:var(--sans);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);white-space:nowrap}
+.alert-strip .dd-body{padding-top:8px;margin-top:6px;border-top:1px solid var(--border)}
+#dbDetailAnalisis h4{font-family:var(--sans);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--brand);margin:0 0 8px}
+
 table{width:100%;border-collapse:collapse;background:var(--bg2);border:1px solid var(--border);border-radius:2px;overflow:hidden}
 th{font-family:var(--sans);font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:var(--mute);padding:8px 5px;border-bottom:1.5px solid var(--brand-dim);text-align:center;background:none}
 th.l,td.l{text-align:left;padding-left:10px}
@@ -215,6 +234,9 @@ td.omset{color:var(--brand);font-weight:700}
   .segb{font-size:8px;padding:8px 1px}
   .shell-top{flex-wrap:wrap}
   .brand{font-size:13px}
+  .stat-grid.compact{flex-wrap:wrap}
+  .stat-grid.compact .stat{flex:1 1 calc(50% - 8px);min-width:calc(50% - 8px)}
+  .dash-datefilter input[type=date]{font-size:11px;padding:5px 6px}
 }
 @media print{
   @page{ margin:12mm; }
@@ -562,97 +584,99 @@ details.sect>summary{padding:15px 16px}
 
 <!-- ================= DASHBOARD / LAPORAN PRODUKSI ================= -->
 <div class="page" id="p-dash">
-  <div class="card">
-    <h3>Dashboard — Posisi Pesanan Outlet</h3>
-    <div class="row" style="align-items:flex-end">
-      <div><label class="fl">Dari Tanggal</label><input type="date" id="db-dari" onchange="renderDashboard()"></div>
-      <div><label class="fl">Sampai Tanggal</label><input type="date" id="db-sampai" onchange="renderDashboard()"></div>
+  <div class="dash-toolbar">
+    <h3>Dashboard Operasional</h3>
+    <div class="dash-datefilter">
+      <input type="date" id="db-dari" onchange="renderDashboard()">
+      <span class="arrow">→</span>
+      <input type="date" id="db-sampai" onchange="renderDashboard()">
     </div>
   </div>
 
-  <div class="card">
-    <div class="stat-grid" id="db-pipelineStats"></div>
-  </div>
+  <div class="stat-grid compact" id="db-pipelineStats"></div>
 
-  <div class="card" id="dbFokusCard">
-    <h3>Fokus Hari Ini</h3>
-    <div id="dbFokusBody"></div>
-  </div>
+  <div id="dbFokusCard"></div>
 
-  <div class="card">
-    <h3>Non-Outlet</h3>
-    <div class="note">Pesanan non-outlet dihitung terpisah dan tidak dimasukkan ke rasio fulfillment Outlet di atas — kalau ikut dicampur, rasio bisa &gt;100% padahal tidak ada masalah produksi.</div>
-    <div class="stat-grid" id="db-pipelineNonOutletStats" style="margin-top:10px"></div>
-  </div>
-
-  <details class="card">
-    <summary><h3 style="display:inline">Rincian Pipeline &amp; Total Produksi</h3></summary>
-    <div class="note" style="margin-top:10px">Melacak posisi barang di sepanjang alur: Pesanan Outlet (dari PO) → Sedang Diproduksi (target divisi yang ceklisnya belum disubmit) → Selesai Produksi (netto yang sudah <b>diverifikasi Finishgood &amp; Packing</b>, inilah yang masuk stok gudang) → Siap Kirim (sudah dipacking &amp; ditandai siap) → Sudah Terkirim ke toko.<br><b>Catatan:</b> angka Finishgood &amp; Packing tidak ikut dijumlah ke Total Aktual — FG memverifikasi barang yang sama, bukan memproduksi barang baru.</div>
-    <div class="chart-box" id="dashPipelineChart" style="margin-top:8px"></div>
-    <div class="note" style="margin-top:10px">Total Produksi — semua divisi (termasuk yang non-outlet), dihitung dari Ceklis Produksi, bukan dari pipeline Outlet di atas:</div>
-    <div class="stat-grid" id="db-stats" style="margin-top:8px"></div>
-  </details>
-
-  <details class="card">
-    <summary><h3 style="display:inline">Arus Barang &amp; Omset</h3></summary>
-    <div class="note" style="margin-top:10px"><b>Retur = beban toko</b>, tidak memotong tagihan dan tidak menyentuh produksi — dipakai untuk rekonsiliasi arus barang di toko. <b>Reject = tanggungan pabrik</b>, memotong invoice atau diganti barang baru (jadi waste). <b>HPP</b> = modal barang yang keluar gudang (qty terkirim × HPP master produk); <b>Margin Kotor</b> = Omset Pabrik − HPP. HPP barang retur tidak dikembalikan, karena modalnya sudah terpakai walau barangnya kembali. <b>Omset Pabrik &amp; Omset 100%</b> selalu dihitung dari qty <b>dikirim penuh</b> × harga standar — tidak berkurang walau ada penyesuaian di Invoice. Omset Pabrik dihitung di <b>persentase basedata (flat, sama untuk semua tipe toko)</b>, diatur di Master → Omset Pabrik (Basedata) — beda dari persentase Invoice yang dipakai backoffice per tipe toko. Kalau ada barang rusak/kurang saat serah terima, selisihnya masuk kolom <b>Kerugian</b> tersendiri (beban pabrik), bukan pengurang omset.<br>Untuk laporan omset harian per bakery yang lebih rinci, lihat menu <b>Laporan Omset</b>.</div>
-    <div class="stat-grid" id="db-arusStats" style="margin-top:10px"></div>
-    <div class="tabs" id="db-arusTabs">
-      <button class="on" data-p="bakery" onclick="dashArusTab(this)">Per Bakery</button>
-      <button data-p="kategori" onclick="dashArusTab(this)">Per Kategori</button>
-      <button data-p="toko" onclick="dashArusTab(this)">Rekonsiliasi Toko</button>
-      <button data-p="channel" onclick="dashArusTab(this)">Per Channel</button>
-    </div>
-    <div style="margin-top:10px;overflow-x:auto">
-      <div class="tabpanel on" data-panel="bakery">
-        <table><thead><tr><th class="l">Bakery</th><th>PO</th><th>Terkirim</th><th>Retur</th><th>Reject</th><th>Omset Pabrik</th><th>HPP</th><th>Margin</th><th>Margin %</th><th>Omset 100%</th><th>Kerugian</th></tr></thead><tbody id="db-arusBakery"></tbody></table>
-      </div>
-      <div class="tabpanel" data-panel="kategori">
-        <table><thead><tr><th class="l">Kategori</th><th>PO</th><th>Terkirim</th><th>Retur</th><th>Reject</th><th>Omset Pabrik</th><th>HPP</th><th>Margin</th><th>Margin %</th><th>Omset 100%</th><th>Kerugian</th></tr></thead><tbody id="db-arusKategori"></tbody></table>
-      </div>
-      <div class="tabpanel" data-panel="toko">
-        <div class="note">Rekonsiliasi arus barang di toko: <b>Dikirim = Terjual ke konsumen + Retur + Sisa stok di toko</b>. Kolom Terjual diambil dari menu Jual Konsumen; kalau data POS belum masuk, angka Sisa Stok akan terlihat besar.</div>
-        <table style="margin-top:8px"><thead><tr><th class="l">Toko</th><th>Dikirim</th><th>Terjual</th><th>Retur</th><th>Sisa Stok</th><th>% Terjual</th><th>% Retur</th></tr></thead><tbody id="db-arusToko"></tbody></table>
-      </div>
-      <div class="tabpanel" data-panel="channel">
-        <table><thead><tr><th class="l">Tipe Toko</th><th>PO</th><th>Terkirim</th><th>Retur</th><th>Reject</th><th>Omset Pabrik</th><th>HPP</th><th>Margin</th><th>Margin %</th><th>Omset 100%</th><th>Kerugian</th></tr></thead><tbody id="db-arusChannel"></tbody></table>
-      </div>
+  <details class="dd" id="dbNonOutletWrap">
+    <summary><span>Non-Outlet <span id="dbNonOutletHeadline" style="color:var(--mute);font-weight:400"></span></span></summary>
+    <div class="dd-body">
+      <div class="note">Pesanan non-outlet dihitung terpisah dan tidak dimasukkan ke rasio fulfillment Outlet di atas.</div>
+      <div class="stat-grid compact" id="db-pipelineNonOutletStats" style="margin-top:8px"></div>
     </div>
   </details>
 
-  <details class="card">
-    <summary><h3 style="display:inline">PO per Bakery &amp; Pemenuhannya</h3></summary>
-    <div class="note" style="margin-top:10px">Membandingkan Pesanan (PO), hasil Produksi, dan yang sudah Terkirim antara factory Karangtengah dan Cibadak pada rentang tanggal di atas.</div>
-    <div class="stat-grid" id="dashFactoryStats" style="margin-top:10px"></div>
-    <div class="chart-box" id="dashFactoryChart" style="margin-top:8px"></div>
-  </details>
+  <details class="card" id="dbDetailAnalisis">
+    <summary><h3 style="display:inline">Detail Analisis</h3> <span class="note" style="display:inline">— pipeline lengkap, arus barang &amp; omset, PO per bakery, status submit, tren, per divisi, per produk</span></summary>
 
-  <details class="card">
-    <summary><h3 style="display:inline">Status Submit — <span id="db-statusTgl"></span></h3></summary>
-    <div id="dashWrap" style="margin-top:10px"></div>
-  </details>
-
-  <details class="card">
-    <summary><h3 style="display:inline">Tren Harian</h3></summary>
-    <div class="chart-box" id="dashChart" style="margin-top:8px"></div>
-    <div id="dashTrenTable" style="margin-top:10px"></div>
-  </details>
-
-  <details class="card">
-    <summary><h3 style="display:inline">Per Divisi</h3></summary>
-    <div id="dashKatTable" style="margin-top:10px"></div>
-  </details>
-
-  <details class="card">
-    <summary><h3 style="display:inline">Per Produk</h3></summary>
-    <input type="text" id="dash-cari" placeholder="Cari produk atau kode…" oninput="dashProdukFilterRender()" style="margin-top:10px">
-    <div class="scrollY" style="overflow-x:auto;margin-top:10px">
-    <table>
-      <thead><tr><th class="l">Produk</th><th class="l">Divisi</th><th>Target</th><th>Aktual</th><th>Reject</th><th>Fulfillment</th></tr></thead>
-      <tbody id="dashProdukTable"></tbody>
-    </table>
+    <div style="margin-top:14px">
+      <h4>Rincian Pipeline &amp; Total Produksi</h4>
+      <div class="note">Melacak posisi barang di sepanjang alur: Pesanan Outlet (dari PO) → Sedang Diproduksi (target divisi yang ceklisnya belum disubmit) → Selesai Produksi (netto yang sudah <b>diverifikasi Finishgood &amp; Packing</b>, inilah yang masuk stok gudang) → Siap Kirim (sudah dipacking &amp; ditandai siap) → Sudah Terkirim ke toko. Finishgood &amp; Packing tidak ikut dijumlah ke Total Aktual — FG memverifikasi barang yang sama, bukan memproduksi barang baru.</div>
+      <div class="chart-box" id="dashPipelineChart" style="margin-top:8px"></div>
+      <div class="note" style="margin-top:10px">Total Produksi — semua divisi (termasuk yang non-outlet), dihitung dari Ceklis Produksi, bukan dari pipeline Outlet di atas:</div>
+      <div class="stat-grid" id="db-stats" style="margin-top:8px"></div>
     </div>
-    <div class="note">Diurutkan dari fulfillment terendah — produk yang paling butuh perhatian tampil di atas.</div>
+
+    <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+      <h4>Arus Barang &amp; Omset</h4>
+      <div class="note"><b>Retur = beban toko</b>, tidak memotong tagihan dan tidak menyentuh produksi. <b>Reject = tanggungan pabrik</b>, memotong invoice atau diganti barang baru (jadi waste). <b>HPP</b> = modal barang yang keluar gudang; <b>Margin Kotor</b> = Omset Pabrik − HPP. <b>Omset Pabrik &amp; Omset 100%</b> dihitung dari qty <b>dikirim penuh</b> × harga standar (persentase basedata, diatur di Master → Omset Pabrik) — tidak berkurang walau ada penyesuaian di Invoice. Untuk laporan omset harian per bakery yang lebih rinci, lihat menu <b>Laporan Omset</b>.</div>
+      <div class="stat-grid" id="db-arusStats" style="margin-top:10px"></div>
+      <div class="tabs" id="db-arusTabs">
+        <button class="on" data-p="bakery" onclick="dashArusTab(this)">Per Bakery</button>
+        <button data-p="kategori" onclick="dashArusTab(this)">Per Kategori</button>
+        <button data-p="toko" onclick="dashArusTab(this)">Rekonsiliasi Toko</button>
+        <button data-p="channel" onclick="dashArusTab(this)">Per Channel</button>
+      </div>
+      <div style="margin-top:10px;overflow-x:auto">
+        <div class="tabpanel on" data-panel="bakery">
+          <table><thead><tr><th class="l">Bakery</th><th>PO</th><th>Terkirim</th><th>Retur</th><th>Reject</th><th>Omset Pabrik</th><th>HPP</th><th>Margin</th><th>Margin %</th><th>Omset 100%</th><th>Kerugian</th></tr></thead><tbody id="db-arusBakery"></tbody></table>
+        </div>
+        <div class="tabpanel" data-panel="kategori">
+          <table><thead><tr><th class="l">Kategori</th><th>PO</th><th>Terkirim</th><th>Retur</th><th>Reject</th><th>Omset Pabrik</th><th>HPP</th><th>Margin</th><th>Margin %</th><th>Omset 100%</th><th>Kerugian</th></tr></thead><tbody id="db-arusKategori"></tbody></table>
+        </div>
+        <div class="tabpanel" data-panel="toko">
+          <div class="note">Rekonsiliasi arus barang di toko: <b>Dikirim = Terjual ke konsumen + Retur + Sisa stok di toko</b>. Kolom Terjual diambil dari menu Jual Konsumen; kalau data POS belum masuk, angka Sisa Stok akan terlihat besar.</div>
+          <table style="margin-top:8px"><thead><tr><th class="l">Toko</th><th>Dikirim</th><th>Terjual</th><th>Retur</th><th>Sisa Stok</th><th>% Terjual</th><th>% Retur</th></tr></thead><tbody id="db-arusToko"></tbody></table>
+        </div>
+        <div class="tabpanel" data-panel="channel">
+          <table><thead><tr><th class="l">Tipe Toko</th><th>PO</th><th>Terkirim</th><th>Retur</th><th>Reject</th><th>Omset Pabrik</th><th>HPP</th><th>Margin</th><th>Margin %</th><th>Omset 100%</th><th>Kerugian</th></tr></thead><tbody id="db-arusChannel"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+      <h4>PO per Bakery &amp; Pemenuhannya</h4>
+      <div class="note">Membandingkan Pesanan (PO), hasil Produksi, dan yang sudah Terkirim antara factory Karangtengah dan Cibadak pada rentang tanggal di atas.</div>
+      <div class="stat-grid" id="dashFactoryStats" style="margin-top:10px"></div>
+      <div class="chart-box" id="dashFactoryChart" style="margin-top:8px"></div>
+    </div>
+
+    <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+      <h4>Status Submit — <span id="db-statusTgl"></span></h4>
+      <div id="dashWrap" style="margin-top:10px"></div>
+    </div>
+
+    <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+      <h4>Tren Harian</h4>
+      <div class="chart-box" id="dashChart" style="margin-top:8px"></div>
+      <div id="dashTrenTable" style="margin-top:10px"></div>
+    </div>
+
+    <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+      <h4>Per Divisi</h4>
+      <div id="dashKatTable" style="margin-top:10px"></div>
+    </div>
+
+    <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+      <h4>Per Produk</h4>
+      <input type="text" id="dash-cari" placeholder="Cari produk atau kode…" oninput="dashProdukFilterRender()" style="margin-top:10px">
+      <div class="scrollY" style="overflow-x:auto;margin-top:10px">
+      <table>
+        <thead><tr><th class="l">Produk</th><th class="l">Divisi</th><th>Target</th><th>Aktual</th><th>Reject</th><th>Fulfillment</th></tr></thead>
+        <tbody id="dashProdukTable"></tbody>
+      </table>
+      </div>
+      <div class="note">Diurutkan dari fulfillment terendah — produk yang paling butuh perhatian tampil di atas.</div>
+    </div>
   </details>
 </div>
 
@@ -4220,30 +4244,44 @@ function renderDashPipeline(dari,sampai){
     {label:'Siap Kirim', value:d.siapKirim, color:'#c9a86e'},
     {label:'Sudah Terkirim', value:d.kirim, color:'#7cb88f'}
   ]);
+  // "Sisa" non-outlet = murni tampilan (pesanan - selesai, tak pernah minus),
+  // sama seperti pola render-side lain di app ini (mis. kTotBelum) — BUKAN
+  // angka baru dari data engine, cuma pengurangan dari 2 angka yang dashPipelineData()
+  // sendiri sudah hasilkan (pesananNonOutlet & selesaiNonOutlet, tidak diubah).
+  const sisaNonOutlet = Math.max(0, d.pesananNonOutlet - d.selesaiNonOutlet);
+  const elNonOutletHead = $("dbNonOutletHeadline");
+  if(elNonOutletHead) elNonOutletHead.textContent = `— ${fmt(d.pesananNonOutlet)} pcs`;
   const elNonOutlet = $("db-pipelineNonOutletStats");
   if(elNonOutlet){
     elNonOutlet.innerHTML = `
-      <div class="stat"><div class="lbl">Pesanan Non-Outlet</div><div class="val">${fmt(d.pesananNonOutlet)}</div></div>
-      <div class="stat"><div class="lbl">Selesai Non-Outlet</div><div class="val">${fmt(d.selesaiNonOutlet)}</div></div>
-      ${d.overproduksi>0?`<div class="stat"><div class="lbl">Overproduksi</div><div class="val" style="color:var(--warn)">${fmt(d.overproduksi)}</div><div class="note" style="margin-top:2px">Di luar total target Outlet+Non-Outlet — bukan bagian pipeline manapun di atas.</div></div>`:''}`;
+      <div class="stat"><div class="lbl">Pesanan</div><div class="val">${fmt(d.pesananNonOutlet)}</div></div>
+      <div class="stat"><div class="lbl">Selesai</div><div class="val">${fmt(d.selesaiNonOutlet)}</div></div>
+      <div class="stat"><div class="lbl">Sisa</div><div class="val" style="color:${sisaNonOutlet>0?'var(--warn)':'var(--hi)'}">${fmt(sisaNonOutlet)}</div></div>
+      ${d.overproduksi>0?`<div class="stat"><div class="lbl">Overproduksi</div><div class="val" style="color:var(--warn)">${fmt(d.overproduksi)}</div><div class="note" style="margin-top:2px">Di luar total target Outlet+Non-Outlet.</div></div>`:''}`;
   }
   renderDashFokus(d);
 }
 // Ringkasan "apa yang perlu perhatian sekarang" — sintesis dari angka yang
 // SUDAH dihitung di tempat lain (dashPipelineData, kPesananBelumTerpenuhiPerToko),
-// bukan logika bisnis baru. Sengaja hanya teks singkat, bukan stat-grid lagi,
-// supaya tidak menambah kepadatan informasi di header.
+// bukan logika bisnis baru. Satu baris alert (bukan card besar) — klik "Lihat"
+// (native <details>) baru menampilkan rinciannya.
 function renderDashFokus(d){
-  const el = $("dbFokusBody"); if(!el) return;
+  const box = $("dbFokusCard"); if(!box) return;
   const belumToko = (typeof kPesananBelumTerpenuhiPerToko==="function") ? kPesananBelumTerpenuhiPerToko().length : 0;
   const poin = [];
-  if(d.produksi>0) poin.push(`<b>${fmt(d.produksi)} pcs</b> masih dalam produksi, belum diverifikasi Finishgood`);
-  if(d.siapKirim>0) poin.push(`<b>${fmt(d.siapKirim)} pcs</b> siap kirim, menunggu diproses jadi Delivery Order`);
-  if(belumToko>0) poin.push(`<b>${fmt(belumToko)} toko</b> pesanannya belum terpenuhi 100%`);
-  if(d.overproduksi>0) poin.push(`<b>${fmt(d.overproduksi)} pcs</b> overproduksi di luar target Outlet + Non-Outlet`);
-  el.innerHTML = poin.length
-    ? poin.map(p=>`<div style="margin:4px 0;padding-left:14px;position:relative"><span style="position:absolute;left:0;color:var(--brand)">•</span>${p}</div>`).join("")
-    : '<div class="empty">Tidak ada yang perlu perhatian khusus pada rentang ini.</div>';
+  if(belumToko>0) poin.push({ringkas:`${fmt(belumToko)} bakery belum terpenuhi 100%`, detail:`<b>${fmt(belumToko)} toko</b> pesanannya belum terpenuhi 100%.`});
+  if(d.produksi>0) poin.push({ringkas:`${fmt(d.produksi)} pcs masih diproduksi`, detail:`<b>${fmt(d.produksi)} pcs</b> masih dalam produksi, belum diverifikasi Finishgood.`});
+  if(d.siapKirim>0) poin.push({ringkas:`${fmt(d.siapKirim)} pcs siap kirim`, detail:`<b>${fmt(d.siapKirim)} pcs</b> siap kirim, menunggu diproses jadi Delivery Order.`});
+  if(d.overproduksi>0) poin.push({ringkas:`${fmt(d.overproduksi)} pcs overproduksi`, detail:`<b>${fmt(d.overproduksi)} pcs</b> overproduksi di luar target Outlet + Non-Outlet.`});
+  if(!poin.length){
+    box.innerHTML = `<div class="alert-strip ok">✓ Tidak ada yang perlu perhatian khusus pada rentang ini.</div>`;
+    return;
+  }
+  const ringkasText = poin.map(p=>p.ringkas).join(" · ");
+  box.innerHTML = `<details class="alert-strip">
+    <summary><span>⚠ ${ringkasText}</span><span class="alert-toggle">Lihat</span></summary>
+    <div class="dd-body">${poin.map(p=>`<div style="margin:4px 0;padding-left:14px;position:relative"><span style="position:absolute;left:0;color:var(--brand)">•</span>${p.detail}</div>`).join("")}</div>
+  </details>`;
 }
 function renderDashTren(dari,sampai){
   const data = dashTrenData(dari,sampai);

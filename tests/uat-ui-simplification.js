@@ -127,7 +127,7 @@ async function main(){
   check("DASH.sedangDiproduksiMovedOut", "Dashboard — 'Sedang Diproduksi' TIDAK lagi jadi kartu primer di header",
     false, pipelineHtml.includes("Sedang Diproduksi"));
 
-  const fokusHtml = api.$("dbFokusBody").innerHTML;
+  const fokusHtml = api.$("dbFokusCard").innerHTML;
   check("DASH.fokusMentionsProduksi", "Dashboard — Fokus Hari Ini menyebutkan qty yang masih diproduksi (dipindah dari header)",
     true, fokusHtml.includes("masih dalam produksi"));
 
@@ -138,6 +138,53 @@ async function main(){
     0, d.selesai);
   check("DASH.pipelineDataUnchanged_produksi", "Dashboard — dashPipelineData() Sedang Diproduksi tetap benar (divisi Pastry belum disubmit = 20)",
     20, d.produksi);
+
+  /* ===================== COMPACT PASS — layout-only assertions ===================== */
+  // 1) Date filter tidak lagi di dalam card besar berdiri sendiri.
+  const dariCardParent = api.$("db-dari").closest(".card");
+  check("COMPACT.dateFilterNotInBigCard", "Compact — filter tanggal TIDAK lagi di dalam .card besar berdiri sendiri",
+    null, dariCardParent);
+  const toolbarEl = api.$("db-dari").closest(".dash-toolbar");
+  check("COMPACT.dateFilterInCompactToolbar", "Compact — filter tanggal ada di dalam toolbar compact (.dash-toolbar)",
+    true, !!toolbarEl);
+
+  // 2) Tetap persis 4 KPI utama (diverifikasi ulang di sini scoped ke compact pass).
+  check("COMPACT.exactlyFourPrimaryKpi", "Compact — tetap persis 4 KPI utama di header (tidak nambah/berkurang)",
+    4, api.$("db-pipelineStats").children.length);
+
+  // 3) Fokus Hari Ini = alert-strip satu baris (details), BUKAN card besar dgn heading terpisah.
+  const fokusEl = api.$("dbFokusCard").firstElementChild;
+  check("COMPACT.fokusIsCompactAlertStrip", "Compact — Fokus Hari Ini dirender sbg alert-strip compact (bukan .card besar)",
+    true, !!fokusEl && fokusEl.classList.contains("alert-strip") && !fokusEl.classList.contains("card"));
+  check("COMPACT.fokusHasOneSummaryLine", "Compact — Fokus Hari Ini adalah SATU baris ringkas (elemen <details>, expand via klik)",
+    "DETAILS", fokusEl ? fokusEl.tagName : null);
+
+  // 4) Non-Outlet: collapsed row, CLOSED by default.
+  const nonOutletEl = api.$("dbNonOutletWrap");
+  check("COMPACT.nonOutletIsDetails", "Compact — Non-Outlet adalah elemen <details> (collapsed row), bukan card penuh",
+    "DETAILS", nonOutletEl.tagName);
+  check("COMPACT.nonOutletClosedByDefault", "Compact — Non-Outlet CLOSED by default (belum di-klik)",
+    false, nonOutletEl.open);
+
+  // 5) Detail Analisis: satu parent section gabungan, CLOSED by default, membungkus semua subsection sekunder.
+  const detailEl = api.$("dbDetailAnalisis");
+  check("COMPACT.detailAnalisisIsDetails", "Compact — Detail Analisis adalah elemen <details> tunggal", "DETAILS", detailEl.tagName);
+  check("COMPACT.detailAnalisisClosedByDefault", "Compact — Detail Analisis CLOSED by default (belum di-klik)",
+    false, detailEl.open);
+  const secondaryIdsInsideDetail = ["db-arusStats","dashFactoryStats","dashWrap","dashChart","dashKatTable","dashProdukTable","db-stats"];
+  const allInsideOneDetail = secondaryIdsInsideDetail.every(id=>{ const el=api.$(id); return el && detailEl.contains(el); });
+  check("COMPACT.allSecondarySectionsInsideOneDetail", "Compact — semua 6+ subsection sekunder ada DI DALAM satu <details> yang sama (bukan 6 <details> terpisah)",
+    true, allInsideOneDetail);
+  // Tidak boleh ada <details class="card"> lain yang berdiri sendiri di halaman Dashboard
+  // selain dbNonOutletWrap (.dd) dan dbDetailAnalisis (.card) itu sendiri.
+  const standaloneDetailsCards = [...api.__document.querySelectorAll('#p-dash > details.card')];
+  check("COMPACT.onlyOneStandaloneDetailsCard", "Compact — hanya SATU <details class=\"card\"> berdiri sendiri langsung di halaman Dashboard (Detail Analisis)",
+    1, standaloneDetailsCards.length);
+
+  // 6) Logika inti tidak boleh berubah krn compact pass — cross-check ulang thd fungsi asli.
+  const d2 = api.dashData(TGL);
+  check("COMPACT.dashDataStillCorrect", "Compact — dashData() (logika inti) tidak tersentuh sama sekali oleh perubahan tampilan",
+    true, Array.isArray(d2) && d2.some(r=>r.target>0));
 
   const total = results.length;
   const passCount = results.filter(r=>r.pass).length;
