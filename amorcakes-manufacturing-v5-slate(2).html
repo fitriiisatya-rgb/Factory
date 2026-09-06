@@ -446,6 +446,7 @@ details.sect>summary{padding:15px 16px}
     <input type="file" id="po-file" accept=".csv,.xlsx,.xls,text/csv">
     <div class="note">Cukup upload <b>CSV sheet tanggal</b> (sheet "01", "02", dst) hasil download dari file PO — atau file .xlsx utuhnya, sheet tanggal akan dipilih otomatis. Dua bentuk layout dikenali otomatis:<br>• <b>Karangtengah</b> — header <b>NO / KATEGORI / KODE / NAMA PRODUK</b>, kolom <b>TOTAL</b> (PO Awal, PO Revisi, PB).<br>• <b>Cibadak (Bolu)</b> — header <b>Kategori / Nama Produk / Harga Satuan</b>, kolom <b>TOTAL PO</b> (PO Awal, PO Tambahan, PB); kode produk diambil dari katalog bawaan.<br>Jumlah kolom toko boleh berbeda tiap upload.</div>
     <div class="note" id="po-katWarn" style="display:none"></div>
+    <div class="note" id="po-kodeBentrokWarn" style="display:none;color:var(--warn)"></div>
     <button class="btn ghost" onclick="poProses()">Proses File</button>
     <div id="po-previewWrap" style="display:none;margin-top:14px">
       <div class="warn-box">Ini baru <b>pratinjau</b> — data belum tersimpan. Cek dulu ringkasannya di bawah, lalu WAJIB klik tombol "Simpan sebagai Target Hari Ini" supaya benar-benar masuk ke sistem.</div>
@@ -1637,6 +1638,30 @@ const normNama = n => String(n||"").trim().toUpperCase().replace(/\s+/g," ");
 // ada dua sumber kebenaran untuk hal yang sama.
 const normalizeProductKey = normNama;
 
+/* ================= IDENTITAS SKU (kode BUKAN key unik yg aman) =================
+   Terbukti dari data PO sungguhan: kode BISA dipakai untuk >1 nama produk
+   berbeda (salah isi kolom kode di spreadsheet sumber — mis. "BSC008" dipakai
+   utk "MUFFIN VANILLA" DAN "MUFFIN COKLAT" pada baris yang berbeda). Kode
+   dulu dipakai sendirian sbg key di banyak tempat (ceklis produksi, FG,
+   packing per toko, dashboard per-produk, revision PO) — kalau 2 produk
+   beda berbagi kode, mereka collision dan salah satu bisa: hilang datanya,
+   tertukar angkanya, atau ke-dobel-hitung. stok gudang pun ikut salah karena
+   ceklis FG-nya sudah salah dari awal.
+   skuId() adalah SATU identitas terpusat dipakai di SELURUH aplikasi kapan
+   pun kode dipakai sbg key: kode + nama produk (dinormalisasi). Kalau kode
+   kosong, jatuh balik ke nama saja (tetap konsisten dgn poIdentitasBaris/
+   cocokProduk). TIDAK mengubah kode/nama di data sumber — ini murni kunci
+   internal, jadi 2 produk beda nama tidak akan pernah collision hanya krn
+   kode-nya kebetulan sama, TANPA perlu mengedit spreadsheet PPIC. */
+function skuId(rowOrKode, produkArg){
+  let kode, produk;
+  if(rowOrKode && typeof rowOrKode === "object"){ kode = rowOrKode.kode; produk = rowOrKode.produk || rowOrKode.produkAsli; }
+  else { kode = rowOrKode; produk = produkArg; }
+  const namaKey = normNama(produk);
+  const kodeKey = kode ? String(kode).trim() : "";
+  return kodeKey + "\x1f" + namaKey;
+}
+
 /* ================= PENCOCOKAN NAMA PRODUK DARI PO ================= */
 // Jarak edit (Levenshtein) — dipakai HANYA untuk memberi SARAN, tidak pernah
 // untuk mencocokkan otomatis secara diam-diam. Implementasi ringan, tanpa
@@ -2491,9 +2516,31 @@ function setTargetMode(v){ D.settings.targetMode=v; saveD(); renderAll(); toast(
    baris di spreadsheet); kalau kode kosong, jatuh balik ke nama produk asli
    (produkAsli) yang dinormalisasi — BUKAN nama hasil resolusi, supaya tetap
    stabil walau user baru memutuskan mapping produknya di sesi ini. */
+// Kode SAJA tidak aman dipakai sbg identitas (lihat skuId()) — file PO
+// sungguhan terbukti bisa punya kode yg sama dipakai utk produk berbeda.
+// Gabungkan kode+nama supaya 2 produk beda tidak pernah disatukan hanya krn
+// kode kebetulan sama, sambil tetap toleran thd kode kosong (fallback nama).
 function poIdentitasBaris(r){
-  if(r && r.kode) return "K:"+r.kode;
-  return "N:"+normNama((r && (r.produkAsli||r.produk))||"");
+  const nama = normNama((r && (r.produkAsli||r.produk))||"");
+  if(r && r.kode) return "K:"+String(r.kode).trim()+"\x1f"+nama;
+  return "N:"+nama;
+}
+// Deteksi kode yg dipakai oleh >1 nama produk BERBEDA di file yg BARU
+// diupload — biasanya salah isi kolom kode di spreadsheet sumber (mis.
+// kode yang sama tercatat utk 2 produk berbeda). Ini WARNING SAJA (Save
+// tetap boleh jalan, sistem sendiri sudah aman dari collision ini lewat
+// skuId()) — supaya admin bisa perbaiki di sumbernya kalau memang typo.
+// TIDAK mengubah kode/nama apa pun secara otomatis.
+function poDeteksiKodeBentrok(rows){
+  const byKode = {};
+  (rows||[]).forEach(r=>{
+    if(!r.kode) return;
+    const nama = normNama(r.produk||r.produkAsli);
+    (byKode[r.kode] ||= new Set()).add(nama);
+  });
+  const bentrok = [];
+  Object.entries(byKode).forEach(([kode,namaSet])=>{ if(namaSet.size>1) bentrok.push({kode, nama:[...namaSet]}); });
+  return bentrok;
 }
 function poAmbilExisting(tgl, factory){
   return (D.po[tgl]||[]).filter(r=>r.factory===factory);
@@ -2612,6 +2659,16 @@ function renderPoPreview(){
       w.style.display="block";
       w.innerHTML = `⚠️ Ada produk kategori <b>${belum.join(", ")}</b> yang belum ketahuan divisinya (tidak ada di katalog bawaan &amp; kategorinya belum dipetakan). Produk ini <b>tidak akan muncul di ceklis produksi</b> — petakan di menu <b>Master → Pemetaan Kategori → Divisi</b>.`;
     } else w.style.display="none";
+  }
+  const wKode = $("po-kodeBentrokWarn");
+  if(wKode){
+    const bentrok = poDeteksiKodeBentrok(rows);
+    if(bentrok.length){
+      wKode.style.display="block";
+      wKode.innerHTML = `⚠️ <b>${bentrok.length} kode</b> dipakai oleh lebih dari satu nama produk berbeda di file ini — kemungkinan salah isi kolom kode di spreadsheet sumber: `+
+        bentrok.map(b=>`<b>${b.kode}</b> (${b.nama.join(" / ")})`).join(", ")+
+        `. Sistem tetap memperlakukan tiap nama sebagai produk terpisah (aman dari tertukar), tapi sebaiknya kode-nya diperbaiki di sumbernya.`;
+    } else wKode.style.display="none";
   }
   $("po-previewWrap").style.display="block";
   const namaFactory = factory==='karangtengah'?'Karangtengah':'Cibadak (Bolu)';
@@ -2813,7 +2870,10 @@ function targetUntukDivisi(tgl, divisi){
       if(!divisiAsal) return;
       const c = D.ceklis[ceklisKey(tgl,divisiAsal)];
       if(!c || !c.submitted) return;
-      const srcRow = (c.rows||[]).find(cr=>cr.kode===r.kode);
+      // skuId (kode+nama), BUKAN kode saja — kode bisa dipakai >1 produk
+      // berbeda di file sumber (lihat skuId()); kalau dicocokkan pakai kode
+      // saja, 2 produk beda bisa saling "mencuri" netto punya yang lain.
+      const srcRow = (c.rows||[]).find(cr=>skuId(cr)===skuId(r));
       if(!srcRow) return;
       const netto = num(srcRow.aktual)-num(srcRow.reject);
       if(netto<=0) return;
@@ -2850,9 +2910,9 @@ function ceklisKey(tgl,divisi){ return tgl+"|"+divisi; }
 function pdSisaTarget(tgl, divisi){
   const targets = targetUntukDivisi(tgl,divisi);
   const existing = D.ceklis[ceklisKey(tgl,divisi)];
-  const kum = {}; (existing?.rows||[]).forEach(r=>kum[r.kode]=r);
+  const kum = {}; (existing?.rows||[]).forEach(r=>kum[skuId(r)]=r);
   return targets.map(t=>{
-    const k = kum[t.kode];
+    const k = kum[skuId(t)];
     const sudahAktual = k?num(k.aktual):0;
     const sudahReject = k?num(k.reject):0;
     // Kalau revisi dikoreksi TURUN setelah aktual sudah melebihi target baru,
@@ -3076,16 +3136,21 @@ function pdSimpan(){
   const key = ceklisKey(tgl,divisi);
   if(!D.ceklis[key]) D.ceklis[key] = {submitted:false, submittedAt:null, rows:[], closed:false};
   const rec = D.ceklis[key];
-  const map = {}; (rec.rows||[]).forEach(r=>map[r.kode]=r);
+  // skuId (kode+nama) — kode saja tidak cukup, terbukti bisa dipakai >1
+  // produk berbeda di file PO sumber. Kalau dedup pakai kode saja, 2 produk
+  // beda submit sekaligus akan tergabung jadi 1 row (salah satu hilang,
+  // aktual keduanya kejumlah ke produk yg "menang").
+  const map = {}; (rec.rows||[]).forEach(r=>map[skuId(r)]=r);
   formRows.forEach(fr=>{
-    const prev = map[fr.kode];
+    const id = skuId(fr);
+    const prev = map[id];
     if(prev){
       prev.aktual = num(prev.aktual)+fr.aktual;
       prev.reject = num(prev.reject)+fr.reject;
       prev.status = fr.status;
       if(fr.keterangan) prev.keterangan = prev.keterangan ? (prev.keterangan+"; "+fr.keterangan) : fr.keterangan;
     } else {
-      map[fr.kode] = {kode:fr.kode, produk:fr.produk, kategori:fr.kategori, target:fr.targetAsli, status:fr.status, aktual:fr.aktual, reject:fr.reject, keterangan:fr.keterangan};
+      map[id] = {kode:fr.kode, produk:fr.produk, kategori:fr.kategori, target:fr.targetAsli, status:fr.status, aktual:fr.aktual, reject:fr.reject, keterangan:fr.keterangan};
     }
   });
   rec.rows = Object.values(map);
@@ -3153,7 +3218,9 @@ function fgMaterializeAll(tgl, factory){
   const rec = D.fgPacking[key];
   let changed = false;
   rows.forEach(r=>{
-    const k = r.kode+"|"+r.toko;
+    // skuId (kode+nama), bukan kode saja — 2 produk berbeda yg berbagi kode
+    // dan kebetulan sama2 kirim ke toko yg sama tidak boleh bentrok di satu key.
+    const k = skuId(r)+"|"+r.toko;
     if(rec.packed[k]==null){
       rec.packed[k] = belumPernahAda
         ? {qty:r.target, status:"sesuai", keterangan:""}
@@ -3173,19 +3240,22 @@ function fgBuildPanel(){
 }
 // Baca 1 entri packing dgn format baru {qty,status,keterangan}; tetap kompatibel
 // dgn data lama yg cuma berupa angka polos.
-function fgGetPacked(tgl, factory, kode, toko){
+// `id` di sini HARUS skuId(row) (kode+nama), bukan kode mentah — dipanggil
+// dari tempat yg punya row lengkap (fgTandaiSiap dst) atau dari DOM row yg
+// datasetnya sudah membawa kode+produk (fgSetStatus/fgSetPacked/fgSetKeterangan).
+function fgGetPacked(tgl, factory, id, toko){
   const rec = D.fgPacking[fgKey(tgl,factory)];
-  const raw = rec ? rec.packed[kode+"|"+toko] : undefined;
+  const raw = rec ? rec.packed[id+"|"+toko] : undefined;
   if(raw==null) return {qty:0, status:"sesuai", keterangan:""};
   if(typeof raw === "object") return {qty:num(raw.qty), status:raw.status||"sesuai", keterangan:raw.keterangan||""};
   return {qty:num(raw), status:"sesuai", keterangan:""};
 }
-function fgSetPackedField(tgl, factory, kode, toko, patch){
+function fgSetPackedField(tgl, factory, id, toko, patch){
   const key = fgKey(tgl,factory);
   if(!D.fgPacking[key]) D.fgPacking[key] = {readyAt:null, packed:{}};
-  const cur = fgGetPacked(tgl, factory, kode, toko);
+  const cur = fgGetPacked(tgl, factory, id, toko);
   const merged = Object.assign({}, cur, patch);
-  D.fgPacking[key].packed[kode+"|"+toko] = merged;
+  D.fgPacking[key].packed[id+"|"+toko] = merged;
   saveD();
   return merged;
 }
@@ -3205,7 +3275,7 @@ function fgRenderTable(){
   let selesai=0;
   const grup={};
   rows.forEach(r=>{
-    const st = fgGetPacked(tgl, factory, r.kode, r.toko);
+    const st = fgGetPacked(tgl, factory, skuId(r), r.toko);
     const sisa = r.target-st.qty;
     if(sisa<=0) selesai++;
     const g = mode==="toko" ? r.toko : (mode==="produk" ? r.produk : "");
@@ -3269,7 +3339,7 @@ function fgApplyFilter(){
 function fgSisaCell(tr){ return tr.children[5]; }
 function fgSetStatus(btn, status){
   const tr = btn.closest("tr");
-  const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value), kode=tr.dataset.kode, toko=tr.dataset.toko, target=num(tr.dataset.target);
+  const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value), id=skuId({kode:tr.dataset.kode,produk:tr.dataset.produk}), toko=tr.dataset.toko, target=num(tr.dataset.target);
   tr.querySelectorAll(".segb").forEach(b=>b.classList.remove("on"));
   btn.classList.add("on");
   tr.dataset.status = status;
@@ -3278,7 +3348,7 @@ function fgSetStatus(btn, status){
   if(status==="sesuai"){ qty = target; qtyEl.value = target; qtyEl.setAttribute("readonly","readonly"); }
   else { qtyEl.removeAttribute("readonly"); qtyEl.focus(); }
   const ket = tr.querySelector('input[type="text"]').value;
-  fgSetPackedField(tgl, factory, kode, toko, {qty, status, keterangan:ket});
+  fgSetPackedField(tgl, factory, id, toko, {qty, status, keterangan:ket});
   const sisa = target-qty;
   tr.dataset.sisa = sisa;
   fgSisaCell(tr).textContent = fmt(sisa); fgSisaCell(tr).className = sisa<=0?'g':'r';
@@ -3286,11 +3356,11 @@ function fgSetStatus(btn, status){
 }
 function fgSetPacked(el){
   const tr = el.closest("tr");
-  const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value), kode=tr.dataset.kode, toko=tr.dataset.toko, target=num(tr.dataset.target);
+  const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value), id=skuId({kode:tr.dataset.kode,produk:tr.dataset.produk}), toko=tr.dataset.toko, target=num(tr.dataset.target);
   const qty = num(el.value);
   const status = tr.dataset.status || "sesuai";
   const ket = tr.querySelector('input[type="text"]').value;
-  fgSetPackedField(tgl, factory, kode, toko, {qty, status, keterangan:ket});
+  fgSetPackedField(tgl, factory, id, toko, {qty, status, keterangan:ket});
   const sisa = target-qty;
   tr.dataset.sisa = sisa;
   fgSisaCell(tr).textContent = fmt(sisa); fgSisaCell(tr).className = sisa<=0?'g':'r';
@@ -3298,10 +3368,10 @@ function fgSetPacked(el){
 }
 function fgSetKeterangan(el){
   const tr = el.closest("tr");
-  const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value), kode=tr.dataset.kode, toko=tr.dataset.toko;
+  const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value), id=skuId({kode:tr.dataset.kode,produk:tr.dataset.produk}), toko=tr.dataset.toko;
   const qtyEl = tr.querySelector('input[type="number"]');
   const status = tr.dataset.status || "sesuai";
-  fgSetPackedField(tgl, factory, kode, toko, {qty:num(qtyEl.value), status, keterangan: el.value});
+  fgSetPackedField(tgl, factory, id, toko, {qty:num(qtyEl.value), status, keterangan: el.value});
 }
 function fgUpdateProgressCounter(){
   const rows=[...document.querySelectorAll('#fgBody tr[data-kode]')];
@@ -3317,9 +3387,9 @@ function fgSimpanProgres(){
 function fgTandaiSiap(){
   const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value);
   const rows = fgStoreRows(tgl, factory);
-  const belum = rows.filter(r=> fgGetPacked(tgl, factory, r.kode, r.toko).qty < r.target);
+  const belum = rows.filter(r=> fgGetPacked(tgl, factory, skuId(r), r.toko).qty < r.target);
   if(belum.length){
-    const totalKurang = belum.reduce((a,r)=>a+(r.target-fgGetPacked(tgl,factory,r.kode,r.toko).qty),0);
+    const totalKurang = belum.reduce((a,r)=>a+(r.target-fgGetPacked(tgl,factory,skuId(r),r.toko).qty),0);
     if(!confirm(`Masih ada ${belum.length} baris toko/produk belum lengkap (total kurang ${totalKurang} pcs). Tetap tandai siap diambil delivery?`)) return;
   }
   const key = fgKey(tgl,factory);
@@ -3407,12 +3477,16 @@ function dashKategoriData(dari,sampai){ // dikelompokkan per DIVISI (produksi), 
   return per;
 }
 function dashProdukData(dari,sampai){
+  // Dikelompokkan per skuId (kode+nama), BUKAN kode saja — kalau tidak, 2
+  // produk berbeda yg kebetulan berbagi kode akan tergabung jadi satu baris
+  // laporan (target/aktual/reject-nya kejumlah, nama yg tampil cuma salah satu).
   const per={};
   Object.entries(D.po).forEach(([tgl,rows])=>{
     if(!inRange(tgl,dari,sampai)) return;
     rows.forEach(r=>{
-      (per[r.kode] ||= {kode:r.kode, produk:r.produk, kategori:divisiProduk(r)||'(Tanpa Divisi)', target:0,aktual:0,reject:0});
-      per[r.kode].target += hitungTarget(r);
+      const id = skuId(r);
+      (per[id] ||= {kode:r.kode, produk:r.produk, kategori:divisiProduk(r)||'(Tanpa Divisi)', target:0,aktual:0,reject:0});
+      per[id].target += hitungTarget(r);
     });
   });
   Object.entries(D.ceklis).forEach(([key,c])=>{
@@ -3420,9 +3494,10 @@ function dashProdukData(dari,sampai){
     if(!inRange(tgl,dari,sampai)) return;
     if(divisiVerifikasi(key.split("|")[1])) return;
     (c.rows||[]).forEach(r=>{
-      (per[r.kode] ||= {kode:r.kode, produk:r.produk, kategori:divisiDari(r.produk, r.kategori), target:0,aktual:0,reject:0});
-      per[r.kode].aktual += num(r.aktual);
-      per[r.kode].reject += num(r.reject);
+      const id = skuId(r);
+      (per[id] ||= {kode:r.kode, produk:r.produk, kategori:divisiDari(r.produk, r.kategori), target:0,aktual:0,reject:0});
+      per[id].aktual += num(r.aktual);
+      per[id].reject += num(r.reject);
     });
   });
   return Object.values(per);
@@ -3445,29 +3520,30 @@ function dashPipelineData(dari,sampai){
   let pesanan=0, produksi=0, selesai=0, siapKirim=0, kirim=0;
   let selesaiNonOutlet=0, overproduksi=0, pesananNonOutlet=0;
   const tglPO = [];
-  const outletTargetByKey = {};    // "tgl|kode" -> target Outlet (dari D.po langsung)
+  const outletTargetByKey = {};    // "tgl|skuId" -> target Outlet (dari D.po langsung)
   Object.entries(D.po).forEach(([tgl,rows])=>{
     if(!inRange(tgl,dari,sampai)) return;
     tglPO.push(tgl);
     rows.forEach(r=>{
       const t = hitungTarget(r);
       pesanan += t;
-      if(r.kode){ const k=tgl+"|"+r.kode; outletTargetByKey[k]=(outletTargetByKey[k]||0)+t; }
+      const k=tgl+"|"+skuId(r); outletTargetByKey[k]=(outletTargetByKey[k]||0)+t;
     });
   });
   // target gabungan (Outlet+Non-Outlet) per SKU — basis yang SAMA dgn yang
   // benar2 dipakai ceklis produksi (targetUntukDivisi), dipakai HANYA utk
   // membedakan "produksi Non-Outlet yang sah" dari "overproduction sungguhan".
+  // Key pakai skuId (kode+nama) — kode saja bisa dipakai >1 produk berbeda.
   const combinedTargetByKey = {};
   tglPO.forEach(tgl=>{
     D.divisi.forEach(d=>{
       if(divisiVerifikasi(d)) return;
       const rows = targetUntukDivisi(tgl,d);
-      rows.forEach(r=>{ if(r.kode){ const k=tgl+"|"+r.kode; combinedTargetByKey[k]=(combinedTargetByKey[k]||0)+r.target; } });
+      rows.forEach(r=>{ const k=tgl+"|"+skuId(r); combinedTargetByKey[k]=(combinedTargetByKey[k]||0)+r.target; });
       // sedang diproduksi: porsi OUTLET SAJA dari target divisi yg belum disubmit
       const c = D.ceklis[ceklisKey(tgl,d)];
       if(c && c.submitted) return;
-      rows.forEach(r=>{ produksi += (r.kode ? (outletTargetByKey[tgl+"|"+r.kode]||0) : 0); });
+      rows.forEach(r=>{ produksi += (outletTargetByKey[tgl+"|"+skuId(r)]||0); });
     });
   });
   // selesai produksi = hasil verifikasi FG, dipecah Outlet / Non-Outlet / overproduksi
@@ -3479,7 +3555,7 @@ function dashPipelineData(dari,sampai){
     (c.rows||[]).forEach(r=>{
       const netto = num(r.aktual)-num(r.reject);
       if(netto<=0) return;
-      const k = tgl+"|"+r.kode;
+      const k = tgl+"|"+skuId(r);
       const targetOutlet = outletTargetByKey[k]||0;
       const targetGabungan = combinedTargetByKey[k]||0;
       const fgOutlet = Math.min(netto, targetOutlet);
@@ -3861,7 +3937,7 @@ function mutasiStok(produk){
       out.push({tgl, produk:r.produk, masuk:netto, keluar:0,
         dok:`FG/${divisi===SPECIAL_FG_CIBADAK?'CBD':'KRT'}/${tgl}`,
         ket:`Selesai produksi diverifikasi ${divisi}${num(r.reject)?` · reject ${fmt(r.reject)} tidak masuk stok`:''}`,
-        jenis:"produksi", id:key+"|"+r.kode});
+        jenis:"produksi", id:key+"|"+skuId(r)});
     });
   });
   D.kirim.forEach(k=>{
@@ -3942,11 +4018,6 @@ function stokToko(toko, produk){
 let kList = [], rList = [], jList = [];
 let kFgSource = null;
 
-function kodeToProdukMap(tgl, factory){
-  const map={};
-  (D.po[tgl]||[]).forEach(r=>{ if(r.factory===factory) map[r.kode]=r.produk; });
-  return map;
-}
 function fgReadyList(){
   const out=[];
   Object.entries(D.fgPacking).forEach(([key,rec])=>{
@@ -4120,15 +4191,15 @@ function kTarikDariFG(tgl,toko,factory){
   if($("k-showAll")) $("k-showAll").checked = false; // biar filter sisa-pesanan tetap aktif; kalau produk yg ditarik ternyata di luar pesanan resmi, admin bisa centang manual
   kBuildGrid();
   const rec = D.fgPacking[fgKey(tgl,factory)];
-  const map = kodeToProdukMap(tgl, factory);
   if(rec){
-    Object.entries(rec.packed||{}).forEach(([k,val])=>{
-      const q = typeof val==="object" ? num(val.qty) : num(val);
+    // Ambil produk langsung dari fgStoreRows (yg sudah py kode+produk+toko),
+    // BUKAN dgn membongkar key "id|toko" balik ke produk lewat kode saja —
+    // kode bisa dipakai >1 produk berbeda, jadi peta kode->produk tidak aman.
+    fgStoreRows(tgl, factory).filter(r=>r.toko===toko).forEach(r=>{
+      const val = rec.packed[skuId(r)+"|"+r.toko];
+      const q = val==null ? 0 : (typeof val==="object" ? num(val.qty) : num(val));
       if(q<=0) return;
-      const idx=k.lastIndexOf("|"); const kode=k.slice(0,idx), tk=k.slice(idx+1);
-      if(tk!==toko) return;
-      const produk = map[kode];
-      const i = kList.indexOf(produk);
+      const i = kList.indexOf(r.produk);
       if(i>=0){ const el=$("kq-"+i); if(el) el.value=q; } // input tetap aktif & bisa diubah manual, bukan readonly
     });
   }
