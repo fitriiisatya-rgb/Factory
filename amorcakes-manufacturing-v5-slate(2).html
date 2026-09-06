@@ -29,9 +29,16 @@ body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12
 .dot.live{background:var(--green);box-shadow:0 0 5px var(--green)}
 .dot.loading{background:var(--warn)}
 .dot.error{background:var(--red)}
-.nav{display:flex;gap:0;overflow-x:auto}
+.nav{display:flex;gap:0;overflow-x:auto;position:relative}
 .nav-btn{background:none;border:none;border-bottom:2px solid transparent;padding:9px 14px 10px;font-family:var(--sans);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);cursor:pointer;white-space:nowrap}
 .nav-btn.active{color:var(--brand);border-bottom-color:var(--brand)}
+.nav-more{position:relative}
+.nav-more>summary{list-style:none}
+.nav-more>summary::-webkit-details-marker{display:none}
+.nav-more-panel{position:absolute;top:100%;left:0;z-index:20;background:var(--bg2);border:1px solid var(--border);border-radius:3px;min-width:170px;display:flex;flex-direction:column;padding:4px;box-shadow:0 8px 20px rgba(0,0,0,.35)}
+.nav-more-panel .nav-btn{text-align:left;border-bottom:none;padding:8px 10px;border-radius:2px}
+.nav-more-panel .nav-btn.active{background:var(--bg3)}
+.nav-more.has-active>summary{color:var(--brand)}
 
 .wrap{max-width:1320px;margin:0 auto;padding:16px}
 .page{display:none}.page.active{display:block}
@@ -53,12 +60,18 @@ input:focus,select:focus{outline:1px solid var(--brand)}
 .stat .lbl{font-family:var(--sans);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--mute);margin-bottom:6px}
 .stat .val{font-family:var(--serif);font-size:21px;font-weight:600;color:var(--hi);font-variant-numeric:tabular-nums}
 
-/* ===== Dashboard compact pass — presentation only, no data/logic here ===== */
-.dash-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;min-height:40px}
-.dash-toolbar h3{margin:0;font-family:var(--sans);font-size:13px;font-weight:700;color:var(--brand);letter-spacing:.03em}
-.dash-datefilter{display:flex;align-items:center;gap:6px}
-.dash-datefilter input[type=date]{width:auto;padding:6px 8px;font-size:12px}
-.dash-datefilter .arrow{color:var(--mute);font-size:12px}
+/* ===== Compact page-header pass — presentation only, no data/logic here.
+   .dash-toolbar/.dash-datefilter kept as names for backcompat (Dashboard),
+   .page-toolbar/.page-datefilter are the same rules reused on other pages
+   (Kirim Toko, Invoice & Piutang, Kartu Stok, Rekap) for a consistent compact
+   header instead of each page having its own big title card. ===== */
+.dash-toolbar,.page-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:6px;min-height:40px}
+.dash-toolbar h3,.page-toolbar h3{margin:0;font-family:var(--sans);font-size:13px;font-weight:700;color:var(--brand);letter-spacing:.03em}
+.page-sub{margin:0 0 12px;color:var(--mute);font-size:11.5px}
+.dash-datefilter,.page-datefilter{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.dash-datefilter input[type=date],.page-datefilter input[type=date]{width:auto;padding:6px 8px;font-size:12px}
+.dash-datefilter .arrow,.page-datefilter .arrow{color:var(--mute);font-size:12px}
+.page-datefilter input[type=text],.page-datefilter select{width:auto;padding:6px 8px;font-size:12px}
 .stat-grid.compact{gap:8px;margin-bottom:10px;flex-wrap:nowrap}
 .stat-grid.compact .stat{padding:8px 10px;min-width:0}
 .stat-grid.compact .stat .lbl{font-size:9.5px;margin-bottom:3px}
@@ -70,7 +83,7 @@ input:focus,select:focus{outline:1px solid var(--brand)}
 .alert-strip summary::-webkit-details-marker{display:none}
 .alert-strip .alert-toggle{font-family:var(--sans);font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--brand);white-space:nowrap}
 .alert-strip .dd-body{padding-top:8px;margin-top:6px;border-top:1px solid var(--border)}
-#dbDetailAnalisis h4{font-family:var(--sans);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--brand);margin:0 0 8px}
+#dbDetailAnalisis h4,.detail-analisis h4{font-family:var(--sans);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--brand);margin:0 0 8px}
 
 table{width:100%;border-collapse:collapse;background:var(--bg2);border:1px solid var(--border);border-radius:2px;overflow:hidden}
 th{font-family:var(--sans);font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:var(--mute);padding:8px 5px;border-bottom:1.5px solid var(--brand-dim);text-align:center;background:none}
@@ -87,6 +100,8 @@ tr.trow td{background:var(--bg3);color:var(--hi);font-weight:600;border-top:1px 
 .chart-box svg{min-width:520px}
 .two-col{display:grid;grid-template-columns:1fr;gap:14px}
 @media(min-width:860px){ .two-col{grid-template-columns:1fr 1.25fr;align-items:start} }
+.grid3{display:grid;grid-template-columns:1fr;gap:12px}
+@media(min-width:860px){ .grid3{grid-template-columns:repeat(3,1fr)} }
 .three-col{display:grid;grid-template-columns:1fr;gap:14px;align-items:start}
 @media(min-width:980px){ .three-col{grid-template-columns:1fr 1fr 1fr} }
 
@@ -191,6 +206,7 @@ details.dd .dd-body{padding:4px 2px 10px}
 .tbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:10px 0 6px}
 .tbar input[type="text"]{flex:1 1 150px;min-width:130px;padding:7px 9px;font-size:12px;width:auto}
 .tbar select{flex:0 1 155px;width:auto;padding:7px 8px;font-size:11.5px}
+.tbar input[type="date"]{flex:0 0 auto;width:auto;padding:7px 9px;font-size:12px}
 .tbar .chip{font-size:10px;color:var(--mute);font-family:var(--sans);letter-spacing:.04em;white-space:nowrap}
 .tbar .tgl{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--mute);white-space:nowrap}
 .tbar .tgl input{width:auto}
@@ -437,25 +453,31 @@ details.sect>summary{padding:15px 16px}
     <div class="shell-right"><button class="btn mini ghost" id="navBackBtn" style="padding:4px 10px;font-size:10px;display:none" onclick="navBack()">← Kembali</button><button class="btn mini ghost" style="padding:4px 10px;font-size:10px" onclick="muatSemua()">⟳ Segarkan</button><div class="dot" id="dot"></div><span id="status">Lokal</span></div>
   </div>
   <div class="nav">
-    <button class="nav-btn active" data-p="p-po" onclick="go(this)">Upload PO</button>
+    <button class="nav-btn active" data-p="p-dash" onclick="go(this)">Dashboard</button>
     <button class="nav-btn" data-p="p-prod" onclick="go(this)">Produksi</button>
-    <button class="nav-btn" data-p="p-dash" onclick="go(this)">Dashboard</button>
     <button class="nav-btn" data-p="p-kirim" onclick="go(this)">Kirim Toko</button>
     <button class="nav-btn" data-p="p-omset" onclick="go(this)">Laporan Omset</button>
-    <button class="nav-btn" data-p="p-retur" onclick="go(this)">Retur</button>
-    <button class="nav-btn" data-p="p-reject" onclick="go(this)">Reject</button>
-    <button class="nav-btn" data-p="p-pesanan" onclick="go(this)">Pesanan</button>
-    <button class="nav-btn" data-p="p-jual" onclick="go(this)">Jual Konsumen</button>
+    <button class="nav-btn" data-p="p-invoice" onclick="go(this)">Invoice &amp; Piutang</button>
     <button class="nav-btn" data-p="p-stok" onclick="go(this)">Kartu Stok</button>
     <button class="nav-btn" data-p="p-rekap" onclick="go(this)">Rekap</button>
     <button class="nav-btn" data-p="p-master" onclick="go(this)">Master</button>
+    <details class="nav-more">
+      <summary class="nav-btn">Lainnya ▾</summary>
+      <div class="nav-more-panel">
+        <button class="nav-btn" data-p="p-po" onclick="go(this)">Upload PO</button>
+        <button class="nav-btn" data-p="p-retur" onclick="go(this)">Retur</button>
+        <button class="nav-btn" data-p="p-reject" onclick="go(this)">Reject</button>
+        <button class="nav-btn" data-p="p-pesanan" onclick="go(this)">Pesanan</button>
+        <button class="nav-btn" data-p="p-jual" onclick="go(this)">Jual Konsumen</button>
+      </div>
+    </details>
   </div>
 </div>
 
 <div class="wrap">
 
 <!-- ================= UPLOAD PO ================= -->
-<div class="page active" id="p-po">
+<div class="page" id="p-po">
   <div class="card">
     <h3>Upload PO Harian</h3>
     <div class="row">
@@ -583,7 +605,7 @@ details.sect>summary{padding:15px 16px}
 </div>
 
 <!-- ================= DASHBOARD / LAPORAN PRODUKSI ================= -->
-<div class="page" id="p-dash">
+<div class="page active" id="p-dash">
   <div class="dash-toolbar">
     <h3>Dashboard Operasional</h3>
     <div class="dash-datefilter">
@@ -682,29 +704,29 @@ details.sect>summary{padding:15px 16px}
 
 <!-- ================= KIRIM TOKO ================= -->
 <div class="page" id="p-kirim">
+  <div class="page-toolbar">
+    <h3>Kirim Toko</h3>
+  </div>
+  <p class="page-sub">Bakery mana yang siap dikirim? Finance (invoice &amp; piutang) ada di menu terpisah.</p>
+  <div class="stat-grid compact" id="kKpiStats"></div>
+
   <div class="portal-row" id="kPortalRow">
-    <button class="portal on" data-p="pesanan" onclick="kPortalTab(this)">
+    <button class="portal" data-p="pesanan" onclick="kPortalTab(this)">
       <div class="picon">📋</div>
       <div class="plabel">Pesanan Toko</div>
       <div class="pval" id="kPortalPesananVal">0</div>
       <div class="psub" id="kPortalPesananSub">toko belum terpenuhi</div>
     </button>
-    <button class="portal" data-p="do" onclick="kPortalTab(this)">
+    <button class="portal on" data-p="do" onclick="kPortalTab(this)">
       <div class="picon">🚚</div>
-      <div class="plabel">Delivery Order</div>
+      <div class="plabel">Bakery Siap Dikirim</div>
       <div class="pval" id="kPortalDoVal">0</div>
       <div class="psub" id="kPortalDoSub">siap diambil</div>
-    </button>
-    <button class="portal" data-p="invoice" onclick="kPortalTab(this)">
-      <div class="picon">🧾</div>
-      <div class="plabel">Invoice</div>
-      <div class="pval" id="kPortalInvVal">Rp 0</div>
-      <div class="psub" id="kPortalInvSub">total invoice</div>
     </button>
   </div>
 
   <div id="kPortalPanels">
-  <div class="tabpanel on" data-panel="pesanan">
+  <div class="tabpanel" data-panel="pesanan">
   <div class="card" id="kUnfulfilledCard" style="display:none">
     <h3>Pesanan Belum Terpenuhi</h3>
     <div class="note">Default: dikelompokkan per toko, klik untuk lihat rincian. Pilih Filter Produk atau Filter Toko untuk lihat rincian pemenuhannya langsung (pcs &amp; %).</div>
@@ -733,7 +755,7 @@ details.sect>summary{padding:15px 16px}
   </div>
   </div>
 
-  <div class="tabpanel" data-panel="do">
+  <div class="tabpanel on" data-panel="do">
   <div class="two-col">
   <div class="card" id="kFgReadyCard" style="display:none">
     <h3>Siap Diambil Delivery</h3>
@@ -851,16 +873,26 @@ details.sect>summary{padding:15px 16px}
   </div>
   </div>
 
-  <div class="tabpanel" data-panel="invoice">
+  </div>
+</div>
+
+<!-- ================= INVOICE & PIUTANG ================= -->
+<div class="page" id="p-invoice">
+  <div class="page-toolbar">
+    <h3>Invoice &amp; Piutang</h3>
+    <button type="button" class="btn mini ghost" onclick="invEkspor()">Ekspor Excel</button>
+  </div>
+  <p class="page-sub">Tagihan mana yang belum selesai? Workspace finance — terpisah dari Kirim Toko.</p>
+  <div class="stat-grid" id="inv-stats"></div>
+
   <div class="card">
     <h3>Daftar Invoice <span style="font-size:9px;color:var(--mute);font-weight:400" id="inv-agingChip"></span></h3>
-    <div class="note">Daftar faktur penjualan beserta status pembayarannya. Sisa Piutang = Total Tagihan − pembayaran yang sudah dicatat.</div>
     <div class="row" style="margin-top:10px">
       <div><label class="fl">Dari Tanggal</label><input type="date" id="inv-dari" onchange="renderInvoiceList()"></div>
       <div><label class="fl">Sampai Tanggal</label><input type="date" id="inv-sampai" onchange="renderInvoiceList()"></div>
     </div>
     <div class="tbar">
-      <input type="text" id="inv-cari" placeholder="Cari no. faktur / toko…" oninput="renderInvoiceList()">
+      <input type="text" id="inv-cari" placeholder="Cari no. faktur / bakery…" oninput="renderInvoiceList()">
       <select id="inv-fToko" onchange="renderInvoiceList()"><option value="">Semua Toko</option></select>
       <select id="inv-fStatus" onchange="renderInvoiceList()">
         <option value="">Semua Status</option>
@@ -869,16 +901,14 @@ details.sect>summary{padding:15px 16px}
         <option value="belum">Belum Lunas</option>
       </select>
       <label class="tgl"><input type="checkbox" id="inv-outstanding" onchange="renderInvoiceList()"> Outstanding only</label>
-      <button type="button" class="linkbtn" onclick="invEkspor()">Ekspor Excel</button>
       <span class="chip" id="inv-count"></span>
     </div>
-    <div class="stat-grid" id="inv-stats" style="margin-top:10px"></div>
     <div class="docgrid" style="margin:0">
       <table>
         <thead><tr>
           <th class="l" style="min-width:130px">No. Faktur</th>
           <th style="width:86px">Tanggal</th>
-          <th class="l" style="min-width:140px">Toko / Pelanggan</th>
+          <th class="l" style="min-width:140px">Bakery</th>
           <th style="width:112px">Total Tagihan</th>
           <th style="width:112px">Sisa Piutang</th>
           <th style="width:110px">Status</th>
@@ -910,33 +940,35 @@ details.sect>summary{padding:15px 16px}
     <div id="bayar-hist" style="margin-top:12px"></div>
   </div>
 
-  <div class="card">
-    <h3>Daftar Delivery Order <span style="font-size:9px;color:var(--mute);font-weight:400" id="kh-belumChip"></span></h3>
-    <div class="note">DO yang <b>belum dibuatkan invoice</b>. Begitu invoicenya dibuat, DO-nya pindah ke <b>Daftar Invoice</b> di atas — jadi daftar ini isinya selalu pekerjaan yang masih harus diselesaikan.</div>
-    <div class="note" id="kInvoiceSummaryTop" style="margin-top:4px;color:var(--hi)"></div>
-    <div class="tbar">
-      <input type="text" id="kh-cari" placeholder="Cari toko / no. DO…" oninput="kHistFilter()">
-      <select id="kh-fInv" onchange="kHistFilter()">
-        <option value="belum">Belum dibuat invoice</option>
-        <option value="">Semua DO (termasuk yang sudah)</option>
-        <option value="sudah">Sudah ada invoice</option>
-      </select>
-      <span class="chip" id="kh-count"></span>
+  <details class="dd">
+    <summary><span>DO belum dibuatkan invoice <span style="font-size:9px;color:var(--mute);font-weight:400" id="kh-belumChip"></span></span></summary>
+    <div class="dd-body">
+      <div class="note">DO yang <b>belum dibuatkan invoice</b>. Begitu invoicenya dibuat, DO-nya pindah ke <b>Daftar Invoice</b> di atas — jadi daftar ini isinya selalu pekerjaan yang masih harus diselesaikan.</div>
+      <div class="note" id="kInvoiceSummaryTop" style="margin-top:4px;color:var(--hi)"></div>
+      <div class="tbar">
+        <input type="text" id="kh-cari" placeholder="Cari toko / no. DO…" oninput="kHistFilter()">
+        <select id="kh-fInv" onchange="kHistFilter()">
+          <option value="belum">Belum dibuat invoice</option>
+          <option value="">Semua DO (termasuk yang sudah)</option>
+          <option value="sudah">Sudah ada invoice</option>
+        </select>
+        <span class="chip" id="kh-count"></span>
+      </div>
+      <div class="docgrid" style="margin:6px 0 0">
+        <table>
+          <thead><tr>
+            <th class="l" style="min-width:130px">No. DO</th>
+            <th style="width:86px">Tanggal</th>
+            <th class="l" style="min-width:140px">Toko</th>
+            <th style="width:70px">Qty</th>
+            <th style="width:96px">Status</th>
+            <th style="width:210px"></th>
+          </tr></thead>
+          <tbody id="kHist"></tbody>
+        </table>
+      </div>
     </div>
-    <div class="docgrid" style="margin:6px 0 0">
-      <table>
-        <thead><tr>
-          <th class="l" style="min-width:130px">No. DO</th>
-          <th style="width:86px">Tanggal</th>
-          <th class="l" style="min-width:140px">Toko</th>
-          <th style="width:70px">Qty</th>
-          <th style="width:96px">Status</th>
-          <th style="width:210px"></th>
-        </tr></thead>
-        <tbody id="kHist"></tbody>
-      </table>
-    </div>
-  </div>
+  </details>
 
   <div class="doc" id="kInvoiceCard" style="display:none">
     <div class="doc-bar">
@@ -1020,25 +1052,25 @@ details.sect>summary{padding:15px 16px}
     </div>
   </div>
 
-  <div class="card">
-    <h3>Mutasi Antar Toko</h3>
-    <div class="note">Kalau toko memindahkan stok ke toko lain (mis. potensi retur tinggi di toko asal), catat di sini. Invoice toko asal otomatis dikurangi qty-nya, dan invoice baru dibuat untuk toko tujuan sesuai tipe &amp; Harga Pabriknya sendiri (bisa beda kalau Ownership vs Franchise).</div>
-    <div class="row" style="margin-top:10px">
-      <div><label class="fl">Tanggal</label><input type="date" id="mut-tgl"></div>
-      <div><label class="fl">Produk</label><select id="mut-produk" onchange="mutIsiInfo()"><option value="">— pilih —</option></select></div>
+  <details class="dd">
+    <summary><span>Mutasi Antar Toko</span></summary>
+    <div class="dd-body">
+      <div class="note">Kalau toko memindahkan stok ke toko lain (mis. potensi retur tinggi di toko asal), catat di sini. Invoice toko asal otomatis dikurangi qty-nya, dan invoice baru dibuat untuk toko tujuan sesuai tipe &amp; Harga Pabriknya sendiri (bisa beda kalau Ownership vs Franchise).</div>
+      <div class="row" style="margin-top:10px">
+        <div><label class="fl">Tanggal</label><input type="date" id="mut-tgl"></div>
+        <div><label class="fl">Produk</label><select id="mut-produk" onchange="mutIsiInfo()"><option value="">— pilih —</option></select></div>
+      </div>
+      <div class="row">
+        <div><label class="fl">Dari Toko</label><select id="mut-asal" onchange="mutIsiInfo()"><option value="">— pilih —</option></select></div>
+        <div><label class="fl">Ke Toko</label><select id="mut-tujuan"><option value="">— pilih —</option></select></div>
+      </div>
+      <label class="fl">Qty</label><input type="number" inputmode="numeric" id="mut-qty" placeholder="0">
+      <label class="fl">Keterangan (opsional)</label><input type="text" id="mut-ket" placeholder="mis. potensi retur tinggi di toko asal">
+      <div class="note" id="mut-info" style="color:var(--hi)"></div>
+      <button class="btn" onclick="mutSimpan()">Simpan Mutasi</button>
+      <div id="mut-hist" class="scrollY" style="margin-top:14px"></div>
     </div>
-    <div class="row">
-      <div><label class="fl">Dari Toko</label><select id="mut-asal" onchange="mutIsiInfo()"><option value="">— pilih —</option></select></div>
-      <div><label class="fl">Ke Toko</label><select id="mut-tujuan"><option value="">— pilih —</option></select></div>
-    </div>
-    <label class="fl">Qty</label><input type="number" inputmode="numeric" id="mut-qty" placeholder="0">
-    <label class="fl">Keterangan (opsional)</label><input type="text" id="mut-ket" placeholder="mis. potensi retur tinggi di toko asal">
-    <div class="note" id="mut-info" style="color:var(--hi)"></div>
-    <button class="btn" onclick="mutSimpan()">Simpan Mutasi</button>
-    <div id="mut-hist" class="scrollY" style="margin-top:14px"></div>
-  </div>
-  </div>
-  </div>
+  </details>
 </div>
 
 <!-- ================= LAPORAN OMSET ================= -->
@@ -1385,15 +1417,18 @@ details.sect>summary{padding:15px 16px}
 <!-- ================= KARTU STOK ================= -->
 <div class="page" id="p-stok">
   <div class="card">
-    <h3>Kartu Stok Gudang <span style="font-size:9px;color:var(--mute);font-weight:400" id="ks-headSub"></span></h3>
-    <div class="note"><b>Ketuk angka Masuk atau Keluar</b> untuk melihat rinciannya — keluar ke bakery mana saja, atau masuk dari produksi pabrik mana. Riwayat keluar-masuk barang di gudang pabrik. <b>Masuk</b> dari hasil produksi yang sudah diverifikasi Finishgood &amp; Packing, <b>keluar</b> lewat Delivery Order, ditambah penyesuaian manual (waste, rusak, opname). Barang retur dari toko tidak otomatis masuk stok — catat manual kalau memang masih layak jual.</div>
-    <div class="row" style="margin-top:10px">
-      <div><label class="fl">Dari Tanggal</label><input type="date" id="ks-dari" onchange="renderKartuStok()"></div>
-      <div><label class="fl">Sampai Tanggal</label><input type="date" id="ks-sampai" onchange="renderKartuStok()"></div>
+    <div class="page-toolbar" style="margin-bottom:0">
+      <h3>Kartu Stok Gudang <span style="font-size:9px;color:var(--mute);font-weight:400" id="ks-headSub"></span></h3>
+      <details class="dd" style="margin:0">
+        <summary style="padding:4px 2px">ⓘ Cara baca</summary>
+        <div class="dd-body note">Ketuk angka Masuk atau Keluar untuk melihat rinciannya — keluar ke bakery mana saja, atau masuk dari produksi pabrik mana. Riwayat keluar-masuk barang di gudang pabrik. Masuk dari hasil produksi yang sudah diverifikasi Finishgood &amp; Packing, keluar lewat Delivery Order, ditambah penyesuaian manual (waste, rusak, opname). Barang retur dari toko tidak otomatis masuk stok — catat manual kalau memang masih layak jual.</div>
+      </details>
     </div>
-    <label class="fl">Produk</label>
-    <select id="ks-produk" onchange="renderKartuStok()"></select>
-    <div class="tbar">
+    <div class="tbar" style="margin-top:10px">
+      <input type="date" id="ks-dari" onchange="renderKartuStok()">
+      <span style="color:var(--mute)">→</span>
+      <input type="date" id="ks-sampai" onchange="renderKartuStok()">
+      <select id="ks-produk" onchange="renderKartuStok()"></select>
       <input type="text" id="ks-cari" placeholder="Cari produk…" oninput="renderKartuStok()">
       <select id="ks-mode" onchange="renderKartuStok()">
         <option value="tanggal">Rekap: per Tanggal → Produk</option>
@@ -1475,80 +1510,106 @@ details.sect>summary{padding:15px 16px}
 
 <!-- ================= REKAP ================= -->
 <div class="page" id="p-rekap">
-  <div class="card">
-    <h3>Arus Barang</h3>
-    <div class="row" style="align-items:flex-end">
-      <div><label class="fl">Dari Tanggal</label><input type="date" id="rk-dari" onchange="renderRekap()"></div>
-      <div><label class="fl">Sampai Tanggal</label><input type="date" id="rk-sampai" onchange="renderRekap()"></div>
-      <button class="btn ghost" style="flex:0" onclick="rekapEkspor()">Ekspor Excel</button>
-    </div>
+  <div class="page-toolbar">
+    <h3>Rekap Periode</h3>
+    <button class="btn mini ghost" onclick="rekapEkspor()">Ekspor Excel</button>
   </div>
+  <p class="page-sub">Apa hasil periode ini? Ringkasan performa — bukan tempat menumpuk semua detail.</p>
+  <div class="page-datefilter" style="margin-bottom:10px">
+    <input type="date" id="rk-dari" onchange="renderRekap()">
+    <span class="arrow">→</span>
+    <input type="date" id="rk-sampai" onchange="renderRekap()">
+  </div>
+
   <div class="stat-grid" id="rk-stats"></div>
-  <div class="card">
-    <h3>Simulasi Persentase Omset <span style="font-size:9px;color:var(--mute);font-weight:400">Ownership vs Franchise</span></h3>
-    <div class="note">Omset 100% (harga konsumen) yang sama, dilihat di beberapa persentase sekaligus — supaya kelihatan bedanya kalau basisnya diganti. Baris yang bertanda adalah persentase yang sungguhan dipakai sekarang (diatur di Master → Omset Pabrik / Harga Invoice).</div>
-    <div class="scrollY" style="overflow-x:auto;margin-top:10px">
-    <table>
-      <thead><tr><th class="l">Persentase</th><th>Ownership</th><th>Franchise</th><th>Total</th></tr></thead>
-      <tbody id="rk-persentase"></tbody>
-    </table>
-    </div>
+  <div class="stat-grid" id="rk-statsPerforma"></div>
+
+  <div class="grid3">
+    <div class="card"><h3>Per Factory</h3><div id="rk-perFactory"></div></div>
+    <div class="card"><h3>Per Bakery</h3><div id="rk-perBakery"></div></div>
+    <div class="card"><h3>Top Concern</h3><div id="rk-topConcern"></div></div>
   </div>
-  <div class="card">
-    <h3>Rekonsiliasi Arus Barang <span style="font-size:9px;color:var(--mute);font-weight:400" id="rc-headSub"></span></h3>
-    <div class="note"><b>Sisa = Kirim − Terjual − Retur.</b> Sisa positif = barang masih ada di toko (belum laku / belum di-opname). <b>Sisa minus mestinya tidak terjadi</b> — kalau muncul, artinya Terjual+Retur melebihi yang tercatat dikirim, perlu dipertanyakan: bisa jadi POS salah catat toko, ada kiriman yang belum masuk sistem, atau retur dobel input. <b>Reject</b> ditampilkan di sisi produksi: kolom <b>Potong Invoice</b> hanya menghitung reject yang <b>tidak diganti barang</b> oleh pabrik — itu yang benar-benar mengurangi tagihan.</div>
-    <div class="row" style="margin-top:10px">
-      <div><label class="fl">Filter Toko</label><select id="rc-toko" onchange="renderRekonsiliasi()"><option value="">Semua toko (gabungan)</option></select></div>
-      <div><label class="fl">Tampilkan</label><select id="rc-filter" onchange="renderRekonsiliasi()">
-        <option value="aktif">Hanya yang ada aktivitas</option>
-        <option value="masalah">Hanya yang bermasalah</option>
-        <option value="minus">Hanya sisa minus</option>
-        <option value="numpuk">Hanya barang menumpuk</option>
-        <option value="">Semua produk</option>
-      </select></div>
+
+  <details class="dd">
+    <summary><span>Rekonsiliasi Arus Barang <span style="font-size:9px;color:var(--mute);font-weight:400" id="rc-headSub"></span></span></summary>
+    <div class="dd-body">
+      <div class="note"><b>Sisa = Kirim − Terjual − Retur.</b> Sisa positif = barang masih ada di toko (belum laku / belum di-opname). <b>Sisa minus mestinya tidak terjadi</b> — kalau muncul, artinya Terjual+Retur melebihi yang tercatat dikirim, perlu dipertanyakan: bisa jadi POS salah catat toko, ada kiriman yang belum masuk sistem, atau retur dobel input. <b>Reject</b> ditampilkan di sisi produksi: kolom <b>Potong Invoice</b> hanya menghitung reject yang <b>tidak diganti barang</b> oleh pabrik — itu yang benar-benar mengurangi tagihan.</div>
+      <div class="row" style="margin-top:10px">
+        <div><label class="fl">Filter Toko</label><select id="rc-toko" onchange="renderRekonsiliasi()"><option value="">Semua toko (gabungan)</option></select></div>
+        <div><label class="fl">Tampilkan</label><select id="rc-filter" onchange="renderRekonsiliasi()">
+          <option value="aktif">Hanya yang ada aktivitas</option>
+          <option value="masalah">Hanya yang bermasalah</option>
+          <option value="minus">Hanya sisa minus</option>
+          <option value="numpuk">Hanya barang menumpuk</option>
+          <option value="">Semua produk</option>
+        </select></div>
+      </div>
+      <div class="tbar">
+        <input type="text" id="rc-cari" placeholder="Cari produk…" oninput="renderRekonsiliasi()">
+        <button type="button" class="linkbtn" onclick="rekonsiliasiEkspor()">Ekspor Excel</button>
+        <span class="chip" id="rc-count"></span>
+      </div>
+      <div class="stat-grid" id="rc-stats" style="margin-top:10px"></div>
+      <div class="docgrid" style="margin:0">
+        <table>
+          <thead><tr>
+            <th class="l" style="min-width:170px">Produk</th>
+            <th style="width:76px" title="Hasil produksi yang sudah diverifikasi Finishgood &amp; Packing">Produksi</th>
+            <th style="width:70px" title="Reject dari toko — tanggungan pabrik">Reject</th>
+            <th style="width:96px" title="Nilai reject yang TIDAK diganti barang, jadi memotong tagihan toko">Potong Invoice</th>
+            <th style="width:70px">Kirim</th>
+            <th style="width:70px">Terjual</th>
+            <th style="width:64px">Retur</th>
+            <th style="width:76px">Sisa</th>
+            <th style="width:64px">% Jual</th>
+          </tr></thead>
+          <tbody id="rc-body"></tbody>
+        </table>
+      </div>
     </div>
-    <div class="tbar">
-      <input type="text" id="rc-cari" placeholder="Cari produk…" oninput="renderRekonsiliasi()">
-      <button type="button" class="linkbtn" onclick="rekonsiliasiEkspor()">Ekspor Excel</button>
-      <span class="chip" id="rc-count"></span>
-    </div>
-    <div class="stat-grid" id="rc-stats" style="margin-top:10px"></div>
-    <div class="docgrid" style="margin:0">
+  </details>
+
+  <details class="dd">
+    <summary><span>Simulasi Persentase Omset <span style="font-size:9px;color:var(--mute);font-weight:400">Ownership vs Franchise — bukan laporan omset aktual</span></span></summary>
+    <div class="dd-body">
+      <div class="note">Omset 100% (harga konsumen) yang sama, dilihat di beberapa persentase sekaligus — supaya kelihatan bedanya kalau basisnya diganti. Baris yang bertanda adalah persentase yang sungguhan dipakai sekarang (diatur di Master → Omset Pabrik / Harga Invoice). Untuk angka omset aktual per hari/bakery, lihat menu <b>Laporan Omset</b>.</div>
+      <div class="scrollY" style="overflow-x:auto;margin-top:10px">
       <table>
-        <thead><tr>
-          <th class="l" style="min-width:170px">Produk</th>
-          <th style="width:76px" title="Hasil produksi yang sudah diverifikasi Finishgood &amp; Packing">Produksi</th>
-          <th style="width:70px" title="Reject dari toko — tanggungan pabrik">Reject</th>
-          <th style="width:96px" title="Nilai reject yang TIDAK diganti barang, jadi memotong tagihan toko">Potong Invoice</th>
-          <th style="width:70px">Kirim</th>
-          <th style="width:70px">Terjual</th>
-          <th style="width:64px">Retur</th>
-          <th style="width:76px">Sisa</th>
-          <th style="width:64px">% Jual</th>
-        </tr></thead>
-        <tbody id="rc-body"></tbody>
+        <thead><tr><th class="l">Persentase</th><th>Ownership</th><th>Franchise</th><th>Total</th></tr></thead>
+        <tbody id="rk-persentase"></tbody>
       </table>
+      </div>
     </div>
-  </div>
-  <div class="card">
-    <h3>Tren Harian</h3>
-    <div class="chart-box" id="rekapChart" style="margin-top:8px"></div>
-    <div id="rekapTrenTable" style="margin-top:10px"></div>
-  </div>
-  <div class="card"><h3>Per Kategori</h3><div id="rk-kategori"></div></div>
-  <div class="card">
-    <h3>Per Produk</h3>
-    <input type="text" id="rk-cari" placeholder="Cari produk…" oninput="renderRekap()">
-    <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--mute)"><input type="checkbox" id="rk-showAll" style="width:auto" onchange="renderRekap()"> Tampilkan produk tanpa aktivitas</label>
-    <div class="scrollY" style="overflow-x:auto;margin-top:10px">
-    <table>
-      <thead><tr><th class="l">Produk</th><th>Produksi</th><th>Reject</th><th>Kirim</th><th>Retur</th><th>Terjual</th><th>Sell-through</th><th>Sisa Gudang</th><th>Sisa Toko</th></tr></thead>
-      <tbody id="rekTable"></tbody>
-    </table>
+  </details>
+
+  <details class="card detail-analisis">
+    <summary><h3 style="display:inline">Detail Tambahan</h3> <span class="note" style="display:inline">— tren harian, per kategori, per produk, per toko</span></summary>
+    <div style="margin-top:14px">
+      <h4>Tren Harian</h4>
+      <div class="chart-box" id="rekapChart" style="margin-top:8px"></div>
+      <div id="rekapTrenTable" style="margin-top:10px"></div>
     </div>
-    <div class="note">Sell-through = Terjual ÷ Kirim, dalam rentang tanggal di atas. Diurutkan dari sell-through terendah — produk yang menumpuk di toko tampil di atas. Sisa Gudang &amp; Sisa Toko adalah posisi saat ini (semua waktu). Produk tanpa aktivitas disembunyikan secara default.</div>
-  </div>
-  <div class="card"><h3>Per Toko (rentang terpilih)</h3><div id="rk-toko"></div></div>
+    <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+      <h4>Per Kategori</h4>
+      <div id="rk-kategori"></div>
+    </div>
+    <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+      <h4>Per Produk</h4>
+      <input type="text" id="rk-cari" placeholder="Cari produk…" oninput="renderRekap()">
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--mute)"><input type="checkbox" id="rk-showAll" style="width:auto" onchange="renderRekap()"> Tampilkan produk tanpa aktivitas</label>
+      <div class="scrollY" style="overflow-x:auto;margin-top:10px">
+      <table>
+        <thead><tr><th class="l">Produk</th><th>Produksi</th><th>Reject</th><th>Kirim</th><th>Retur</th><th>Terjual</th><th>Sell-through</th><th>Sisa Gudang</th><th>Sisa Toko</th></tr></thead>
+        <tbody id="rekTable"></tbody>
+      </table>
+      </div>
+      <div class="note">Sell-through = Terjual ÷ Kirim, dalam rentang tanggal di atas. Diurutkan dari sell-through terendah — produk yang menumpuk di toko tampil di atas. Sisa Gudang &amp; Sisa Toko adalah posisi saat ini (semua waktu). Produk tanpa aktivitas disembunyikan secara default.</div>
+    </div>
+    <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+      <h4>Per Toko (rentang terpilih)</h4>
+      <div id="rk-toko"></div>
+    </div>
+  </details>
 </div>
 
 <!-- ================= MASTER ================= -->
@@ -2241,7 +2302,14 @@ function navBack(){
 function pindahHalaman(pid){
   const btn = document.querySelector(`.nav-btn[data-p="${pid}"]`);
   document.querySelectorAll(".nav-btn").forEach(b=>b.classList.remove("active"));
-  if(btn) btn.classList.add("active");
+  document.querySelectorAll(".nav-more").forEach(d=>d.classList.remove("has-active"));
+  if(btn){
+    btn.classList.add("active");
+    // Kalau halaman aktif ada di dalam dropdown "Lainnya", tandai summary-nya
+    // juga supaya tetap terlihat menu mana yang lagi aktif walau dropdown tertutup.
+    const more = btn.closest(".nav-more");
+    if(more) more.classList.add("has-active");
+  }
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   const hal = $(pid); if(hal) hal.classList.add("active");
 }
@@ -4136,13 +4204,15 @@ function renderOmset(){
   const perBakery = omsetPerBakeryData(f.dari, f.sampai, f);
   const totQty = perBakery.reduce((a,x)=>a+x.qty,0);
   const totOmset = perBakery.reduce((a,x)=>a+x.omsetPabrik,0);
+  const totOmset100 = perBakery.reduce((a,x)=>a+x.omset100,0);
+  const totHpp = perBakery.reduce((a,x)=>a+x.hpp,0);
   const totMargin = perBakery.reduce((a,x)=>a+x.margin,0);
   const marginPct = totOmset ? Math.round(totMargin/totOmset*1000)/10 : null;
   if($("om-stats")) $("om-stats").innerHTML = `
-    <div class="stat"><div class="lbl">Terkirim</div><div class="val">${fmt(totQty)}</div><div class="sub">pcs, ${f.dari===f.sampai?fmtTgl(f.dari):fmtTgl(f.dari)+' – '+fmtTgl(f.sampai)}</div></div>
-    <div class="stat"><div class="lbl">Omset Pabrik</div><div class="val">${rupiah(totOmset)}</div><div class="sub">basis: barang terkirim (D.kirim), bukan invoice</div></div>
-    <div class="stat"><div class="lbl">Margin Kotor</div><div class="val" style="color:${totMargin>=0?'var(--green)':'var(--red)'}">${rupiah(totMargin)}</div><div class="sub">${marginPct==null?'-':marginPct+'% dari omset'}</div></div>
-    <div class="stat"><div class="lbl">Bakery Aktif</div><div class="val">${fmt(perBakery.length)}</div><div class="sub">ada transaksi kirim pada rentang ini</div></div>`;
+    <div class="stat"><div class="lbl">Omset Pabrik</div><div class="val">${rupiah(totOmset)}</div><div class="sub">${fmt(totQty)} pcs terkirim — basis D.kirim, bukan invoice</div></div>
+    <div class="stat"><div class="lbl">Omset 100%</div><div class="val">${rupiah(totOmset100)}</div><div class="sub">setara harga konsumen</div></div>
+    <div class="stat"><div class="lbl">HPP</div><div class="val">${rupiah(totHpp)}</div><div class="sub">modal barang terkirim</div></div>
+    <div class="stat"><div class="lbl">Margin Kotor</div><div class="val" style="color:${totMargin>=0?'var(--green)':'var(--red)'}">${rupiah(totMargin)}</div><div class="sub">${marginPct==null?'-':marginPct+'% dari omset'}</div></div>`;
   if($("om-tbody")){
     $("om-tbody").innerHTML = perBakery.length ? perBakery.map(b=>{
       const margPct = b.omsetPabrik ? Math.round(b.margin/b.omsetPabrik*1000)/10 : null;
@@ -5351,20 +5421,30 @@ function renderKPortalStats(){
     elDo.textContent = fmt(siap);
     elDoSub.textContent = siap ? "siap diambil" : "tidak ada yang siap";
   }
-  const elInv=$("kPortalInvVal"), elInvSub=$("kPortalInvSub");
-  if(elInv){
-    const batches = {}; D.kirim.forEach(r=>{ (batches[r.batch] ||= []).push(r); });
-    const keys = Object.keys(batches);
-    const invoiceKeys = Object.keys(D.invoice).filter(b=>batches[b]);
-    const totalInvoice = invoiceKeys.reduce((a,b)=>a+num(D.invoice[b].total),0);
-    const piutang = Object.values(D.invoice).reduce((a,inv)=>a+invStatus(inv).sisa,0);
-    elInv.textContent = rupiah(totalInvoice);
-    elInvSub.innerHTML = keys.length
-      ? `${invoiceKeys.length} dari ${keys.length} kiriman${piutang>0?` · <span style="color:var(--warn)">piutang ${rupiah(piutang)}</span>`:' · lunas semua'}`
-      : "belum ada kiriman";
-  }
+  renderKirimKpi();
+  // Invoice & Piutang sekarang halaman terpisah (p-invoice) — tetap direfresh
+  // di sini (bukan cuma saat halaman itu dibuka) supaya nomor invoice/DO
+  // konsisten begitu ada perubahan dari Kirim Toko (mis. Simpan Delivery Order).
   fillInvoiceTokoSelect();
   renderInvoiceList();
+}
+// KPI utama Kirim Toko: murni workflow barang, TANPA angka finance (Tagihan/
+// Piutang) — itu semua sekarang di halaman Invoice & Piutang. Sintesis dari
+// fungsi yang SUDAH ada (fgReadyListByBakery, kPesananBelumTerpenuhiPerToko,
+// D.kirim, canonicalStoreName) — bukan logika baru.
+function renderKirimKpi(){
+  const el = $("kKpiStats"); if(!el) return;
+  const groups = (typeof fgReadyListByBakery==="function") ? fgReadyListByBakery() : [];
+  const siapBakery = groups.length;
+  const totalSiapPcs = groups.reduce((a,g)=>a+g.total,0);
+  const belumSelesai = (typeof kPesananBelumTerpenuhiPerToko==="function") ? kPesananBelumTerpenuhiPerToko().length : 0;
+  const tglIni = hariIni();
+  const sudahHariIni = new Set(D.kirim.filter(r=>r.tgl===tglIni).map(r=>canonicalStoreName(r.toko))).size;
+  el.innerHTML = `
+    <div class="stat"><div class="lbl">Siap Dikirim</div><div class="val">${fmt(siapBakery)}</div><div class="note" style="margin-top:2px">bakery</div></div>
+    <div class="stat"><div class="lbl">Sudah Dikirim Hari Ini</div><div class="val">${fmt(sudahHariIni)}</div><div class="note" style="margin-top:2px">bakery</div></div>
+    <div class="stat"><div class="lbl">Belum Selesai</div><div class="val" style="color:${belumSelesai>0?'var(--warn)':'var(--hi)'}">${fmt(belumSelesai)}</div><div class="note" style="margin-top:2px">bakery</div></div>
+    <div class="stat"><div class="lbl">Total Siap</div><div class="val">${fmt(totalSiapPcs)}</div><div class="note" style="margin-top:2px">pcs</div></div>`;
 }
 
 /* ================= DAFTAR INVOICE (filter tanggal & toko) ================= */
@@ -7551,10 +7631,10 @@ function renderRekap(){
   const per = rekapData();
   const cari = ($("rk-cari").value||"").trim().toLowerCase();
   const showInactive = $("rk-showAll") && $("rk-showAll").checked;
-  let TK=0,TRt=0,TJ=0;
+  let TK=0,TRt=0,TJ=0,TRej=0;
   let rowsData = D.products.map(p=>{
     const d = per[p]||{produksi:0,reject:0,kirim:0,retur:0,jual:0};
-    TK+=d.kirim; TRt+=d.retur; TJ+=d.jual;
+    TK+=d.kirim; TRt+=d.retur; TJ+=d.jual; TRej+=d.reject;
     const sisaGudang = stokGudang(p);
     const sisaToko = D.stores.reduce((a,s)=>a+stokToko(s,p),0);
     const st = d.kirim>0 ? Math.round(d.jual/d.kirim*1000)/10 : null;
@@ -7567,9 +7647,54 @@ function renderRekap(){
   $("rk-stats").innerHTML = `
     <div class="stat"><div class="lbl">Kirim ke Toko</div><div class="val">${fmt(TK)}</div></div>
     <div class="stat"><div class="lbl">Retur</div><div class="val">${fmt(TRt)}</div></div>
-    <div class="stat"><div class="lbl">Terjual Konsumen</div><div class="val">${fmt(TJ)}</div></div>
+    <div class="stat"><div class="lbl">Reject</div><div class="val" style="color:${TRej?'var(--red)':'var(--hi)'}">${fmt(TRej)}</div></div>
     <div class="stat"><div class="lbl">Sell-through</div><div class="val">${TK?Math.round(TJ/TK*1000)/10+'%':'-'}</div></div>`;
-  renderRekapTren(); renderRekapKategori(); renderRekapToko(); renderRekapPersentase(); renderRekonsiliasi();
+  renderRekapTren(); renderRekapKategori(); renderRekapToko(); renderRekapPersentase(); renderRekonsiliasi(); renderRekapRingkasan();
+}
+// KPI performa + 3 blok ringkasan (Per Factory / Per Bakery / Top Concern) —
+// sintesis dari data yang SUDAH dihitung fungsi lain (dashArusBarangData,
+// dashByFactoryData, omsetPerBakeryData, kPesananBelumTerpenuhiPerToko),
+// bukan logika bisnis baru. Canonical bakery dipakai lewat omsetPerBakeryData.
+function renderRekapRingkasan(){
+  const dari = $("rk-dari").value, sampai = $("rk-sampai").value;
+  const arus = dashArusBarangData(dari, sampai);
+  const totalOmset = Object.values(arus.byBakery).reduce((a,x)=>a+x.omset,0);
+  const totalHpp = Object.values(arus.byBakery).reduce((a,x)=>a+x.hpp,0);
+  const totalPo = Object.values(arus.byBakery).reduce((a,x)=>a+x.po,0);
+  const totalKirim = Object.values(arus.byBakery).reduce((a,x)=>a+x.kirim,0);
+  const margin = totalOmset - totalHpp;
+  const fulfillment = totalPo ? Math.round(totalKirim/totalPo*1000)/10 : null;
+  const belumSelesai = (typeof kPesananBelumTerpenuhiPerToko==="function") ? kPesananBelumTerpenuhiPerToko().length : 0;
+  if($("rk-statsPerforma")) $("rk-statsPerforma").innerHTML = `
+    <div class="stat"><div class="lbl">Omset Pabrik</div><div class="val">${rupiah(totalOmset)}</div></div>
+    <div class="stat"><div class="lbl">Margin Kotor</div><div class="val" style="color:${margin>=0?'var(--green)':'var(--red)'}">${rupiah(margin)}</div></div>
+    <div class="stat"><div class="lbl">Fulfillment</div><div class="val">${fulfillment==null?'-':fulfillment+'%'}</div></div>
+    <div class="stat"><div class="lbl">Bakery Belum Selesai</div><div class="val" style="color:${belumSelesai>0?'var(--warn)':'var(--hi)'}">${fmt(belumSelesai)}</div></div>`;
+
+  if($("rk-perFactory")){
+    const f = dashByFactoryData(dari, sampai);
+    $("rk-perFactory").innerHTML = `<table class="mini-t"><tbody>
+      <tr><td class="l">Karangtengah</td><td class="r">${fmt(f.karangtengah.pesanan)} pcs</td></tr>
+      <tr><td class="l">Cibadak</td><td class="r">${fmt(f.cibadak.pesanan)} pcs</td></tr>
+    </tbody></table>`;
+  }
+
+  if($("rk-perBakery")){
+    const bakeries = (typeof omsetPerBakeryData==="function" ? omsetPerBakeryData(dari, sampai, {}) : []).slice().sort((a,b)=>b.qty-a.qty).slice(0,6);
+    $("rk-perBakery").innerHTML = bakeries.length
+      ? `<table class="mini-t"><tbody>${bakeries.map(b=>`<tr><td class="l">${b.bakery}</td><td class="r">${fmt(b.qty)} pcs</td></tr>`).join("")}</tbody></table>`
+      : '<div class="empty">Tidak ada kiriman pada rentang ini.</div>';
+  }
+
+  if($("rk-topConcern")){
+    const produkTanpaHpp = new Set(D.kirim.filter(r=>inRange(r.tgl,dari,sampai) && !num(mpGet(r.produk).hpp)).map(r=>r.produk)).size;
+    const totalRejectQty = Object.values(rekapData()).reduce((a,x)=>a+x.reject,0);
+    $("rk-topConcern").innerHTML = `<table class="mini-t"><tbody>
+      <tr><td class="l">Bakery belum selesai</td><td class="r">${fmt(belumSelesai)}</td></tr>
+      <tr><td class="l">HPP kosong</td><td class="r">${fmt(produkTanpaHpp)} SKU</td></tr>
+      <tr><td class="l">Reject</td><td class="r">${fmt(totalRejectQty)} pcs</td></tr>
+    </tbody></table>`;
+  }
 }
 // Menampilkan Omset 100% (harga konsumen, tetap) pada beberapa tingkat
 // persentase sekaligus — supaya perbandingan Ownership vs Franchise, dan

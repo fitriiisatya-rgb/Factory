@@ -56,6 +56,8 @@ function loadApp({confirmAnswer=true, fetchImpl=null}={}){
     omsetHarianRows, omsetPerBakeryData, omsetTrenHarian, omsetSkuDetailData, omsetRejectPotongRows,
     renderOmset, omsetBukaDrill, hargaDasar, hargaPabrik, mpGet, rupiah, rjBuildGrid, rjSimpan,
     dashPipelineData, dashData, pdRingkasanHariIni, renderPdRingkasan, pdBukaDivisi, renderDashFokus, renderDashboard,
+    renderInvoiceList, invBarisData, renderKPortalStats, renderKirimKpi, renderRekap, renderRekapRingkasan, renderRekapToko,
+    renderKartuStok, go, goPage, dashArusBarangData, dashByFactoryData, rekapData,
     get poPreview(){ return poPreview; },
     get kList(){ return kList; },
     get kFgSource(){ return kFgSource; },
