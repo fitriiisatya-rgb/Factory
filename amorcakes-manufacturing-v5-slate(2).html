@@ -45,6 +45,17 @@ body{background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12
 .nav-more-panel .nav-btn.active{background:var(--bg3)}
 .nav-more.has-active>summary{color:var(--brand)}
 
+/* Menu "⋯" per-baris (mis. Daftar Invoice) — sama persis polanya dengan
+   .nav-more-panel di atas: position:fixed + reposisi oleh JS supaya tidak
+   ke-clip oleh ancestor tabel yang overflow-x:auto. */
+details.row-menu{display:inline-block;position:relative}
+details.row-menu>summary{list-style:none;cursor:pointer}
+details.row-menu>summary::-webkit-details-marker{display:none}
+.row-menu-panel{position:fixed;z-index:250;background:var(--bg2);border:1px solid var(--border);border-radius:3px;min-width:150px;display:flex;flex-direction:column;padding:4px;box-shadow:0 8px 20px rgba(0,0,0,.35)}
+.row-menu-panel .linkbtn{border:none;background:none;text-align:left;padding:7px 10px;width:100%;border-radius:2px}
+.row-menu-panel .linkbtn:hover{background:var(--bg3);color:var(--hi)}
+.inv-row-actions{display:flex;align-items:center;gap:6px;white-space:nowrap}
+
 .wrap{max-width:1320px;margin:0 auto;padding:16px}
 .page{display:none}.page.active{display:block}
 
@@ -131,6 +142,10 @@ details.dd .dd-body{padding:4px 2px 10px}
 .segb:first-child{border-radius:3px 0 0 3px;border-right:none}
 .segb:last-child{border-radius:0 3px 3px 0;border-left:none}
 .segb.on{background:var(--brand);border-color:var(--brand);color:#0b0c10}
+/* "Belum Dicek" netral — sengaja BUKAN warna brand (yg berarti "aktif/oke")
+   dan BUKAN merah (yg berarti error) — supaya beda jelas dari kedua status
+   lain, bukan default yg terlihat seperti sudah dikonfirmasi. */
+.segb.on.neutral{background:var(--bg3);border-color:var(--mute);color:var(--mute)}
 .scrollY{max-height:420px;overflow-y:auto}
 /* ============ GAYA DOKUMEN (Delivery Order & Invoice) ============ */
 .doc{background:var(--bg2);border:1px solid var(--border);border-radius:3px;overflow:hidden;margin-bottom:14px}
@@ -603,10 +618,13 @@ details.sect>summary{padding:15px 16px}
     </table>
     </div>
     <div class="row">
+      <button type="button" class="btn ghost mini" style="flex:0" onclick="fgTandaiSemuaSesuai()">Tandai Semua "Belum Dicek" → Sesuai</button>
+    </div>
+    <div class="row">
       <button class="btn ghost" onclick="fgSimpanProgres()">Simpan Progres</button>
       <button class="btn" onclick="fgTandaiSiap()">Tandai Siap Diambil Delivery</button>
     </div>
-    <div class="note" style="margin-top:6px">"Simpan Progres" = cadangkan pekerjaan yang sedang berjalan (boleh belum lengkap, tidak memunculkan apapun ke Kirim Toko). "Tandai Siap Diambil Delivery" = mengunci packing hari ini sebagai FINAL dan memunculkannya di kartu "Siap Diambil Delivery" pada menu Kirim Toko — baru dari situ admin bisa buat Delivery Order.</div>
+    <div class="note" style="margin-top:6px">"Simpan Progres" = cadangkan pekerjaan yang sedang berjalan (boleh belum lengkap, tidak memunculkan apapun ke Kirim Toko). "Tandai Siap Diambil Delivery" = mengunci packing hari ini sebagai FINAL dan memunculkannya di kartu "Siap Diambil Delivery" pada menu Kirim Toko — baru dari situ admin bisa buat Delivery Order. Baris yang masih "Belum Dicek" akan diperingatkan dulu sebelum boleh ditandai siap.</div>
     <div class="ok-box" id="fg-ready" style="display:none">✓ Siap diambil delivery sejak <span id="fg-readyAt"></span></div>
   </div>
 </div>
@@ -1725,6 +1743,17 @@ details.sect>summary{padding:15px 16px}
     <table>
       <thead><tr><th class="l">Store ID</th><th class="l">Nama Standar</th><th class="l">Alias</th><th>Channel</th><th>Status</th><th>Action</th></tr></thead>
       <tbody id="mtk-list"></tbody>
+    </table>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Audit Pemakaian Nama Toko (Semua Sumber Data)</h3>
+    <div class="note">Semua nama/alias toko mentah yang benar-benar dipakai di PO, FG/Packing, Kirim, Invoice, Retur, Reject, Rekap, dan Laporan Omset — dicek terhadap Master Toko di atas. <b>Unmapped</b> = belum ada pemetaan ke nama standar (perlu ditambahkan di atas). <b>Ambiguous</b> = mirip beberapa nama standar sekaligus, perlu direview manual (tidak digabung otomatis).</div>
+    <div id="mtk-usageAuditSummary" style="margin-top:8px"></div>
+    <div class="tblwrap" style="margin-top:10px">
+    <table>
+      <thead><tr><th class="l">Raw Name</th><th class="l">Canonical Name</th><th>Status</th><th>Source Count</th><th class="l">Sources</th></tr></thead>
+      <tbody id="mtk-usageAuditBody"></tbody>
     </table>
     </div>
   </div>
@@ -3495,15 +3524,13 @@ function fgFillFilters(tgl, factory){
 // Existing packed TIDAK PERNAH ditimpa (guard rec.packed[k]==null) — jadi kalau
 // PO Revisi menaikkan target, hanya target yang berubah (dihitung ulang tiap
 // panggilan lewat fgStoreRows), packed lama tetap.
-// Utk baris yg SUDAH PERNAH dibuka sebelumnya (rec sudah ada) tapi combo toko-
-// produknya baru MUNCUL BELAKANGAN (mis. toko/produk baru yg ditambahkan lewat
-// PO Revisi setelah packing hari itu sudah mulai dikerjakan): jangan otomatis
-// dianggap sudah packing penuh — qty mulai dari 0 dan menunggu operator
-// mengonfirmasi, supaya tambahan revisi tidak diam-diam dihitung sudah packed.
-// Utk pembuatan rec yang benar-benar PERTAMA KALI (baru mulai packing hari itu,
-// blm ada satupun baris) tetap pakai default lama (langsung "sesuai"=target)
-// supaya alur harian yang sudah biasa dipakai (packing awal massal, tinggal
-// koreksi pengecualian) tidak berubah.
+// SEMUA baris baru (baik saat packing hari itu baru pertama kali dibuka,
+// maupun toko/produk baru yg muncul belakangan lewat PO Revisi) mulai dari
+// status "belum" (Belum Dicek), qty 0 — TIDAK PERNAH diam-diam dianggap
+// "Sesuai"/sudah packing penuh (browser UAT: default lama bikin baris yg
+// belum dicek operator tampil seolah "Tidak Sesuai"/salah, padahal cuma
+// belum diperiksa). Operator konfirmasi eksplisit per baris (Sesuai/Tidak
+// Sesuai), atau bulk lewat "Tandai Semua Sesuai" (fgTandaiSemuaSesuai).
 // Data packing yg SUDAH tersimpan sebelum patch skuId ini dipakai key LAMA
 // (kode polos+"|"+toko) — kalau tidak dicek, progres packing yg sudah ada
 // akan kelihatan "hilang/reset" krn dicari pakai key BARU (skuId+"|"+toko)
@@ -3532,9 +3559,13 @@ function fgMaterializeAll(tgl, factory){
     const id = skuId(r);
     const existingKey = fgPackedKeyExisting(rec, id, r.toko);
     if(rec.packed[existingKey]==null){
-      rec.packed[id+"|"+r.toko] = belumPernahAda
-        ? {qty:r.target, status:"sesuai", keterangan:""}
-        : {qty:0, status:"belum", keterangan:""};
+      // Baris yg BENAR-BENAR baru (baik packing hari itu baru pertama kali
+      // dibuka, maupun toko/produk baru muncul belakangan lewat PO Revisi)
+      // SELALU mulai dari "belum" (Belum Dicek) — qty 0 TIDAK boleh diam-diam
+      // dianggap "Sesuai" (matched target) sebelum operator benar2 mengecek
+      // barangnya. Operator bisa konfirmasi cepat banyak baris sekaligus lewat
+      // tombol "Tandai Semua Sesuai" (fgTandaiSemuaSesuai) kalau memang sesuai.
+      rec.packed[id+"|"+r.toko] = {qty:0, status:"belum", keterangan:""};
       changed=true;
     }
   });
@@ -3553,11 +3584,16 @@ function fgBuildPanel(){
 // `id` di sini HARUS skuId(row) (kode+nama), bukan kode mentah — dipanggil
 // dari tempat yg punya row lengkap (fgTandaiSiap dst) atau dari DOM row yg
 // datasetnya sudah membawa kode+produk (fgSetStatus/fgSetPacked/fgSetKeterangan).
+// Status 3-state: "belum" (Belum Dicek, netral — default utk baris yg BELUM
+// PERNAH disentuh operator), "sesuai", "tidak_sesuai". Data LAMA (tersimpan
+// sblm status "belum" ada / berupa angka polos) TETAP dibaca sbg "sesuai" apa
+// adanya lewat fallback `raw.status||"sesuai"` di bawah — HANYA baris yang
+// BENAR-BENAR belum pernah ada record sama sekali yg dapat default "belum".
 function fgGetPacked(tgl, factory, id, toko){
   const rec = D.fgPacking[fgKey(tgl,factory)];
-  if(!rec) return {qty:0, status:"sesuai", keterangan:""};
+  if(!rec) return {qty:0, status:"belum", keterangan:""};
   const raw = rec.packed[fgPackedKeyExisting(rec, id, toko)];
-  if(raw==null) return {qty:0, status:"sesuai", keterangan:""};
+  if(raw==null) return {qty:0, status:"belum", keterangan:""};
   if(typeof raw === "object") return {qty:num(raw.qty), status:raw.status||"sesuai", keterangan:raw.keterangan||""};
   return {qty:num(raw), status:"sesuai", keterangan:""};
 }
@@ -3609,8 +3645,9 @@ function fgRenderTable(){
       <td class="l" title="${r.toko}">${r.toko}</td>
       <td>${fmt(r.target)}</td>
       <td><div class="seg3">
+        <button type="button" class="segb neutral ${st.status==='belum'?'on':''}" onclick="fgSetStatus(this,'belum')">Belum Dicek</button>
         <button type="button" class="segb ${st.status==='sesuai'?'on':''}" onclick="fgSetStatus(this,'sesuai')">Sesuai</button>
-        <button type="button" class="segb ${st.status!=='sesuai'?'on':''}" onclick="fgSetStatus(this,'tidak_sesuai')">Tidak Sesuai</button>
+        <button type="button" class="segb ${st.status==='tidak_sesuai'?'on':''}" onclick="fgSetStatus(this,'tidak_sesuai')">Tidak Sesuai</button>
       </div></td>
       <td><input type="number" inputmode="numeric" value="${st.qty||''}" placeholder="0" ${st.status==='sesuai'?'readonly':''} onchange="fgSetPacked(this)"></td>
       <td class="${sisa<=0?'g':'r'}">${fmt(sisa)}</td>
@@ -3660,6 +3697,7 @@ function fgSetStatus(btn, status){
   const qtyEl = tr.querySelector('input[type="number"]');
   let qty = num(qtyEl.value);
   if(status==="sesuai"){ qty = target; qtyEl.value = target; qtyEl.setAttribute("readonly","readonly"); }
+  else if(status==="belum"){ qtyEl.removeAttribute("readonly"); } // kembali netral — qty tetap apa adanya, tidak dipaksa 0 kalau operator sudah sempat isi lalu klik balik
   else { qtyEl.removeAttribute("readonly"); qtyEl.focus(); }
   const ket = tr.querySelector('input[type="text"]').value;
   fgSetPackedField(tgl, factory, id, toko, {qty, status, keterangan:ket});
@@ -3687,6 +3725,21 @@ function fgSetKeterangan(el){
   const status = tr.dataset.status || "sesuai";
   fgSetPackedField(tgl, factory, id, toko, {qty:num(qtyEl.value), status, keterangan: el.value});
 }
+// Konfirmasi cepat massal: baris yg MASIH "Belum Dicek" (bukan yg sudah
+// eksplisit ditandai Tidak Sesuai) ditandai Sesuai = qty penuh sesuai target.
+// Ini tombol eksplisit yg operator klik SENDIRI — bukan default otomatis lagi
+// (beda dgn perilaku lama yg diam-diam menganggap semua baris baru "Sesuai").
+function fgTandaiSemuaSesuai(){
+  const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value);
+  if(!factory) return;
+  const rows = fgStoreRows(tgl, factory);
+  const belum = rows.filter(r=> fgGetPacked(tgl, factory, skuId(r), r.toko).status==="belum");
+  if(!belum.length) return toast("Tidak ada baris \"Belum Dicek\" tersisa");
+  if(!confirm(`Tandai ${belum.length} baris "Belum Dicek" sbg Sesuai (qty = target)?`)) return;
+  belum.forEach(r=>{ fgSetPackedField(tgl, factory, skuId(r), r.toko, {qty:r.target, status:"sesuai", keterangan:""}); });
+  fgRenderTable();
+  toast(`${belum.length} baris ditandai Sesuai`);
+}
 function fgUpdateProgressCounter(){
   const rows=[...document.querySelectorAll('#fgBody tr[data-kode]')];
   let selesai=0;
@@ -3701,10 +3754,22 @@ function fgSimpanProgres(){
 function fgTandaiSiap(){
   const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value);
   const rows = fgStoreRows(tgl, factory);
-  const belum = rows.filter(r=> fgGetPacked(tgl, factory, skuId(r), r.toko).qty < r.target);
-  if(belum.length){
-    const totalKurang = belum.reduce((a,r)=>a+(r.target-fgGetPacked(tgl,factory,skuId(r),r.toko).qty),0);
-    if(!confirm(`Masih ada ${belum.length} baris toko/produk belum lengkap (total kurang ${totalKurang} pcs). Tetap tandai siap diambil delivery?`)) return;
+  // Dua kelompok DIPISAH biar pesannya jelas: "belum dicek sama sekali" (blm
+  // pernah diklik Sesuai/Tidak Sesuai) beda kasusnya dari "sudah dicek tapi
+  // qty-nya kurang dari target" (mis. ditandai Tidak Sesuai krn barang kurang).
+  const belumDicek = rows.filter(r=> fgGetPacked(tgl, factory, skuId(r), r.toko).status==="belum");
+  const kurangPacking = rows.filter(r=>{
+    const st = fgGetPacked(tgl, factory, skuId(r), r.toko);
+    return st.status!=="belum" && st.qty < r.target;
+  });
+  if(belumDicek.length || kurangPacking.length){
+    const bagian = [];
+    if(belumDicek.length) bagian.push(`${belumDicek.length} baris masih "Belum Dicek"`);
+    if(kurangPacking.length){
+      const totalKurang = kurangPacking.reduce((a,r)=>a+(r.target-fgGetPacked(tgl,factory,skuId(r),r.toko).qty),0);
+      bagian.push(`${kurangPacking.length} baris kurang packing (total kurang ${totalKurang} pcs)`);
+    }
+    if(!confirm(`${bagian.join(" · ")}. Tetap tandai siap diambil delivery?`)) return;
   }
   const key = fgKey(tgl,factory);
   const rec = D.fgPacking[key] || {readyAt:null, packed:{}};
@@ -5502,7 +5567,7 @@ function invBarisData(){
   let list = Object.values(D.invoice).map(inv=>({inv, st:invStatus(inv)}));
   if(dari || sampai) list = list.filter(x=>inRange(x.inv.tgl, dari, sampai));
   if(toko) list = list.filter(x=>canonicalStoreName(x.inv.toko)===toko);
-  if(q) list = list.filter(x=> String(x.inv.invoiceNo).toLowerCase().includes(q) || String(x.inv.toko).toLowerCase().includes(q));
+  if(q) list = list.filter(x=> String(x.inv.invoiceNo).toLowerCase().includes(q) || String(x.inv.toko).toLowerCase().includes(q) || canonicalStoreName(x.inv.toko).toLowerCase().includes(q));
   if(fStatus) list = list.filter(x=>x.st.kode===fStatus);
   if(outstanding) list = list.filter(x=>x.st.sisa>0);
   list.sort((a,b)=> b.inv.tgl.localeCompare(a.inv.tgl) || String(b.inv.invoiceNo).localeCompare(String(a.inv.invoiceNo)));
@@ -5529,26 +5594,42 @@ function renderInvoiceList(){
     ? (list.length ? `Menampilkan ${list.length} invoice · tagihan ${rupiah(tagihan)} · sisa piutang ${rupiah(piutang)}` : "Tidak ada invoice yang cocok dengan filter.")
     : "Belum ada invoice dibuat sama sekali.";
 
-  listEl.innerHTML = list.length ? list.map(({inv,st})=>`
+  listEl.innerHTML = list.length ? list.map(({inv,st})=>{
+    const tokoTampil = canonicalStoreName(inv.toko);
+    const isPesanan = inv.sumber==="pesanan";
+    const bukaFn = isPesanan ? `psBukaDariBatch('${inv.batch}')` : `kBukaInvoiceDanPindah('${inv.batch}')`;
+    const menuItems = isPesanan
+      ? [["Cetak Invoice",`psCetakInvoiceDariBatch('${inv.batch}')`],
+         ["Buka DO",`psCetakDODariBatch('${inv.batch}')`],
+         ["Edit",bukaFn],
+         [st.sisa>0?'Bayar':'Riwayat Bayar',`bayarBuka('${inv.batch}')`]]
+      : [["Cetak Invoice",`kCetakInvoice('${inv.batch}')`],
+         ["Buka DO",`kCetak('${inv.batch}')`],
+         ["Edit",bukaFn],
+         [st.sisa>0?'Bayar':'Riwayat Bayar',`bayarBuka('${inv.batch}')`]];
+    return `
     <tr>
       <td class="l" title="${inv.invoiceNo}">${inv.invoiceNo}</td>
       <td>${fmtTgl(inv.tgl)}</td>
-      <td class="l" title="${inv.toko}">${inv.toko}</td>
+      <td class="l" title="${inv.toko}">${tokoTampil}</td>
       <td style="text-align:right;padding-right:9px">${rupiah(st.total)}</td>
       <td style="text-align:right;padding-right:9px;color:${st.sisa>0?'var(--warn)':'var(--dim)'}">${rupiah(st.sisa)}</td>
       <td><span class="pill ${st.kode}">${st.label}</span></td>
       <td class="${st.telat?'kurang':''}">${st.umur}h</td>
       <td>
-        ${inv.sumber==="pesanan"
-          ? `<button class="linkbtn" onclick="psCetakInvoiceDariBatch('${inv.batch}')">Cetak Invoice</button>
-             <button class="linkbtn" onclick="psCetakDODariBatch('${inv.batch}')">Cetak DO</button>
-             <button class="linkbtn" onclick="psBukaDariBatch('${inv.batch}')">Buka Pesanan</button>`
-          : `<button class="linkbtn" onclick="kCetakInvoice('${inv.batch}')">Cetak Invoice</button>
-             <button class="linkbtn" onclick="kCetak('${inv.batch}')">Buka DO</button>
-             <button class="linkbtn" onclick="kBukaInvoiceDanPindah('${inv.batch}')">Edit</button>`}
-        <button class="linkbtn" onclick="bayarBuka('${inv.batch}')">${st.sisa>0?'Bayar':'Riwayat Bayar'}</button>
+        <div class="inv-row-actions">
+          <button class="linkbtn" onclick="${bukaFn}">Buka</button>
+          <details class="row-menu">
+            <summary class="linkbtn" title="Aksi lainnya">⋯</summary>
+            <div class="row-menu-panel">
+              ${menuItems.map(([lbl,fn])=>`<button class="linkbtn" onclick="${fn}">${lbl}</button>`).join("")}
+            </div>
+          </details>
+        </div>
       </td>
-    </tr>`).join("") : '<tr><td colspan="8" class="empty">Tidak ada invoice yang cocok dengan filter.</td></tr>';
+    </tr>`;
+  }).join("") : '<tr><td colspan="8" class="empty">Tidak ada invoice yang cocok dengan filter.</td></tr>';
+  wireRowMenus(listEl);
 }
 function invEkspor(){
   const list = invBarisData();
@@ -5556,7 +5637,7 @@ function invEkspor(){
   const data = list.map(({inv,st})=>({
     "No. Faktur": inv.invoiceNo,
     "Tanggal": fmtTgl(inv.tgl),
-    "Toko": inv.toko,
+    "Toko": canonicalStoreName(inv.toko),
     "Ref. DO": inv.noSJ || "",
     "Total Tagihan": st.total,
     "Sudah Dibayar": Math.min(st.bayar, st.total),
@@ -5812,7 +5893,8 @@ function renderKHist(){
     const tot=rows.reduce((a,r)=>a+num(r.qty),0);
     const inv = D.invoice[b];
     const noDO = r0.noSJ || doNomor(b, r0.tgl);
-    const cari = String(r0.tgl+" "+r0.toko+" "+noDO).toLowerCase().replace(/"/g,'&quot;');
+    const tokoTampil = canonicalStoreName(r0.toko);
+    const cari = String(r0.tgl+" "+r0.toko+" "+tokoTampil+" "+noDO).toLowerCase().replace(/"/g,'&quot;');
     const aksi = inv
       ? `<button class="linkbtn" onclick="kCetak('${b}')">Cetak DO</button>
          <button class="linkbtn" onclick="kBukaInvoiceDanPindah('${b}')">Lihat Invoice</button>`
@@ -5822,7 +5904,7 @@ function renderKHist(){
     return `<tr data-batch="${b}" data-cari="${cari}" data-inv="${inv?'sudah':'belum'}">
       <td class="l" title="${noDO}">${noDO}</td>
       <td>${fmtTgl(r0.tgl)}</td>
-      <td class="l" title="${r0.toko}">${r0.toko}</td>
+      <td class="l" title="${r0.toko}">${tokoTampil}</td>
       <td>${fmt(tot)}</td>
       <td>${inv ? `<span class="pill lunas">Sudah</span>` : `<span class="pill sebagian">Belum</span>`}</td>
       <td>${aksi}</td>
@@ -6032,6 +6114,46 @@ function navMoreReposition(){
   document.addEventListener("click", e => { if(det.open && !det.contains(e.target)) det.open = false; });
   document.addEventListener("keydown", e => { if(e.key === "Escape" && det.open) det.open = false; });
 })();
+
+/* ================= MENU "⋯" PER-BARIS (mis. Daftar Invoice) =================
+   Pola sama persis dengan dropdown "Lainnya" di atas: position:fixed +
+   reposisi manual oleh JS supaya tidak ke-clip oleh ancestor tabel yang
+   overflow-x:auto, dan dijepit di dalam viewport (vertikal & horizontal). */
+function rowMenuReposition(det){
+  if(!det || !det.open) return;
+  const summary = det.querySelector("summary");
+  const panel = det.querySelector(".row-menu-panel");
+  if(!summary || !panel) return;
+  const r = summary.getBoundingClientRect();
+  const w = panel.offsetWidth || 150;
+  const h = panel.offsetHeight || 120;
+  let left = r.right - w;
+  left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+  let top = r.bottom + 4;
+  if(top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);
+  panel.style.left = Math.round(left) + "px";
+  panel.style.top = Math.round(top) + "px";
+}
+function wireRowMenus(container){
+  if(!container || container.dataset.rowMenuWired) return;
+  container.dataset.rowMenuWired = "1";
+  container.addEventListener("toggle", e=>{
+    const det = e.target;
+    if(!det.classList || !det.classList.contains("row-menu")) return;
+    if(det.open){
+      container.querySelectorAll("details.row-menu[open]").forEach(o=>{ if(o!==det) o.open=false; });
+      rowMenuReposition(det);
+    }
+  }, true);
+}
+window.addEventListener("resize", ()=>document.querySelectorAll("details.row-menu[open]").forEach(rowMenuReposition));
+window.addEventListener("scroll", ()=>document.querySelectorAll("details.row-menu[open]").forEach(rowMenuReposition), true);
+document.addEventListener("click", e=>{
+  document.querySelectorAll("details.row-menu[open]").forEach(det=>{ if(!det.contains(e.target)) det.open=false; });
+});
+document.addEventListener("keydown", e=>{
+  if(e.key==="Escape") document.querySelectorAll("details.row-menu[open]").forEach(det=>det.open=false);
+});
 function kartuStokEkspor(){
   const dari = $("ks-dari").value, sampai = $("ks-sampai").value;
   const produk = $("ks-produk").value;
@@ -6385,7 +6507,7 @@ function renderRHist(){
   const keysList = keysSemua.filter(b=>{
     if(!q) return true;
     const rows = batchesSemua[b];
-    return rows.some(r=> (r.toko+" "+r.produk).toLowerCase().includes(q));
+    return rows.some(r=> (r.toko+" "+canonicalStoreName(r.toko)+" "+r.produk).toLowerCase().includes(q));
   });
 
   const totalQtyList = keysList.reduce((a,b)=>a+batchesSemua[b].reduce((x,r)=>x+num(r.qty),0),0);
@@ -6405,7 +6527,7 @@ function renderRHist(){
       const nilaiToko = rows.reduce((a,r)=>a+rNilaiToko(r),0);
       return `<tr>
         <td>${fmtTgl(r0.tgl)}</td>
-        <td class="l" title="${r0.toko}">${r0.toko}</td>
+        <td class="l" title="${r0.toko}">${canonicalStoreName(r0.toko)}</td>
         <td><span class="numlink" onclick="rQtyPop(event,'${b}')" title="Klik untuk lihat rincian per produk">${fmt(tot)}</span></td>
         <td style="text-align:right;padding-right:9px">${rupiah(nilaiPabrik)}</td>
         <td style="text-align:right;padding-right:9px;color:var(--mute)">${rupiah(nilaiToko)}</td>
@@ -6418,7 +6540,7 @@ function rEkspor(){
   const list = D.retur.filter(r=> (!dari||r.tgl>=dari) && (!sampai||r.tgl<=sampai));
   if(!list.length) return toast("Tidak ada retur untuk diekspor");
   const ws = XLSX.utils.json_to_sheet(list.map(r=>({
-    "Tanggal":fmtTgl(r.tgl), "Toko":r.toko, "Produk":r.produk, "Qty":r.qty,
+    "Tanggal":fmtTgl(r.tgl), "Toko":canonicalStoreName(r.toko), "Produk":r.produk, "Qty":r.qty,
     "Nilai Pabrik":rNilaiRetur(r), "Nilai Toko":rNilaiToko(r), "Alasan":r.alasan||""
   })));
   const wb = XLSX.utils.book_new();
@@ -6666,7 +6788,7 @@ function renderRjHist(){
   const list = semua.filter(r=>{
     if(f && r.resolusi!==f) return false;
     if(!q) return true;
-    return [r.toko,r.produk,r.alasan].join(" ").toLowerCase().includes(q);
+    return [r.toko,canonicalStoreName(r.toko),r.produk,r.alasan].join(" ").toLowerCase().includes(q);
   });
   const potong = semua.filter(r=>r.resolusi==="potong");
   const ganti  = semua.filter(r=>r.resolusi==="ganti");
@@ -6684,7 +6806,7 @@ function renderRjHist(){
   $("rjHist").innerHTML = keys.length ? keys.map(b=>{
     const rows = byBatch[b], r0 = rows[0];
     const tot = rows.reduce((a,r)=>a+num(r.qty),0), rugi = nilai(rows);
-    return `<details class="dd"><summary><span><span class="t1">${fmtTgl(r0.tgl)} · ${r0.toko}</span>
+    return `<details class="dd"><summary><span><span class="t1">${fmtTgl(r0.tgl)} · ${canonicalStoreName(r0.toko)}</span>
       <span class="t2">${fmt(tot)} pcs · kerugian ${rupiah(rugi)}</span></span></summary>
       <div class="dd-body">
         ${rows.map(r=>`<div class="li"><span><span class="t1">${r.produk}</span>
@@ -6698,7 +6820,7 @@ function rjEkspor(){
   const list = D.reject.filter(r=> (!dari||r.tgl>=dari) && (!sampai||r.tgl<=sampai));
   if(!list.length) return toast("Tidak ada reject untuk diekspor");
   const ws = XLSX.utils.json_to_sheet(list.map(r=>({
-    "Tanggal":fmtTgl(r.tgl), "Toko":r.toko, "Produk":r.produk, "Qty":r.qty,
+    "Tanggal":fmtTgl(r.tgl), "Toko":canonicalStoreName(r.toko), "Produk":r.produk, "Qty":r.qty,
     "Alasan":r.alasan||"", "Tindak Lanjut":r.resolusi==="potong"?"Potong Invoice":"Ganti Barang",
     "Nilai Kerugian":num(r.nilai)
   })));
@@ -8134,6 +8256,80 @@ function mtkGabungKe(sidAsal, sidTujuan){
   saveD(); renderMasterToko();
   toast(`Digabung ke "${tujuan.canonicalName}"`);
 }
+// ---- Part A/C: Full canonical store audit — SEMUA nama toko mentah yang
+// benar2 dipakai di seluruh state (PO, FG/Packing, Kirim, Invoice, Retur,
+// Reject, Jual Konsumen, alias map lama), bukan cuma D.stores. Read-only,
+// TIDAK mengubah/menggabung apa pun sendiri — cuma laporan utk direview.
+function storeUsageAudit(){
+  const usage = {};
+  const add = (raw, source) => {
+    const name = String(raw||"").trim();
+    if(!name) return;
+    const u = (usage[name] ||= {count:0, sources:new Set()});
+    u.count++; u.sources.add(source);
+  };
+  (D.stores||[]).forEach(s=>add(s, "Master"));
+  Object.values(D.po||{}).forEach(rows=>(rows||[]).forEach(r=>(r.stores||[]).forEach(s=>add(s.toko,"PO"))));
+  Object.values(D.fgPacking||{}).forEach(rec=>{
+    Object.keys((rec&&rec.packed)||{}).forEach(k=>{
+      const idx = k.lastIndexOf("|"); if(idx<0) return;
+      add(k.slice(idx+1), "FG/Packing");
+    });
+  });
+  (D.kirim||[]).forEach(r=>add(r.toko, "Kirim"));
+  Object.values(D.invoice||{}).forEach(inv=>add(inv.toko, "Invoice"));
+  (D.retur||[]).forEach(r=>add(r.toko, "Retur"));
+  (D.reject||[]).forEach(r=>add(r.toko, "Reject"));
+  (D.jual||[]).forEach(r=>add(r.toko, "Jual Konsumen"));
+  Object.keys(D.tokoAlias||{}).forEach(k=>add(k, "Alias Map (lama)"));
+
+  const audit = auditStoreAliases();
+  const conflictKeys = new Set((audit.conflictingAlias||[]).map(c=>normalizeStoreName(c.alias)));
+  const compactKey = s => normalizeStoreName(s).replace(/\s+/g,"");
+  const masterCompactIndex = {};
+  Object.values(D.masterToko||{}).forEach(m=>{
+    [m.canonicalName, ...(m.aliases||[])].map(compactKey).forEach(ck=>{ if(!masterCompactIndex[ck]) masterCompactIndex[ck] = m.canonicalName; });
+  });
+
+  const rows = Object.keys(usage).map(raw=>{
+    const rec = resolveStore(raw);
+    let status, canonical, suggestion=null;
+    if(rec){
+      status = conflictKeys.has(normalizeStoreName(raw)) ? "ambiguous" : "mapped";
+      canonical = rec.canonicalName;
+    } else {
+      const ck = compactKey(raw);
+      const fuzzy = masterCompactIndex[ck];
+      if(fuzzy && normalizeStoreName(fuzzy)!==normalizeStoreName(raw)){
+        status = "ambiguous"; canonical = "-"; suggestion = fuzzy;
+      } else {
+        status = "unmapped"; canonical = "-";
+      }
+    }
+    return {raw, canonical, status, suggestion, count:usage[raw].count, sources:[...usage[raw].sources].sort()};
+  });
+  const rank = {unmapped:0, ambiguous:1, mapped:2};
+  rows.sort((a,b)=> (rank[a.status]-rank[b.status]) || b.count-a.count || a.raw.localeCompare(b.raw));
+  return rows;
+}
+function renderStoreUsageAudit(){
+  const el = $("mtk-usageAuditBody"); if(!el) return;
+  const rows = storeUsageAudit();
+  const badge = s => s==="mapped" ? `<span class="pill lunas">Mapped</span>` : s==="ambiguous" ? `<span class="pill sebagian">Ambiguous</span>` : `<span class="pill belum">Unmapped</span>`;
+  el.innerHTML = rows.length ? rows.map(r=>`<tr>
+      <td class="l">${r.raw}</td>
+      <td class="l">${r.canonical}${r.suggestion?` <span style="color:var(--mute);font-size:10px">(saran: ${r.suggestion})</span>`:''}</td>
+      <td>${badge(r.status)}</td>
+      <td>${fmt(r.count)}</td>
+      <td class="l" style="color:var(--mute)">${r.sources.join(", ")}</td>
+    </tr>`).join("") : '<tr><td colspan="5" class="empty">Belum ada data toko sama sekali.</td></tr>';
+  const sum = $("mtk-usageAuditSummary");
+  if(sum){
+    const nUnmapped = rows.filter(r=>r.status==="unmapped").length;
+    const nAmbig = rows.filter(r=>r.status==="ambiguous").length;
+    sum.textContent = `${rows.length} nama toko mentah ditemukan · ${nUnmapped} unmapped · ${nAmbig} ambiguous/saran fuzzy — TIDAK di-auto-merge.`;
+  }
+}
 function renderMasterToko(){
   const esc = s => String(s).replace(/'/g,"\\'");
   const q = (($("mtk-cari")&&$("mtk-cari").value)||"").trim().toLowerCase();
@@ -8172,6 +8368,7 @@ function renderMasterToko(){
       <td><button class="btn mini ${m.active?'ghost':'red'}" onclick="mtkToggleActive('${esc(m.storeId)}')">${m.active?'Aktif':'Nonaktif'}</button></td>
       <td><button class="del" onclick="mHapus('toko','${esc(m.canonicalName)}');delete D.masterToko['${esc(m.storeId)}'];saveD();renderMasterToko()">Hapus</button></td>
     </tr>`).join("") : '<tr><td colspan="6" class="empty">Belum ada bakery.</td></tr>';
+  renderStoreUsageAudit();
 }
 function cekDuplikatToko(){
   const groups = {};

@@ -45,6 +45,10 @@ function markFgReady(api, tgl, divisi){
   api.$("pd-tgl").value = tgl;
   api.$("pd-divisi").value = divisi;
   api.prodBuildChecklist();
+  // Baris packing baru default "Belum Dicek" (qty 0) sampai operator eksplisit
+  // konfirmasi — simulasikan itu lewat "Tandai Semua Sesuai" sblm menandai siap,
+  // sama seperti alur asli di browser (bukan lagi auto-"sesuai" diam-diam).
+  api.fgTandaiSemuaSesuai();
   api.fgTandaiSiap();
 }
 

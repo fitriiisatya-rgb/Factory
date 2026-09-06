@@ -111,6 +111,15 @@ async function main(){
   const fgRowB = api.fgStoreRows(TGL,FAC).find(r=>r.produk==="PRODUK B");
   check("PACKING.targetACorrect", "fgStoreRows — target packing PRODUK A/STORE_A benar (40)", 40, fgRowA?fgRowA.target:null);
   check("PACKING.targetBCorrect", "fgStoreRows — target packing PRODUK B/STORE_B benar (60)", 60, fgRowB?fgRowB.target:null);
+  // Baris baru default "Belum Dicek" (qty 0) sampai operator eksplisit konfirmasi
+  // per produk — pastikan status A & B TIDAK saling tertukar sejak awal juga.
+  const freshA = api.fgGetPacked(TGL,FAC, api.skuId(fgRowA), "STORE_A");
+  const freshB = api.fgGetPacked(TGL,FAC, api.skuId(fgRowB), "STORE_B");
+  check("PACKING.freshStatusNotSwappedA", "packing baru PRODUK A/STORE_A — status Belum Dicek (bukan ikut status B)", "belum", freshA.status);
+  check("PACKING.freshStatusNotSwappedB", "packing baru PRODUK B/STORE_B — status Belum Dicek (bukan ikut status A)", "belum", freshB.status);
+  // Operator konfirmasi eksplisit (klik Sesuai) per baris — real UI flow.
+  api.fgSetPackedField(TGL, FAC, api.skuId(fgRowA), "STORE_A", {qty:40, status:"sesuai", keterangan:""});
+  api.fgSetPackedField(TGL, FAC, api.skuId(fgRowB), "STORE_B", {qty:60, status:"sesuai", keterangan:""});
   const packedA = api.fgGetPacked(TGL,FAC, api.skuId(fgRowA), "STORE_A");
   const packedB = api.fgGetPacked(TGL,FAC, api.skuId(fgRowB), "STORE_B");
   check("PACKING.packedSeparateA", "packing PRODUK A/STORE_A tidak tertukar dgn B (qty=target=40)", 40, packedA.qty);
