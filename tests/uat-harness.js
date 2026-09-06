@@ -39,7 +39,7 @@ function loadApp({confirmAnswer=true, fetchImpl=null}={}){
   window.__API__ = {
     D, SEED, hitungTarget, poMergeDenganExisting, poIdentitasBaris, poAmbilExisting,
     pdSisaTarget, targetUntukDivisi, ceklisKey, fgKey, skuId,
-    fgMaterializeAll, fgStoreRows, fgGetPacked, fgSetPackedField, fgTandaiSiap,
+    fgMaterializeAll, fgStoreRows, fgGetPacked, fgSetPackedField, fgPackedKeyExisting, fgTandaiSiap,
     parsePOAuto, parsePOCsv, parsePOBolu, deteksiFactory,
     poHitungUnresolved, resolusiProdukPO, poResolusiPetakan, poResolusiBuatBaru, poResolusiPilihLain, poResolusiJadiBaru, poResolusiKonfirmasi, cocokProduk,
     saveD, uid, num, fmt, normNama, normalizeProductKey, divisiProduk, stokGudang, mutasiStok, rekapStokHarian,

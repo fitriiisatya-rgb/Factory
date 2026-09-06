@@ -221,6 +221,42 @@ async function main(){
     check("REALDATA.mc0025DubaiCorrect", "Real CSV — target DUBAI CHEWY COOKIES tetap 534 (bukan digabung ke produk lain)", 534, dubaiRow?dubaiRow.target:null);
   }
 
+  // Data safety: packing progres yg sudah tersimpan SEBELUM patch ini (key
+  // lama "kode|toko" polos, tanpa skuId) harus tetap terbaca — TIDAK boleh
+  // kelihatan reset/hilang hanya krn skema key berubah.
+  {
+    const api2 = await setup();
+    const divisi2 = api2.divisiProduk(api2.D.po[TGL][0]);
+    api2.$("pd-tgl").value = TGL; api2.$("pd-divisi").value = divisi2;
+    api2.prodBuildChecklist(); api2.pdSimpan();
+    api2.$("pd-divisi").value = api2.SPECIAL_FG;
+    api2.prodBuildChecklist(); api2.pdSimpan();
+    // Simulasikan data LAMA: tulis manual pakai key lama (kode polos+"|"+toko),
+    // seperti yg tersimpan di localStorage sebelum patch skuId ada.
+    const fgKeyStr = api2.fgKey(TGL, FAC);
+    delete api2.D.fgPacking[fgKeyStr]; // hapus hasil auto-materialize dulu
+    api2.D.fgPacking[fgKeyStr] = {readyAt:null, packed:{
+      [KODE+"|STORE_A"]: {qty:40, status:"sesuai", keterangan:"data lama sebelum patch"},
+      [KODE+"|STORE_B"]: {qty:60, status:"sesuai", keterangan:"data lama sebelum patch"},
+    }};
+    api2.saveD();
+    api2.prodBuildChecklist(); // triggers fgMaterializeAll again — must NOT overwrite old-format entries
+    const rowA2 = api2.fgStoreRows(TGL,FAC).find(r=>r.produk==="PRODUK A");
+    const rowB2 = api2.fgStoreRows(TGL,FAC).find(r=>r.produk==="PRODUK B");
+    const packedA2 = api2.fgGetPacked(TGL, FAC, api2.skuId(rowA2), "STORE_A");
+    const packedB2 = api2.fgGetPacked(TGL, FAC, api2.skuId(rowB2), "STORE_B");
+    check("BACKCOMPAT.oldKeyStillReadableA", "Data lama (key 'kode|toko' polos) tetap terbaca utk PRODUK A, tidak reset ke 0", 40, packedA2.qty);
+    check("BACKCOMPAT.oldKeyStillReadableB", "Data lama (key 'kode|toko' polos) tetap terbaca utk PRODUK B, tidak reset ke 0", 60, packedB2.qty);
+    check("BACKCOMPAT.oldEntriesNotDuplicated", "materializeAll tidak menduplikasi entry lama jadi entry baru terpisah",
+      2, Object.keys(api2.D.fgPacking[fgKeyStr].packed).length);
+    // Update lewat fgSetPackedField harus menulis BALIK ke key lama yg sama (bukan bikin key baru di sebelahnya).
+    api2.fgSetPackedField(TGL, FAC, api2.skuId(rowA2), "STORE_A", {qty:35, status:"tidak_sesuai", keterangan:"dikoreksi"});
+    check("BACKCOMPAT.updateStaysOnOldKey", "Update pakai skuId tetap menulis ke key lama yg sama (tidak duplikat)",
+      2, Object.keys(api2.D.fgPacking[fgKeyStr].packed).length);
+    check("BACKCOMPAT.updateValueCorrect", "Nilai ter-update benar (35) setelah ditulis balik ke key lama",
+      35, api2.D.fgPacking[fgKeyStr].packed[KODE+"|STORE_A"].qty);
+  }
+
   const total = results.length;
   const passCount = results.filter(r=>r.pass).length;
   console.log("\n=== SKU-IDENTITY (kode collision) TEST TABLE ===\n");

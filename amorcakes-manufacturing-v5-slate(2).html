@@ -3210,6 +3210,21 @@ function fgFillFilters(tgl, factory){
 // blm ada satupun baris) tetap pakai default lama (langsung "sesuai"=target)
 // supaya alur harian yang sudah biasa dipakai (packing awal massal, tinggal
 // koreksi pengecualian) tidak berubah.
+// Data packing yg SUDAH tersimpan sebelum patch skuId ini dipakai key LAMA
+// (kode polos+"|"+toko) — kalau tidak dicek, progres packing yg sudah ada
+// akan kelihatan "hilang/reset" krn dicari pakai key BARU (skuId+"|"+toko)
+// yg tidak pernah cocok dgn data lama. Fungsi ini mencari entry yg SUDAH ADA
+// baik di key baru maupun key lama, supaya data lama tetap kebaca — hanya
+// entry yg BENAR-BENAR baru yg ditulis pakai key baru (skuId).
+function fgPackedKeyExisting(rec, id, toko){
+  const newKey = id+"|"+toko;
+  if(!rec || !rec.packed) return newKey;
+  if(rec.packed[newKey]!=null) return newKey;
+  const kode = String(id).split("\x1f")[0];
+  const oldKey = kode ? (kode+"|"+toko) : null;
+  if(oldKey && oldKey!==newKey && rec.packed[oldKey]!=null) return oldKey;
+  return newKey;
+}
 function fgMaterializeAll(tgl, factory){
   const rows = fgStoreRows(tgl, factory);
   const key = fgKey(tgl,factory);
@@ -3220,9 +3235,10 @@ function fgMaterializeAll(tgl, factory){
   rows.forEach(r=>{
     // skuId (kode+nama), bukan kode saja — 2 produk berbeda yg berbagi kode
     // dan kebetulan sama2 kirim ke toko yg sama tidak boleh bentrok di satu key.
-    const k = skuId(r)+"|"+r.toko;
-    if(rec.packed[k]==null){
-      rec.packed[k] = belumPernahAda
+    const id = skuId(r);
+    const existingKey = fgPackedKeyExisting(rec, id, r.toko);
+    if(rec.packed[existingKey]==null){
+      rec.packed[id+"|"+r.toko] = belumPernahAda
         ? {qty:r.target, status:"sesuai", keterangan:""}
         : {qty:0, status:"belum", keterangan:""};
       changed=true;
@@ -3245,7 +3261,8 @@ function fgBuildPanel(){
 // datasetnya sudah membawa kode+produk (fgSetStatus/fgSetPacked/fgSetKeterangan).
 function fgGetPacked(tgl, factory, id, toko){
   const rec = D.fgPacking[fgKey(tgl,factory)];
-  const raw = rec ? rec.packed[id+"|"+toko] : undefined;
+  if(!rec) return {qty:0, status:"sesuai", keterangan:""};
+  const raw = rec.packed[fgPackedKeyExisting(rec, id, toko)];
   if(raw==null) return {qty:0, status:"sesuai", keterangan:""};
   if(typeof raw === "object") return {qty:num(raw.qty), status:raw.status||"sesuai", keterangan:raw.keterangan||""};
   return {qty:num(raw), status:"sesuai", keterangan:""};
@@ -3253,9 +3270,12 @@ function fgGetPacked(tgl, factory, id, toko){
 function fgSetPackedField(tgl, factory, id, toko, patch){
   const key = fgKey(tgl,factory);
   if(!D.fgPacking[key]) D.fgPacking[key] = {readyAt:null, packed:{}};
+  const rec = D.fgPacking[key];
   const cur = fgGetPacked(tgl, factory, id, toko);
   const merged = Object.assign({}, cur, patch);
-  D.fgPacking[key].packed[id+"|"+toko] = merged;
+  // Tulis balik ke key yg SAMA dgn yg dibaca (kalau entry lama masih pakai
+  // key lama, tetap di situ — jangan diam2 pindah/duplikat ke key baru).
+  rec.packed[fgPackedKeyExisting(rec, id, toko)] = merged;
   saveD();
   return merged;
 }
@@ -4196,7 +4216,7 @@ function kTarikDariFG(tgl,toko,factory){
     // BUKAN dgn membongkar key "id|toko" balik ke produk lewat kode saja —
     // kode bisa dipakai >1 produk berbeda, jadi peta kode->produk tidak aman.
     fgStoreRows(tgl, factory).filter(r=>r.toko===toko).forEach(r=>{
-      const val = rec.packed[skuId(r)+"|"+r.toko];
+      const val = rec.packed[fgPackedKeyExisting(rec, skuId(r), r.toko)];
       const q = val==null ? 0 : (typeof val==="object" ? num(val.qty) : num(val));
       if(q<=0) return;
       const i = kList.indexOf(r.produk);
