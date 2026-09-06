@@ -558,9 +558,10 @@ details.sect>summary{padding:15px 16px}
   <div class="stat-grid" id="db-stats"></div>
   <div class="card">
     <h3>Tracing Posisi Barang</h3>
-    <div class="note">Melacak posisi barang di sepanjang alur pada rentang tanggal di atas: Pesanan (dari PO) → Sedang Diproduksi (target divisi yang ceklisnya belum disubmit) → Selesai Produksi (netto yang sudah <b>diverifikasi Finishgood &amp; Packing</b>, inilah yang masuk stok gudang) → Siap Kirim (sudah dipacking &amp; ditandai siap) → Sudah Terkirim ke toko.<br><b>Catatan:</b> angka Finishgood &amp; Packing tidak ikut dijumlah ke Total Aktual di atas — FG memverifikasi barang yang sama, bukan memproduksi barang baru.</div>
+    <div class="note">Melacak posisi barang di sepanjang alur pada rentang tanggal di atas: Pesanan Outlet (dari PO) → Sedang Diproduksi (target divisi yang ceklisnya belum disubmit) → Selesai Produksi (netto yang sudah <b>diverifikasi Finishgood &amp; Packing</b>, inilah yang masuk stok gudang) → Siap Kirim (sudah dipacking &amp; ditandai siap) → Sudah Terkirim ke toko.<br><b>Catatan:</b> angka Finishgood &amp; Packing tidak ikut dijumlah ke Total Aktual di atas — FG memverifikasi barang yang sama, bukan memproduksi barang baru.<br><b>Pipeline ini khusus PO outlet.</b> Pesanan non-outlet dihitung terpisah di bawah dan tidak dimasukkan ke rasio fulfillment outlet — kalau ikut dicampur, rasio bisa &gt;100% padahal tidak ada masalah produksi.</div>
     <div class="stat-grid" id="db-pipelineStats" style="margin-top:10px"></div>
     <div class="chart-box" id="dashPipelineChart" style="margin-top:8px"></div>
+    <div class="stat-grid" id="db-pipelineNonOutletStats" style="margin-top:10px"></div>
   </div>
   <div class="card">
     <h3>Arus Barang &amp; Omset</h3>
@@ -3426,36 +3427,69 @@ function dashProdukData(dari,sampai){
   });
   return Object.values(per);
 }
+// Tracing Posisi Barang ini SENGAJA basis-nya OUTLET SAJA (PO Awal+Revisi, PB
+// diabaikan) — Pesanan Non-Outlet tetap ikut jadi target produksi (lihat
+// targetUntukDivisi/targetPesananDivisi, TIDAK diubah di sini), tapi tidak
+// dimasukkan ke rasio fulfillment outlet supaya "Pesanan" dan "Selesai
+// Produksi (FG)" membandingkan basis yang sama. Sebelumnya "Pesanan" hanya
+// menghitung D.po (outlet), sementara "Selesai Produksi (FG)" menjumlah
+// SELURUH netto FG — termasuk porsi yang sebenarnya berasal dari Pesanan
+// Non-Outlet yang digabung ke baris target yang sama (kode yang sama) oleh
+// targetUntukDivisi. Akibatnya rasio bisa >100% padahal tidak ada masalah
+// produksi sungguhan (dashboard membandingkan dua basis berbeda).
+// Alokasi per SKU per tanggal, dari yang tersedia di aplikasi (bukan invented):
+//   fgOutlet      = min(FG verified netto, target Outlet SKU itu)
+//   fgNonOutlet   = min(sisa netto, target Non-Outlet SKU itu)
+//   overproduksi  = sisa netto setelah itu (di luar TOTAL target Outlet+Non-Outlet)
 function dashPipelineData(dari,sampai){
-  // Tiap tahap diambil dari sumber yang BERBEDA supaya tidak tumpang tindih:
-  //   Pesanan          = PO
-  //   Sedang Diproduksi= target divisi produksi yang ceklisnya BELUM disubmit
-  //   Selesai Produksi = netto yang sudah diverifikasi Finishgood & Packing
-  //                      (ini yang benar2 masuk stok gudang)
-  //   Siap Kirim       = packing yang sudah ditandai siap
-  //   Sudah Terkirim   = data Kirim ke Toko
   let pesanan=0, produksi=0, selesai=0, siapKirim=0, kirim=0;
+  let selesaiNonOutlet=0, overproduksi=0, pesananNonOutlet=0;
   const tglPO = [];
+  const outletTargetByKey = {};    // "tgl|kode" -> target Outlet (dari D.po langsung)
   Object.entries(D.po).forEach(([tgl,rows])=>{
     if(!inRange(tgl,dari,sampai)) return;
     tglPO.push(tgl);
-    rows.forEach(r=>{ pesanan += hitungTarget(r); });
+    rows.forEach(r=>{
+      const t = hitungTarget(r);
+      pesanan += t;
+      if(r.kode){ const k=tgl+"|"+r.kode; outletTargetByKey[k]=(outletTargetByKey[k]||0)+t; }
+    });
   });
-  // sedang diproduksi: target divisi produksi yg belum disubmit
+  // target gabungan (Outlet+Non-Outlet) per SKU — basis yang SAMA dgn yang
+  // benar2 dipakai ceklis produksi (targetUntukDivisi), dipakai HANYA utk
+  // membedakan "produksi Non-Outlet yang sah" dari "overproduction sungguhan".
+  const combinedTargetByKey = {};
   tglPO.forEach(tgl=>{
     D.divisi.forEach(d=>{
       if(divisiVerifikasi(d)) return;
+      const rows = targetUntukDivisi(tgl,d);
+      rows.forEach(r=>{ if(r.kode){ const k=tgl+"|"+r.kode; combinedTargetByKey[k]=(combinedTargetByKey[k]||0)+r.target; } });
+      // sedang diproduksi: porsi OUTLET SAJA dari target divisi yg belum disubmit
       const c = D.ceklis[ceklisKey(tgl,d)];
       if(c && c.submitted) return;
-      produksi += targetUntukDivisi(tgl,d).reduce((a,r)=>a+r.target,0);
+      rows.forEach(r=>{ produksi += (r.kode ? (outletTargetByKey[tgl+"|"+r.kode]||0) : 0); });
     });
   });
-  // selesai produksi = hasil verifikasi FG saja (bukan penjumlahan semua ceklis)
+  // selesai produksi = hasil verifikasi FG, dipecah Outlet / Non-Outlet / overproduksi
+  // per SKU per tanggal (bukan penjumlahan mentah semua ceklis FG).
   Object.entries(D.ceklis).forEach(([key,c])=>{
     const [tgl, divisi] = key.split("|");
     if(!inRange(tgl,dari,sampai)) return;
     if(!divisiVerifikasi(divisi) || !c.submitted) return;
-    (c.rows||[]).forEach(r=>{ selesai += num(r.aktual)-num(r.reject); });
+    (c.rows||[]).forEach(r=>{
+      const netto = num(r.aktual)-num(r.reject);
+      if(netto<=0) return;
+      const k = tgl+"|"+r.kode;
+      const targetOutlet = outletTargetByKey[k]||0;
+      const targetGabungan = combinedTargetByKey[k]||0;
+      const fgOutlet = Math.min(netto, targetOutlet);
+      const sisaSetelahOutlet = netto - fgOutlet;
+      const targetNonOutlet = Math.max(0, targetGabungan - targetOutlet);
+      const fgNonOutlet = Math.min(sisaSetelahOutlet, targetNonOutlet);
+      selesai += fgOutlet;
+      selesaiNonOutlet += fgNonOutlet;
+      overproduksi += (sisaSetelahOutlet - fgNonOutlet);
+    });
   });
   Object.entries(D.fgPacking).forEach(([key,rec])=>{
     const tgl = key.split("|")[0];
@@ -3463,7 +3497,13 @@ function dashPipelineData(dari,sampai){
     if(rec.readyAt){ Object.values(rec.packed||{}).forEach(v=>{ siapKirim += num(v.qty); }); }
   });
   D.kirim.forEach(r=>{ if(inRange(r.tgl,dari,sampai)) kirim += num(r.qty); });
-  return {pesanan, produksi, selesai, siapKirim, kirim};
+  // Pesanan Non-Outlet — dihitung terpisah, TIDAK masuk rasio fulfillment outlet di atas.
+  D.pesanan.forEach(p=>{
+    if(p.sumber!=="produksi" || p.status==="selesai") return;
+    if(!inRange(p.tglProduksi,dari,sampai)) return;
+    (p.items||[]).forEach(it=>{ pesananNonOutlet += num(it.qty); });
+  });
+  return {pesanan, produksi, selesai, siapKirim, kirim, selesaiNonOutlet, overproduksi, pesananNonOutlet};
 }
 function dashByFactoryData(dari,sampai){
   const data = {karangtengah:{pesanan:0,produksi:0,terkirim:0}, cibadak:{pesanan:0,produksi:0,terkirim:0}};
@@ -3716,18 +3756,25 @@ function ratioNote(value, total){
 function renderDashPipeline(dari,sampai){
   const d = dashPipelineData(dari,sampai);
   $("db-pipelineStats").innerHTML = `
-    <div class="stat"><div class="lbl">Pesanan</div><div class="val">${fmt(d.pesanan)}</div></div>
+    <div class="stat"><div class="lbl">Pesanan Outlet</div><div class="val">${fmt(d.pesanan)}</div></div>
     <div class="stat"><div class="lbl">Sedang Diproduksi</div><div class="val">${fmt(d.produksi)}</div><div class="note" style="margin-top:2px">${ratioNote(d.produksi,d.pesanan)}</div></div>
     <div class="stat"><div class="lbl">Selesai Produksi (FG)</div><div class="val">${fmt(d.selesai)}</div><div class="note" style="margin-top:2px">${ratioNote(d.selesai,d.pesanan)}</div></div>
     <div class="stat"><div class="lbl">Siap Kirim</div><div class="val">${fmt(d.siapKirim)}</div><div class="note" style="margin-top:2px">${ratioNote(d.siapKirim,d.pesanan)}</div></div>
     <div class="stat"><div class="lbl">Sudah Terkirim</div><div class="val">${fmt(d.kirim)}</div><div class="note" style="margin-top:2px">${ratioNote(d.kirim,d.pesanan)}</div></div>`;
   renderHBarChart("dashPipelineChart", [
-    {label:'Pesanan', value:d.pesanan, color:'#5c5a4f'},
+    {label:'Pesanan Outlet', value:d.pesanan, color:'#5c5a4f'},
     {label:'Sedang Diproduksi', value:d.produksi, color:'#b8935a'},
     {label:'Selesai Produksi (FG)', value:d.selesai, color:'#d4a94a'},
     {label:'Siap Kirim', value:d.siapKirim, color:'#c9a86e'},
     {label:'Sudah Terkirim', value:d.kirim, color:'#7cb88f'}
   ]);
+  const elNonOutlet = $("db-pipelineNonOutletStats");
+  if(elNonOutlet){
+    elNonOutlet.innerHTML = `
+      <div class="stat"><div class="lbl">Pesanan Non-Outlet</div><div class="val">${fmt(d.pesananNonOutlet)}</div></div>
+      <div class="stat"><div class="lbl">Selesai Non-Outlet</div><div class="val">${fmt(d.selesaiNonOutlet)}</div></div>
+      ${d.overproduksi>0?`<div class="stat"><div class="lbl">Overproduksi</div><div class="val" style="color:var(--warn)">${fmt(d.overproduksi)}</div><div class="note" style="margin-top:2px">Di luar total target Outlet+Non-Outlet — bukan bagian pipeline manapun di atas.</div></div>`:''}`;
+  }
 }
 function renderDashTren(dari,sampai){
   const data = dashTrenData(dari,sampai);
