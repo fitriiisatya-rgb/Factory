@@ -55,6 +55,7 @@ function loadApp({confirmAnswer=true, fetchImpl=null}={}){
     mtkTambahBakery, mtkEditCanonical, mtkTambahAlias, mtkHapusAlias, mtkSetChannel, mtkToggleActive, mtkGabungKe,
     omsetHarianRows, omsetPerBakeryData, omsetTrenHarian, omsetSkuDetailData, omsetRejectPotongRows,
     renderOmset, omsetBukaDrill, hargaDasar, hargaPabrik, mpGet, rupiah, rjBuildGrid, rjSimpan,
+    dashPipelineData, dashData, pdRingkasanHariIni, renderPdRingkasan, pdBukaDivisi, renderDashFokus, renderDashboard,
     get poPreview(){ return poPreview; },
     get kList(){ return kList; },
     get kFgSource(){ return kFgSource; },
