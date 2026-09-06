@@ -419,6 +419,7 @@ details.sect>summary{padding:15px 16px}
     <button class="nav-btn" data-p="p-prod" onclick="go(this)">Produksi</button>
     <button class="nav-btn" data-p="p-dash" onclick="go(this)">Dashboard</button>
     <button class="nav-btn" data-p="p-kirim" onclick="go(this)">Kirim Toko</button>
+    <button class="nav-btn" data-p="p-omset" onclick="go(this)">Laporan Omset</button>
     <button class="nav-btn" data-p="p-retur" onclick="go(this)">Retur</button>
     <button class="nav-btn" data-p="p-reject" onclick="go(this)">Reject</button>
     <button class="nav-btn" data-p="p-pesanan" onclick="go(this)">Pesanan</button>
@@ -977,6 +978,50 @@ details.sect>summary{padding:15px 16px}
   </div>
 </div>
 
+<!-- ================= LAPORAN OMSET ================= -->
+<div class="page" id="p-omset">
+  <div class="card" id="omsetPage">
+    <h3>Laporan Omset — Per Bakery</h3>
+    <div class="note">Basis: barang yang <b>benar-benar terkirim</b> (Kirim Toko), bukan invoice. Retur = beban toko (tidak mengurangi angka ini). Nama toko sudah digabung per bakery standar (Karangtengah + Cibadak untuk bakery yang sama tampil sebagai satu baris).</div>
+    <div class="row" style="margin-top:10px">
+      <div><label class="fl">Dari Tanggal</label><input type="date" id="om-dari" onchange="renderOmset()"></div>
+      <div><label class="fl">Sampai Tanggal</label><input type="date" id="om-sampai" onchange="renderOmset()"></div>
+      <button class="btn mini ghost" style="flex:0;margin-top:20px" onclick="omsetIsiFilterHariIni()">Hari Ini</button>
+    </div>
+    <div class="row">
+      <div><label class="fl">Bakery</label><select id="om-fBakery" onchange="renderOmset()"><option value="">Semua bakery</option></select></div>
+      <div><label class="fl">Channel</label><select id="om-fChannel" onchange="renderOmset()">
+        <option value="">Semua channel</option><option value="ownership">Ownership</option><option value="franchise">Franchise</option>
+      </select></div>
+      <div><label class="fl">Factory</label><select id="om-fFactory" onchange="renderOmset()">
+        <option value="">Semua factory</option><option value="karangtengah">Karangtengah</option><option value="cibadak">Cibadak</option>
+      </select></div>
+    </div>
+    <div class="stat-grid" id="om-stats" style="margin-top:10px"></div>
+    <div style="margin-top:14px" id="omsetTrenChart"></div>
+    <div class="tblwrap" style="margin-top:14px">
+      <table>
+        <thead><tr><th class="l">Bakery</th><th>Channel</th><th>Terkirim</th><th>Omset Pabrik</th><th>Omset 100%</th><th>HPP</th><th>Margin</th><th>Margin%</th></tr></thead>
+        <tbody id="om-tbody"></tbody>
+      </table>
+    </div>
+    <div class="note">Klik satu baris bakery untuk melihat rincian SKU (Daily Store Report) pada tanggal terakhir di rentang yang dipilih.</div>
+    <div id="omsetDrillWrap" class="card" style="display:none;margin-top:14px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h3 id="omsetDrillTitle" style="margin:0"></h3>
+        <button class="btn mini ghost" onclick="omsetTutupDrill()">✕ Tutup</button>
+      </div>
+      <div class="note" id="omsetDrillSummary"></div>
+      <div class="tblwrap" style="margin-top:10px">
+        <table>
+          <thead><tr><th class="l">Produk</th><th class="l">Factory</th><th>Qty Kirim</th><th>Harga Pabrik</th><th>Omset</th><th>HPP</th><th>Margin</th></tr></thead>
+          <tbody id="omsetDrillBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ================= RETUR ================= -->
 <div class="page" id="p-retur">
   <div class="card">
@@ -1448,6 +1493,7 @@ details.sect>summary{padding:15px 16px}
   <div class="tabs" id="masterTabs">
     <button class="on" data-p="produk" onclick="dashArusTab(this)">Produk &amp; Harga</button>
     <button data-p="toko" onclick="dashArusTab(this)">Toko</button>
+    <button data-p="tokoCanon" onclick="dashArusTab(this)">Master Toko</button>
     <button data-p="divisi" onclick="dashArusTab(this)">Divisi &amp; Kategori</button>
     <button data-p="sync" onclick="dashArusTab(this)">Sinkronisasi &amp; Cadangan</button>
   </div>
@@ -1528,6 +1574,26 @@ details.sect>summary{padding:15px 16px}
     </div>
     <div class="row" style="margin-top:10px"><input type="text" id="m-tokoBaru" placeholder="Nama toko/kanal baru"><button class="btn sub" style="flex:0;margin-top:0" onclick="mTambah('toko')">Tambah</button></div>
     <div id="m-tokoList" style="margin-top:10px"></div>
+  </div>
+  </div>
+
+  <div class="tabpanel" data-panel="tokoCanon">
+  <div class="card">
+    <h3>Master Toko — Nama Standar Bakery</h3>
+    <div class="note">Bakery yang sama bisa muncul dengan nama berbeda dari sumber PO yang berbeda (mis. Karangtengah "CKLE" vs Cibadak "BAKERY CIKOLE") — tabel ini menyatukan semua alias ke <b>satu nama standar</b> yang dipakai Kirim Toko, Laporan Omset, Retur, dan Rekap. Data lama TIDAK diubah/dihapus — ini cuma layer pemetaan yang dibaca saat ditampilkan.</div>
+    <div id="mtk-warnWrap" style="margin-top:10px"></div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="mtk-storeIdBaru" placeholder="Store ID (mis. CKLE)">
+      <input type="text" id="mtk-canonBaru" placeholder="Nama Standar (mis. BAKERY CIKOLE)">
+      <button class="btn sub" style="flex:0;margin-top:0" onclick="mtkTambahBakery()">Tambah Bakery</button>
+    </div>
+    <input type="text" id="mtk-cari" placeholder="Cari store ID / nama / alias…" oninput="renderMasterToko()" style="margin-top:10px">
+    <div class="tblwrap" style="margin-top:10px">
+    <table>
+      <thead><tr><th class="l">Store ID</th><th class="l">Nama Standar</th><th class="l">Alias</th><th>Channel</th><th>Status</th><th>Action</th></tr></thead>
+      <tbody id="mtk-list"></tbody>
+    </table>
+    </div>
   </div>
   </div>
 
@@ -1774,7 +1840,7 @@ function divisiVerifikasi(divisi){ return divisi===SPECIAL_FG || divisi===SPECIA
 
 /* ================= STATE ================= */
 const KEY = "amorcakes-arus-v1";
-const SEED = { divisi:[], products:[], stores:[], produksi:{}, kirim:[], retur:[], jual:[], po:{}, ceklis:{}, kategoriMap:{}, settings:{targetMode:"jumlah"}, fgPacking:{}, kirimClosed:{}, hargaProduk:{}, invoice:{}, masterProduk:{}, mutasi:[], pembayaran:[] };
+const SEED = { divisi:[], products:[], stores:[], produksi:{}, kirim:[], retur:[], jual:[], po:{}, ceklis:{}, kategoriMap:{}, settings:{targetMode:"jumlah"}, fgPacking:{}, kirimClosed:{}, hargaProduk:{}, invoice:{}, masterProduk:{}, masterToko:{}, mutasi:[], pembayaran:[] };
 let D;
 try { D = JSON.parse(localStorage.getItem(KEY)) || structuredClone(SEED); } catch { D = structuredClone(SEED); }
 ["divisi","products","stores","kirim","retur","jual"].forEach(k=>{ if(!Array.isArray(D[k])) D[k]=[]; });
@@ -1795,6 +1861,16 @@ if(!Array.isArray(D.stokAdj)) D.stokAdj = [];
 // di aplikasi. Pencocokan huruf besar/kecil TIDAK diperhitungkan — alias hanya
 // dipakai untuk nama yang memang berbeda tulisannya.
 if(!D.tokoAlias || typeof D.tokoAlias!=="object") D.tokoAlias = {};
+// Master Toko kanonik — toko/bakery yang SAMA bisa masuk dgn nama berbeda dari
+// sumber PO berbeda (mis. Karangtengah "CKLE" vs Cibadak "BAKERY CIKOLE").
+// D.masterToko menyimpan {storeId, canonicalName, aliases[], channel, active}
+// per bakery — lihat ensureMasterToko()/bootstrapTokoCanonicalV di bawah
+// (fungsinya dideklarasikan lebih jauh di file ini, tapi `function` di-hoist
+// jadi bisa dipanggil dari sini). TIDAK menulis ulang D.stores/riwayat lama —
+// murni layer resolusi baru yg dibaca lazy (lihat resolveStore/canonicalStoreName).
+if(!D.masterToko || typeof D.masterToko!=="object") D.masterToko = {};
+ensureMasterToko();
+if(!D.masterTokoBootstrapV){ bootstrapTokoCanonicalDikenal(); D.masterTokoBootstrapV = 1; saveD(); }
 // Padanan nama produk dari PO (typo/variasi ejaan) ke nama resmi di Master
 // Produk — sekali dikonfirmasi user, dipakai otomatis di upload PO berikutnya.
 // Dibuat SEPARATE dari D.tokoAlias (beda domain), tapi pola & mekanismenya sama.
@@ -1897,7 +1973,11 @@ if(D.settings.pctFranchise==null) D.settings.pctFranchise = 60;
 //   - Harga Invoice (dokumen ke toko)  = Harga 100% × pctOwnership/pctFranchise
 if(D.settings.pctDasar==null) D.settings.pctDasar = 50;
 if(!D.tokoTipe || typeof D.tokoTipe!=="object") D.tokoTipe = {};
-function tokoTipe(toko){ return D.tokoTipe[toko] || "ownership"; }
+// Resolve via canonical bakery dulu (channel yg diset lewat Master Toko utk
+// SATU alias harus kepakai jg utk alias lain bakery yg sama), fallback ke
+// nama mentah (data lama yg tokoTipe-nya sudah diset sebelum ada canonical
+// mapping tetap terbaca — tidak ada yg direset).
+function tokoTipe(toko){ const canon = canonicalStoreName(toko); return D.tokoTipe[canon] || D.tokoTipe[toko] || "ownership"; }
 function pctUntukToko(toko){ return tokoTipe(toko)==="franchise" ? num(D.settings.pctFranchise) : num(D.settings.pctOwnership); }
 // Harga Invoice — dipakai backoffice utk dokumen (Invoice, Retur/Reject
 // sebagai referensi), TERGANTUNG tipe toko (Ownership/Franchise).
@@ -2329,9 +2409,20 @@ async function muatSemua(diam){
 
 /* ================= OPSI SELECT ================= */
 function tokoOptions(){ return '<option value="">— pilih —</option>'+D.stores.map(s=>`<option>${s}</option>`).join(""); }
+// Kirim Toko harus memilih BAKERY (nama standar), bukan tiap alias per
+// factory sbg baris terpisah — "CKLE" (Karangtengah) dan "BAKERY CIKOLE"
+// (Cibadak) harus muncul sbg SATU pilihan "BAKERY CIKOLE" di dropdown ini.
+function tokoOptionsCanonical(){
+  ensureMasterToko();
+  const nama = [...new Set(Object.values(D.masterToko||{}).filter(m=>m.active!==false).map(m=>m.canonicalName))].sort();
+  return '<option value="">— pilih —</option>'+nama.map(s=>`<option>${s}</option>`).join("");
+}
 function fillTokoSelects(){
-  // (rj-toko ikut diisi di bawah bersama select toko lainnya)
-  ["k-toko","rj-toko"].forEach(id=>{ const el=$(id); if(!el) return; const v=el.value; el.innerHTML=tokoOptions(); el.value=v; });
+  const el = $("k-toko");
+  if(el){ const v=el.value; el.innerHTML=tokoOptionsCanonical(); el.value=v; }
+  // rj-toko (Reject) belum diubah ke canonical — di luar cakupan patch ini.
+  const elRj = $("rj-toko");
+  if(elRj){ const v=elRj.value; elRj.innerHTML=tokoOptions(); elRj.value=v; }
 }
 
 /* ================= PARSER PO (CSV) ================= */
@@ -3814,6 +3905,173 @@ function renderRekonToko(dari,sampai){
       <td style="color:var(--mute)">${pRetur==null?'-':pRetur+'%'}</td></tr>`;
   }).join("") : '<tr><td colspan="7" class="empty">Belum ada kiriman pada rentang tanggal ini.</td></tr>';
 }
+/* ================= LAPORAN OMSET HARIAN (per bakery kanonik) =================
+   Halaman terpisah dari Dashboard operasional — fokus SATU pertanyaan: berapa
+   omset per bakery per hari. Basis WAJIB D.kirim (barang benar2 terkirim),
+   BUKAN D.invoice — invoice bisa berbeda dari kirim (potongan reject, atau
+   history lama yang belum pernah diinvoice), jadi tidak dipakai sbg dasar
+   Omset Pabrik. Formula PERSIS sama dgn yang sudah dipakai Dashboard "Arus
+   Barang"/Rekap (omsetKirimRow/omset100KirimRow/hargaDasar/reject "potong")
+   — supaya angka Omset Pabrik konsisten di seluruh aplikasi, bukan basis
+   kedua yang bisa beda sendiri. Grouping pakai bakery KANONIK: Karangtengah +
+   Cibadak utk bakery yang sama digabung jadi satu baris; factory tetap ada
+   per-baris SKU utk drill-down, tidak pernah hilang/disembunyikan permanen. */
+function omsetProdukFactoryMap(){
+  const map = {};
+  Object.values(D.po).forEach(rows=>rows.forEach(r=>{ map[r.produk] = r.factory==="cibadak"?"cibadak":"karangtengah"; }));
+  return map;
+}
+function omsetKirimDetailRow(r, prodFactory){
+  const h100 = num(mpGet(r.produk).harga);
+  const hpp = num(mpGet(r.produk).hpp);
+  const qty = num(r.qty);
+  const omsetPabrik = omsetKirimRow(r);
+  const omset100 = omset100KirimRow(r);
+  const totalHpp = qty * hpp;
+  return {
+    tgl:r.tgl, produk:r.produk, factory: (prodFactory||omsetProdukFactoryMap())[r.produk] || null,
+    toko:r.toko, bakery: canonicalStoreName(r.toko), channel: tokoTipe(r.toko),
+    qty, hargaPabrikSatuan: hargaDasar(h100), omsetPabrik, omset100, hpp: totalHpp,
+    margin: omsetPabrik - totalHpp,
+  };
+}
+function omsetHarianRows(dari, sampai, filter){
+  filter = filter || {};
+  const prodFactory = omsetProdukFactoryMap();
+  return D.kirim.filter(k=>inRange(k.tgl,dari,sampai)).map(r=>omsetKirimDetailRow(r,prodFactory)).filter(r=>{
+    if(filter.bakery && r.bakery!==filter.bakery) return false;
+    if(filter.channel && r.channel!==filter.channel) return false;
+    if(filter.factory && r.factory!==filter.factory) return false;
+    return true;
+  });
+}
+// Reject dgn resolusi "potong" mengurangi Omset Pabrik/100% (aturan yang sama
+// dgn dashArusBarangData) — TIDAK mengubah qty/riwayat D.kirim sama sekali,
+// cuma koreksi angka omset laporan.
+function omsetRejectPotongRows(dari, sampai, filter){
+  filter = filter || {};
+  const prodFactory = omsetProdukFactoryMap();
+  return (D.reject||[]).filter(r=>inRange(r.tgl,dari,sampai) && r.resolusi==="potong").map(r=>{
+    const qty = num(r.qty);
+    const h100 = num(mpGet(r.produk).harga);
+    return {
+      tgl:r.tgl, bakery: canonicalStoreName(r.toko), channel: tokoTipe(r.toko),
+      factory: prodFactory[r.produk] || null,
+      omsetPabrik: -(qty*hargaDasar(h100)), omset100: -(qty*h100),
+    };
+  }).filter(r=>{
+    if(filter.bakery && r.bakery!==filter.bakery) return false;
+    if(filter.channel && r.channel!==filter.channel) return false;
+    if(filter.factory && r.factory!==filter.factory) return false;
+    return true;
+  });
+}
+function omsetPerBakeryData(dari, sampai, filter){
+  const per = {};
+  const get = b => (per[b] ||= {bakery:b, channel:null, qty:0, omsetPabrik:0, omset100:0, hpp:0, margin:0});
+  omsetHarianRows(dari,sampai,filter).forEach(r=>{
+    const b = get(r.bakery); if(!b.channel) b.channel = r.channel;
+    b.qty += r.qty; b.omsetPabrik += r.omsetPabrik; b.omset100 += r.omset100; b.hpp += r.hpp; b.margin += r.margin;
+  });
+  omsetRejectPotongRows(dari,sampai,filter).forEach(r=>{
+    const b = get(r.bakery);
+    b.omsetPabrik += r.omsetPabrik; b.omset100 += r.omset100; b.margin += r.omsetPabrik;
+  });
+  return Object.values(per).sort((a,b)=>b.omsetPabrik-a.omsetPabrik);
+}
+function omsetTrenHarian(dari, sampai, filter){
+  const per = {};
+  omsetHarianRows(dari,sampai,filter).forEach(r=>{ per[r.tgl] = (per[r.tgl]||0) + r.omsetPabrik; });
+  omsetRejectPotongRows(dari,sampai,filter).forEach(r=>{ per[r.tgl] = (per[r.tgl]||0) + r.omsetPabrik; });
+  return Object.keys(per).sort().map(tgl=>({tgl, omsetPabrik:per[tgl]}));
+}
+// Drill-down SKU: satu tanggal + satu bakery ("Daily Store Report").
+function omsetSkuDetailData(tgl, bakery, filter){
+  return omsetHarianRows(tgl, tgl, Object.assign({}, filter, {bakery})).sort((a,b)=>b.omsetPabrik-a.omsetPabrik);
+}
+let omsetDrillState = null; // {tgl-ish scope handled via filter inputs} — {bakery} saat sedang dibuka
+function omsetFilterBaca(){
+  return {
+    dari: ($("om-dari")&&$("om-dari").value) || hariIni(),
+    sampai: ($("om-sampai")&&$("om-sampai").value) || hariIni(),
+    bakery: ($("om-fBakery")&&$("om-fBakery").value) || "",
+    channel: ($("om-fChannel")&&$("om-fChannel").value) || "",
+    factory: ($("om-fFactory")&&$("om-fFactory").value) || "",
+  };
+}
+function omsetIsiFilterHariIni(){
+  if($("om-dari")) $("om-dari").value = hariIni();
+  if($("om-sampai")) $("om-sampai").value = hariIni();
+  renderOmset();
+}
+function renderOmset(){
+  const wrap = $("omsetPage"); if(!wrap) return;
+  if($("om-dari") && !$("om-dari").value) $("om-dari").value = hariIni();
+  if($("om-sampai") && !$("om-sampai").value) $("om-sampai").value = hariIni();
+  const f = omsetFilterBaca();
+  if($("om-fBakery")){
+    const cur = $("om-fBakery").value;
+    const bakeryList = [...new Set(Object.values(D.masterToko||{}).filter(m=>m.active!==false).map(m=>m.canonicalName))].sort();
+    $("om-fBakery").innerHTML = '<option value="">Semua bakery</option>'+bakeryList.map(b=>`<option ${b===cur?'selected':''}>${b}</option>`).join("");
+  }
+  const perBakery = omsetPerBakeryData(f.dari, f.sampai, f);
+  const totQty = perBakery.reduce((a,x)=>a+x.qty,0);
+  const totOmset = perBakery.reduce((a,x)=>a+x.omsetPabrik,0);
+  const totMargin = perBakery.reduce((a,x)=>a+x.margin,0);
+  const marginPct = totOmset ? Math.round(totMargin/totOmset*1000)/10 : null;
+  if($("om-stats")) $("om-stats").innerHTML = `
+    <div class="stat"><div class="lbl">Terkirim</div><div class="val">${fmt(totQty)}</div><div class="sub">pcs, ${f.dari===f.sampai?fmtTgl(f.dari):fmtTgl(f.dari)+' – '+fmtTgl(f.sampai)}</div></div>
+    <div class="stat"><div class="lbl">Omset Pabrik</div><div class="val">${rupiah(totOmset)}</div><div class="sub">basis: barang terkirim (D.kirim), bukan invoice</div></div>
+    <div class="stat"><div class="lbl">Margin Kotor</div><div class="val" style="color:${totMargin>=0?'var(--green)':'var(--red)'}">${rupiah(totMargin)}</div><div class="sub">${marginPct==null?'-':marginPct+'% dari omset'}</div></div>
+    <div class="stat"><div class="lbl">Bakery Aktif</div><div class="val">${fmt(perBakery.length)}</div><div class="sub">ada transaksi kirim pada rentang ini</div></div>`;
+  if($("om-tbody")){
+    $("om-tbody").innerHTML = perBakery.length ? perBakery.map(b=>{
+      const margPct = b.omsetPabrik ? Math.round(b.margin/b.omsetPabrik*1000)/10 : null;
+      return `<tr style="cursor:pointer" onclick="omsetBukaDrill('${b.bakery.replace(/'/g,"\\'")}')">
+        <td class="l">${b.bakery}</td>
+        <td style="color:var(--mute)">${b.channel==="franchise"?"Franchise":"Ownership"}</td>
+        <td>${fmt(b.qty)}</td>
+        <td class="omset">${rupiah(b.omsetPabrik)}</td>
+        <td style="color:var(--mute)">${rupiah(b.omset100)}</td>
+        <td style="color:var(--mute)">${rupiah(b.hpp)}</td>
+        <td style="color:${b.margin>=0?'var(--green)':'var(--red)'}">${rupiah(b.margin)}</td>
+        <td style="color:var(--mute)">${margPct==null?'-':margPct+'%'}</td>
+      </tr>`;
+    }).join("") : '<tr><td colspan="8" class="empty">Tidak ada kiriman pada rentang/filter ini.</td></tr>';
+  }
+  const tren = omsetTrenHarian(tglMinus(6)<f.dari?tglMinus(6):f.dari, f.sampai, {bakery:f.bakery, channel:f.channel, factory:f.factory});
+  if(typeof renderLineChart==="function") renderLineChart("omsetTrenChart", tren.map(t=>fmtTgl(t.tgl)), [{label:"Omset Pabrik", color:"#c9a24b", data:tren.map(t=>t.omsetPabrik), fill:true}]);
+  if(omsetDrillState) omsetRenderDrill(); else if($("omsetDrillWrap")) $("omsetDrillWrap").style.display="none";
+}
+function omsetBukaDrill(bakery){
+  const f = omsetFilterBaca();
+  omsetDrillState = {bakery, tgl: f.dari===f.sampai ? f.dari : null};
+  omsetRenderDrill();
+}
+function omsetTutupDrill(){ omsetDrillState = null; if($("omsetDrillWrap")) $("omsetDrillWrap").style.display="none"; }
+function omsetRenderDrill(){
+  const box = $("omsetDrillWrap"); if(!box || !omsetDrillState) return;
+  box.style.display = "block";
+  const f = omsetFilterBaca();
+  const { bakery } = omsetDrillState;
+  // Kalau rentang > 1 hari, drill-down default ke tanggal TERAKHIR pada
+  // rentang tsb supaya "Daily Store Report" selalu satu hari yang jelas.
+  const tgl = omsetDrillState.tgl || f.sampai;
+  const rows = omsetSkuDetailData(tgl, bakery, {channel:f.channel, factory:f.factory});
+  const qty = rows.reduce((a,r)=>a+r.qty,0), omset = rows.reduce((a,r)=>a+r.omsetPabrik,0);
+  const hpp = rows.reduce((a,r)=>a+r.hpp,0), margin = rows.reduce((a,r)=>a+r.margin,0);
+  $("omsetDrillTitle").textContent = `${bakery} · ${fmtTgl(tgl)}`;
+  $("omsetDrillSummary").innerHTML = `${fmt(qty)} pcs · Omset Pabrik ${rupiah(omset)} · HPP ${rupiah(hpp)} · Margin ${rupiah(margin)}`;
+  $("omsetDrillBody").innerHTML = rows.length ? rows.map(r=>`<tr>
+      <td class="l">${r.produk}</td>
+      <td style="color:var(--mute)">${r.factory==='cibadak'?'Cibadak':'Karangtengah'}</td>
+      <td>${fmt(r.qty)}</td>
+      <td style="color:var(--mute)">${rupiah(r.hargaPabrikSatuan)}</td>
+      <td class="omset">${rupiah(r.omsetPabrik)}</td>
+      <td style="color:var(--mute)">${rupiah(r.hpp)}</td>
+      <td style="color:${r.margin>=0?'var(--green)':'var(--red)'}">${rupiah(r.margin)}</td>
+    </tr>`).join("") : '<tr><td colspan="7" class="empty">Tidak ada kiriman bakery ini pada tanggal tsb.</td></tr>';
+}
 function dashArusTab(btn){
   const tabs = btn.closest(".tabs");
   tabs.querySelectorAll("button").forEach(b=>b.classList.remove("on"));
@@ -4036,7 +4294,10 @@ function stokToko(toko, produk){
 
 /* ================= KIRIM TOKO ================= */
 let kList = [], rList = [], jList = [];
-let kFgSource = null;
+// Array (bukan objek tunggal) — supaya menarik >1 batch FG (mis. Karangtengah
+// + Cibadak utk bakery gabungan yg sama) tetap menandai KEDUA batch sbg
+// terkirim saat disimpan, bukan cuma batch yg terakhir ditarik.
+let kFgSource = [];
 
 function fgReadyList(){
   const out=[];
@@ -4055,6 +4316,30 @@ function fgReadyList(){
   });
   return out.sort((a,b)=> b.tgl.localeCompare(a.tgl));
 }
+// Gabungkan baris fgReadyList() per bakery kanonik + tanggal — satu row per
+// bakery meski sumbernya >1 factory (mis. Karangtengah "CKLE" + Cibadak
+// "BAKERY CIKOLE"), dgn breakdown per-factory tetap tersimpan utk expand.
+function fgReadyListByBakery(){
+  const raw = fgReadyList();
+  const byGroup = {};
+  raw.forEach(r=>{
+    const bakery = canonicalStoreName(r.toko);
+    const key = r.tgl+"|"+bakery;
+    if(!byGroup[key]) byGroup[key] = {tgl:r.tgl, bakery, total:0, breakdown:[]};
+    byGroup[key].total += r.total;
+    byGroup[key].breakdown.push(r);
+  });
+  return Object.values(byGroup).sort((a,b)=> b.tgl.localeCompare(a.tgl) || a.bakery.localeCompare(b.bakery));
+}
+// Tarik SEMUA batch FG (bisa >1 factory) utk satu bakery+tanggal sekaligus —
+// dipakai tombol "Proses Kirim" pada row gabungan Siap Kirim. kTarikDariFG
+// sendiri sudah aman dipanggil berkali-kali beruntun (kFgSource
+// mengakumulasi, bukan menimpa, selama tgl+tokoCanon sama).
+function kTarikDariFGBakery(tgl,bakery){
+  const grup = fgReadyListByBakery().find(g=>g.tgl===tgl && g.bakery===bakery);
+  if(!grup || !grup.breakdown.length) return;
+  grup.breakdown.forEach(r=>{ kTarikDariFG(r.tgl, r.toko, r.factory); });
+}
 function totalPesananTokoFactory(toko, factory){
   let total = 0;
   Object.values(D.po).forEach(rows=>{
@@ -4067,16 +4352,21 @@ function totalPesananTokoFactory(toko, factory){
   return total;
 }
 function renderFgReadyList(){
-  const list = fgReadyList();
+  const groups = fgReadyListByBakery();
   const card = $("kFgReadyCard");
   const btn = $("kFgPullBtn");
-  if(btn) btn.style.display = list.length ? "inline-block" : "none";
-  if(!list.length){ card.style.display="none"; $("kFgReadyEmpty").style.display="block"; renderKPortalStats(); return; }
+  if(btn) btn.style.display = groups.length ? "inline-block" : "none";
+  if(!groups.length){ card.style.display="none"; $("kFgReadyEmpty").style.display="block"; renderKPortalStats(); return; }
   card.style.display="block"; $("kFgReadyEmpty").style.display="none";
-  $("kFgReadyList").innerHTML = list.map(r=>{
-    const totalToko = totalPesananTokoFactory(r.toko, r.factory);
+  $("kFgReadyList").innerHTML = groups.map(g=>{
+    const totalToko = g.breakdown.reduce((a,r)=>a+totalPesananTokoFactory(r.toko, r.factory),0);
     const ratio = totalToko ? ` <span style="color:var(--mute)">(dari ${fmt(totalToko)} pcs pesanan toko ini)</span>` : '';
-    return `<div class="li"><span><span class="t1">${r.toko}</span><span class="t2">${fmtTgl(r.tgl)} · ${r.factory==='cibadak'?'Cibadak':'Karangtengah'} · <b style="color:var(--hi)">${fmt(r.total)} pcs</b> siap${ratio}</span></span><button class="btn mini ghost" onclick="kTarikDariFG('${r.tgl}','${r.toko.replace(/'/g,"\\'")}','${r.factory}')">Proses Kirim →</button></div>`;
+    const detailBlock = g.breakdown.length>1
+      ? `<details class="dd" style="margin-top:4px"><summary style="color:var(--mute);font-size:12px;cursor:pointer">${g.breakdown.length} factory — lihat rincian per factory</summary><div class="dd-body">${
+          g.breakdown.map(r=>`<div style="padding-left:10px;color:var(--mute);font-size:12px">• ${r.factory==='cibadak'?'Cibadak':'Karangtengah'} (${r.toko}): ${fmt(r.total)} pcs</div>`).join("")
+        }</div></details>`
+      : "";
+    return `<div class="li"><span><span class="t1">${g.bakery}</span><span class="t2">${fmtTgl(g.tgl)} · <b style="color:var(--hi)">${fmt(g.total)} pcs</b> siap${ratio}</span>${detailBlock}</span><button class="btn mini ghost" onclick="kTarikDariFGBakery('${g.tgl}','${g.bakery.replace(/'/g,"\\'")}')">Proses Kirim →</button></div>`;
   }).join("");
   renderKPortalStats();
 }
@@ -4091,7 +4381,7 @@ function kFulfillmentFlatData(){
       const kategori = r.factory==="cibadak" ? "BOLU" : r.kategori;
       (r.stores||[]).forEach(s=>{
         const key = r.factory+"|"+s.toko+"|"+r.produk;
-        if(!perTokoProduk[key]) perTokoProduk[key] = {factory:r.factory, toko:s.toko, produk:r.produk, kategori, target:0, terkirim:0};
+        if(!perTokoProduk[key]) perTokoProduk[key] = {factory:r.factory, toko:s.toko, bakery:canonicalStoreName(s.toko), produk:r.produk, kategori, target:0, terkirim:0};
         perTokoProduk[key].target += hitungTarget({poAwal:s.poAwal, poRevisi:s.poRevisi});
       });
     });
@@ -4110,18 +4400,28 @@ function kFulfillmentFlatData(){
       return Object.assign({}, x, {sisa, pct});
     });
 }
+// Dikelompokkan per BAKERY kanonik (bukan per factory+toko mentah) — pesanan
+// belum terpenuhi dari Karangtengah & Cibadak utk bakery gabungan yg sama
+// (mis. CKLE + BAKERY CIKOLE) tampil sbg satu grup, dgn factory tiap baris
+// produk tetap tersimpan (x.factory) utk ditampilkan di detail.
 function kPesananBelumTerpenuhiPerToko(){
   const flat = kFulfillmentFlatData().filter(x=>x.sisa>0);
   const byToko = {};
   flat.forEach(x=>{
-    const key = x.factory+"|"+x.toko;
-    if(!byToko[key]) byToko[key] = {factory:x.factory, toko:x.toko, produkList:[], totalSisa:0, totalTarget:0};
+    const key = x.bakery;
+    if(!byToko[key]) byToko[key] = {toko:x.bakery, factories:new Set(), produkList:[], totalSisa:0, totalTarget:0};
+    byToko[key].factories.add(x.factory);
     byToko[key].produkList.push(x);
     byToko[key].totalSisa += x.sisa;
     byToko[key].totalTarget += x.target;
   });
-  Object.values(byToko).forEach(g=>g.produkList.sort((a,b)=>b.sisa-a.sisa));
-  return Object.values(byToko).sort((a,b)=> b.totalSisa - a.totalSisa);
+  return Object.values(byToko).map(g=>{
+    g.produkList.sort((a,b)=>b.sisa-a.sisa);
+    const facs = [...g.factories];
+    g.factory = facs.length===1 ? facs[0] : null; // null = gabungan >1 factory
+    delete g.factories;
+    return g;
+  }).sort((a,b)=> b.totalSisa - a.totalSisa);
 }
 let kUnfulfilledCache = [];
 let kUnfulfilledFlatCache = [];
@@ -4134,7 +4434,7 @@ function renderKUnfulfilled(){
   kUnfulfilledCache = kPesananBelumTerpenuhiPerToko();
   const vP = $("ku-fProduk").value, vT = $("ku-fToko").value;
   const produkUnik = [...new Set(flat.map(x=>x.produk))].sort();
-  const tokoUnik = [...new Set(flat.map(x=>x.toko))].sort();
+  const tokoUnik = [...new Set(flat.map(x=>x.bakery))].sort(); // nama standar (canonical) bakery, bukan alias mentah
   $("ku-fProduk").innerHTML = '<option value="">Filter Produk…</option>'+produkUnik.map(p=>`<option>${p}</option>`).join("");
   $("ku-fToko").innerHTML = '<option value="">Filter Toko…</option>'+tokoUnik.map(t=>`<option>${t}</option>`).join("");
   if(produkUnik.includes(vP)) $("ku-fProduk").value = vP;
@@ -4162,21 +4462,30 @@ function kUnfulfilledFilterRender(){
   }
 
   if(fToko){
-    let rows = kUnfulfilledFlatCache.filter(x=>x.toko===fToko);
+    let rows = kUnfulfilledFlatCache.filter(x=>x.bakery===fToko);
     if(fFactory) rows = rows.filter(x=>x.factory===fFactory);
     if(q) rows = rows.filter(x=>x.produk.toLowerCase().includes(q));
     rows = rows.sort((a,b)=>(a.pct??999)-(b.pct??999));
     const totalTarget = rows.reduce((a,x)=>a+x.target,0), totalTerkirim = rows.reduce((a,x)=>a+x.terkirim,0);
     const pctTotal = totalTarget ? Math.round(totalTerkirim/totalTarget*1000)/10 : null;
     $("ku-summary").innerHTML = rows.length ? `<b>${fToko}</b> · ${rows.length} produk · terpenuhi ${fmt(totalTerkirim)} dari ${fmt(totalTarget)} pcs (${pctTotal==null?'-':pctTotal+'%'})` : `<b>${fToko}</b> · tidak ada pesanan`;
-    $("kUnfulfilledList").innerHTML = rows.length ? `<table class="mini-t"><thead><tr><th class="l">Produk</th><th class="l">Kategori</th><th>Terpenuhi</th><th class="l">Dari Pesanan</th><th>%</th></tr></thead><tbody>${
-      rows.map(x=>`<tr><td class="l">${x.produk}</td><td class="l" style="color:var(--mute)">${x.kategori||'-'}</td><td class="${x.sisa>0?'r':'g'}">${fmt(x.terkirim)}</td><td class="l" style="color:var(--mute)">dari ${fmt(x.target)} pcs</td><td class="${fulfilClass(x.pct)}">${x.pct==null?'-':x.pct+'%'}</td></tr>`).join("")
+    $("kUnfulfilledList").innerHTML = rows.length ? `<table class="mini-t"><thead><tr><th class="l">Produk</th><th class="l">Factory</th><th class="l">Kategori</th><th>Terpenuhi</th><th class="l">Dari Pesanan</th><th>%</th></tr></thead><tbody>${
+      rows.map(x=>`<tr><td class="l">${x.produk}</td><td class="l" style="color:var(--mute)">${x.factory==='cibadak'?'Cibadak':'Karangtengah'}</td><td class="l" style="color:var(--mute)">${x.kategori||'-'}</td><td class="${x.sisa>0?'r':'g'}">${fmt(x.terkirim)}</td><td class="l" style="color:var(--mute)">dari ${fmt(x.target)} pcs</td><td class="${fulfilClass(x.pct)}">${x.pct==null?'-':x.pct+'%'}</td></tr>`).join("")
     }</tbody></table>` : '<div class="empty">Tidak ada yang cocok.</div>';
     return;
   }
 
+  // Grup di sini adalah per-BAKERY kanonik (lihat kPesananBelumTerpenuhiPerToko):
+  // g.factory berisi nama factory HANYA kalau semua produk grup itu dari satu
+  // factory yg sama; null berarti gabungan >1 factory (mis. Karangtengah +
+  // Cibadak utk bakery yang sama) — filter factory diterapkan ke tiap baris
+  // produk, bukan membuang seluruh grup, supaya bakery gabungan tetap muncul
+  // saat difilter ke salah satu factory-nya.
   let groups = kUnfulfilledCache;
-  if(fFactory) groups = groups.filter(g=>g.factory===fFactory);
+  if(fFactory){
+    groups = groups.map(g=>Object.assign({}, g, {produkList: g.produkList.filter(p=>p.factory===fFactory)}))
+      .filter(g=>g.produkList.length>0);
+  }
   if(q){
     groups = groups.map(g=>{
       const tokoMatch = g.toko.toLowerCase().includes(q);
@@ -4190,25 +4499,36 @@ function kUnfulfilledFilterRender(){
   $("kUnfulfilledList").innerHTML = totalToko ? groups.map(g=>{
     const sisaTampil = g.produkList.reduce((a,p)=>a+p.sisa,0);
     const targetTampil = g.produkList.reduce((a,p)=>a+p.target,0);
-    const rows = g.produkList.map(p=>`<tr><td class="l">${p.produk}</td><td class="r">${fmt(p.sisa)}</td><td class="l" style="color:var(--mute)">dari ${fmt(p.target)} pcs</td></tr>`).join("");
+    const facs = [...new Set(g.produkList.map(p=>p.factory))];
+    const facTxt = facs.map(f=>f==='cibadak'?'Cibadak':'Karangtengah').join(" + ");
+    const rows = g.produkList.map(p=>`<tr><td class="l">${p.produk}</td>${facs.length>1?`<td class="l" style="color:var(--mute)">${p.factory==='cibadak'?'Cibadak':'Karangtengah'}</td>`:''}<td class="r">${fmt(p.sisa)}</td><td class="l" style="color:var(--mute)">dari ${fmt(p.target)} pcs</td></tr>`).join("");
     return `<details class="dd">
       <summary>
-        <span><span class="t1">${g.toko}</span><span class="t2">${g.factory==='cibadak'?'Cibadak':'Karangtengah'} · ${g.produkList.length} produk belum terkirim</span></span>
+        <span><span class="t1">${g.toko}</span><span class="t2">${facTxt} · ${g.produkList.length} produk belum terkirim</span></span>
         <span style="color:var(--red);font-weight:700">${fmt(sisaTampil)}<span style="color:var(--mute);font-weight:400"> / ${fmt(targetTampil)} pcs</span></span>
       </summary>
       <div class="dd-body">
-        <table class="mini-t"><thead><tr><th class="l">Produk</th><th>Sisa</th><th class="l">Dari Pesanan</th></tr></thead><tbody>${rows}</tbody></table>
+        <table class="mini-t"><thead><tr><th class="l">Produk</th>${facs.length>1?'<th class="l">Factory</th>':''}<th>Sisa</th><th class="l">Dari Pesanan</th></tr></thead><tbody>${rows}</tbody></table>
       </div>
     </details>`;
   }).join("") : '<div class="empty">Tidak ada yang cocok dengan filter/pencarian.</div>';
 }
 function kTarikDariFG(tgl,toko,factory){
-  if(toko && !D.stores.includes(toko)){ D.stores.push(toko); saveD(); }
+  if(toko && !D.stores.includes(toko)){ D.stores.push(toko); saveD(); ensureMasterToko(); }
   $("k-tgl").value = tgl;
   fillTokoSelects();
-  $("k-toko").value = toko;
-  if($("k-toko").value !== toko){ console.warn("Gagal set toko di dropdown:", toko); toast(`Toko "${toko}" gagal dipilih otomatis — pilih manual dari daftar Toko`); }
+  // Dropdown k-toko sekarang berisi nama STANDAR (canonical) — "toko" dari FG
+  // Ready list masih nama mentah per-factory (mis. "CKLE"), jadi resolve dulu.
+  const tokoCanon = canonicalStoreName(toko);
+  $("k-toko").value = tokoCanon;
+  if($("k-toko").value !== tokoCanon){ console.warn("Gagal set toko di dropdown:", tokoCanon); toast(`Toko "${tokoCanon}" gagal dipilih otomatis — pilih manual dari daftar Toko`); }
   if($("k-showAll")) $("k-showAll").checked = false; // biar filter sisa-pesanan tetap aktif; kalau produk yg ditarik ternyata di luar pesanan resmi, admin bisa centang manual
+  // Sumber FG diakumulasi per tgl+tokoCanon (bukan ditimpa) — supaya menarik
+  // batch Karangtengah lalu batch Cibadak (dua factory, satu bakery gabungan)
+  // dua kali berturut-turut tetap menandai KEDUA batch FG sbg terkirim saat
+  // Simpan, bukan cuma batch yg terakhir ditarik.
+  if(!kFgSource.length || kFgSource[0].tgl!==tgl || kFgSource[0].tokoCanon!==tokoCanon) kFgSource = [];
+  if(!kFgSource.some(s=>s.factory===factory && s.tokoRaw===toko)) kFgSource.push({tgl, tokoCanon, tokoRaw:toko, factory});
   kBuildGrid();
   const rec = D.fgPacking[fgKey(tgl,factory)];
   if(rec){
@@ -4224,7 +4544,6 @@ function kTarikDariFG(tgl,toko,factory){
     });
   }
   kHitung();
-  kFgSource = {tgl,toko,factory};
   $("kFormWrap").style.display="block"; $("kDoneWrap").style.display="none";
   $("kFgPullNote").style.display="block";
   toast("Qty ditarik dari packing FG — silakan sesuaikan jika perlu, lalu Simpan Kiriman");
@@ -4236,12 +4555,17 @@ function kTarikDariFG(tgl,toko,factory){
     window.scrollTo({top:y, behavior:"smooth"});
   }
 }
+// `toko` param di sini boleh nama standar (canonical) ATAU alias apa pun —
+// dicocokkan lewat canonicalStoreName supaya PO dari kedua factory utk
+// bakery yang sama (mis. Karangtengah "CKLE" + Cibadak "BAKERY CIKOLE")
+// tetap terjumlah jadi satu, bukan cuma yang tulisannya persis sama.
 function kProdukPesanan(tgl, toko){
   const map = {};
   if(!tgl || !toko) return map;
+  const target = canonicalStoreName(toko);
   (D.po[tgl]||[]).forEach(r=>{
     (r.stores||[]).forEach(s=>{
-      if(s.toko!==toko) return;
+      if(canonicalStoreName(s.toko)!==target) return;
       const t = hitungTarget({poAwal:s.poAwal, poRevisi:s.poRevisi});
       if(t>0) map[r.produk] = (map[r.produk]||0) + t;
     });
@@ -4250,10 +4574,11 @@ function kProdukPesanan(tgl, toko){
 }
 function kSudahKirim(tgl, toko){
   const map={};
-  D.kirim.forEach(k=>{ if(k.tgl===tgl && k.toko===toko) map[k.produk]=(map[k.produk]||0)+num(k.qty); });
+  const target = canonicalStoreName(toko);
+  D.kirim.forEach(k=>{ if(k.tgl===tgl && canonicalStoreName(k.toko)===target) map[k.produk]=(map[k.produk]||0)+num(k.qty); });
   return map;
 }
-function kClosedKey(tgl,toko){ return tgl+"|"+toko; }
+function kClosedKey(tgl,toko){ return tgl+"|"+canonicalStoreName(toko); }
 let kCatGroups = []; // [{kat, idxs:[i,...]}]
 let kKosongkanIsian = false;
 function kDocTab(btn){
@@ -4304,7 +4629,8 @@ function kBuildGrid(){
   $("k-tipeToko").value = toko ? (tokoTipe(toko)==="franchise"
       ? `Franchise — harga pabrik ${D.settings.pctFranchise}%`
       : `Ownership — harga pabrik ${D.settings.pctOwnership}%`) : "—";
-  const facs = [...new Set(Object.values(D.po).flat().filter(r=>(r.stores||[]).some(x=>x.toko===toko)).map(r=>r.factory))];
+  const tokoCanon = canonicalStoreName(toko);
+  const facs = [...new Set(Object.values(D.po).flat().filter(r=>(r.stores||[]).some(x=>canonicalStoreName(x.toko)===tokoCanon)).map(r=>r.factory))];
   $("k-factoryInfo").value = facs.length ? facs.map(f=>f==="cibadak"?"Cibadak (Bolu)":"Karangtengah").join(" + ") : "—";
   $("kDocTag").textContent = closed ? "Pesanan Ditutup" : "Draft";
   $("kTutupBtn").style.display = (adaPesanan && !closed) ? "inline-block" : "none";
@@ -4482,14 +4808,17 @@ function kSimpan(){
   D.kirim.push(...rows);
   extras.forEach(it=>{ if(!D.products.includes(it.produk)) D.products.push(it.produk); });
   saveD();
-  if(kFgSource && kFgSource.tgl===tgl && kFgSource.toko===toko){
-    const key = fgKey(tgl, kFgSource.factory);
+  // Tandai SEMUA batch FG yg ditarik (bisa >1 factory utk bakery gabungan yg
+  // sama) sbg sudah dikirim — masing2 pakai nama toko MENTAH milik factory-nya
+  // sendiri (tokoRaw), karena itulah yg dicocokkan oleh fgReadyList().
+  kFgSource.filter(s=>s.tgl===tgl && s.tokoCanon===toko).forEach(s=>{
+    const key = fgKey(tgl, s.factory);
     const rec = D.fgPacking[key] || {readyAt:null, packed:{}};
     rec.dikirimKe = rec.dikirimKe || [];
-    if(!rec.dikirimKe.includes(toko)) rec.dikirimKe.push(toko);
-    D.fgPacking[key] = rec; saveD();
-    kFgSource = null;
-  }
+    if(!rec.dikirimKe.includes(s.tokoRaw)) rec.dikirimKe.push(s.tokoRaw);
+    D.fgPacking[key] = rec;
+  });
+  if(kFgSource.length){ saveD(); kFgSource = []; }
   toast(`✓ Delivery Order tersimpan · ${fmt(totalQty)} pcs ke ${toko}`);
   kirimSheets({jenis:"kirim",rows});
   $("k-inv").value="";
@@ -4502,7 +4831,7 @@ function kSimpan(){
 }
 function kBaru(){
   $("kFormWrap").style.display="block"; $("kDoneWrap").style.display="none"; $("kFgPullNote").style.display="none";
-  kFgSource=null; kExtraKosongkan();
+  kFgSource=[]; kExtraKosongkan();
   if($("k-inv")) $("k-inv").value="";
   if($("k-catatan")) $("k-catatan").value="";
   if($("k-cari")) $("k-cari").value="";
@@ -4865,7 +5194,7 @@ function renderKPortalStats(){
   }
   const elDo=$("kPortalDoVal"), elDoSub=$("kPortalDoSub");
   if(elDo){
-    const siap = (typeof fgReadyList==="function") ? fgReadyList().length : 0;
+    const siap = (typeof fgReadyListByBakery==="function") ? fgReadyListByBakery().length : 0;
     elDo.textContent = fmt(siap);
     elDoSub.textContent = siap ? "siap diambil" : "tidak ada yang siap";
   }
@@ -4886,10 +5215,13 @@ function renderKPortalStats(){
 }
 
 /* ================= DAFTAR INVOICE (filter tanggal & toko) ================= */
+// Dropdown & filter pakai nama bakery KANONIK — invoice lama yg masih
+// tertulis alias mentah (mis. "CKLE") tetap ikut kefilter di bawah nama
+// standarnya ("BAKERY CIKOLE"), tanpa data invoice lama itu ditulis ulang.
 function fillInvoiceTokoSelect(){
   const sel = $("inv-fToko"); if(!sel) return;
   const cur = sel.value;
-  const tokoList = [...new Set(Object.values(D.invoice).map(inv=>inv.toko))].sort();
+  const tokoList = [...new Set(Object.values(D.invoice).map(inv=>canonicalStoreName(inv.toko)))].sort();
   sel.innerHTML = '<option value="">Semua Toko</option>' + tokoList.map(t=>`<option>${t}</option>`).join("");
   if(tokoList.includes(cur)) sel.value = cur;
 }
@@ -4913,7 +5245,7 @@ function invBarisData(){
   const outstanding = !!($("inv-outstanding") && $("inv-outstanding").checked);
   let list = Object.values(D.invoice).map(inv=>({inv, st:invStatus(inv)}));
   if(dari || sampai) list = list.filter(x=>inRange(x.inv.tgl, dari, sampai));
-  if(toko) list = list.filter(x=>x.inv.toko===toko);
+  if(toko) list = list.filter(x=>canonicalStoreName(x.inv.toko)===toko);
   if(q) list = list.filter(x=> String(x.inv.invoiceNo).toLowerCase().includes(q) || String(x.inv.toko).toLowerCase().includes(q));
   if(fStatus) list = list.filter(x=>x.st.kode===fStatus);
   if(outstanding) list = list.filter(x=>x.st.sisa>0);
@@ -5773,7 +6105,7 @@ function renderRHist(){
   });
 
   const totalQtyList = keysList.reduce((a,b)=>a+batchesSemua[b].reduce((x,r)=>x+num(r.qty),0),0);
-  const totalTokoList = new Set(keysList.map(b=>batchesSemua[b][0].toko)).size;
+  const totalTokoList = new Set(keysList.map(b=>canonicalStoreName(batchesSemua[b][0].toko))).size; // hitung per bakery kanonik, bukan per alias mentah
   $("r-histSub").textContent = D.retur.length ? `${D.retur.length} baris total` : "";
   const el = $("rh-count"); if(el) el.textContent = D.retur.length ? `${keysList.length} / ${keysSemua.length} kiriman` : "";
   $("rh-stats").innerHTML = `
@@ -7147,12 +7479,14 @@ function renderRekapKategori(){
   $("rk-kategori").innerHTML = keys.length ? `<table class="mini-t"><thead><tr><th class="l">Kategori</th><th>Kirim</th><th>Retur</th><th>Terjual</th><th>Sell-through</th></tr></thead><tbody>`+
     keys.map(k=>{ const d=per[k]; const st=d.kirim?Math.round(d.jual/d.kirim*1000)/10:null; return `<tr><td class="l">${k}</td><td>${fmt(d.kirim)}</td><td>${fmt(d.retur)}</td><td>${fmt(d.jual)}</td><td class="${fulfilClass(st)}">${st==null?'-':st+'%'}</td></tr>`; }).join("")+`</tbody></table>` : '<div class="empty">Tidak ada data pada rentang ini.</div>';
 }
+// Dikelompokkan per bakery KANONIK — Karangtengah "CKLE" & Cibadak "BAKERY
+// CIKOLE" (bakery fisik yang sama) tampil sbg satu baris, bukan 2 baris alias.
 function renderRekapToko(){
   const dari=$("rk-dari").value, sampai=$("rk-sampai").value;
   const per={};
-  D.kirim.forEach(r=>{ if(inRange(r.tgl,dari,sampai)){ (per[r.toko] ||= {kirim:0,retur:0,jual:0}); per[r.toko].kirim+=num(r.qty); } });
-  D.retur.forEach(r=>{ if(inRange(r.tgl,dari,sampai)){ (per[r.toko] ||= {kirim:0,retur:0,jual:0}); per[r.toko].retur+=num(r.qty); } });
-  D.jual.forEach(r=>{ if(inRange(r.tgl,dari,sampai)){ (per[r.toko] ||= {kirim:0,retur:0,jual:0}); per[r.toko].jual+=num(r.qty); } });
+  D.kirim.forEach(r=>{ if(inRange(r.tgl,dari,sampai)){ const t=canonicalStoreName(r.toko); (per[t] ||= {kirim:0,retur:0,jual:0}); per[t].kirim+=num(r.qty); } });
+  D.retur.forEach(r=>{ if(inRange(r.tgl,dari,sampai)){ const t=canonicalStoreName(r.toko); (per[t] ||= {kirim:0,retur:0,jual:0}); per[t].retur+=num(r.qty); } });
+  D.jual.forEach(r=>{ if(inRange(r.tgl,dari,sampai)){ const t=canonicalStoreName(r.toko); (per[t] ||= {kirim:0,retur:0,jual:0}); per[t].jual+=num(r.qty); } });
   const keys=Object.keys(per).sort();
   $("rk-toko").innerHTML = !keys.length? '<div class="empty">Tidak ada data toko pada rentang ini.</div>' :
     `<table class="mini-t"><thead><tr><th class="l">Toko</th><th>Kirim</th><th>Retur</th><th>Terjual</th></tr></thead><tbody>`+
@@ -7229,6 +7563,7 @@ function renderMaster(){
   fillMpKategoriList();
   renderMasterProduk();
   cekDuplikatToko();
+  renderMasterToko();
 }
 function setPctHarga(field, val){
   D.settings[field] = num(val);
@@ -7278,6 +7613,236 @@ function cocokToko(namaLuar){
   const kandidat = Object.keys(peta).filter(x=> x && k && (x===k || x.startsWith(k+" ") || k.startsWith(x+" ")));
   if(kandidat.length===1) return peta[kandidat[0]];
   return null;
+}
+
+/* ================= MASTER TOKO KANONIK (canonical bakery) =================
+   Toko/bakery yang SAMA bisa muncul dgn nama berbeda dari sumber PO berbeda
+   (Karangtengah pakai kode singkat spt "CKLE", Cibadak pakai nama penuh spt
+   "BAKERY CIKOLE"). D.tokoAlias/cocokToko() di atas sudah menangani padanan
+   "sumber luar -> nama resmi yg SUDAH ADA di D.stores" (dipakai Retur/POS-
+   Jual) — tapi CKLE dan BAKERY CIKOLE BERDUA sudah jadi nama resmi terpisah
+   di D.stores (masing2 datang dari factory yg berbeda), jadi bukan kasus itu.
+   D.masterToko adalah layer BARU khusus utk "toko resmi mana saja yang
+   sebenarnya bakery yang sama", dibaca lazy (resolveStore/canonicalStoreName)
+   TANPA menulis ulang riwayat data lama (beda dgn gantiNamaTokoKeCanonical()
+   di atas yg memang didesain utk kasus lain: duplikat ejaan/spasi/huruf besar
+   dlm SATU sumber, dan sengaja menimpa history sekaligus).
+   Auto-resolve HANYA: alias persis (sudah dikonfirmasi sebelumnya / sudah ada
+   di master) — TIDAK PERNAH auto-merge tebakan fuzzy. */
+function normalizeStoreName(s){ return normTokoKunci(s); } // 1 sumber normalisasi, bukan implementasi kedua
+function storeAliasIndex(){
+  const idx = {};
+  Object.values(D.masterToko||{}).forEach(m=>{
+    if(!m) return;
+    idx[normalizeStoreName(m.canonicalName)] = m;
+    (m.aliases||[]).forEach(a=>{ idx[normalizeStoreName(a)] = m; });
+  });
+  return idx;
+}
+function resolveStore(name){
+  const key = normalizeStoreName(name);
+  if(!key) return null;
+  return storeAliasIndex()[key] || null;
+}
+// Nama resmi (canonical) utk ditampilkan — kalau belum ada mapping-nya sama
+// sekali, kembalikan nama asli apa adanya (JANGAN diam2 mengarang nama baru).
+function canonicalStoreName(name){
+  const m = resolveStore(name);
+  return m ? m.canonicalName : String(name||"").trim();
+}
+// Identitas stabil dipakai sbg key pengganti nama toko mentah di manapun toko
+// dipakai sbg map/dedup key — 2 alias yg beda tulisan resolve ke identity yg
+// SAMA, sementara toko yg belum termapping tetap dapat identity yg konsisten
+// (jadi tidak collision sesamanya krn dikira "kosong").
+function storeIdentity(name){
+  const m = resolveStore(name);
+  return m ? ("SID:"+m.storeId) : ("RAW:"+normalizeStoreName(name));
+}
+// Pastikan tiap nama di D.stores setidaknya py entry master sendiri (1:1,
+// TIDAK menggabungkan apa pun) — supaya toko yg belum pernah diaudit tetap
+// bisa di-resolve/ditampilkan di Master Toko, bukan sekadar "tidak ada".
+function ensureMasterToko(){
+  if(!D.masterToko || typeof D.masterToko!=="object") D.masterToko = {};
+  const idx = storeAliasIndex();
+  (D.stores||[]).forEach(nama=>{
+    if(!nama || idx[normalizeStoreName(nama)]) return;
+    const sid = nama;
+    if(!D.masterToko[sid]){
+      const rec = {storeId:sid, canonicalName:nama, aliases:[nama], channel:(D.tokoTipe&&D.tokoTipe[nama])||"ownership", active:true, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString()};
+      D.masterToko[sid] = rec;
+      idx[normalizeStoreName(nama)] = rec;
+    }
+  });
+}
+// Satu-satunya penggabungan yang dilakukan OTOMATIS oleh sistem — pasangan
+// yang SUDAH DIKONFIRMASI (bukan tebakan): CKLE (Karangtengah) = BAKERY
+// CIKOLE (Cibadak). Hanya jalan kalau salah satu nama itu memang ada di
+// D.stores saat ini — tidak pernah mengarang toko yang belum pernah muncul.
+function bootstrapTokoCanonicalDikenal(){
+  ensureMasterToko();
+  const grup = [{ storeId:"CKLE", canonical:"BAKERY CIKOLE", aliases:["CKLE","CIKOLE","BAKERY CIKOLE"] }];
+  grup.forEach(g=>{
+    const adaSalahSatu = g.aliases.some(a=>(D.stores||[]).some(s=>normalizeStoreName(s)===normalizeStoreName(a)));
+    if(!adaSalahSatu) return;
+    g.aliases.forEach(a=>{
+      Object.keys(D.masterToko).forEach(sid=>{
+        if(sid!==g.storeId && normalizeStoreName(D.masterToko[sid].canonicalName)===normalizeStoreName(a)) delete D.masterToko[sid];
+      });
+    });
+    const channelLama = (D.tokoTipe&&(D.tokoTipe[g.canonical]||D.tokoTipe[g.storeId]))||"ownership";
+    D.masterToko[g.storeId] = {storeId:g.storeId, canonicalName:g.canonical, aliases:[...new Set(g.aliases)], channel:channelLama, active:true, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString()};
+  });
+}
+// ---- Part B: audit alias — TIDAK PERNAH auto-merge, cuma laporan+saran ----
+// obviousDuplicates : >1 storeId beda tapi canonicalName-nya identik persis
+//                     setelah dinormalisasi (jelas duplikat, aman utk digabung
+//                     lewat UI 1 klik).
+// suggestions       : toko yg despaced-normalized-nya sama TAPI belum ada di
+//                     satu master yg sama (mis. "Bojong Lopang" vs
+//                     "BOJONGLOPANG") — cuma saran, butuh konfirmasi admin.
+// unmapped          : nama toko yg muncul di D.stores tapi (krn alasan apa
+//                     pun) belum py entry master sama sekali.
+// conflictingAlias  : satu alias (setelah dinormalisasi) dipakai oleh >1
+//                     canonical store berbeda — INI HARUS diperingatkan keras
+//                     krn artinya resolusinya ambigu.
+function auditStoreAliases(){
+  ensureMasterToko();
+  const master = Object.values(D.masterToko||{});
+  const obviousDuplicates = [];
+  const byCanonKey = {};
+  master.forEach(m=>{ (byCanonKey[normalizeStoreName(m.canonicalName)] ||= []).push(m); });
+  Object.values(byCanonKey).forEach(grp=>{ if(grp.length>1) obviousDuplicates.push(grp); });
+
+  const aliasOwner = {};
+  const conflictingAlias = [];
+  master.forEach(m=>{
+    (m.aliases||[]).forEach(a=>{
+      const k = normalizeStoreName(a);
+      if(aliasOwner[k] && aliasOwner[k]!==m.storeId) conflictingAlias.push({alias:a, stores:[aliasOwner[k], m.storeId]});
+      aliasOwner[k] = m.storeId;
+    });
+  });
+
+  const compactKey = s => normalizeStoreName(s).replace(/\s+/g,"");
+  const byCompact = {};
+  master.forEach(m=>{ (byCompact[compactKey(m.canonicalName)] ||= new Set()).add(m.storeId); });
+  const suggestions = [];
+  Object.entries(byCompact).forEach(([ck,sids])=>{
+    if(sids.size<2) return;
+    const stores = [...sids].map(sid=>D.masterToko[sid]).filter(Boolean);
+    // hanya disarankan kalau nama despaced-nya identik TAPI belum satu master
+    // (sudah dicek via byCompact sendiri = beda storeId, sama compactKey).
+    suggestions.push({compactKey:ck, stores});
+  });
+
+  const unmapped = (D.stores||[]).filter(s=>!resolveStore(s));
+
+  return {obviousDuplicates, suggestions, conflictingAlias, unmapped};
+}
+function mtkTambahBakery(){
+  const sid = ($("mtk-storeIdBaru").value||"").trim();
+  const canon = ($("mtk-canonBaru").value||"").trim();
+  if(!sid || !canon) return toast("Isi Store ID dan Nama Standar dulu");
+  if(D.masterToko[sid]) return toast("Store ID itu sudah dipakai");
+  D.masterToko[sid] = {storeId:sid, canonicalName:canon, aliases:[canon], channel:"ownership", active:true, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString()};
+  saveD(); $("mtk-storeIdBaru").value=""; $("mtk-canonBaru").value=""; renderMasterToko();
+  toast(`Bakery "${canon}" ditambahkan`);
+}
+function mtkEditCanonical(sid){
+  const m = D.masterToko[sid]; if(!m) return;
+  const baru = prompt("Nama standar baru untuk bakery ini:", m.canonicalName);
+  if(baru==null || !baru.trim()) return;
+  m.canonicalName = baru.trim();
+  if(!m.aliases.some(a=>normalizeStoreName(a)===normalizeStoreName(baru))) m.aliases.push(baru.trim());
+  m.updatedAt = new Date().toISOString();
+  saveD(); renderMasterToko();
+}
+function mtkTambahAlias(sid){
+  const m = D.masterToko[sid]; if(!m) return;
+  const el = $("mtk-aliasBaru-"+sid); if(!el) return;
+  const a = (el.value||"").trim();
+  if(!a) return;
+  const existing = resolveStore(a);
+  if(existing && existing.storeId!==sid) return toast(`"${a}" sudah jadi alias bakery lain ("${existing.canonicalName}") — hapus dulu di sana kalau memang mau dipindah`);
+  if(!m.aliases.some(x=>normalizeStoreName(x)===normalizeStoreName(a))) m.aliases.push(a);
+  m.updatedAt = new Date().toISOString();
+  saveD(); el.value=""; renderMasterToko();
+  toast(`Alias "${a}" ditambahkan ke "${m.canonicalName}"`);
+}
+function mtkHapusAlias(sid, alias){
+  const m = D.masterToko[sid]; if(!m) return;
+  if(normalizeStoreName(alias)===normalizeStoreName(m.canonicalName) && m.aliases.length<=1) return toast("Tidak bisa menghapus satu-satunya alias");
+  if(!confirm(`Hapus alias "${alias}" dari "${m.canonicalName}"? Data transaksi lama yang memakai nama ini tetap tersimpan, tapi tidak akan resolve ke bakery ini lagi.`)) return;
+  m.aliases = m.aliases.filter(a=>normalizeStoreName(a)!==normalizeStoreName(alias));
+  m.updatedAt = new Date().toISOString();
+  saveD(); renderMasterToko();
+}
+function mtkSetChannel(sid, channel){
+  const m = D.masterToko[sid]; if(!m) return;
+  m.channel = channel; m.updatedAt = new Date().toISOString();
+  D.tokoTipe[m.canonicalName] = channel; // tetap sinkron dgn sumber kebenaran channel yg sudah ada (tokoTipe)
+  saveD();
+  kirimSheets({jenis:"tokoTipeUpsert", toko:m.canonicalName, tipe:channel});
+  renderMasterToko();
+}
+function mtkToggleActive(sid){
+  const m = D.masterToko[sid]; if(!m) return;
+  m.active = !m.active; m.updatedAt = new Date().toISOString();
+  saveD(); renderMasterToko();
+}
+// Gabungkan 2 canonical store yg SAMA (dari obviousDuplicates/suggestions) —
+// selalu lewat konfirmasi klik, tidak pernah otomatis. Semua alias pindah ke
+// storeId TUJUAN, storeId ASAL dihapus dari master (transaksi lama tetap
+// utuh — cuma pemetaannya yg berubah, dibaca lazy).
+function mtkGabungKe(sidAsal, sidTujuan){
+  if(sidAsal===sidTujuan) return;
+  const asal = D.masterToko[sidAsal], tujuan = D.masterToko[sidTujuan];
+  if(!asal || !tujuan) return;
+  if(!confirm(`Gabungkan "${asal.canonicalName}" ke "${tujuan.canonicalName}"? Alias dari keduanya akan dipakai bersama.`)) return;
+  asal.aliases.forEach(a=>{ if(!tujuan.aliases.some(x=>normalizeStoreName(x)===normalizeStoreName(a))) tujuan.aliases.push(a); });
+  tujuan.updatedAt = new Date().toISOString();
+  delete D.masterToko[sidAsal];
+  saveD(); renderMasterToko();
+  toast(`Digabung ke "${tujuan.canonicalName}"`);
+}
+function renderMasterToko(){
+  const esc = s => String(s).replace(/'/g,"\\'");
+  const q = (($("mtk-cari")&&$("mtk-cari").value)||"").trim().toLowerCase();
+  const audit = auditStoreAliases();
+  const wWrap = $("mtk-warnWrap");
+  if(wWrap){
+    const parts = [];
+    if(audit.conflictingAlias.length) parts.push(`<div class="warn-box" style="color:var(--red)">⚠️ <b>${audit.conflictingAlias.length} alias dipakai oleh lebih dari satu bakery</b> (ambigu — resolusinya bisa salah): ${audit.conflictingAlias.map(c=>`"${c.alias}" (${c.stores.join(" vs ")})`).join(", ")}.</div>`);
+    if(audit.obviousDuplicates.length) parts.push(`<div class="warn-box">⚠️ <b>${audit.obviousDuplicates.length} nama standar bakery persis sama</b> tapi Store ID beda — kemungkinan duplikat: `+
+      audit.obviousDuplicates.map(grp=>grp.map(m=>`<button class="btn mini ghost" style="margin:2px" onclick="mtkGabungKe('${esc(grp.find(x=>x!==m).storeId)}','${esc(m.storeId)}')">Gabungkan ke ${esc(m.storeId)}</button>`).join(" ")).join(" · ")+`</div>`);
+    if(audit.suggestions.length) parts.push(`<div class="note" style="color:var(--warn)">💡 <b>${audit.suggestions.length} kemungkinan bakery yang sama</b> (nama mirip setelah spasi dirapikan) — CUMA SARAN, klik kalau memang benar: `+
+      audit.suggestions.map(s=>{
+        const [a,b] = s.stores;
+        return `<span style="white-space:nowrap">"${esc(a.canonicalName)}" ⇄ "${esc(b.canonicalName)}" <button class="btn mini ghost" onclick="mtkGabungKe('${esc(a.storeId)}','${esc(b.storeId)}')">Gabung</button></span>`;
+      }).join(" · ")+`</div>`);
+    if(audit.unmapped.length) parts.push(`<div class="warn-box">⚠️ <b>${audit.unmapped.length} toko belum ter-mapping</b>: ${audit.unmapped.join(", ")} — klik "Perbaiki Mapping" di Master untuk memindai ulang.</div>`);
+    wWrap.innerHTML = parts.join("");
+  }
+  ensureMasterToko();
+  let list = Object.values(D.masterToko||{}).sort((a,b)=>a.canonicalName.localeCompare(b.canonicalName));
+  if(q) list = list.filter(m=> m.storeId.toLowerCase().includes(q) || m.canonicalName.toLowerCase().includes(q) || m.aliases.some(a=>a.toLowerCase().includes(q)));
+  $("mtk-list").innerHTML = list.length ? list.map(m=>`<tr>
+      <td class="l">${esc(m.storeId)}</td>
+      <td class="l"><span class="t1" style="cursor:pointer" onclick="mtkEditCanonical('${esc(m.storeId)}')" title="Klik untuk edit">${esc(m.canonicalName)}</span></td>
+      <td class="l">
+        ${m.aliases.map(a=>`<span class="chip" style="display:inline-flex;align-items:center;gap:4px;margin:2px">${esc(a)}${m.aliases.length>1?`<button class="del" style="padding:0" onclick="mtkHapusAlias('${esc(m.storeId)}','${esc(a)}')">✕</button>`:''}</span>`).join(" ")}
+        <div class="row" style="margin-top:4px;gap:4px">
+          <input type="text" id="mtk-aliasBaru-${esc(m.storeId)}" placeholder="+ alias" style="font-size:11px;padding:4px 6px">
+          <button class="btn mini ghost" style="flex:0;margin-top:0" onclick="mtkTambahAlias('${esc(m.storeId)}')">+</button>
+        </div>
+      </td>
+      <td><select style="width:auto;padding:5px 8px;font-size:11px" onchange="mtkSetChannel('${esc(m.storeId)}',this.value)">
+        <option value="ownership" ${m.channel==='franchise'?'':'selected'}>Ownership</option>
+        <option value="franchise" ${m.channel==='franchise'?'selected':''}>Franchise</option>
+      </select></td>
+      <td><button class="btn mini ${m.active?'ghost':'red'}" onclick="mtkToggleActive('${esc(m.storeId)}')">${m.active?'Aktif':'Nonaktif'}</button></td>
+      <td><button class="del" onclick="mHapus('toko','${esc(m.canonicalName)}');delete D.masterToko['${esc(m.storeId)}'];saveD();renderMasterToko()">Hapus</button></td>
+    </tr>`).join("") : '<tr><td colspan="6" class="empty">Belum ada bakery.</td></tr>';
 }
 function cekDuplikatToko(){
   const groups = {};
@@ -7685,6 +8250,7 @@ function renderAll(){
   jalankan("renderPoHist", renderPoHist);
   jalankan("prodBuildChecklist", prodBuildChecklist);
   jalankan("renderDashboard", renderDashboard);
+  jalankan("renderOmset", renderOmset);
   jalankan("renderKHist", renderKHist);
   jalankan("renderRHist", renderRHist);
   jalankan("rjBuildGrid", rjBuildGrid);
