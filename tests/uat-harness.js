@@ -16,7 +16,7 @@ const appSrc = scriptMatch[1];
 
 const XLSX = require("xlsx");
 
-function loadApp({confirmAnswer=true, fetchImpl=null}={}){
+function loadApp({confirmAnswer=true, fetchImpl=null, promptAnswer=null}={}){
   // runScripts:"outside-only" -> the page's own <script> tags never auto-run
   // (so we control exactly when appSrc executes, after stubs are attached),
   // but window.eval() from outside is allowed and runs in the real window.
@@ -29,6 +29,7 @@ function loadApp({confirmAnswer=true, fetchImpl=null}={}){
   w.XLSX = XLSX;
   w.confirm = () => confirmAnswer;
   w.alert = () => {};
+  w.prompt = () => promptAnswer;
   w.fetch = fetchImpl || (() => Promise.reject(new Error("no-network-in-tests")));
   w.setInterval = () => 0; // don't keep a real 25s polling timer alive across tests
   w.console = console;
@@ -61,6 +62,7 @@ function loadApp({confirmAnswer=true, fetchImpl=null}={}){
     kBukaFormBaru, adjSimpan, renderAdjHist, ksFillProdukSelect,
     storeUsageAudit, renderStoreUsageAudit, renderMasterToko, fgTandaiSemuaSesuai,
     rowMenuReposition, wireRowMenus, renderRHist, renderRjHist, renderKHist,
+    kirimSheetsVersioned, tampilkanKonflikVersi, pdBukaKembali,
     get poPreview(){ return poPreview; },
     get kList(){ return kList; },
     get kFgSource(){ return kFgSource; },

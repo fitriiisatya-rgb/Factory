@@ -2014,6 +2014,16 @@ if(!D.kirimClosed || typeof D.kirimClosed!=="object") D.kirimClosed = {};
 if(!D.hargaProduk || typeof D.hargaProduk!=="object") D.hargaProduk = {};
 if(!D.invoice || typeof D.invoice!=="object") D.invoice = {};
 if(!D.masterProduk || typeof D.masterProduk!=="object") D.masterProduk = {};
+// Versi optimis per-record utk alur produksi rawan-konkurensi (PO/Ceklis/
+// FGPacking/FGReady/Invoice/MasterProduk/TokoTipe) — diisi dari muatSemua()
+// (j.versions) dan diperbarui tiap kali kirimSheetsVersioned() sukses. Data
+// LAMA (sblm field ini ada) otomatis mulai dari objek kosong = expectedVersion
+// 0 utk tiap key, konsisten dgn backend yang menganggap record blm pernah
+// ada = versi 0.
+if(!D.recordVersions || typeof D.recordVersions!=="object") D.recordVersions = {};
+["po","ceklis","fgPacking","fgReady","invoice","masterProduk","tokoTipe"].forEach(k=>{
+  if(!D.recordVersions[k] || typeof D.recordVersions[k]!=="object") D.recordVersions[k] = {};
+});
 if(!Array.isArray(D.mutasi)) D.mutasi = [];
 if(!Array.isArray(D.pembayaran)) D.pembayaran = [];  // {id,batch,tgl,jumlah,cara,keterangan}
 // Penyesuaian stok gudang di luar alur produksi/kiriman:
@@ -2444,6 +2454,45 @@ async function kirimSheets(payload){
     setDot("live","Terkirim"); return "terkirim";
   }catch(e){ setDot("error","Gagal kirim"); return "gagal"; }
 }
+// ================= SINKRON BARU — versi/requestId/conflict-aware =================
+// Dipakai KHUSUS alur produksi yang rawan konkurensi (PO, ceklis produksi,
+// FG/packing) — jenis data lain masih pakai kirimSheets() lama di atas
+// (mode:"no-cors", fire-and-forget) supaya TIDAK ada risiko regresi pada
+// ~30 titik panggilan lain yang belum diaudit ulang.
+//
+// PENTING (baca sebelum mengandalkan ini utk multi-user sungguhan): fetch
+// di sini SENGAJA TIDAK memakai mode:"no-cors" (beda dari kirimSheets() lama)
+// supaya respons terstruktur (VERSION_CONFLICT/LOCK_TIMEOUT/ALREADY_APPLIED)
+// bisa dibaca balik oleh browser. Apps Script Web App KADANG butuh
+// penyesuaian tambahan soal CORS spesifik per-deployment — ini BELUM
+// diverifikasi jalan normal di browser sungguhan dari sandbox pengembangan
+// ini (tidak ada akses jaringan ke deployment Anda). WAJIB dites manual di
+// browser asli (buka DevTools > Network, pastikan respons JSON benar2
+// kebaca, bukan cuma "opaque response") sebelum mengaktifkan multi-user.
+async function kirimSheetsVersioned(payload){
+  const url = ($("cfg-url").value||"").trim();
+  if(!url) return {ok:true, code:"LOCAL_ONLY"}; // belum ada backend dikonfigurasi -> dianggap sukses lokal, versi tidak dilacak
+  setDot("loading","Mengirim…");
+  try{
+    const res = await fetch(url, {method:"POST", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(payload)});
+    let j = null;
+    try{ j = await res.json(); }catch(e){ j = null; }
+    if(!j){ setDot("error","Respons tidak terbaca"); return {ok:false, code:"BAD_RESPONSE"}; }
+    setDot(j.ok ? "live" : "error", j.ok ? "Terkirim" : (j.code||"Gagal"));
+    return j;
+  }catch(e){ setDot("error","Gagal kirim"); return {ok:false, code:"NETWORK_ERROR", message:String(e)}; }
+}
+// Section 5 — konflik versi TIDAK PERNAH ditimpa otomatis (bukan last-write-
+// wins diam-diam). Dipakai confirm()/toast() yang SUDAH jadi idiom di
+// seluruh app ini, bukan komponen UI baru. Opsi "bandingkan perubahan"
+// (diff detail) SENGAJA belum dibuat — di luar cakupan "jangan fokus UI
+// dulu"; yang tersedia sekarang cuma "muat data terbaru" atau "batalkan".
+function tampilkanKonflikVersi(labelData, recordKey, res, onMuatUlang){
+  const pesan = `Data ${labelData} ini sudah diperbarui oleh user lain (versi server saat ini: ${res.currentVersion}).\n\n`+
+    `Perubahan Anda BELUM terkirim ke server (tidak hilang di layar ini), tapi JANGAN simpan ulang begitu saja — bisa menimpa perubahan orang lain.\n\n`+
+    `OK = muat data terbaru dari server sekarang (input di layar ini perlu dimasukkan ulang setelah reload)\nBatal = jangan reload dulu, saya cek manual`;
+  if(confirm(pesan) && typeof onMuatUlang==="function") onMuatUlang();
+}
 let muatSedang = false;
 async function muatSemua(diam){
   const url = ($("cfg-url").value||"").trim();
@@ -2535,6 +2584,17 @@ async function muatSemua(diam){
         D.invoice[inv.batch] = {invoiceNo:inv.invoiceNo||"", batch:inv.batch, tgl:inv.tgl||"", toko:inv.toko||"", noSJ:inv.noSJ||"", items:Array.isArray(inv.items)?inv.items:[], total:num(inv.total), createdAt:D.invoice[inv.batch]?.createdAt||"", updatedAt:new Date().toLocaleString("id-ID")};
       });
       dikenali=true;
+    }
+    // Versi optimis per record (section 4/18) — dipakai sbg expectedVersion
+    // pengiriman BERIKUTNYA dari device ini lewat kirimSheetsVersioned().
+    // TIDAK menimpa versi lain yang belum ada di respons ini.
+    if(j.versions && typeof j.versions==="object"){
+      Object.keys(D.recordVersions).forEach(k=>{
+        if(j.versions[k] && typeof j.versions[k]==="object"){
+          D.recordVersions[k] = Object.assign({}, D.recordVersions[k], j.versions[k]);
+          dikenali = true;
+        }
+      });
     }
     if(Array.isArray(j.stokAdj) && j.stokAdj.length){
       const ada = new Set(D.stokAdj.map(a=>a.id));
@@ -3094,7 +3154,14 @@ function poSimpanPreview(){
     (r.stores||[]).forEach(s=>{ if(s.toko && !D.stores.includes(s.toko)) D.stores.push(s.toko); });
   });
   saveD(); renderAll();
-  kirimSheets({jenis:"poUpload", tanggal:tgl, factory, rows}).then(res=>toast(res==="terkirim"?"PO tersimpan & terkirim":"PO tersimpan (lokal)"));
+  const poKey = tgl+"|"+factory;
+  const poExpectedVersion = (D.recordVersions.po||{})[poKey] || 0;
+  kirimSheetsVersioned({jenis:"poUpload", tanggal:tgl, factory, rows, requestId:uid(), expectedVersion:poExpectedVersion}).then(res=>{
+    if(res.ok){ if(res.version!=null) D.recordVersions.po[poKey]=res.version; saveD(); toast("PO tersimpan & terkirim"); }
+    else if(res.code==="VERSION_CONFLICT") tampilkanKonflikVersi("PO tanggal/factory ini", poKey, res, ()=>muatSemua());
+    else if(res.code==="LOCK_TIMEOUT") toast("Sistem sedang sibuk — PO tersimpan lokal, coba sinkron ulang sebentar lagi");
+    else toast("PO tersimpan (lokal)");
+  });
   poPreview = null; $("po-previewWrap").style.display="none"; $("po-file").value="";
 }
 function renderPoHist(){
@@ -3113,7 +3180,7 @@ function poHapusFactory(tgl,factory){
   D.po[tgl] = (D.po[tgl]||[]).filter(r=>r.factory!==factory);
   if(!D.po[tgl].length) delete D.po[tgl];
   saveD(); renderAll();
-  kirimSheets({jenis:"hapusPO", tanggal:tgl, factory});
+  kirimSheets({jenis:"hapusPO", tanggal:tgl, factory, requestId:uid()});
 }
 
 /* ================= TARGET PER DIVISI ================= */
@@ -3327,12 +3394,31 @@ function pdTutup(){
   D.ceklis[key].closed = true;
   D.ceklis[key].closedAt = new Date().toLocaleString("id-ID");
   saveD(); renderAll();
-  kirimSheets({jenis:"ceklisTutup", tanggal:tgl, divisi}).then(r=>toast(r==="terkirim"?"Ditutup & terkirim":"Ditutup (lokal)"));
+  const submitExpectedVersion = (D.recordVersions.ceklis||{})[key] || 0;
+  kirimSheetsVersioned({jenis:"ceklisSubmit", tanggal:tgl, divisi, requestId:uid(), expectedVersion:submitExpectedVersion}).then(res=>{
+    if(res.ok){ if(res.version!=null) D.recordVersions.ceklis[key]=res.version; saveD(); toast("Ditutup & terkirim"); }
+    else if(res.code==="VERSION_CONFLICT") tampilkanKonflikVersi("produksi divisi ini", key, res, ()=>muatSemua());
+    else if(res.code==="LOCK_TIMEOUT") toast("Sistem sedang sibuk — coba tutup lagi sebentar lagi");
+    else toast("Ditutup (lokal)");
+  });
 }
+// Section 9: reopen WAJIB alasan (tercatat di audit trail server). Sebelumnya
+// fungsi ini TIDAK PERNAH mengirim apa pun ke backend (murni lokal) — reopen
+// jadi tidak tersinkron sama sekali. Sekarang tersinkron + tercatat.
 function pdBukaKembali(){
   const tgl=$("pd-tgl").value, divisi=$("pd-divisi").value;
   const key = ceklisKey(tgl,divisi);
-  if(D.ceklis[key]){ D.ceklis[key].closed=false; saveD(); renderAll(); toast("Dibuka kembali — bisa submit lagi"); }
+  if(!D.ceklis[key]) return;
+  const reason = (prompt("Alasan membuka kembali produksi yang sudah ditutup ini (wajib diisi, tercatat di audit trail):")||"").trim();
+  if(!reason) return toast("Dibatalkan — alasan wajib diisi");
+  D.ceklis[key].closed=false; saveD(); renderAll();
+  const reopenExpectedVersion = (D.recordVersions.ceklis||{})[key] || 0;
+  kirimSheetsVersioned({jenis:"ceklisReopen", tanggal:tgl, divisi, requestId:uid(), expectedVersion:reopenExpectedVersion, reason}).then(res=>{
+    if(res.ok){ if(res.version!=null) D.recordVersions.ceklis[key]=res.version; saveD(); toast("Dibuka kembali & tercatat — bisa submit lagi"); }
+    else if(res.code==="VERSION_CONFLICT") tampilkanKonflikVersi("produksi divisi ini", key, res, ()=>muatSemua());
+    else if(res.code==="REASON_REQUIRED") toast("Alasan wajib diisi");
+    else toast("Dibuka kembali (lokal) — belum tersinkron ke server");
+  });
 }
 function pdFillFilterDivisiAsal(){
   const el = $("pd-fDivisiAsal"); if(!el) return;
@@ -3480,7 +3566,28 @@ function pdSimpan(){
   rec.submitted = true;
   rec.submittedAt = new Date().toLocaleString("id-ID");
   saveD();
-  kirimSheets({jenis:"ceklisProduksi", tanggal:tgl, divisi, rows:rec.rows}).then(r=>toast(r==="terkirim"?"Produksi harian tersimpan & terkirim":"Produksi harian tersimpan (lokal)"));
+  // Kirim sbg DELTA (actualDelta/rejectDelta = angka yg BARU diisi operator
+  // di submission ini, sblm digabung ke kumulatif lokal di atas) + expectedVersion
+  // — backend yang menjumlahkan ke total TERKINI di server (bukan salinan
+  // lokal yang bisa basi kalau device lain sudah menyimpan duluan utk divisi
+  // yang sama). Lihat section 6/18 spesifikasi concurrency safety.
+  const ceklisRecKey = key;
+  const ceklisExpectedVersion = (D.recordVersions.ceklis||{})[ceklisRecKey] || 0;
+  kirimSheetsVersioned({jenis:"productionProgress", tanggal:tgl, divisi, requestId:uid(), expectedVersion:ceklisExpectedVersion,
+    rows: formRows.map(fr=>({kode:fr.kode, produk:fr.produk, kategori:fr.kategori, target:fr.targetAsli, status:fr.status, actualDelta:fr.aktual, rejectDelta:fr.reject, keterangan:fr.keterangan}))
+  }).then(res=>{
+    if(res.ok){
+      if(res.version!=null) D.recordVersions.ceklis[ceklisRecKey] = res.version;
+      saveD();
+      toast("Produksi harian tersimpan & terkirim");
+    } else if(res.code==="VERSION_CONFLICT"){
+      tampilkanKonflikVersi("produksi divisi ini", ceklisRecKey, res, ()=>muatSemua());
+    } else if(res.code==="LOCK_TIMEOUT"){
+      toast("Sistem sedang sibuk (ada divisi lain menyimpan) — data tersimpan lokal, coba \"Sinkron\" lagi sebentar lagi");
+    } else {
+      toast("Produksi harian tersimpan (lokal)");
+    }
+  });
   renderAll();
 }
 
@@ -3749,7 +3856,32 @@ function fgUpdateProgressCounter(){
 function fgSimpanProgres(){
   const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value);
   saveD();
-  kirimSheets({jenis:"fgPacking", tanggal:tgl, factory, packed:(D.fgPacking[fgKey(tgl,factory)]||{}).packed||{}}).then(r=>toast(r==="terkirim"?"Progres packing tersimpan & terkirim":"Progres packing tersimpan (lokal)"));
+  // Kirim array `rows` eksplisit {kode,produk,toko,...} — BUKAN LAGI map
+  // "key":qty. Key packing lokal berformat skuId ("<kode>\x1f<produk>|<toko>")
+  // diuraikan DI SINI (client yang punya kode+produk asli terpisah per baris),
+  // supaya backend tidak perlu menebak-nebak dari string gabungan (itu akar
+  // bug lama: kolom Kode di sheet FGPacking kemasukan karakter kontrol+nama
+  // produk). Produk yg dikirim = versi ternormalisasi (dari skuId), bukan
+  // ejaan asli persis — cukup utk identifikasi, bukan utk tampilan cantik.
+  const fgKeyStr = fgKey(tgl,factory);
+  const rec = D.fgPacking[fgKeyStr] || {packed:{}};
+  const rowsOut = Object.keys(rec.packed||{}).map(k=>{
+    const idx = k.lastIndexOf("|");
+    const skuPart = k.slice(0, idx), toko = k.slice(idx+1);
+    const sep = skuPart.indexOf("\x1f");
+    const kode = sep>=0 ? skuPart.slice(0,sep) : skuPart;
+    const produk = sep>=0 ? skuPart.slice(sep+1) : "";
+    const val = rec.packed[k];
+    const isObj = val && typeof val==="object";
+    return {kode, produk, toko, qty:isObj?val.qty:val, status:isObj?val.status:"sesuai", keterangan:isObj?val.keterangan:""};
+  });
+  const fgExpectedVersion = (D.recordVersions.fgPacking||{})[fgKeyStr] || 0;
+  kirimSheetsVersioned({jenis:"fgPacking", tanggal:tgl, factory, requestId:uid(), expectedVersion:fgExpectedVersion, rows:rowsOut}).then(res=>{
+    if(res.ok){ if(res.version!=null) D.recordVersions.fgPacking[fgKeyStr]=res.version; saveD(); toast("Progres packing tersimpan & terkirim"); }
+    else if(res.code==="VERSION_CONFLICT") tampilkanKonflikVersi("packing FG", fgKeyStr, res, ()=>muatSemua());
+    else if(res.code==="LOCK_TIMEOUT") toast("Sistem sedang sibuk — coba simpan progres lagi sebentar lagi");
+    else toast("Progres packing tersimpan (lokal)");
+  });
 }
 function fgTandaiSiap(){
   const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value);
@@ -3776,7 +3908,28 @@ function fgTandaiSiap(){
   rec.readyAt = new Date().toLocaleString("id-ID");
   D.fgPacking[key] = rec;
   saveD(); renderAll();
-  kirimSheets({jenis:"fgReady", tanggal:tgl, factory, readyAt:rec.readyAt}).then(r=>toast(r==="terkirim"?"Ditandai siap diambil delivery & terkirim":"Ditandai siap diambil delivery (lokal)"));
+  // Section 17: sertakan versi produksi (ceklis) sumber yg dipakai FG saat
+  // verifikasi, supaya backend bisa mendeteksi kalau produksi sumbernya
+  // berubah LAGI setelah FG mulai verifikasi (warning, bukan hard block —
+  // konsisten dgn soft-gate belumDicek/kurangPacking di atas).
+  const divisiSumber = [...new Set((D.po[tgl]||[]).filter(r=>r.factory===factory).map(r=>divisiProduk(r)).filter(Boolean))];
+  const sourceVersions = {};
+  divisiSumber.forEach(dv=>{ sourceVersions[dv] = (D.recordVersions.ceklis||{})[tgl+"|"+dv] || 0; });
+  const fgReadyExpectedVersion = (D.recordVersions.fgReady||{})[key] || 0;
+  kirimSheetsVersioned({jenis:"fgReady", tanggal:tgl, factory, requestId:uid(), expectedVersion:fgReadyExpectedVersion, readyAt:rec.readyAt, sourceVersions}).then(res=>{
+    if(res.ok){
+      if(res.version!=null) D.recordVersions.fgReady[key]=res.version;
+      saveD();
+      if(res.warning && res.warning.code==="STALE_PRODUCTION_SOURCE") toast(`⚠️ Ditandai siap, TAPI ${res.warning.message}`);
+      else toast("Ditandai siap diambil delivery & terkirim");
+    } else if(res.code==="VERSION_CONFLICT"){
+      tampilkanKonflikVersi("status siap FG", key, res, ()=>muatSemua());
+    } else if(res.code==="LOCK_TIMEOUT"){
+      toast("Sistem sedang sibuk — coba tandai siap lagi sebentar lagi");
+    } else {
+      toast("Ditandai siap diambil delivery (lokal)");
+    }
+  });
 }
 
 /* ================= DASHBOARD / LAPORAN PRODUKSI ================= */
@@ -5125,7 +5278,7 @@ function kSimpan(){
   });
   if(kFgSource.length){ saveD(); kFgSource = []; }
   toast(`✓ Delivery Order tersimpan · ${fmt(totalQty)} pcs ke ${toko}`);
-  kirimSheets({jenis:"kirim",rows});
+  kirimSheets({jenis:"kirim", rows, requestId:uid()});
   $("k-inv").value="";
   kExtraKosongkan();
   lastKBatch = batch;
@@ -5165,7 +5318,7 @@ function kHapusBatch(batch){
   if(!confirm("Hapus data kiriman ini?")) return;
   const rows = D.kirim.filter(r=>r.batch===batch);
   D.kirim = D.kirim.filter(r=>r.batch!==batch); saveD(); renderAll();
-  rows.forEach(r=>kirimSheets({jenis:"hapusKirim",id:r.id}));
+  rows.forEach(r=>kirimSheets({jenis:"hapusKirim", id:r.id, requestId:uid()}));
 }
 function doNomor(batch, tgl){
   const semua = [...new Set(D.kirim.map(r=>r.batch))]
@@ -5301,7 +5454,7 @@ function simpanInvoicePerubahan(invoiceBatch){
   const inv = D.invoice[invoiceBatch];
   if(!inv) return;
   saveD();
-  kirimSheets({jenis:"invoice", batch:invoiceBatch, invoiceNo:inv.invoiceNo, tanggal:inv.tgl, toko:inv.toko, noSJ:inv.noSJ||"", items:inv.items, total:inv.total});
+  kirimSheets({jenis:"invoice", batch:invoiceBatch, invoiceNo:inv.invoiceNo, tanggal:inv.tgl, toko:inv.toko, noSJ:inv.noSJ||"", items:inv.items, total:inv.total, requestId:uid()});
 }
 // Bikin invoice baru utk toko TUJUAN mutasi — harga dihitung dari Harga 100%
 // Master Produk x persentase Ownership/Franchise milik toko tujuan sendiri
@@ -5463,7 +5616,7 @@ function kInvoiceSimpan(){
   // Notif ditampilkan LANGSUNG (tidak menunggu balasan Sheets, yang bisa lambat
   // atau tidak pernah membalas) supaya user tahu simpanannya sudah masuk.
   toast(`✓ Invoice ${simpanan.invoiceNo} tersimpan · ${rupiah(total)}`);
-  kirimSheets({jenis:"invoice", batch:kInvoiceCurrentBatch, invoiceNo:simpanan.invoiceNo, tanggal:r0.tgl, toko:r0.toko, items, total, catatan:simpanan.catatan||""});
+  kirimSheets({jenis:"invoice", batch:kInvoiceCurrentBatch, invoiceNo:simpanan.invoiceNo, tanggal:r0.tgl, toko:r0.toko, items, total, catatan:simpanan.catatan||"", requestId:uid()});
   $("kInvNo").value = simpanan.invoiceNo;
   $("kInvTag").textContent = "Tersimpan"; $("kInvTag").className = "tag ok";
   $("kInvCetakBtn").style.display = "inline-block";
@@ -5681,7 +5834,7 @@ function bayarSimpan(){
   if(jumlah > sisa && !confirm(`Jumlah (${rupiah(jumlah)}) melebihi sisa piutang (${rupiah(sisa)}). Lanjutkan? Kelebihannya akan tercatat sebagai lebih bayar.`)) return;
   const rec = {id:uid(), batch:bayarBatch, tgl, jumlah, cara:$("bayar-cara").value, keterangan:($("bayar-ket").value||"").trim(), createdAt:new Date().toLocaleString("id-ID")};
   D.pembayaran.push(rec); saveD();
-  kirimSheets({jenis:"pembayaran", id:rec.id, batch:rec.batch, invoiceNo:inv.invoiceNo, toko:inv.toko, tgl, jumlah, cara:rec.cara, keterangan:rec.keterangan})
+  kirimSheets({jenis:"pembayaran", id:rec.id, batch:rec.batch, invoiceNo:inv.invoiceNo, toko:inv.toko, tgl, jumlah, cara:rec.cara, keterangan:rec.keterangan, requestId:uid()})
     .then(r=>toast(r==="terkirim"?"Pembayaran tersimpan & terkirim":"Pembayaran tersimpan (lokal)"));
   bayarBuka(bayarBatch);
   renderInvoiceList(); renderKHist();
@@ -5689,7 +5842,7 @@ function bayarSimpan(){
 function bayarHapus(id){
   if(!confirm("Hapus catatan pembayaran ini?")) return;
   D.pembayaran = D.pembayaran.filter(b=>b.id!==id); saveD();
-  kirimSheets({jenis:"hapusPembayaran", id});
+  kirimSheets({jenis:"hapusPembayaran", id, requestId:uid()});
   if(bayarBatch) bayarBuka(bayarBatch);
   renderInvoiceList();
 }
@@ -5752,11 +5905,11 @@ function mutSimpan(){
   const batchTujuan = buatInvoiceMutasi(tgl, tujuan, produk, qty, keteranganTujuan);
   const invTujuan = D.invoice[batchTujuan];
   saveD();
-  kirimSheets({jenis:"invoice", batch:batchTujuan, invoiceNo:invTujuan.invoiceNo, tanggal:tgl, toko:tujuan, noSJ:"MUTASI", items:invTujuan.items, total:invTujuan.total});
+  kirimSheets({jenis:"invoice", batch:batchTujuan, invoiceNo:invTujuan.invoiceNo, tanggal:tgl, toko:tujuan, noSJ:"MUTASI", items:invTujuan.items, total:invTujuan.total, requestId:uid()});
 
   const rec = {id:uid(), tgl, produk, asal, tujuan, qty, keterangan:ket, batchAsal:invAsal?invAsal.batch:"", batchTujuan, createdAt:new Date().toLocaleString("id-ID")};
   D.mutasi.push(rec); saveD();
-  kirimSheets({jenis:"mutasi", id:rec.id, tgl, produk, asal, tujuan, qty, keterangan:ket, batchAsal:rec.batchAsal, batchTujuan});
+  kirimSheets({jenis:"mutasi", id:rec.id, tgl, produk, asal, tujuan, qty, keterangan:ket, batchAsal:rec.batchAsal, batchTujuan, requestId:uid()});
 
   toast(`Mutasi tersimpan — ${pesanAsal}, invoice baru ${invTujuan.invoiceNo} dibuat utk ${tujuan}`);
   $("mut-qty").value=""; $("mut-ket").value=""; $("mut-info").textContent="";
@@ -6220,14 +6373,14 @@ function adjSimpan(){
                createdAt:new Date().toLocaleString("id-ID")};
   D.stokAdj.push(rec); saveD();
   toast(`✓ ${labelAdj(tipe)}: ${fmt(Math.abs(qty))} pcs ${produk}`);
-  kirimSheets({jenis:"stokAdj", ...rec});
+  kirimSheets({jenis:"stokAdj", ...rec, requestId:uid()});
   $("adj-qty").value=""; $("adj-ket").value="";
   renderAll();
 }
 function adjHapus(id){
   if(!confirm("Hapus penyesuaian stok ini? Stok gudang akan dihitung ulang.")) return;
   D.stokAdj = D.stokAdj.filter(a=>a.id!==id); saveD();
-  kirimSheets({jenis:"hapusStokAdj", id});
+  kirimSheets({jenis:"hapusStokAdj", id, requestId:uid()});
   renderAll(); toast("Penyesuaian dihapus");
 }
 function renderAdjHist(){
@@ -6466,7 +6619,7 @@ function rHapusBatch(batch){
   if(!confirm("Hapus data retur ini?")) return;
   const rows = D.retur.filter(r=>r.batch===batch);
   D.retur = D.retur.filter(r=>r.batch!==batch); saveD(); renderAll();
-  rows.forEach(r=>kirimSheets({jenis:"hapusRetur",id:r.id}));
+  rows.forEach(r=>kirimSheets({jenis:"hapusRetur", id:r.id, requestId:uid()}));
 }
 let rhBulanAktif = null;
 function rBulanClear(){ rhBulanAktif = null; }
@@ -6752,7 +6905,7 @@ function rjSimpan(){
   saveD();
   const rugi = rows.reduce((a,r)=>a+r.nilai,0);
   toast(`✓ Reject tersimpan · kerugian ${rupiah(rugi)}`);
-  kirimSheets({jenis:"reject", rows});
+  kirimSheets({jenis:"reject", rows, requestId:uid()});
   $("rjFormWrap").style.display="none"; $("rjDoneWrap").style.display="block";
   $("rjDoneMsg").innerHTML = `✓ Reject tersimpan: <b>${fmt(rows.reduce((a,r)=>a+r.qty,0))} pcs</b> dari <b>${toko}</b>, ${fmtTgl(tgl)}<br>
     ${dipotong?`${dipotong} produk memotong invoice · `:''}${ganti.length?`${ganti.length} produk diganti barang baru (tercatat waste di Kartu Stok) · `:''}total kerugian pabrik <b>${rupiah(rugi)}</b>`;
@@ -6767,7 +6920,7 @@ function rjBaru(){
 function rjHapusBatch(batch){
   if(!confirm("Hapus data reject ini? Waste yang tercatat dari penggantian barang tidak ikut terhapus otomatis.")) return;
   D.reject = D.reject.filter(r=>r.batch!==batch); saveD();
-  kirimSheets({jenis:"hapusReject", batch});
+  kirimSheets({jenis:"hapusReject", batch, requestId:uid()});
   renderAll(); toast("Reject dihapus");
 }
 let rjhBulanAktif = null;
@@ -7024,7 +7177,7 @@ function psSimpan(){
   const totQty = items.reduce((a,it)=>a+it.qty,0);
   const totNilai = items.reduce((a,it)=>a+it.qty*it.harga,0);
   toast(`✓ Pesanan ${rec.no} tersimpan · ${rupiah(totNilai)}`);
-  kirimSheets({jenis:"pesanan", ...rec});
+  kirimSheets({jenis:"pesanan", ...rec, requestId:uid()});
   $("psFormWrap").style.display="none"; $("psDoneWrap").style.display="block";
   $("psTag").textContent="Tersimpan"; $("psTag").className="tag ok";
   $("psCetakDOBtn").style.display="inline-block"; $("psCetakInvBtn").style.display="inline-block";
@@ -7117,7 +7270,7 @@ function psSetStatus(id, status){
     D.stokAdj = D.stokAdj.filter(a=>!(a.sumber==="pesanan" && String(a.keterangan||"").startsWith(`Pesanan ${p.no} ·`)));
   }
   p.status = status; saveD();
-  kirimSheets({jenis:"pesananStatus", id:p.id, no:p.no, status});
+  kirimSheets({jenis:"pesananStatus", id:p.id, no:p.no, status, requestId:uid()});
   toast(`Pesanan ${p.no} → ${psLabelStatus(status)}`);
   renderAll();
 }
@@ -7129,7 +7282,7 @@ function psHapus(id){
   delete D.invoice[batch];
   D.pembayaran = D.pembayaran.filter(b=>b.batch!==batch);
   D.pesanan = D.pesanan.filter(x=>x.id!==id); saveD();
-  kirimSheets({jenis:"hapusPesanan", id});
+  kirimSheets({jenis:"hapusPesanan", id, requestId:uid()});
   if(psAktif===id) psBaru();
   renderAll(); toast("Pesanan dihapus");
 }
@@ -7388,7 +7541,7 @@ function jHapusBatch(batch){
   if(!confirm("Hapus data penjualan ini?")) return;
   const rows = D.jual.filter(r=>r.batch===batch);
   D.jual = D.jual.filter(r=>r.batch!==batch); saveD(); renderAll();
-  rows.forEach(r=>kirimSheets({jenis:"hapusJual",id:r.id}));
+  rows.forEach(r=>kirimSheets({jenis:"hapusJual", id:r.id, requestId:uid()}));
 }
 let jhBulanAktif = null;
 function jBulanClear(){ jhBulanAktif = null; }
@@ -7968,7 +8121,7 @@ function mTambah(jenis){
   const arr = {divisi:D.divisi,produk:D.products,toko:D.stores}[jenis];
   if(arr.includes(v)) return toast("Sudah ada di daftar");
   arr.push(v); saveD(); $(inputId).value=""; renderAll();
-  kirimSheets({jenis:jenis+"Upsert", nama:v});
+  kirimSheets({jenis:jenis+"Upsert", nama:v, requestId:uid()});
 }
 function mHapus(jenis, nama){
   if(!confirm(`Hapus "${nama}" dari daftar master? Data transaksi lama tetap tersimpan.`)) return;
@@ -8019,14 +8172,14 @@ function renderMaster(){
 function setPctHarga(field, val){
   D.settings[field] = num(val);
   saveD();
-  kirimSheets({jenis:"settingsUpsert", pctDasar:D.settings.pctDasar, pctOwnership:D.settings.pctOwnership, pctFranchise:D.settings.pctFranchise});
+  kirimSheets({jenis:"settingsUpsert", pctDasar:D.settings.pctDasar, pctOwnership:D.settings.pctOwnership, pctFranchise:D.settings.pctFranchise, requestId:uid()});
   renderMaster();
   toast(field==="pctDasar" ? "Persentase Omset Pabrik disimpan" : "Persentase Harga Invoice disimpan");
 }
 function setTokoTipe(toko, tipe){
   D.tokoTipe[toko] = tipe;
   saveD();
-  kirimSheets({jenis:"tokoTipeUpsert", toko, tipe});
+  kirimSheets({jenis:"tokoTipeUpsert", toko, tipe, requestId:uid()});
 }
 
 /* ================= CEK DUPLIKAT NAMA TOKO (case/spasi) ================= */
@@ -8233,7 +8386,7 @@ function mtkSetChannel(sid, channel){
   m.channel = channel; m.updatedAt = new Date().toISOString();
   D.tokoTipe[m.canonicalName] = channel; // tetap sinkron dgn sumber kebenaran channel yg sudah ada (tokoTipe)
   saveD();
-  kirimSheets({jenis:"tokoTipeUpsert", toko:m.canonicalName, tipe:channel});
+  kirimSheets({jenis:"tokoTipeUpsert", toko:m.canonicalName, tipe:channel, requestId:uid()});
   renderMasterToko();
 }
 function mtkToggleActive(sid){
@@ -8503,7 +8656,7 @@ function mpSetField(produk, field, val){
   D.masterProduk[key][field] = h;
   D.masterProduk[key].updatedAt = new Date().toLocaleString("id-ID");
   saveD();
-  kirimSheets({jenis:"masterProdukUpsert", produk:key, ...D.masterProduk[key]});
+  kirimSheets({jenis:"masterProdukUpsert", produk:key, ...D.masterProduk[key], requestId:uid()});
   renderMasterProduk();
 }
 function mpEditLoad(produk){
@@ -8531,7 +8684,7 @@ function mpSimpanManual(){
   const aktif = $("mp-aktif").checked;
   D.masterProduk[nama] = {kategori, divisi, hpp, harga, aktif, updatedAt:new Date().toLocaleString("id-ID")};
   saveD();
-  kirimSheets({jenis:"masterProdukUpsert", produk:nama, kategori, divisi, hpp, harga, aktif});
+  kirimSheets({jenis:"masterProdukUpsert", produk:nama, kategori, divisi, hpp, harga, aktif, requestId:uid()});
   toast(`Master produk "${nama}" tersimpan`);
   $("mp-nama").value=""; $("mp-kategori").value=""; $("mp-divisi").value=""; $("mp-hpp").value=""; $("mp-harga").value=""; $("mp-aktif").checked=true;
   renderAll();
@@ -8604,7 +8757,7 @@ function mpUploadFile(){
           aktif: r.aktif!=null ? r.aktif : (existing.aktif!==false),
           updatedAt: new Date().toLocaleString("id-ID")
         };
-        kirimSheets({jenis:"masterProdukUpsert", produk:key, ...D.masterProduk[key]});
+        kirimSheets({jenis:"masterProdukUpsert", produk:key, ...D.masterProduk[key], requestId:uid()});
       });
       saveD(); renderAll();
       toast(`${result.length} produk berhasil diimpor ke Master Produk`);
@@ -8755,7 +8908,7 @@ async function resetSemua(){
   const url = ($("cfg-url").value||"").trim();
   if(url && confirm("Hapus juga data transaksi di Google Sheets?\n\nOK = data operasional di spreadsheet ikut dikosongkan (master data tetap aman)\nCancel = spreadsheet dibiarkan sebagai arsip")){
     toast("Mengosongkan data operasional di spreadsheet…");
-    await kirimSheets({jenis:"reset"});
+    await kirimSheets({jenis:"reset", requestId:uid()});
   }
   D.po = {}; D.ceklis = {}; D.fgPacking = {}; D.kirimClosed = {};
   D.kirim = []; D.retur = []; D.reject = []; D.jual = []; D.invoice = {}; D.pembayaran = []; D.stokAdj = []; D.pesanan = [];
