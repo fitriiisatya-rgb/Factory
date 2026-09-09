@@ -2071,6 +2071,11 @@ if(!D.recordVersions || typeof D.recordVersions!=="object") D.recordVersions = {
 ["po","ceklis","fgPacking","fgReady","invoice","masterProduk","tokoTipe"].forEach(k=>{
   if(!D.recordVersions[k] || typeof D.recordVersions[k]!=="object") D.recordVersions[k] = {};
 });
+// FITUR SEMENTARA MASA TRIAL — {recordKey("tgl|factory"): version} batch
+// trial yg tombstone-nya SUDAH diproses (trialCascadeClearLocal_ sudah
+// dijalankan utk versi itu) di DEVICE INI, supaya muatSemua() tidak
+// menjalankan cascade berulang-ulang tiap kali refresh utk batch yg sama.
+if(!D.trialTombstonesProcessed || typeof D.trialTombstonesProcessed!=="object") D.trialTombstonesProcessed = {};
 if(!Array.isArray(D.mutasi)) D.mutasi = [];
 if(!Array.isArray(D.pembayaran)) D.pembayaran = [];  // {id,batch,tgl,jumlah,cara,keterangan}
 // Penyesuaian stok gudang di luar alur produksi/kiriman:
@@ -2621,6 +2626,31 @@ async function muatSemua(diam){
     const res = await fetch(url);
     const j = await res.json();
     let dikenali = false;
+    // FITUR SEMENTARA MASA TRIAL — tombstone RINGAN {recordKey:{deleted,version,
+    // deletedAt}} utk batch yg sudah dihapus lewat "Hapus Batch Trial" DI DEVICE
+    // LAIN. Device ini mungkin py cache lokal FGPacking/FGReady/Pembayaran/
+    // Mutasi/StokAdj utk batch tsb yg TIDAK PERNAH ikut hilang lewat field j.po/
+    // j.kirim/dst di bawah (entitas2 itu memang tidak di-round-trip lewat doGet,
+    // lihat catatan di backend) — jadi WAJIB dibersihkan manual di sini pakai
+    // fungsi cascade LOKAL yg sama dgn yang dipakai trialHapusBatch. HARUS
+    // dijalankan SEBELUM blok j.po di bawah memproses D.po — trialCascadeClearLocal_
+    // butuh D.po[tanggal] milik device ini MASIH UTUH (blm ditimpa/dikosongkan
+    // oleh sync PO normal) utk menurunkan produkSet/skuPairSet/storeSet batch
+    // yg mau dibersihkan. D.trialTombstonesProcessed mencegah cascade
+    // dijalankan berulang tiap refresh utk versi tombstone yg SAMA.
+    if(j.deletedTrialBatches && typeof j.deletedTrialBatches==="object"){
+      Object.keys(j.deletedTrialBatches).forEach(key=>{
+        const info = j.deletedTrialBatches[key];
+        if(!info || !info.deleted) return;
+        if(D.trialTombstonesProcessed[key] === info.version) return; // sudah pernah diproses versi ini
+        const parts = key.split("|");
+        const tanggalTomb = parts[0], factoryTomb = parts.slice(1).join("|");
+        if(!tanggalTomb || !factoryTomb) return;
+        trialCascadeClearLocal_(tanggalTomb, factoryTomb);
+        D.trialTombstonesProcessed[key] = info.version;
+        dikenali = true;
+      });
+    }
     if(Array.isArray(j.divisi)){ D.divisi=[...new Set([...D.divisi,...j.divisi.filter(Boolean)])]; dikenali=true; }
     if(Array.isArray(j.produk)){ D.products=[...new Set([...D.products,...j.produk.filter(Boolean)])]; dikenali=true; }
     if(Array.isArray(j.toko)){ D.stores=[...new Set([...D.stores,...j.toko.filter(Boolean)])]; dikenali=true; }
@@ -3405,18 +3435,24 @@ function trialHapusBatch(tgl, factory, btn){
     if(res.ok){
       // 1. Backend SUDAH mengonfirmasi cascade delete (fetch sungguhan, bukan no-cors).
       if(res.version!=null) D.recordVersions.po[poKey]=res.version;
-      // 2. Cache lokal (best-effort, mirror logika backend) dibersihkan SEKARANG,
-      //    setelah konfirmasi backend — bukan optimis-duluan.
-      trialCascadeClearLocal_(tgl, factory);
+      if(!D.trialTombstonesProcessed) D.trialTombstonesProcessed = {};
+      D.trialTombstonesProcessed[poKey] = res.version!=null ? res.version : (D.trialTombstonesProcessed[poKey]||0)+1;
+      // 2. Cache lokal (mirror PERSIS kebijakan cascade backend, lihat
+      //    trialCascadeClearLocal_) dibersihkan SEKARANG, setelah konfirmasi
+      //    backend — bukan optimis-duluan.
+      const hasil = trialCascadeClearLocal_(tgl, factory);
       saveD();
       // 3. Rerender — batch trial menyentuh banyak modul sekaligus (PO, Produksi,
       //    FG, Kirim, Invoice, Dashboard, Laporan/Rekap), jadi full renderAll()
       //    di sini lebih aman drpd menebak daftar targeted yang lengkap.
       renderAll();
-      toast(`Batch trial ${fmtTgl(tgl)} ${labelFactory} dihapus`);
+      const ringkasSkip = Object.values(hasil.skippedAmbiguousCounts||{}).reduce((a,n)=>a+n,0);
+      toast(`Batch trial ${fmtTgl(tgl)} ${labelFactory} dihapus`+(ringkasSkip?` — ${ringkasSkip} baris ambigu disisakan (lihat catatan)`:""));
       // 4. Refetch backend sbg jaring pengaman utk entitas yang memang disinkronkan
       //    balik (PO/Ceklis/Kirim/Invoice/Retur/Jual) — lihat catatan gap sinkron
-      //    FGPacking/FGReady/Pembayaran/Mutasi/StokAdj di laporan pendamping.
+      //    FGPacking/FGReady/Pembayaran/Mutasi/StokAdj di laporan pendamping. Backend
+      //    jg mengirim tombstone deletedTrialBatches, tapi key ini sudah ditandai
+      //    "processed" di atas jadi muatSemua tidak menjalankan cascade dua kali.
       muatSemua(true);
       return true;
     } else if(res.code==="TRIAL_DELETE_DISABLED"){
@@ -3434,72 +3470,126 @@ function trialHapusBatch(tgl, factory, btn){
     }
   }), {busy:"Menghapus batch trial…", done:"Batch trial dihapus", fail:"Gagal, coba lagi"});
 }
-// Cascade clear LOCAL (best-effort, mirror cascadeDeleteTrialBatch_ di backend)
-// — HANYA dipanggil setelah backend mengonfirmasi sukses (lihat trialHapusBatch).
-// Bukan sumber kebenaran; muatSemua(true) sesudahnya tetap jadi jaring pengaman
-// utk entitas yang disinkronkan balik dari backend.
+// Cascade clear LOCAL — MIRROR PERSIS kebijakan cascadeDeleteTrialBatch_ di
+// backend (hasil audit over-delete): tiap sheet dipersempit dgn identifier
+// PALING presisi yg tersedia (Batch/InvoiceBatch/identitas SKU Kode+Produk/
+// toko tujuan dari PO), bukan cuma tanggal+produk. Kalau tidak ada identifier
+// presisi/pendukung sama sekali, baris DIBIARKAN (bukan ditebak) — PENTING
+// utk entitas yg TIDAK di-refetch dari backend (FGPacking/FGReady/Pembayaran/
+// Mutasi/StokAdj, lihat catatan di doGet backend/Code.gs): kalau fungsi ini
+// over-delete utk entitas2 itu, muatSemua(true) sesudahnya TIDAK BISA
+// memulihkannya lagi krn memang tidak pernah dikirim balik oleh backend.
+// Dipanggil dari 2 tempat: (1) trialHapusBatch, SETELAH backend mengonfirmasi
+// sukses; (2) muatSemua(), saat menerima tombstone deletedTrialBatches dari
+// device/sesi lain. Return {deletedCounts, skippedAmbiguousCounts} spt
+// cascadeDeleteTrialBatch_ backend, utk pesan status yg konsisten.
 function trialCascadeClearLocal_(tgl, factory){
-  const produkSet = new Set((D.po[tgl]||[]).filter(r=>r.factory===factory).map(r=>r.produk));
-  // PO
+  const deletedCounts = {}, skippedAmbiguousCounts = {};
+  const poRows = (D.po[tgl]||[]).filter(r=>r.factory===factory);
+  deletedCounts.po = poRows.length;
   D.po[tgl] = (D.po[tgl]||[]).filter(r=>r.factory!==factory);
   if(!D.po[tgl] || !D.po[tgl].length) delete D.po[tgl];
-  if(!produkSet.size) return; // tidak ada produk teridentifikasi dari batch ini -> selebihnya tidak disentuh, sama spt backend
-  const inSet = p => produkSet.has(p);
-  const produkSetNorm = new Set([...produkSet].map(normNama));
+  if(!poRows.length) return {deletedCounts, skippedAmbiguousCounts}; // tidak ada produk teridentifikasi -> selebihnya tidak disentuh, sama spt backend
 
-  // Ceklis (key tgl|divisi, meta+rows jadi satu objek di sini) — hapus rows
-  // yg produknya masuk batch; kalau rows jadi kosong, hapus seluruh entry
-  // (ikut membersihkan status/submittedAt/closed-nya, spt CeklisMeta di backend).
+  const produkSet = new Set(poRows.map(r=>r.produk).filter(Boolean));
+  const inSet = p => produkSet.has(p);
+  // identitas SKU (Kode+Produk) — sama fungsinya dgn skuPairKey_ backend.
+  const skuPairSet = new Set(poRows.map(r=>(r.kode||"")+"\x1f"+(r.produk||"")));
+  const inSku = (kode,produk) => skuPairSet.has((kode||"")+"\x1f"+(produk||""));
+  // toko tujuan dari StoresJSON PO — "store/source relationship".
+  const storeSet = new Set();
+  poRows.forEach(r=>(r.stores||[]).forEach(s=>{ if(s && s.toko) storeSet.add(s.toko); }));
+  const inStore = toko => storeSet.size>0 && storeSet.has(toko);
+  // FGPacking di-key pakai skuId (kode+NAMA TERNORMALISASI) — bandingkan via
+  // pasangan (kode, namaTernormalisasi) yg sama persis dgn cara skuId dibentuk.
+  const skuPairSetNorm = new Set(poRows.map(r=>(r.kode||"")+"\x1f"+normNama(r.produk)));
+
+  // Ceklis (key tgl|divisi, meta+rows jadi satu objek di sini) — identitas SKU
+  // (Kode+Produk), BUKAN nama produk polos, spt Ceklis backend.
   Object.keys(D.ceklis).forEach(key=>{
     if(!key.startsWith(tgl+"|")) return;
     const c = D.ceklis[key];
     if(!c || !Array.isArray(c.rows)) return;
-    c.rows = c.rows.filter(r=>!inSet(r.produk));
+    const sebelum = c.rows.length;
+    c.rows = c.rows.filter(r=>!inSku(r.kode, r.produk));
+    deletedCounts.ceklis = (deletedCounts.ceklis||0) + (sebelum - c.rows.length);
     if(!c.rows.length) delete D.ceklis[key];
   });
 
-  // FGPacking + FGReady lokal (readyAt embedded di objek yang sama, key tgl|factory
-  // langsung). packed di-key pakai skuId (kode+NAMA TERNORMALISASI), jadi
-  // dicocokkan pakai produkSetNorm, bukan produkSet mentah.
+  // FGPacking + FGReady lokal (readyAt embedded di objek yang sama, key
+  // tgl|factory langsung) — identitas SKU (kode+nama ternormalisasi).
   const fgpKey = fgKey(tgl, factory);
   if(D.fgPacking[fgpKey]){
     const p = D.fgPacking[fgpKey].packed || {};
+    let dihapusFgp = 0;
     Object.keys(p).forEach(key=>{
-      const produkBagianNorm = key.split("|")[0].split("\x1f")[1] || "";
-      if(produkSetNorm.has(produkBagianNorm)) delete p[key];
+      const bagianSku = key.split("|")[0]; // "<kode>\x1f<namaTernormalisasi>"
+      if(skuPairSetNorm.has(bagianSku)){ delete p[key]; dihapusFgp++; }
     });
+    deletedCounts.fgPacking = dihapusFgp;
     if(!Object.keys(p).length) delete D.fgPacking[fgpKey];
   }
 
-  // Kirim/DO (tgl+produk) — kumpulkan batch id terpengaruh utk cascade
-  // Invoice/Pembayaran/Mutasi presisi di bawah.
-  const batchKirimSet = new Set(D.kirim.filter(r=>r.tgl===tgl && inSet(r.produk)).map(r=>r.batch));
-  D.kirim = D.kirim.filter(r=>!(r.tgl===tgl && inSet(r.produk)));
+  // Kirim/DO — Tanggal+Produk DIPERKETAT toko∈storeSet (storeSet kosong ->
+  // dianggap ambigu, TIDAK dihapus). Batch yg terhapus jadi join presisi utk
+  // Invoice/Pembayaran/Mutasi di bawah.
+  const kirimKandidat = D.kirim.filter(r=>r.tgl===tgl && inSet(r.produk));
+  const kirimHapusSet = new Set(kirimKandidat.filter(r=>inStore(r.toko)).map(r=>r.batch));
+  const batchKirimSet = kirimHapusSet;
+  deletedCounts.kirim = kirimKandidat.filter(r=>batchKirimSet.has(r.batch)).length;
+  skippedAmbiguousCounts.kirim = kirimKandidat.length - deletedCounts.kirim;
+  D.kirim = D.kirim.filter(r=>!batchKirimSet.has(r.batch));
 
   // Invoice — join presisi lewat Batch = Batch Kirim yg baru dihapus.
   const batchInvoiceSet = new Set();
-  Object.keys(D.invoice).forEach(batch=>{
-    if(batchKirimSet.has(batch)){ batchInvoiceSet.add(batch); delete D.invoice[batch]; }
-  });
+  Object.keys(D.invoice).forEach(batch=>{ if(batchKirimSet.has(batch)) batchInvoiceSet.add(batch); });
+  deletedCounts.invoice = batchInvoiceSet.size;
+  batchInvoiceSet.forEach(batch=>delete D.invoice[batch]);
 
   // Pembayaran — join presisi lewat Batch = Batch Invoice yg dihapus.
+  const bayarSebelum = D.pembayaran.length;
   D.pembayaran = D.pembayaran.filter(b=>!batchInvoiceSet.has(b.batch));
+  deletedCounts.pembayaran = bayarSebelum - D.pembayaran.length;
 
-  // Retur/Jual — tidak py join batch invoice, best-effort tgl+produk.
-  D.retur = D.retur.filter(r=>!(r.tgl===tgl && inSet(r.produk)));
-  D.jual = D.jual.filter(r=>!(r.tgl===tgl && inSet(r.produk)));
+  // Retur — tidak py Batch/InvoiceBatch di data lokal, sama kebijakan dgn Kirim.
+  const returKandidat = D.retur.filter(r=>r.tgl===tgl && inSet(r.produk));
+  deletedCounts.retur = returKandidat.filter(r=>inStore(r.toko)).length;
+  skippedAmbiguousCounts.retur = returKandidat.length - deletedCounts.retur;
+  D.retur = D.retur.filter(r=>!(r.tgl===tgl && inSet(r.produk) && inStore(r.toko)));
 
-  // Reject — union: tgl+produk ATAU invoiceBatch yg sudah dihapus.
-  D.reject = D.reject.filter(r=>!((r.tgl===tgl && inSet(r.produk)) || batchInvoiceSet.has(r.invoiceBatch)));
+  // Jual — sama kebijakan dgn Retur.
+  const jualKandidat = D.jual.filter(r=>r.tgl===tgl && inSet(r.produk));
+  deletedCounts.jual = jualKandidat.filter(r=>inStore(r.toko)).length;
+  skippedAmbiguousCounts.jual = jualKandidat.length - deletedCounts.jual;
+  D.jual = D.jual.filter(r=>!(r.tgl===tgl && inSet(r.produk) && inStore(r.toko)));
 
-  // Mutasi — union: tgl+produk ATAU batchAsal/batchTujuan yg dihapus.
-  D.mutasi = D.mutasi.filter(m=>!((m.tgl===tgl && inSet(m.produk))
-    || batchKirimSet.has(m.batchAsal) || batchKirimSet.has(m.batchTujuan)
-    || batchInvoiceSet.has(m.batchAsal) || batchInvoiceSet.has(m.batchTujuan)));
+  // Reject — presisi via invoiceBatch; kalau belum tertaut, fallback kebijakan
+  // Retur (tgl+produk+toko∈storeSet). Sisanya ambigu (tidak dihapus).
+  const rejPrecise = r => batchInvoiceSet.has(r.invoiceBatch);
+  const rejStoreFallback = r => !rejPrecise(r) && r.tgl===tgl && inSet(r.produk) && inStore(r.toko);
+  const rejHapus = r => rejPrecise(r) || rejStoreFallback(r);
+  const rejKandidatAmbigu = r => !rejHapus(r) && r.tgl===tgl && inSet(r.produk);
+  deletedCounts.reject = D.reject.filter(rejHapus).length;
+  skippedAmbiguousCounts.reject = D.reject.filter(rejKandidatAmbigu).length;
+  D.reject = D.reject.filter(r=>!rejHapus(r));
 
-  // StokAdj — TIDAK py join presisi sama sekali, best-effort tgl+produk saja
-  // (sama seperti backend — lihat catatan besar di cascadeDeleteTrialBatch_).
-  D.stokAdj = D.stokAdj.filter(a=>!(a.tgl===tgl && inSet(a.produk)));
+  // Mutasi — presisi via batchAsal/batchTujuan; kalau belum tertaut, fallback
+  // tgl+produk+(asal ATAU tujuan)∈storeSet. Sisanya ambigu.
+  const mutPrecise = m => batchKirimSet.has(m.batchAsal) || batchKirimSet.has(m.batchTujuan)
+    || batchInvoiceSet.has(m.batchAsal) || batchInvoiceSet.has(m.batchTujuan);
+  const mutStoreFallback = m => !mutPrecise(m) && m.tgl===tgl && inSet(m.produk) && (inStore(m.asal) || inStore(m.tujuan));
+  const mutHapus = m => mutPrecise(m) || mutStoreFallback(m);
+  const mutKandidatAmbigu = m => !mutHapus(m) && m.tgl===tgl && inSet(m.produk);
+  deletedCounts.mutasi = D.mutasi.filter(mutHapus).length;
+  skippedAmbiguousCounts.mutasi = D.mutasi.filter(mutKandidatAmbigu).length;
+  D.mutasi = D.mutasi.filter(m=>!mutHapus(m));
+
+  // StokAdj — TIDAK PERNAH dihapus cascade (data lokal ini juga TIDAK PERNAH
+  // di-refetch dari backend, jadi over-delete di sini permanen & tak
+  // terpulihkan) — SELALU skippedAmbiguousCounts saja, sama spt backend.
+  skippedAmbiguousCounts.stokAdj = D.stokAdj.filter(a=>a.tgl===tgl && inSet(a.produk)).length;
+
+  return {deletedCounts, skippedAmbiguousCounts};
 }
 
 /* ================= TARGET PER DIVISI ================= */

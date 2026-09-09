@@ -704,9 +704,50 @@ function doGet(e){
       masterProduk: getAllVersions_("masterProduk"),
       tokoTipe: getAllVersions_("tokoTipe"),
       settings: getAllVersions_("settings")
-    }
+    },
+    // FITUR SEMENTARA MASA TRIAL — tombstone RINGAN (bukan dataset penuh)
+    // supaya device lain yg py cache lokal FGPacking/FGReady/Pembayaran/
+    // Mutasi/StokAdj (yang TIDAK di-round-trip lewat field lain di atas)
+    // tahu batch mana yang sudah dihapus lewat "Hapus Batch Trial", lalu
+    // bisa menjalankan trialCascadeClearLocal_ sendiri. Lihat
+    // readDeletedTrialBatches_ — JANGAN diubah jadi menyertakan seluruh
+    // AuditLog atau dataset besar apa pun, cukup key+version+timestamp.
+    deletedTrialBatches: readDeletedTrialBatches_()
   };
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+}
+// Tombstone ringan {recordKey: {deleted:true, version, deletedAt}} utk batch
+// PO yang sudah dihapus lewat "Hapus Batch Trial" — diturunkan dari AuditLog
+// (Action="trial_batch_delete", Status="ok"), BUKAN mengirim seluruh isi
+// AuditLog. Kalau key yang sama sudah di-poUpload ULANG SESUDAH dihapus
+// (versi RecordVersion "po" utk key itu sekarang LEBIH TINGGI dari versi
+// hasil delete), tombstone-nya dianggap basi/tergantikan dan TIDAK
+// dilaporkan — supaya device lain tidak salah menghapus data batch baru
+// yang sah cuma krn kebetulan tanggal+factory-nya sama dgn batch trial lama.
+function readDeletedTrialBatches_(){
+  const sh = getOrCreateSheet(SHEET_AUDITLOG);
+  const rows = readAllAsObjects_(sh).filter(r => str_(r.Action)==="trial_batch_delete" && str_(r.Status)==="ok");
+  const latestByKey = {};
+  rows.forEach(r=>{
+    const key = str_(r.RecordKey);
+    if(!key) return;
+    const version = num_(r.NewVersion);
+    if(!latestByKey[key] || version > latestByKey[key].version){
+      latestByKey[key] = {
+        version,
+        deletedAt: r.Timestamp instanceof Date ? r.Timestamp.toISOString() : str_(r.Timestamp)
+      };
+    }
+  });
+  const out = {};
+  Object.keys(latestByKey).forEach(key=>{
+    const tomb = latestByKey[key];
+    const current = getVersion_("po", key);
+    if(current.version === tomb.version){
+      out[key] = {deleted:true, version:tomb.version, deletedAt:tomb.deletedAt};
+    }
+  });
+  return out;
 }
 
 function readMasterProduk_(){
@@ -993,50 +1034,93 @@ function handleTrialBatchDelete_(payload, actor){
   });
 }
 
-// Cascade delete SATU batch trial (tanggal+factory) dari semua sheet
-// operasional yang diketahui berelasi. Join key dipilih per-sheet dari yang
-// PALING presisi yang tersedia:
-//   - FGReady py kolom Factory+Tanggal sendiri -> match langsung.
-//   - FGPacking py kolom Factory sendiri -> match Tanggal+Factory+Produk.
-//   - Kirim -> match Tanggal+Produk (join by produk krn tidak py kolom
-//     Factory), lalu Invoice/Pembayaran/sebagian Mutasi di-cascade lewat
-//     Batch Kirim/Invoice yg SUDAH pasti dihapus (presisi, bukan tebakan).
-//   - Ceklis -> match Tanggal+Produk (bukan Divisi, krn backend tidak py
-//     peta divisi->factory; katalog produk berbeda per factory jadi ini
-//     tetap presisi). CeklisMeta HANYA dihapus kalau divisi itu benar2
-//     tidak py sisa baris Ceklis lain di tanggal yg sama, supaya tidak
-//     menghapus meta milik PO lain yang kebetulan sama tanggal+divisi.
-//   - Retur/Reject/Jual -> tidak py kolom factory, match Tanggal+Produk
-//     (Reject juga dicek InvoiceBatch kalau sudah tertaut ke invoice yg
-//     dihapus, lebih presisi).
-//   - StokAdj -> TIDAK py join presisi sama sekali (tidak py kolom batch
-//     apa pun) — best-effort Tanggal+Produk SAJA. Ini persis kasus "bila
-//     dapat diidentifikasi dengan aman" di spesifikasi: risiko residual
-//     (atau overdelete) ada, tapi dibatasi Tanggal+Produk supaya tidak
-//     menyentuh penyesuaian stok produk lain/tanggal lain.
-function cascadeDeleteTrialBatch_(tanggal, factory){
-  const counts = {};
+// Identitas "SKU per-factory" dari sepasang Kode+Produk — dipakai utk
+// mempersempit join Ceklis/FGPacking drpd cuma nama produk polos (mengurangi
+// risiko tabrakan nama produk yg kebetulan sama antar factory/kategori).
+function skuPairKey_(kode, produk){ return str_(kode) + "\x1f" + str_(produk); }
+function skuPairSetFromPoRows_(poRows){
+  return new Set(poRows.map(r => skuPairKey_(r.Kode, r.Produk)));
+}
+// Himpunan nama toko TUJUAN yg tercatat di baris PO batch ini (StoresJSON per
+// baris) — "store/source relationship" dipakai utk mempersempit Kirim/Retur/
+// Jual/Reject/Mutasi drpd cuma Tanggal+Produk polos. Kalau batch ini SAMA
+// SEKALI tidak mencatat toko tujuan (semua StoresJSON kosong), storeSet
+// kosong -> baris yg butuh sinyal toko dianggap AMBIGU (lihat pemakaiannya
+// di bawah), BUKAN diam-diam di-fallback ke Tanggal+Produk polos.
+function storeSetFromPoRows_(poRows){
+  const set = new Set();
+  poRows.forEach(r=>{
+    let stores = [];
+    try{ stores = JSON.parse(r.StoresJSON || "[]"); }catch(e){ stores = []; }
+    (Array.isArray(stores) ? stores : []).forEach(s=>{ if(s && s.toko) set.add(str_(s.toko)); });
+  });
+  return set;
+}
 
-  // 1. PO milik batch ini -> produkSet jadi join key utk sheet lain yang
-  //    tidak py kolom Factory sendiri.
+// Cascade delete SATU batch trial (tanggal+factory) dari semua sheet
+// operasional yang diketahui berelasi — HASIL AUDIT over-delete: setiap
+// sheet dipersempit dgn identifier PALING presisi yang benar-benar tersedia
+// di schema-nya (Batch/InvoiceBatch/factory-derived SKU identity/store
+// relationship). Kalau tidak ada identifier presisi/pendukung apa pun yang
+// tersedia utk satu baris, baris itu DIBIARKAN (tidak dihapus) dan dihitung
+// ke skippedAmbiguousCounts drpd menebak dari Tanggal+Produk semata — lebih
+// aman residual drpd salah menghapus data yang bukan milik batch ini.
+//   - PO: Tanggal+Factory (key asli, presisi mutlak).
+//   - Ceklis/FGPacking: Kode+Produk (identitas SKU) — FGPacking juga py
+//     kolom Factory sendiri (presisi ganda). CeklisMeta HANYA dihapus kalau
+//     divisi itu benar2 tidak py sisa baris Ceklis lain di tanggal yg sama.
+//   - FGReady: Tanggal+Factory langsung (key asli schema).
+//   - Kirim: TIDAK py Factory/Kode/Batch-ref apa pun ke PO — presisi terbaik
+//     yg tersedia adalah Tanggal+Produk DIPERKETAT dgn toko tujuan dari
+//     StoresJSON PO (storeSet). Kalau storeSet kosong, baris yg cuma cocok
+//     Tanggal+Produk dianggap AMBIGU (TIDAK dihapus). Batch Kirim yg
+//     terhapus di sini jadi join key PRESISI utk Invoice/Pembayaran/Mutasi.
+//   - Invoice: Batch = Batch Kirim yg baru dihapus (presisi mutlak).
+//   - Pembayaran: Batch = Batch Invoice yg baru dihapus (presisi mutlak).
+//   - Retur/Jual: sama kebijakan dgn Kirim (Tanggal+Produk+toko∈storeSet;
+//     storeSet kosong -> ambigu, tidak dihapus). Retur/Jual TIDAK py kolom
+//     Batch/InvoiceBatch di schema ini sama sekali.
+//   - Reject: presisi via InvoiceBatch kalau sudah tertaut ke Invoice yg
+//     dihapus; kalau belum, fallback ke kebijakan Retur (Tanggal+Produk+
+//     toko∈storeSet). Sisanya ambigu.
+//   - Mutasi: presisi via BatchAsal/BatchTujuan yg merujuk Batch Kirim/
+//     Invoice yg dihapus; kalau belum, fallback Tanggal+Produk+(Asal ATAU
+//     Tujuan)∈storeSet. Sisanya ambigu.
+//   - StokAdj: SELALU dianggap ambigu, TIDAK PERNAH dihapus cascade — schema
+//     ini tidak py Batch/InvoiceBatch/toko/store apa pun utk ditautkan balik
+//     ke batch manapun, jadi Tanggal+Produk semata terlalu lemah (bisa jadi
+//     penyesuaian stok independen yg kebetulan sama produk+tanggal). Ini
+//     permintaan eksplisit hasil audit.
+function cascadeDeleteTrialBatch_(tanggal, factory){
+  const deletedCounts = {};
+  const skippedAmbiguousCounts = {};
+
+  // 1. PO milik batch ini -> jadi sumber SEMUA join key di bawah (produkSet,
+  //    skuPairSet, storeSet).
   const shPO = getOrCreateSheet(SHEET_PO);
   const poRows = readAllAsObjects_(shPO).filter(r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory);
-  const produkSet = new Set(poRows.map(r=>str_(r.Produk)).filter(Boolean));
-  counts.po = poRows.length;
+  deletedCounts.po = poRows.length;
   deleteRowsWhere_(shPO, r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory);
 
-  if(!produkSet.size){
-    return Object.assign(counts, {tanggal, factory, note:"Tidak ada baris PO ditemukan utk batch ini — cuma baris PO (kalau ada) yang dihapus, sheet lain tidak disentuh."});
+  if(!poRows.length){
+    return {tanggal, factory, produkCount:0, deletedCounts, skippedAmbiguousCounts,
+      note:"Tidak ada baris PO ditemukan utk batch ini — cuma baris PO (kalau ada) yang dihapus, sheet lain tidak disentuh."};
   }
+  const produkSet = new Set(poRows.map(r=>str_(r.Produk)).filter(Boolean));
   const inSet = produk => produkSet.has(str_(produk));
+  const skuPairSet = skuPairSetFromPoRows_(poRows);
+  const inSku = (kode, produk) => skuPairSet.has(skuPairKey_(kode, produk));
+  const storeSet = storeSetFromPoRows_(poRows);
+  const inStore = toko => storeSet.size > 0 && storeSet.has(str_(toko));
 
-  // 2. Ceklis (Tanggal+Produk).
+  // 2. Ceklis — identitas SKU (Kode+Produk), bukan nama produk polos.
   const shCeklis = getOrCreateSheet(SHEET_CEKLIS);
   const ceklisRows = readAllAsObjects_(shCeklis);
-  const ceklisHapus = ceklisRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  const ceklisMatch = r => normDate_(r.Tanggal)===tanggal && inSku(r.Kode, r.Produk);
+  const ceklisHapus = ceklisRows.filter(ceklisMatch);
   const divisiTerdampak = new Set(ceklisHapus.map(r=>str_(r.Divisi)));
-  counts.ceklis = ceklisHapus.length;
-  deleteRowsWhere_(shCeklis, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  deletedCounts.ceklis = ceklisHapus.length;
+  deleteRowsWhere_(shCeklis, ceklisMatch);
 
   // 3. CeklisMeta — hanya kalau divisi itu tidak py sisa Ceklis lain di
   //    tanggal yg sama (baca ulang SETELAH baris Ceklis di atas dihapus).
@@ -1050,81 +1134,100 @@ function cascadeDeleteTrialBatch_(tanggal, factory){
       metaHapus++;
     }
   });
-  counts.ceklisMeta = metaHapus;
+  deletedCounts.ceklisMeta = metaHapus;
 
-  // 4. FGPacking (Tanggal+Factory+Produk — py kolom Factory sendiri).
+  // 4. FGPacking — Factory sendiri (presisi) + identitas SKU (Kode+Produk).
   const shFgp = getOrCreateSheet(SHEET_FGPACKING);
   const fgpRows = readAllAsObjects_(shFgp);
-  counts.fgPacking = fgpRows.filter(r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory && inSet(r.Produk)).length;
-  deleteRowsWhere_(shFgp, r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory && inSet(r.Produk));
+  const fgpMatch = r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory && inSku(r.Kode, r.Produk);
+  deletedCounts.fgPacking = fgpRows.filter(fgpMatch).length;
+  deleteRowsWhere_(shFgp, fgpMatch);
 
   // 5. FGReady (Tanggal+Factory langsung, sesuai kontrak schema aslinya).
   const shFgr = getOrCreateSheet(SHEET_FGREADY);
   const fgrRows = readAllAsObjects_(shFgr);
-  counts.fgReady = fgrRows.filter(r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory).length;
-  deleteRowsWhere_(shFgr, r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory);
+  const fgrMatch = r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory;
+  deletedCounts.fgReady = fgrRows.filter(fgrMatch).length;
+  deleteRowsWhere_(shFgr, fgrMatch);
 
-  // 6. Kirim/DO (Tanggal+Produk) — kumpulkan Batch yg terpengaruh utk
-  //    cascade presisi ke Invoice/Pembayaran/Mutasi di bawah.
+  // 6. Kirim/DO — Tanggal+Produk DIPERKETAT toko∈storeSet (lihat catatan
+  //    kebijakan di atas fungsi ini). Kumpulkan Batch yg terhapus utk join
+  //    presisi Invoice/Pembayaran/Mutasi di bawah.
   const shKirim = getOrCreateSheet(SHEET_KIRIM);
   const kirimRows = readAllAsObjects_(shKirim);
-  const kirimHapus = kirimRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  const kirimKandidat = kirimRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  const kirimHapus = kirimKandidat.filter(r => inStore(r.Toko));
   const batchKirimSet = new Set(kirimHapus.map(r=>str_(r.Batch)).filter(Boolean));
-  counts.kirim = kirimHapus.length;
-  deleteRowsWhere_(shKirim, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  deletedCounts.kirim = kirimHapus.length;
+  skippedAmbiguousCounts.kirim = kirimKandidat.length - kirimHapus.length;
+  deleteRowsWhere_(shKirim, r => batchKirimSet.has(str_(r.Batch)));
 
-  // 7. Invoice — join PRESISI lewat Batch = Batch Kirim yg baru dihapus
-  //    (satu batch kirim = satu invoice di app ini), bukan tebakan tanggal/produk.
+  // 7. Invoice — Batch = Batch Kirim yg baru dihapus (presisi mutlak).
   const shInv = getOrCreateSheet(SHEET_INVOICE);
   const invRows = readAllAsObjects_(shInv);
   const invHapus = invRows.filter(r => batchKirimSet.has(str_(r.Batch)));
   const batchInvoiceSet = new Set(invHapus.map(r=>str_(r.Batch)));
-  counts.invoice = invHapus.length;
+  deletedCounts.invoice = invHapus.length;
   deleteRowsWhere_(shInv, r => batchKirimSet.has(str_(r.Batch)));
 
-  // 8. Pembayaran — join presisi lewat Batch = Batch Invoice yg dihapus.
+  // 8. Pembayaran — Batch = Batch Invoice yg baru dihapus (presisi mutlak).
   const shBayar = getOrCreateSheet(SHEET_PEMBAYARAN);
   const bayarRows = readAllAsObjects_(shBayar);
-  counts.pembayaran = bayarRows.filter(r => batchInvoiceSet.has(str_(r.Batch))).length;
-  deleteRowsWhere_(shBayar, r => batchInvoiceSet.has(str_(r.Batch)));
+  const bayarMatch = r => batchInvoiceSet.has(str_(r.Batch));
+  deletedCounts.pembayaran = bayarRows.filter(bayarMatch).length;
+  deleteRowsWhere_(shBayar, bayarMatch);
 
-  // 9. Retur (Tanggal+Produk — tidak py join batch invoice).
+  // 9. Retur — tidak py Batch/InvoiceBatch di schema ini sama sekali; sama
+  //    kebijakan dgn Kirim (Tanggal+Produk+toko∈storeSet).
   const shRetur = getOrCreateSheet(SHEET_RETUR);
   const returRows = readAllAsObjects_(shRetur);
-  counts.retur = returRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk)).length;
-  deleteRowsWhere_(shRetur, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  const returKandidat = returRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  const returHapus = returKandidat.filter(r => inStore(r.Toko));
+  deletedCounts.retur = returHapus.length;
+  skippedAmbiguousCounts.retur = returKandidat.length - returHapus.length;
+  deleteRowsWhere_(shRetur, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk) && inStore(r.Toko));
 
-  // 10. Reject — union: Tanggal+Produk ATAU InvoiceBatch yg sudah dihapus.
+  // 10. Reject — presisi via InvoiceBatch; kalau belum tertaut, fallback ke
+  //     kebijakan Retur (Tanggal+Produk+toko∈storeSet). Sisanya ambigu.
   const shRej = getOrCreateSheet(SHEET_REJECT);
   const rejRows = readAllAsObjects_(shRej);
-  const rejMatch = r => (normDate_(r.Tanggal)===tanggal && inSet(r.Produk)) || batchInvoiceSet.has(str_(r.InvoiceBatch));
-  counts.reject = rejRows.filter(rejMatch).length;
-  deleteRowsWhere_(shRej, rejMatch);
+  const rejPrecise = r => batchInvoiceSet.has(str_(r.InvoiceBatch));
+  const rejStoreFallback = r => !rejPrecise(r) && normDate_(r.Tanggal)===tanggal && inSet(r.Produk) && inStore(r.Toko);
+  const rejHapusMatch = r => rejPrecise(r) || rejStoreFallback(r);
+  const rejKandidatAmbigu = r => !rejHapusMatch(r) && normDate_(r.Tanggal)===tanggal && inSet(r.Produk);
+  deletedCounts.reject = rejRows.filter(rejHapusMatch).length;
+  skippedAmbiguousCounts.reject = rejRows.filter(rejKandidatAmbigu).length;
+  deleteRowsWhere_(shRej, rejHapusMatch);
 
-  // 11. Jual/penjualan outlet (Tanggal+Produk).
+  // 11. Jual/penjualan outlet — sama kebijakan dgn Retur.
   const shJual = getOrCreateSheet(SHEET_JUAL);
   const jualRows = readAllAsObjects_(shJual);
-  counts.jual = jualRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk)).length;
-  deleteRowsWhere_(shJual, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  const jualKandidat = jualRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  const jualHapus = jualKandidat.filter(r => inStore(r.Toko));
+  deletedCounts.jual = jualHapus.length;
+  skippedAmbiguousCounts.jual = jualKandidat.length - jualHapus.length;
+  deleteRowsWhere_(shJual, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk) && inStore(r.Toko));
 
-  // 12. Mutasi — union: Tanggal+Produk ATAU BatchAsal/BatchTujuan yg dihapus
-  //     (mutasi mengacu ke batch Kirim ASAL & batch Invoice TUJUAN yg baru dibuat).
+  // 12. Mutasi — presisi via BatchAsal/BatchTujuan; kalau belum tertaut,
+  //     fallback Tanggal+Produk+(Asal ATAU Tujuan)∈storeSet. Sisanya ambigu.
   const shMut = getOrCreateSheet(SHEET_MUTASI);
   const mutRows = readAllAsObjects_(shMut);
-  const mutMatch = r => (normDate_(r.Tanggal)===tanggal && inSet(r.Produk))
-    || batchKirimSet.has(str_(r.BatchAsal)) || batchKirimSet.has(str_(r.BatchTujuan))
+  const mutPrecise = r => batchKirimSet.has(str_(r.BatchAsal)) || batchKirimSet.has(str_(r.BatchTujuan))
     || batchInvoiceSet.has(str_(r.BatchAsal)) || batchInvoiceSet.has(str_(r.BatchTujuan));
-  counts.mutasi = mutRows.filter(mutMatch).length;
-  deleteRowsWhere_(shMut, mutMatch);
+  const mutStoreFallback = r => !mutPrecise(r) && normDate_(r.Tanggal)===tanggal && inSet(r.Produk) && (inStore(r.Asal) || inStore(r.Tujuan));
+  const mutHapusMatch = r => mutPrecise(r) || mutStoreFallback(r);
+  const mutKandidatAmbigu = r => !mutHapusMatch(r) && normDate_(r.Tanggal)===tanggal && inSet(r.Produk);
+  deletedCounts.mutasi = mutRows.filter(mutHapusMatch).length;
+  skippedAmbiguousCounts.mutasi = mutRows.filter(mutKandidatAmbigu).length;
+  deleteRowsWhere_(shMut, mutHapusMatch);
 
-  // 13. StokAdj — best-effort Tanggal+Produk SAJA (lihat catatan besar di
-  //     atas fungsi ini soal kenapa ini satu-satunya sheet tanpa join presisi).
+  // 13. StokAdj — TIDAK PERNAH dihapus cascade (lihat catatan kebijakan di
+  //     atas fungsi ini) — SELALU dihitung skippedAmbiguousCounts saja.
   const shStok = getOrCreateSheet(SHEET_STOKADJ);
   const stokRows = readAllAsObjects_(shStok);
-  counts.stokAdj = stokRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk)).length;
-  deleteRowsWhere_(shStok, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  skippedAmbiguousCounts.stokAdj = stokRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk)).length;
 
-  return Object.assign(counts, {tanggal, factory, produkCount:produkSet.size});
+  return {tanggal, factory, produkCount:produkSet.size, deletedCounts, skippedAmbiguousCounts};
 }
 
 // ============================================================
