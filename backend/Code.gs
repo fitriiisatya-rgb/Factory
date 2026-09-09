@@ -107,7 +107,12 @@ const HEADERS = {
   // Kode+Produk sekarang eksplisit terpisah (bukan lagi digabung/di-parse dari
   // satu string key skuId) — lihat handleFgPacking_ & catatan bug #6 di atas.
   [SHEET_CEKLIS]: ["Tanggal","Divisi","Kode","Produk","Kategori","Target","Status","Aktual","Reject","Keterangan","UpdatedAt"],
-  [SHEET_CEKLIS_META]: ["Tanggal","Divisi","SubmittedAt","Closed","ClosedAt","ClosedBy","ReopenReason"],
+  // Status eksplisit (bukan diinfer dari qty/Closed — lihat konstanta
+  // CEKLIS_STATUS_* dan touchCeklisMetaDraft_/markCeklisSubmitted_/
+  // markCeklisReopened_/markCeklisVerifiedFg_ di bawah). Kolom baru,
+  // backward-compatible: baris lama tanpa Status dibaca sbg "not_started"
+  // (bukan ditebak dari Closed), akan terisi begitu record itu disentuh lagi.
+  [SHEET_CEKLIS_META]: ["Tanggal","Divisi","Status","SubmittedAt","Closed","ClosedAt","ClosedBy","ReopenReason"],
   [SHEET_FGPACKING]: ["Tanggal","Factory","Kode","Produk","Toko","Qty","Status","Keterangan","UpdatedAt"],
   [SHEET_FGREADY]: ["Tanggal","Factory","ReadyAt","SourceVersionJSON"],
   [SHEET_KIRIM]: ["Id","Batch","Tanggal","Toko","Produk","Qty","NoSJ","Pengemudi","Kendaraan","CreatedAt"],
@@ -137,6 +142,18 @@ const TEXT_COLS = ["Tanggal","Factory","Kategori","Kode","Id","Batch","Toko","No
 
 const LOCK_TIMEOUT_MS = 10000; // 10 detik — cukup utk beban beberapa divisi, lihat catatan tradeoff di laporan.
 const CACHE_TTL_SEC = 21600; // 6 jam — cukup panjang utk menutup retry jaringan HP yang telat, cache expiry BUKAN batas idempotency (RequestLog sheet yang permanen).
+
+// ---- Status eksplisit lifecycle Ceklis per tanggal+divisi ----
+// JANGAN infer status dari qty atau Closed di mana pun — field Status pada
+// CeklisMeta inilah SATU-SATUNYA sumber kebenaran, ditulis eksplisit oleh
+// fungsi touchCeklisMetaDraft_/markCeklisSubmitted_/markCeklisReopened_/
+// markCeklisVerifiedFg_ di bawah, masing-masing dipanggil dari HANYA satu
+// jenis aksi (progress, submit, reopen, verifikasi FG).
+const CEKLIS_STATUS_NOT_STARTED = "not_started";
+const CEKLIS_STATUS_DRAFT = "draft";
+const CEKLIS_STATUS_SUBMITTED = "submitted";
+const CEKLIS_STATUS_REOPENED = "reopened";
+const CEKLIS_STATUS_VERIFIED_FG = "verified_fg";
 
 function setup(){
   Object.keys(HEADERS).forEach(name => getOrCreateSheet(name));
@@ -410,6 +427,19 @@ function mutateAppend_(opts, applyFn){
   });
 }
 
+// Section 4 (STRICT versioning): endpoint multi-user "inti" (productionProgress/
+// ceklisSubmit/ceklisReopen) WAJIB requestId+expectedVersion — jangan biarkan
+// lolos tanpa itu, karena keduanya inilah yang membuat endpoint ini aman dari
+// lost-update/duplikasi. Endpoint LAIN (poUpload, fgPacking, fgReady, master/
+// lookup upserts, dst) TETAP backward-compatible sementara (expectedVersion
+// null dilewati, requestId kosong berarti tidak idempoten) — lihat catatan di
+// mutateVersioned_.
+function requireStrictVersioning_(payload){
+  if(!payload.requestId) return {ok:false, code:"MISSING_REQUEST_ID", message:"requestId wajib utk endpoint ini."};
+  if(payload.expectedVersion==null) return {ok:false, code:"MISSING_EXPECTED_VERSION", message:"expectedVersion wajib utk endpoint ini."};
+  return null;
+}
+
 function actorFromPayload_(payload){
   // CATATAN KERAS: ini BUKAN otentikasi. userId/userName/role di sini
   // sepenuhnya diklaim sendiri oleh client, dicatat apa adanya ke audit
@@ -517,7 +547,12 @@ function readCeklis_(){
   const metaMap = {};
   readAllAsObjects_(shM).forEach(m=>{
     const key = normDate_(m.Tanggal) + "|" + str_(m.Divisi);
-    metaMap[key] = { submittedAt: str_(m.SubmittedAt), closed: str_(m.Closed)==="true", closedAt: str_(m.ClosedAt) };
+    // NOTE: field ini "metaStatus" (lifecycle: not_started/draft/submitted/
+    // reopened/verified_fg dari CeklisMeta), BUKAN "status" per-baris di
+    // sheet Ceklis (itu status sesuai/tidak_sesuai per SKU, field beda).
+    // Baris lama tanpa kolom Status dibaca "not_started" — TIDAK ditebak
+    // dari Closed/qty (lihat catatan section 2/3 di header file).
+    metaMap[key] = { metaStatus: str_(m.Status) || CEKLIS_STATUS_NOT_STARTED, submittedAt: str_(m.SubmittedAt), closed: str_(m.Closed)==="true", closedAt: str_(m.ClosedAt), reopenReason: str_(m.ReopenReason) };
   });
   return readAllAsObjects_(shC).map(r=>{
     const tanggal = normDate_(r.Tanggal), divisi = str_(r.Divisi);
@@ -525,7 +560,8 @@ function readCeklis_(){
     return {
       tanggal, divisi, kode: str_(r.Kode), produk: str_(r.Produk), kategori: str_(r.Kategori),
       target: num_(r.Target), status: str_(r.Status) || "sesuai", aktual: num_(r.Aktual), reject: num_(r.Reject),
-      keterangan: str_(r.Keterangan), submittedAt: meta.submittedAt || "", closed: !!meta.closed, closedAt: meta.closedAt || ""
+      keterangan: str_(r.Keterangan), submittedAt: meta.submittedAt || "", closed: !!meta.closed, closedAt: meta.closedAt || "",
+      metaStatus: meta.metaStatus || CEKLIS_STATUS_NOT_STARTED, reopenReason: meta.reopenReason || ""
     };
   });
 }
@@ -600,7 +636,16 @@ function doPost(e){
       case "tokoTipeUpsert": resp = handleTokoTipeUpsert_(payload, actor); break;
       case "settingsUpsert": resp = handleSettingsUpsert_(payload, actor); break;
       case "invoice": resp = handleInvoiceUpsert_(payload, actor); break;
-      case "reset": resp = handleReset_(payload, actor); break;
+      // Reset jarak jauh DINONAKTIFKAN TOTAL — tidak pernah mengeksekusi apa
+      // pun, tidak pernah menyentuh sheet, siapa pun yang mengirim payload
+      // ini (termasuk yang benar-benar berniat) selalu dapat respons ini.
+      // arsipkanData()/arsipkanData_() tetap ada di file ini HANYA utk
+      // dijalankan manual dari dalam Apps Script Editor (Run > arsipkanData)
+      // oleh orang yang punya akses editor — bukan lewat doPost publik.
+      case "reset":
+        logError_(payload, "reset ditolak — remote reset dinonaktifkan (RESET_DISABLED)");
+        resp = {ok:false, code:"RESET_DISABLED", message:"Reset jarak jauh dinonaktifkan. Jalankan arsipkanData() manual dari Apps Script Editor kalau memang perlu mengarsipkan/mengosongkan data."};
+        break;
       default:
         logError_(payload, "jenis tidak dikenal: " + payload.jenis);
         resp = {ok:false, code:"UNKNOWN_JENIS", message:"jenis tidak dikenal: "+payload.jenis};
@@ -669,7 +714,9 @@ function handleCeklisProduksiReplace_(payload, actor){
     actor, action:"production_progress", tanggal, divisi
   }, function(){
     writeCeklisRows_(tanggal, divisi, payload.rows||[]);
-    touchCeklisMetaSubmitted_(tanggal, divisi, actor);
+    // DRAFT, bukan submitted — endpoint legacy ini dipakai utk Save Progress,
+    // bukan submit final. Lihat catatan bug #3 di header file.
+    touchCeklisMetaDraft_(tanggal, divisi, actor);
     return {record:{tanggal, divisi, rowCount:(payload.rows||[]).length}, payloadSummary:(payload.rows||[]).length+" baris ceklis (replace) utk "+recordKey};
   });
 }
@@ -684,6 +731,8 @@ function handleCeklisProduksiReplace_(payload, actor){
 // TIDAK otomatis di-retry dgn versi baru oleh backend, itu keputusan sadar
 // supaya operator tahu ada perubahan lain sebelum datanya ikut bercampur).
 function handleProductionProgressDelta_(payload, actor){
+  const strictErr = requireStrictVersioning_(payload);
+  if(strictErr) return strictErr;
   const tanggal = normDate_(payload.tanggal), divisi = str_(payload.divisi);
   const recordKey = tanggal + "|" + divisi;
   return mutateVersioned_({
@@ -714,7 +763,9 @@ function handleProductionProgressDelta_(payload, actor){
     const rows = Object.values(map).map(r=>Object.assign({}, r, {UpdatedAt:new Date()}));
     deleteRowsWhere_(sh, r => normDate_(r.Tanggal)===tanggal && str_(r.Divisi)===divisi);
     appendObjects_(sh, HEADERS[SHEET_CEKLIS], rows);
-    touchCeklisMetaSubmitted_(tanggal, divisi, actor);
+    // DRAFT — ini Save Progress, BUKAN submit final. SubmittedAt tidak diisi
+    // di sini sama sekali (bug #2 di header file).
+    touchCeklisMetaDraft_(tanggal, divisi, actor);
     return {record:{tanggal, divisi, rowCount:rows.length}, payloadSummary:(payload.rows||[]).length+" delta diterapkan ke "+recordKey};
   });
 }
@@ -728,21 +779,70 @@ function writeCeklisRows_(tanggal, divisi, rows){
     Keterangan: str_(r.keterangan), UpdatedAt: now
   })));
 }
-function touchCeklisMetaSubmitted_(tanggal, divisi, actor){
+// ---- Metadata Ceklis: 4 fungsi TERPISAH, masing-masing HANYA dipanggil dari
+// SATU jenis aksi. Jangan gabung lagi jadi satu fungsi serba-bisa seperti
+// touchCeklisMetaSubmitted_ yang lama — itu sebabnya Save Progress (delta
+// atau legacy replace) dulu ikut mengisi SubmittedAt padahal belum di-submit.
+
+// productionProgress & ceklisProduksi (legacy replace) -> DRAFT. SubmittedAt
+// SENGAJA TIDAK diisi di sini (dipertahankan apa adanya kalau sudah pernah
+// ada dari submit sebelumnya — draft baru TIDAK menghapus riwayat submit
+// terakhir, tapi juga TIDAK menciptakan SubmittedAt baru).
+function touchCeklisMetaDraft_(tanggal, divisi, actor){
   const shM = getOrCreateSheet(SHEET_CEKLIS_META);
   const existing = readAllAsObjects_(shM).find(m=>normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi);
   deleteRowsWhere_(shM, m => normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi);
   appendObjects_(shM, HEADERS[SHEET_CEKLIS_META], [{
-    Tanggal: tanggal, Divisi: divisi, SubmittedAt: new Date().toLocaleString("id-ID"),
-    Closed: existing ? str_(existing.Closed) : "false", ClosedAt: existing ? str_(existing.ClosedAt) : "",
-    ClosedBy: existing ? str_(existing.ClosedBy) : "", ReopenReason: existing ? str_(existing.ReopenReason) : ""
+    Tanggal: tanggal, Divisi: divisi, Status: CEKLIS_STATUS_DRAFT,
+    SubmittedAt: existing ? str_(existing.SubmittedAt) : "",
+    Closed: "false", ClosedAt: "", ClosedBy: "",
+    ReopenReason: existing ? str_(existing.ReopenReason) : ""
   }]);
+}
+// ceklisSubmit -> SUBMITTED. Satu-satunya tempat SubmittedAt diisi.
+function markCeklisSubmitted_(tanggal, divisi, actor){
+  const shM = getOrCreateSheet(SHEET_CEKLIS_META);
+  deleteRowsWhere_(shM, m => normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi);
+  const now = new Date();
+  appendObjects_(shM, HEADERS[SHEET_CEKLIS_META], [{
+    Tanggal: tanggal, Divisi: divisi, Status: CEKLIS_STATUS_SUBMITTED,
+    SubmittedAt: now.toLocaleString("id-ID"), Closed: "true", ClosedAt: now.toLocaleString("id-ID"),
+    ClosedBy: actor.userName||"", ReopenReason: ""
+  }]);
+}
+// ceklisReopen -> REOPENED. SubmittedAt (riwayat submit terakhir) dipertahankan
+// apa adanya utk jejak audit, TAPI Status eksplisit "reopened" itulah yang
+// harus dibaca konsumen manapun — bukan menyimpulkan dari ada/tidaknya SubmittedAt.
+function markCeklisReopened_(tanggal, divisi, actor, reason){
+  const shM = getOrCreateSheet(SHEET_CEKLIS_META);
+  const existing = readAllAsObjects_(shM).find(m=>normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi) || {};
+  deleteRowsWhere_(shM, m => normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi);
+  appendObjects_(shM, HEADERS[SHEET_CEKLIS_META], [{
+    Tanggal: tanggal, Divisi: divisi, Status: CEKLIS_STATUS_REOPENED,
+    SubmittedAt: str_(existing.SubmittedAt)||"", Closed: "false", ClosedAt: "",
+    ClosedBy: "", ReopenReason: reason
+  }]);
+}
+// fgReady (verifikasi FG) -> VERIFIED_FG, utk SETIAP divisi sumber yang
+// disebut di payload.sourceVersions. Kalau divisi itu belum pernah punya
+// CeklisMeta sama sekali (FG mengklaim sumber yg tidak pernah ada ceklis-nya),
+// TIDAK membuat baris baru — tidak ada apa pun utk ditandai terverifikasi.
+function markCeklisVerifiedFg_(tanggal, divisi, actor){
+  const shM = getOrCreateSheet(SHEET_CEKLIS_META);
+  const existing = readAllAsObjects_(shM).find(m=>normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi);
+  if(!existing) return;
+  deleteRowsWhere_(shM, m => normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi);
+  appendObjects_(shM, HEADERS[SHEET_CEKLIS_META], [Object.assign({}, existing, {
+    Status: CEKLIS_STATUS_VERIFIED_FG
+  })]);
 }
 
 // Section 8: SUBMIT harus atomik — verifikasi versi, tandai submitted/closed,
 // naikkan versi, audit, semua di dalam SATU critical section (bukan langkah
 // terpisah yang bisa berhenti di tengah).
 function handleCeklisSubmit_(payload, actor){
+  const strictErr = requireStrictVersioning_(payload);
+  if(strictErr) return strictErr;
   const tanggal = normDate_(payload.tanggal), divisi = str_(payload.divisi);
   const recordKey = tanggal + "|" + divisi;
   return mutateVersioned_({
@@ -765,15 +865,9 @@ function handleCeklisSubmit_(payload, actor){
       deleteRowsWhere_(sh, r => normDate_(r.Tanggal)===tanggal && str_(r.Divisi)===divisi);
       appendObjects_(sh, HEADERS[SHEET_CEKLIS], Object.values(map).map(r=>Object.assign({}, r, {UpdatedAt:new Date()})));
     }
-    const shM = getOrCreateSheet(SHEET_CEKLIS_META);
-    const existingMeta = readAllAsObjects_(shM).find(m=>normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi) || {};
-    deleteRowsWhere_(shM, m => normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi);
-    const now = new Date();
-    appendObjects_(shM, HEADERS[SHEET_CEKLIS_META], [{
-      Tanggal: tanggal, Divisi: divisi, SubmittedAt: existingMeta.SubmittedAt || now.toLocaleString("id-ID"),
-      Closed: "true", ClosedAt: now.toLocaleString("id-ID"), ClosedBy: actor.userName||"", ReopenReason: ""
-    }]);
-    return {record:{tanggal, divisi, closed:true}, payloadSummary:"Submit final "+recordKey};
+    // SUBMITTED — satu-satunya tempat SubmittedAt benar-benar diisi.
+    markCeklisSubmitted_(tanggal, divisi, actor);
+    return {record:{tanggal, divisi, closed:true, status:CEKLIS_STATUS_SUBMITTED}, payloadSummary:"Submit final "+recordKey};
   });
 }
 
@@ -783,6 +877,8 @@ function handleCeklisSubmit_(payload, actor){
 // yang dikirim client cuma diklaim sendiri (lihat actorFromPayload_ & blocker
 // AUTH IDENTITY). Yang BISA dipastikan di sini: alasan wajib diisi & tercatat.
 function handleCeklisReopen_(payload, actor){
+  const strictErr = requireStrictVersioning_(payload);
+  if(strictErr) return strictErr;
   const tanggal = normDate_(payload.tanggal), divisi = str_(payload.divisi);
   const recordKey = tanggal + "|" + divisi;
   const reason = str_(payload.reason).trim();
@@ -793,14 +889,8 @@ function handleCeklisReopen_(payload, actor){
     recordType:"ceklis", recordKey, requestId:payload.requestId, expectedVersion:payload.expectedVersion,
     actor, action:"production_reopen", tanggal, divisi
   }, function(){
-    const shM = getOrCreateSheet(SHEET_CEKLIS_META);
-    const existingMeta = readAllAsObjects_(shM).find(m=>normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi) || {};
-    deleteRowsWhere_(shM, m => normDate_(m.Tanggal)===tanggal && str_(m.Divisi)===divisi);
-    appendObjects_(shM, HEADERS[SHEET_CEKLIS_META], [{
-      Tanggal: tanggal, Divisi: divisi, SubmittedAt: existingMeta.SubmittedAt||"",
-      Closed: "false", ClosedAt: "", ClosedBy: "", ReopenReason: reason
-    }]);
-    return {record:{tanggal, divisi, closed:false, reason}, payloadSummary:"Reopen "+recordKey+": "+reason};
+    markCeklisReopened_(tanggal, divisi, actor, reason);
+    return {record:{tanggal, divisi, closed:false, status:CEKLIS_STATUS_REOPENED, reason}, payloadSummary:"Reopen "+recordKey+": "+reason};
   });
 }
 
@@ -873,6 +963,10 @@ function handleFgReady_(payload, actor){
         return cur !== num_(payload.sourceVersions[divisi]);
       });
       if(stale.length) warning = {code:"STALE_PRODUCTION_SOURCE", divisi: stale, message:"Produksi sumber ("+stale.join(", ")+") berubah lagi setelah FG mulai verifikasi — cek ulang sebelum kirim."};
+      // VERIFIED_FG utk tiap divisi sumber — dicatat terlepas dari warning di
+      // atas (FG memang sudah memakai/memverifikasi versi itu; warning cuma
+      // memberitahu kalau sumbernya berubah LAGI sesudahnya).
+      Object.keys(payload.sourceVersions).forEach(divisi=>{ markCeklisVerifiedFg_(tanggal, divisi, actor); });
     }
     return {record:{tanggal, factory, readyAt:str_(payload.readyAt)}, warning, payloadSummary:"FG ready "+recordKey};
   });
@@ -1082,25 +1176,6 @@ function handleInvoiceUpsert_(payload, actor){
       Total: num_(payload.total), CreatedAt: existing ? existing.CreatedAt : new Date(), UpdatedAt: new Date()
     }]);
     return {record:{batch}, payloadSummary:"Invoice "+batch};
-  });
-}
-
-// ============================================================
-//  Reset — TETAP tanpa auth (lihat blocker), tapi sekarang minimal lock +
-//  audit + arsip dulu, supaya bisa dilacak siapa/kapan yang melakukannya.
-// ============================================================
-function handleReset_(payload, actor){
-  return withLock_(function(){
-    arsipkanData_("sebelum-reset");
-    [SHEET_PO,SHEET_CEKLIS,SHEET_CEKLIS_META,SHEET_FGPACKING,SHEET_FGREADY,SHEET_KIRIM,SHEET_RETUR,SHEET_JUAL,
-     SHEET_INVOICE,SHEET_REJECT,SHEET_PEMBAYARAN,SHEET_MUTASI,SHEET_STOKADJ,SHEET_PESANAN,SHEET_RECORDVERSION].forEach(name=>{
-      const sh = getOrCreateSheet(name);
-      rewriteAll_(sh, HEADERS[name], []);
-    });
-    appendAudit_({requestId:payload.requestId, userId:actor.userId, userName:actor.userName, role:actor.role,
-      action:"reset", tanggal:"", divisi:"", recordKey:"__all__", previousVersion:0, newVersion:0,
-      payloadSummary:"RESET seluruh data operasional (arsip dibuat lebih dulu)", status:"ok"});
-    return {ok:true, code:"RESET_DONE"};
   });
 }
 
