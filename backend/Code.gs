@@ -203,6 +203,66 @@ function migrateSchema_(){
   migrateFgReadySourceVersionColumn_();
 }
 
+// Cek CEPAT & READ-ONLY (tanpa lock, tanpa getOrCreateSheet — kalau sheet
+// belum ada sama sekali, itu bukan kasus migrasi; nanti dibuat FRESH dgn
+// header terbaru oleh getOrCreateSheet begitu benar2 diakses) apakah MASIH
+// ada sheet yang perlu dimigrasi. Dipakai sbg fast-path di
+// ensureSchemaMigrated_ — HARUS murah krn dipanggil di SETIAP doGet/doPost.
+function sheetMissingColumn_(sheetName, newColumn){
+  const sh = getSS().getSheetByName(sheetName);
+  if(!sh) return false;
+  const header = readHeaderRow_(sh);
+  if(!header.length) return false; // sheet ada tapi kosong total -> bukan kasus migrasi (getOrCreateSheet/migrate*_ menanganinya sbg no-op/isi header baru saat benar2 disentuh)
+  return header.indexOf(newColumn) === -1;
+}
+function schemaNeedsMigration_(){
+  return sheetMissingColumn_(SHEET_CEKLIS_META, "Status")
+      || sheetMissingColumn_(SHEET_FGPACKING, "Produk")
+      || sheetMissingColumn_(SHEET_FGREADY, "SourceVersionJSON");
+}
+
+/**
+ * Dipakai KHUSUS dari doGet()/doPost() (bukan dari setup() — setup() boleh
+ * memanggil migrateSchema_() langsung/manual, lihat requirement #1). Pola:
+ *   1. cek read-only TANPA lock dulu -> kalau tidak perlu migrasi, return
+ *      cepat (ini kasus NORMAL/steady-state, harus murah).
+ *   2. kalau PERLU migrasi -> baru acquire LockService.getScriptLock().
+ *   3. CEK ULANG setelah dapat lock -> request LAIN mungkin sudah
+ *      menyelesaikan migrasi duluan selagi kita menunggu/baru mulai cek;
+ *      kalau sudah, jangan migrasi lagi (idempoten, hindari rewriteAll_
+ *      dobel yang sia-sia).
+ *   4. migrateSchema_() di dalam critical section itu.
+ *   5. release di finally — TIDAK PERNAH menahan lock lebih lama dari
+ *      migrasi itu sendiri, apalagi menahannya selama SISA doGet/doPost.
+ *      Ini PENTING: handler mutation (productionProgress/ceklisSubmit/dst)
+ *      MEMAKAI withLock_() SENDIRI belakangan di request yang sama (utk
+ *      doPost) — lock migrasi ini SUDAH DILEPAS jauh sebelum handler mana
+ *      pun mulai, jadi TIDAK bersarang (nested) dengan lock milik handler.
+ *   Kalau tryLock() gagal (request lain sedang migrasi) -> jangan
+ *   memaksa; lewati saja utk request INI (bukan fatal — request ini tetap
+ *   lanjut baca/tulis dgn apa adanya, request berikutnya yang berhasil
+ *   dapat lock akan menuntaskannya). Ini SATU-SATUNYA kasus di mana kolom
+ *   baru bisa sesaat masih kosong utk SATU request yg pas bersamaan dgn
+ *   migrasi pertama kali — batasnya sempit (cuma sekali, saat deploy
+ *   pertama) dan tidak merusak data apa pun.
+ */
+function ensureSchemaMigrated_(){
+  if(!schemaNeedsMigration_()) return;
+  const lock = LockService.getScriptLock();
+  let gotLock = false;
+  try{ gotLock = lock.tryLock(LOCK_TIMEOUT_MS); }catch(e){ gotLock = false; }
+  if(!gotLock){
+    logError_({jenis:"ensureSchemaMigrated_"}, "Lock timeout saat mencoba migrasi skema otomatis — dilewati utk request ini (request lain kemungkinan sedang migrasi), akan dituntaskan oleh request berikutnya.");
+    return;
+  }
+  try{
+    if(!schemaNeedsMigration_()) return; // sudah dituntaskan request lain selagi kita menunggu lock
+    migrateSchema_();
+  } finally {
+    try{ lock.releaseLock(); }catch(e){}
+  }
+}
+
 // Baca HANYA baris header (bukan getDataRange() yg menarik SELURUH sheet) —
 // ini dipanggil di setiap doGet/doPost, jadi harus murah utk kasus normal
 // (sheet sudah termigrasi, tidak ada apa2 yg perlu dikerjakan lagi).
@@ -592,9 +652,12 @@ function actorFromPayload_(payload){
 function doGet(e){
   Object.keys(HEADERS).forEach(name => getOrCreateSheet(name));
   // Jaring pengaman: jangan bergantung pada orang mengingat menjalankan
-  // setup() ulang tiap kali sheet lama ketemu kolom baru. Murah utk kasus
-  // normal (readHeaderRow_ cuma baca 1 baris, langsung no-op kalau sudah termigrasi).
-  migrateSchema_();
+  // setup() ulang tiap kali sheet lama ketemu kolom baru. ensureSchemaMigrated_
+  // (BUKAN migrateSchema_ langsung) — cek read-only dulu, cuma acquire lock
+  // kalau benar2 perlu menulis, lock dilepas SEBELUM baris ini selesai (jadi
+  // tidak nested dgn lock milik handler mutation manapun). Lihat catatan di
+  // ensureSchemaMigrated_.
+  ensureSchemaMigrated_();
   const out = {
     divisi: readMasterList_("divisi"),
     produk: readMasterList_("produk"),
@@ -731,7 +794,12 @@ function doPost(e){
   }catch(err){
     return jsonResp_({ok:false, code:"BAD_PAYLOAD", message:"payload bukan JSON valid"});
   }
-  migrateSchema_(); // jaring pengaman yg sama dgn doGet — lihat catatan di atas migrateSchema_().
+  // Jaring pengaman yg sama dgn doGet — lihat catatan di ensureSchemaMigrated_.
+  // Lock migrasi (kalau memang perlu) SUDAH DILEPAS pada titik ini sebelum
+  // baris ini selesai, jauh sebelum switch(payload.jenis) di bawah mulai
+  // memanggil handler mana pun yang pakai withLock_() sendiri — jadi TIDAK
+  // bersarang dgn lock handler.
+  ensureSchemaMigrated_();
   logPayload_(payload);
   const actor = actorFromPayload_(payload);
   let resp;

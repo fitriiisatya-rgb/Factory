@@ -9,7 +9,7 @@ const CODE_LEGACY = path.join(__dirname, "..", "..", "backend", "Code.legacy.gs"
 
 const EXPORT_NAMES = [
   "doGet","doPost","setup","getSS","getVersion_","getAllVersions_","readAllAsObjects_","getOrCreateSheet",
-  "readHeaderRow_","migrateSchema_",
+  "readHeaderRow_","migrateSchema_","ensureSchemaMigrated_","schemaNeedsMigration_",
   "SHEET_CEKLIS","SHEET_PO","SHEET_FGPACKING","SHEET_CEKLIS_META","SHEET_FGREADY"
 ];
 
