@@ -157,7 +157,8 @@ const CEKLIS_STATUS_VERIFIED_FG = "verified_fg";
 
 function setup(){
   Object.keys(HEADERS).forEach(name => getOrCreateSheet(name));
-  Logger.log("Setup selesai — semua sheet sudah siap: " + Object.keys(HEADERS).join(", "));
+  migrateSchema_();
+  Logger.log("Setup selesai — semua sheet sudah siap (termasuk migrasi skema kalau ada yg perlu): " + Object.keys(HEADERS).join(", "));
 }
 
 function getSS(){ return SpreadsheetApp.getActiveSpreadsheet(); }
@@ -177,6 +178,138 @@ function getOrCreateSheet(name){
     });
   }
   return sh;
+}
+
+// ============================================================
+//  SCHEMA MIGRATION — sheet PRODUKSI yang SUDAH ADA sebelum kolom baru
+//  ditambahkan (Status di CeklisMeta, Produk di FGPacking, SourceVersionJSON
+//  di FGReady) TIDAK otomatis dapat kolom itu dari getOrCreateSheet() —
+//  fungsi itu HANYA menulis header saat sheet BARU dibuat. Tanpa migrasi
+//  eksplisit ini, kolom baru itu baru "ketiban" (self-heal, karena
+//  deleteRowsWhere_/rewriteAll_ menulis ulang SELURUH sheet pakai HEADERS
+//  terbaru, dipetakan per NAMA bukan posisi — jadi nilai lama TIDAK
+//  bergeser ke kolom salah) begitu ada TULISAN PERTAMA ke sheet itu sesudah
+//  deploy. Sebelum tulisan pertama itu terjadi, PEMBACAAN LANGSUNG (doGet /
+//  readCeklis_, yang baca header AS-IS tanpa lewat deleteRowsWhere_ dulu)
+//  akan melihat kolom baru itu kosong utk SEMUA baris historis — misalnya
+//  metaStatus terbaca "not_started" utk record yang sebenarnya sudah lama
+//  submitted. Ini bikin migrasi implisit itu TIDAK BOLEH DIANDALKAN; harus
+//  eksplisit & deterministik, dipanggil dari setup() DAN (sbg jaring
+//  pengaman tambahan) dari doGet/doPost supaya tidak bergantung sama sekali
+//  pada orang mengingat menjalankan setup() ulang tiap kali deploy.
+function migrateSchema_(){
+  migrateCeklisMetaStatus_();
+  migrateFgPackingProdukColumn_();
+  migrateFgReadySourceVersionColumn_();
+}
+
+// Baca HANYA baris header (bukan getDataRange() yg menarik SELURUH sheet) —
+// ini dipanggil di setiap doGet/doPost, jadi harus murah utk kasus normal
+// (sheet sudah termigrasi, tidak ada apa2 yg perlu dikerjakan lagi).
+function readHeaderRow_(sh){
+  const lastCol = sh.getLastColumn();
+  if(lastCol < 1) return [];
+  return sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h=>String(h).trim());
+}
+
+// ---- CeklisMeta: sisipkan kolom "Status" (setelah Divisi, sesuai posisi
+// di HEADERS[SHEET_CEKLIS_META] terbaru) utk sheet lama yang belum punya.
+//
+// ATURAN MIGRASI utk baris historis (persis seperti diminta):
+//   - SubmittedAt ADA dan Closed=="true"  -> Status = submitted
+//     (sudah pernah disubmit & memang masih tertutup — paling sesuai)
+//   - SubmittedAt ADA tapi Closed=="false" -> Status = reopened
+//     (CATATAN JUJUR: data lama (5-7 kolom) TIDAK membedakan "pernah
+//     disubmit lalu dibuka lagi" dari "pernah disimpan progress berkali-
+//     kali tapi belum pernah benar2 di-submit" — versi backend SEBELUM
+//     patch ini memang mengisi SubmittedAt di setiap progress save, bug
+//     yang baru diperbaiki di patch sebelumnya. "reopened" dipilih sesuai
+//     instruksi krn itu yang paling aman/masuk akal drpd mengklaim
+//     "submitted" utk record yang justru sedang Closed=false, TAPI ini
+//     tetap sebuah heuristik, bukan fakta yang bisa dipulihkan 100% akurat
+//     dari data lama.)
+//   - SubmittedAt TIDAK ADA sama sekali    -> Status = not_started
+//     (walau Closed kebetulan true — tanpa bukti SubmittedAt, tidak
+//     diklaim submitted)
+// Kalau header sheet TIDAK cocok dgn bentuk lama yang dikenali (bukan
+// bentuk baru, bukan juga salah satu bentuk lama yang dikenal) — migrasi
+// DIBATALKAN dan dicatat ke Log, drpd menebak-nebak dan salah menata ulang
+// data produksi orang.
+function migrateCeklisMetaStatus_(){
+  const sh = getOrCreateSheet(SHEET_CEKLIS_META);
+  const currentHeader = readHeaderRow_(sh);
+  if(!currentHeader.length){ sh.appendRow(HEADERS[SHEET_CEKLIS_META]); return; }
+  if(currentHeader.indexOf("Status") !== -1) return; // sudah termigrasi ATAU sheet baru -> idempoten, tidak diapa-apakan lagi.
+  const OLD_CORE = ["Tanggal","Divisi","SubmittedAt","Closed","ClosedAt"]; // sama di bentuk lama 5-kolom (legacy asli) MAUPUN 7-kolom (+ClosedBy/ReopenReason)
+  const matchesKnownOldShape = OLD_CORE.every(col => currentHeader.indexOf(col) !== -1);
+  if(!matchesKnownOldShape){
+    logError_({jenis:"migrateCeklisMetaStatus_"}, "Header CeklisMeta tidak dikenali (bukan bentuk baru, bukan juga bentuk lama yang diketahui) — migrasi Status DIBATALKAN demi keamanan. Header aktual: "+JSON.stringify(currentHeader));
+    return;
+  }
+  const oldRows = readAllAsObjects_(sh); // dibaca dgn header LAMA yang masih apa adanya di sheet saat ini
+  const migrated = oldRows.map(r=>{
+    const closed = str_(r.Closed) === "true";
+    const submittedAt = str_(r.SubmittedAt);
+    let status;
+    if(submittedAt && closed) status = CEKLIS_STATUS_SUBMITTED;
+    else if(submittedAt && !closed) status = CEKLIS_STATUS_REOPENED;
+    else status = CEKLIS_STATUS_NOT_STARTED;
+    return {
+      Tanggal: r.Tanggal, Divisi: r.Divisi, Status: status, SubmittedAt: str_(r.SubmittedAt),
+      Closed: str_(r.Closed)||"false", ClosedAt: str_(r.ClosedAt),
+      ClosedBy: str_(r.ClosedBy), ReopenReason: str_(r.ReopenReason) // "" kalau kolom ini belum ada sama sekali (bentuk 5-kolom asli)
+    };
+  });
+  rewriteAll_(sh, HEADERS[SHEET_CEKLIS_META], migrated);
+  logPayload_({jenis:"migrateCeklisMetaStatus_ selesai", rowsMigrated: migrated.length});
+}
+
+// ---- FGPacking: sisipkan kolom "Produk" (setelah Kode). Data lama tidak
+// pernah mencatat nama produk terpisah dari Kode (itulah akar bug korupsi
+// Kode yang sudah diperbaiki di patch sebelumnya) — jadi TIDAK ADA cara
+// aman memulihkan nama produk baris historis; default "" (kosong), bukan
+// menebak dari isi Kode yang justru mungkin sudah tercampur skuId lama.
+function migrateFgPackingProdukColumn_(){
+  const sh = getOrCreateSheet(SHEET_FGPACKING);
+  const currentHeader = readHeaderRow_(sh);
+  if(!currentHeader.length){ sh.appendRow(HEADERS[SHEET_FGPACKING]); return; }
+  if(currentHeader.indexOf("Produk") !== -1) return;
+  const OLD_CORE = ["Tanggal","Factory","Kode","Toko","Qty","Status","Keterangan","UpdatedAt"];
+  const matchesKnownOldShape = OLD_CORE.every(col => currentHeader.indexOf(col) !== -1);
+  if(!matchesKnownOldShape){
+    logError_({jenis:"migrateFgPackingProdukColumn_"}, "Header FGPacking tidak dikenali — migrasi Produk DIBATALKAN demi keamanan. Header aktual: "+JSON.stringify(currentHeader));
+    return;
+  }
+  const oldRows = readAllAsObjects_(sh);
+  const migrated = oldRows.map(r=>({
+    Tanggal: r.Tanggal, Factory: r.Factory, Kode: r.Kode, Produk: "",
+    Toko: r.Toko, Qty: r.Qty, Status: r.Status, Keterangan: r.Keterangan, UpdatedAt: r.UpdatedAt
+  }));
+  rewriteAll_(sh, HEADERS[SHEET_FGPACKING], migrated);
+  logPayload_({jenis:"migrateFgPackingProdukColumn_ selesai", rowsMigrated: migrated.length});
+}
+
+// ---- FGReady: sisipkan kolom "SourceVersionJSON". Data lama tidak pernah
+// mencatat versi produksi sumber (fitur staleness-warning FG baru ada di
+// patch ini) — default "{}" (peta kosong, artinya "tidak ada info versi
+// sumber yang tercatat", beda makna dari peta berisi versi asli).
+function migrateFgReadySourceVersionColumn_(){
+  const sh = getOrCreateSheet(SHEET_FGREADY);
+  const currentHeader = readHeaderRow_(sh);
+  if(!currentHeader.length){ sh.appendRow(HEADERS[SHEET_FGREADY]); return; }
+  if(currentHeader.indexOf("SourceVersionJSON") !== -1) return;
+  const OLD_CORE = ["Tanggal","Factory","ReadyAt"];
+  const matchesKnownOldShape = OLD_CORE.every(col => currentHeader.indexOf(col) !== -1);
+  if(!matchesKnownOldShape){
+    logError_({jenis:"migrateFgReadySourceVersionColumn_"}, "Header FGReady tidak dikenali — migrasi SourceVersionJSON DIBATALKAN demi keamanan. Header aktual: "+JSON.stringify(currentHeader));
+    return;
+  }
+  const oldRows = readAllAsObjects_(sh);
+  const migrated = oldRows.map(r=>({
+    Tanggal: r.Tanggal, Factory: r.Factory, ReadyAt: r.ReadyAt, SourceVersionJSON: "{}"
+  }));
+  rewriteAll_(sh, HEADERS[SHEET_FGREADY], migrated);
+  logPayload_({jenis:"migrateFgReadySourceVersionColumn_ selesai", rowsMigrated: migrated.length});
 }
 
 // ---------- Util tanggal & angka ----------
@@ -458,6 +591,10 @@ function actorFromPayload_(payload){
 // ============================================================
 function doGet(e){
   Object.keys(HEADERS).forEach(name => getOrCreateSheet(name));
+  // Jaring pengaman: jangan bergantung pada orang mengingat menjalankan
+  // setup() ulang tiap kali sheet lama ketemu kolom baru. Murah utk kasus
+  // normal (readHeaderRow_ cuma baca 1 baris, langsung no-op kalau sudah termigrasi).
+  migrateSchema_();
   const out = {
     divisi: readMasterList_("divisi"),
     produk: readMasterList_("produk"),
@@ -594,6 +731,7 @@ function doPost(e){
   }catch(err){
     return jsonResp_({ok:false, code:"BAD_PAYLOAD", message:"payload bukan JSON valid"});
   }
+  migrateSchema_(); // jaring pengaman yg sama dgn doGet — lihat catatan di atas migrateSchema_().
   logPayload_(payload);
   const actor = actorFromPayload_(payload);
   let resp;

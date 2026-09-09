@@ -50,12 +50,27 @@ class MockSheet {
   }
   appendRow(arr){ this.rows.push(arr.slice()); this._fireHook("appendRow"); }
   getLastRow(){ return this.rows.length; }
+  getLastColumn(){
+    let max = 0;
+    this.rows.forEach(r=>{ if(r.length>max) max=r.length; });
+    return max;
+  }
   getMaxRows(){ return Math.max(this.rows.length, 1000); }
   setFrozenRows(){ /* no-op */ }
   clearContents(){ this._fireHook("clearContents"); this.rows = []; }
   getRange(row, col, numRows, numCols){
     const self = this;
     return {
+      getValues(){
+        const out = [];
+        for(let i=0;i<numRows;i++){
+          const rowArr = self.rows[row-1+i] || [];
+          const slice = [];
+          for(let j=0;j<numCols;j++){ slice.push(rowArr[col-1+j]!==undefined ? rowArr[col-1+j] : ""); }
+          out.push(slice);
+        }
+        return out;
+      },
       setValues(data){
         for(let i=0;i<data.length;i++){
           const targetRow = row-1+i;
