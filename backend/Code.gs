@@ -161,6 +161,16 @@ const CACHE_TTL_SEC = 21600; // 6 jam — cukup panjang utk menutup retry jaring
 // hilang/nonaktif kalau ENABLE_TRIAL_BATCH_DELETE di HTML ikut diset false.
 const ENABLE_TRIAL_BATCH_DELETE = true;
 
+// "Reset Semua Data Trial" — beda dgn ENABLE_TRIAL_BATCH_DELETE (satu batch
+// tanggal|factory): ini mengosongkan SELURUH sheet operasional sekaligus
+// (lihat resetAllTrialData_) supaya admin bisa mulai UAT dari kondisi
+// benar-benar kosong. TIDAK memakai/menghidupkan kembali endpoint generik
+// lama jenis:"reset" (yang tetap RESET_DISABLED permanen) — ini endpoint
+// baru sendiri, "trialResetAll", dgn flag sendiri. Matikan dgn cara SAMA:
+// ubah jadi `false` di sini DAN di HTML (ENABLE_TRIAL_FULL_RESET), lalu
+// deploy ulang keduanya.
+const ENABLE_TRIAL_FULL_RESET = true;
+
 // ---- Status eksplisit lifecycle Ceklis per tanggal+divisi ----
 // JANGAN infer status dari qty atau Closed di mana pun — field Status pada
 // CeklisMeta inilah SATU-SATUNYA sumber kebenaran, ditulis eksplisit oleh
@@ -712,7 +722,16 @@ function doGet(e){
     // bisa menjalankan trialCascadeClearLocal_ sendiri. Lihat
     // readDeletedTrialBatches_ — JANGAN diubah jadi menyertakan seluruh
     // AuditLog atau dataset besar apa pun, cukup key+version+timestamp.
-    deletedTrialBatches: readDeletedTrialBatches_()
+    deletedTrialBatches: readDeletedTrialBatches_(),
+    // FITUR SEMENTARA MASA TRIAL — angka versi RINGAN (bukan dataset apa
+    // pun) yang naik setiap kali "Reset Semua Data Trial" berhasil (lihat
+    // handleTrialResetAll_ -> setVersion_("trialReset","global",...)).
+    // Device lain membandingkan ini dgn epoch terakhir yang sudah diproses
+    // lokal (D.lastProcessedTrialResetEpoch) — kalau server lebih baru,
+    // WAJIB membersihkan seluruh state operasional lokal sendiri (lihat
+    // trialResetAllLocal_ di HTML), bukan mengandalkan localStorage
+    // dibersihkan manual.
+    trialResetEpoch: getVersion_("trialReset", "global").version
   };
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
@@ -868,6 +887,7 @@ function doPost(e){
       case "hapusPO": resp = handleHapusPO_(payload, actor); break;
       // FITUR SEMENTARA MASA TRIAL — lihat ENABLE_TRIAL_BATCH_DELETE di atas.
       case "trialBatchDelete": resp = handleTrialBatchDelete_(payload, actor); break;
+      case "trialResetAll": resp = handleTrialResetAll_(payload, actor); break;
       // "ceklisProduksi" dipertahankan (replace penuh, cocok dgn client lama
       // yg belum diupgrade). Client yg sudah diupgrade pakai "productionProgress"
       // (delta-safe, section 6) dan "ceklisSubmit"/"ceklisReopen" (section 8/9).
@@ -1228,6 +1248,104 @@ function cascadeDeleteTrialBatch_(tanggal, factory){
   skippedAmbiguousCounts.stokAdj = stokRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk)).length;
 
   return {tanggal, factory, produkCount:produkSet.size, deletedCounts, skippedAmbiguousCounts};
+}
+
+// ============================================================
+//  Handler — TRIAL RESET ALL (FITUR SEMENTARA MASA TRIAL)
+//  Lihat ENABLE_TRIAL_FULL_RESET di atas SEBELUM membaca fungsi ini.
+// ============================================================
+// Beda dgn handleTrialBatchDelete_ (satu batch tanggal|factory): ini
+// mengosongkan SEMUA sheet operasional sekaligus, dipakai admin utk mulai
+// UAT dari kondisi benar-benar kosong. Dibungkus withLock_ + requestId
+// idempotency sama seperti mutasi lain. TIDAK mengecek expectedVersion
+// per-record (tidak ada satu record spesifik yang relevan di sini — ini
+// operasi "kosongkan semua", bukan update satu key) — keamanan terhadap
+// dua admin menekan tombol ini hampir bersamaan datang dari withLock_
+// (antre satu-satu) + idempotency (retry aman, tidak dobel proses).
+function handleTrialResetAll_(payload, actor){
+  if(!ENABLE_TRIAL_FULL_RESET){
+    logError_(payload, "trialResetAll ditolak — ENABLE_TRIAL_FULL_RESET=false");
+    return {ok:false, code:"TRIAL_FULL_RESET_DISABLED", message:"Fitur reset semua data trial sudah dinonaktifkan (ENABLE_TRIAL_FULL_RESET=false di Code.gs)."};
+  }
+  const requestId = payload.requestId;
+  if(!requestId) return {ok:false, code:"MISSING_REQUEST_ID", message:"requestId wajib utk endpoint ini."};
+
+  return withLock_(function(){
+    const cached = checkIdempotent_(requestId);
+    if(cached) return cached;
+
+    let result;
+    try{
+      result = resetAllTrialData_();
+    }catch(err){
+      const resp = {ok:false, code:"APPLY_ERROR", message:String(err)};
+      appendAudit_({requestId, userId:actor.userId, userName:actor.userName, role:actor.role,
+        action:"trial_reset_all", tanggal:"", divisi:"", recordKey:"global",
+        previousVersion:0, newVersion:0, payloadSummary:String(err).slice(0,500), status:"error"});
+      return resp;
+    }
+
+    const current = getVersion_("trialReset", "global");
+    const newVersion = current.version + 1;
+    setVersion_("trialReset", "global", newVersion, actor.userName||actor.userId||"");
+    const resp = {ok:true, version:newVersion, updatedAt:new Date().toISOString(), record:result};
+    recordIdempotent_(requestId, "trialResetAll", "global", resp);
+    // Tombstone — AuditLog TETAP menyimpan bukti "reset penuh pernah terjadi"
+    // (kapan, oleh siapa, berapa baris per sheet), TAPI AuditLog TIDAK PERNAH
+    // dibaca balik utk menghidupkan data operasional manapun — cuma bukti/
+    // jejak, sesuai spesifikasi.
+    appendAudit_({requestId, userId:actor.userId, userName:actor.userName, role:actor.role,
+      action:"trial_reset_all", tanggal:"", divisi:"", recordKey:"global",
+      previousVersion:current.version, newVersion:newVersion,
+      payloadSummary:"TOMBSTONE reset semua data trial — "+JSON.stringify(result), status:"ok"});
+    return resp;
+  });
+}
+
+// Kosongkan SEMUA sheet operasional trial sekaligus. Batasan yang SENGAJA
+// dipertahankan (baca sebelum mengubah daftar ini):
+//   - SHEET_MASTERPRODUK (katalog produk: nama/kategori/HPP/harga) TIDAK
+//     disentuh sama sekali — sheet ini bisa berisi katalog BAWAAN (472
+//     produk) yang sudah disinkron dari HTML, dan backend tidak py cara
+//     aman membedakan mana entry bawaan vs custom trial di sini tanpa
+//     menebak. "Jangan hapus katalog bawaan" menang di sini.
+//   - SHEET_SETTINGS (pctDasar/pctOwnership/pctFranchise/targetMode) TIDAK
+//     disentuh — itu konfigurasi, bukan data transaksi trial.
+//   - SHEET_MASTER (jenis divisi/produk/toko) DIKOSONGKAN TOTAL — katalog
+//     BAWAAN yang sesungguhnya (DEFAULT_DIVISI, katalog 472 produk) hidup
+//     di HTML frontend dan TIDAK PERNAH ditulis ke sheet ini lewat alur
+//     normal aplikasi (cuma tombol "Tambah" manual di UI Master yang
+//     menulis ke sini) — jadi SETIAP baris di sheet ini, by construction,
+//     adalah entry custom/trial, aman dikosongkan total tanpa menyentuh
+//     katalog bawaan yang sesungguhnya (yang memang tidak pernah ada di
+//     sini).
+//   - SHEET_TOKOTIPE DIKOSONGKAN TOTAL — tidak ada channel toko "bawaan"
+//     sama sekali di app ini, semua hasil input/trial.
+//   - RecordVersion dibersihkan HANYA utk recordType yang datanya baru
+//     dikosongkan di atas (po/ceklis/fgPacking/fgReady/invoice/tokoTipe),
+//     supaya expectedVersion berikutnya dari client yang jg direset mulai
+//     dari 0 lagi, bukan bentrok VERSION_CONFLICT dgn versi lama.
+//   - AuditLog & RequestLog TIDAK dikosongkan (jejak/idempotency history,
+//     bukan data operasional — dan AuditLog memang wajib tetap ada sbg
+//     tombstone sesuai spesifikasi).
+function resetAllTrialData_(){
+  const deletedCounts = {};
+  const sheetsToClear = [
+    SHEET_PO, SHEET_CEKLIS, SHEET_CEKLIS_META, SHEET_FGPACKING, SHEET_FGREADY,
+    SHEET_KIRIM, SHEET_INVOICE, SHEET_PEMBAYARAN, SHEET_RETUR, SHEET_REJECT,
+    SHEET_JUAL, SHEET_PESANAN, SHEET_MUTASI, SHEET_STOKADJ, SHEET_TOKOTIPE, SHEET_MASTER
+  ];
+  sheetsToClear.forEach(name=>{
+    const sh = getOrCreateSheet(name);
+    deletedCounts[name] = readAllAsObjects_(sh).length;
+    rewriteAll_(sh, HEADERS[name], []);
+  });
+
+  const resetRecordTypes = ["po","ceklis","fgPacking","fgReady","invoice","tokoTipe"];
+  const shVer = getOrCreateSheet(SHEET_RECORDVERSION);
+  deleteRowsWhere_(shVer, r => resetRecordTypes.indexOf(str_(r.RecordType)) !== -1);
+
+  return {deletedCounts};
 }
 
 // ============================================================

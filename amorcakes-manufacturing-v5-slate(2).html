@@ -529,6 +529,10 @@ details.sect>summary{padding:15px 16px}
     <h3>Riwayat Upload PO</h3>
     <div class="note" id="trialBatchDeleteBanner" style="display:none;color:var(--red);font-weight:700">⚠ FITUR SEMENTARA MASA TRIAL — tombol "Hapus Batch Trial" di bawah menghapus PERMANEN seluruh data satu batch (PO, Produksi, FG/Packing, Kirim/DO, Invoice, Pembayaran, Retur/Reject, penyesuaian stok terkait). Hanya utk membersihkan data percobaan selama UAT, JANGAN dipakai di data produksi sungguhan.</div>
     <div id="poHist"></div>
+    <div id="trialFullResetWrap" style="display:none;margin-top:14px;padding-top:14px;border-top:1px dashed var(--border)">
+      <div class="note" style="color:var(--red);font-weight:700">⚠ FITUR SEMENTARA MASA TRIAL — "Reset Semua Data Trial" menghapus PERMANEN SELURUH data operasional di SEMUA tanggal/factory sekaligus (bukan cuma satu batch): PO, Produksi/Ceklis, FG/Packing, Kirim/DO, Invoice, Pembayaran, Retur, Reject, Jual, Pesanan, Mutasi, penyesuaian stok, dan daftar toko/kanal hasil trial. Katalog produk bawaan &amp; divisi default TIDAK ikut terhapus. Hanya utk memulai UAT dari kondisi benar-benar kosong — JANGAN dipakai di data produksi sungguhan.</div>
+      <button class="btn" style="margin-top:10px;background:var(--red,#c0392b);color:#fff;border-color:transparent" onclick="trialResetAllData(this)">Reset Semua Data Trial</button>
+    </div>
   </div>
 </div>
 
@@ -2076,6 +2080,12 @@ if(!D.recordVersions || typeof D.recordVersions!=="object") D.recordVersions = {
 // dijalankan utk versi itu) di DEVICE INI, supaya muatSemua() tidak
 // menjalankan cascade berulang-ulang tiap kali refresh utk batch yg sama.
 if(!D.trialTombstonesProcessed || typeof D.trialTombstonesProcessed!=="object") D.trialTombstonesProcessed = {};
+// FITUR SEMENTARA MASA TRIAL — versi epoch "Reset Semua Data Trial" TERAKHIR
+// yang sudah diproses (trialResetAllLocal_ sudah dijalankan) DI DEVICE INI.
+// Dibandingkan dgn j.trialResetEpoch dari backend tiap muatSemua() — kalau
+// server lebih baru, device ini WAJIB ikut reset lokal (lihat muatSemua),
+// TIDAK boleh mengandalkan user membersihkan localStorage manual.
+if(D.lastProcessedTrialResetEpoch==null) D.lastProcessedTrialResetEpoch = 0;
 if(!Array.isArray(D.mutasi)) D.mutasi = [];
 if(!Array.isArray(D.pembayaran)) D.pembayaran = [];  // {id,batch,tgl,jumlah,cara,keterangan}
 // Penyesuaian stok gudang di luar alur produksi/kiriman:
@@ -2212,6 +2222,15 @@ const OVERRIDE_FACTORY_RATE_PCT = 60;  // satu-satunya pilihan override manual p
 //  dengan TRIAL_DELETE_DISABLED walau ada yang memanggil endpoint-nya
 //  langsung (mis. lewat console/replay request lama).
 const ENABLE_TRIAL_BATCH_DELETE = true;
+// FITUR SEMENTARA MASA TRIAL — "Reset Semua Data Trial" di Riwayat Upload PO.
+// Beda dgn ENABLE_TRIAL_BATCH_DELETE (satu batch tanggal+factory): ini
+// mengosongkan SELURUH data operasional di SEMUA tanggal/factory sekaligus,
+// dipakai utk mulai UAT dari kondisi benar-benar kosong. Lihat
+// trialResetAllData()/trialResetAllLocal_() di bawah, dan
+// handleTrialResetAll_/resetAllTrialData_ di backend/Code.gs. Matikan
+// dengan cara SAMA: ubah jadi `false` di SINI dan di backend/Code.gs, lalu
+// deploy ulang keduanya.
+const ENABLE_TRIAL_FULL_RESET = true;
 if(D.settings.pctOwnership==null) D.settings.pctOwnership = 55;
 if(D.settings.pctFranchise==null) D.settings.pctFranchise = 60;
 // pctDasar = persentase OMSET PABRIK sesungguhnya (basedata), FLAT untuk semua
@@ -2626,6 +2645,20 @@ async function muatSemua(diam){
     const res = await fetch(url);
     const j = await res.json();
     let dikenali = false;
+    // FITUR SEMENTARA MASA TRIAL — "Reset Semua Data Trial" (epoch, bukan
+    // per-batch). Kalau backend py trialResetEpoch LEBIH BARU dari yang
+    // sudah diproses device ini, berarti ADA reset penuh yang device ini
+    // belum tahu — WAJIB langsung bersihkan SELURUH state operasional lokal
+    // + runtime cache (trialResetAllLocal_), BUKAN mengandalkan user
+    // membersihkan localStorage manual. Dijalankan PALING AWAL (sebelum
+    // blok j.po dkk maupun tombstone per-batch di bawah) — kalau memang ada
+    // reset penuh, tombstone per-batch individual jadi tidak relevan lagi
+    // (cascade lokalnya no-op krn datanya sudah kosong duluan di sini).
+    if(j.trialResetEpoch!=null && num(j.trialResetEpoch) > num(D.lastProcessedTrialResetEpoch||0)){
+      trialResetAllLocal_();
+      D.lastProcessedTrialResetEpoch = num(j.trialResetEpoch);
+      dikenali = true;
+    }
     // FITUR SEMENTARA MASA TRIAL — tombstone RINGAN {recordKey:{deleted,version,
     // deletedAt}} utk batch yg sudah dihapus lewat "Hapus Batch Trial" DI DEVICE
     // LAIN. Device ini mungkin py cache lokal FGPacking/FGReady/Pembayaran/
@@ -3357,6 +3390,8 @@ function renderPoHist(){
   const keys = Object.keys(D.po).sort().reverse();
   const banner = $("trialBatchDeleteBanner");
   if(banner) banner.style.display = (ENABLE_TRIAL_BATCH_DELETE && keys.length) ? "block" : "none";
+  const resetWrap = $("trialFullResetWrap");
+  if(resetWrap) resetWrap.style.display = ENABLE_TRIAL_FULL_RESET ? "block" : "none";
   $("poHist").innerHTML = !keys.length ? '<div class="empty">Belum ada PO diupload.</div>' :
     keys.map(tgl=>{
       const rows = D.po[tgl];
@@ -3590,6 +3625,113 @@ function trialCascadeClearLocal_(tgl, factory){
   skippedAmbiguousCounts.stokAdj = D.stokAdj.filter(a=>a.tgl===tgl && inSet(a.produk)).length;
 
   return {deletedCounts, skippedAmbiguousCounts};
+}
+
+/* ================= RESET SEMUA DATA TRIAL — FITUR SEMENTARA MASA TRIAL =================
+   Lihat ENABLE_TRIAL_FULL_RESET di atas SEBELUM membaca kode ini. Beda dgn
+   trialHapusBatch (satu batch tanggal+factory): ini mengosongkan SELURUH
+   data operasional di SEMUA tanggal/factory sekaligus, dipakai admin utk
+   mulai UAT dari kondisi benar-benar kosong. Backend adalah authoritative
+   source (resetAllTrialData_ di Code.gs) — urutan operasi SAMA persis dgn
+   trialHapusBatch: (1) backend hapus & konfirmasi dulu lewat fetch
+   sungguhan (bukan no-cors), (2) baru cache lokal dibersihkan lewat
+   trialResetAllLocal_, (3) rerender, (4) refetch backend sbg jaring
+   pengaman. Kalau gagal/timeout/disabled, data lokal SAMA SEKALI tidak
+   disentuh. TIDAK memakai jenis:"reset" (endpoint generik lama yang sudah
+   RESET_DISABLED permanen) — ini endpoint baru "trialResetAll" sendiri. */
+function trialResetAllData(btn){
+  if(!ENABLE_TRIAL_FULL_RESET) return toast("Fitur reset trial sudah dinonaktifkan");
+  // Konfirmasi 2 langkah — langkah 1: dialog peringatan.
+  if(!confirm(`FITUR SEMENTARA MASA TRIAL\n\nReset SEMUA data trial? Ini menghapus PERMANEN seluruh PO, Produksi/Ceklis, FG/Packing, Kirim/DO, Invoice, Pembayaran, Retur, Reject, Jual, Pesanan, Mutasi, penyesuaian stok, dan daftar toko/kanal hasil trial DI SEMUA TANGGAL & FACTORY — bukan cuma satu batch. Katalog produk bawaan & divisi default tetap ada. Tidak bisa dibatalkan.`)) return;
+  // Langkah 2: user WAJIB mengetik "RESET SEMUA" persis.
+  const ketik = prompt(`Ketik RESET SEMUA (huruf besar semua, tanpa tanda kutip) untuk mengonfirmasi:`);
+  if(ketik !== "RESET SEMUA"){ toast("Dibatalkan — konfirmasi tidak cocok, data tidak direset"); return; }
+
+  return withBusyBtn(btn, ()=>kirimSheetsVersioned({jenis:"trialResetAll", requestId:uid()}).then(res=>{
+    if(res.ok){
+      // 1. Backend SUDAH mengonfirmasi reset (fetch sungguhan, bukan no-cors).
+      if(res.version!=null) D.lastProcessedTrialResetEpoch = res.version;
+      // 2. Cache lokal dibersihkan SEKARANG, setelah konfirmasi backend.
+      trialResetAllLocal_();
+      saveD();
+      // 3. Rerender — reset menyentuh SEMUA modul, full renderAll() paling aman.
+      renderAll();
+      toast("Semua data trial direset — sistem kembali kosong");
+      // 4. Refetch backend sbg jaring pengaman (entitas yang disinkronkan
+      //    balik seharusnya sudah kosong juga di backend).
+      muatSemua(true);
+      return true;
+    } else if(res.code==="TRIAL_FULL_RESET_DISABLED"){
+      toast("Fitur reset semua data trial sudah dinonaktifkan di backend — data TIDAK direset");
+      return false;
+    } else if(res.code==="LOCK_TIMEOUT"){
+      toast("Sistem sedang sibuk — coba lagi sebentar lagi (data BELUM direset)");
+      return false;
+    } else {
+      toast("Gagal mereset"+(res.code?" ("+res.code+")":"")+" — data TIDAK diubah, coba lagi");
+      return false;
+    }
+  }), {busy:"Mereset semua data trial…", done:"Semua data trial direset", fail:"Gagal, coba lagi"});
+}
+// Reset LOCAL — dipanggil dari 2 tempat: (1) trialResetAllData, SETELAH
+// backend mengonfirmasi sukses; (2) muatSemua(), saat menerima
+// trialResetEpoch yang lebih baru dari device/sesi lain (lihat pemakaiannya
+// di muatSemua). Mengosongkan SELURUH data operasional + runtime cache
+// turunan, TAPI TIDAK menyentuh: katalog Master Produk bawaan (D.masterProduk/
+// D.products — bisa berisi katalog 472 produk bawaan, backend juga sengaja
+// tidak menghapus MasterProduk, lihat catatan di resetAllTrialData_),
+// D.divisi (direset ke DEFAULT_DIVISI, bukan dikosongkan — supaya divisi yg
+// memang dibutuhkan aplikasi pertama kali dibuka tetap ada), D.settings
+// (konfigurasi rate/target mode, bukan data trial), dan config koneksi
+// (cfg-url/localStorage amorcakes-cfg-url — TIDAK disentuh sama sekali).
+function trialResetAllLocal_(){
+  D.po = {};
+  D.ceklis = {};
+  D.fgPacking = {};
+  D.kirim = [];
+  D.kirimClosed = {};
+  D.invoice = {};
+  D.pembayaran = [];
+  D.retur = [];
+  D.reject = [];
+  D.jual = [];
+  D.pesanan = [];
+  D.mutasi = [];
+  D.stokAdj = [];
+  D.returImported = {};
+  D.returTertahan = [];
+  // Toko/kanal/alias HASIL TRIAL — tidak ada "bawaan" utk toko sama sekali
+  // di app ini (semua toko murni berasal dari PO/input user), aman
+  // dikosongkan total.
+  D.stores = [];
+  D.masterToko = {};
+  D.tokoTipe = {};
+  D.tokoAlias = {};
+  // Divisi direset ke DEFAULT bawaan SAJA (bukan dikosongkan total) — custom
+  // divisi yang ditambah manual selama trial (Master > Tambah) dibuang,
+  // divisi yang dibutuhkan aplikasi pertama kali dibuka tetap ada.
+  D.divisi = DEFAULT_DIVISI.slice();
+  // Versi lokal utk record type yang barusan direset — supaya expectedVersion
+  // berikutnya mulai dari 0 lagi, konsisten dgn RecordVersion backend yang
+  // jg dibersihkan utk recordType yang sama (lihat resetAllTrialData_).
+  ["po","ceklis","fgPacking","fgReady","invoice","tokoTipe"].forEach(k=>{ D.recordVersions[k] = {}; });
+  D.trialTombstonesProcessed = {};
+
+  // Runtime cache turunan — kalau tidak ikut dikosongkan, bisa nampilkan
+  // angka/preview basi dari SEBELUM reset walau dataset aslinya sudah 0
+  // (lihat bug kUnfulfilledCache/kUnfulfilledFlatCache yang baru diperbaiki
+  // di renderKUnfulfilled — audit ini menerapkan prinsip yang sama ke semua
+  // cache turunan serupa yang ditemukan).
+  kUnfulfilledCache = [];
+  kUnfulfilledFlatCache = [];
+  dashProdukCache = [];
+  returPreviewCache = null;
+  posJualCache = null;
+  ckTokoCache = [];
+  ckHasilCache = [];
+  poPreview = null;
+  omsetDrillState = null;
+  kFgSource = [];
 }
 
 /* ================= TARGET PER DIVISI ================= */
@@ -5346,7 +5488,16 @@ let kUnfulfilledFlatCache = [];
 function renderKUnfulfilled(){
   const flat = kFulfillmentFlatData();
   const card = $("kUnfulfilledCard");
-  if(!flat.length){ card.style.display="none"; $("kUnfulfilledEmpty").style.display="block"; renderKPortalStats(); return; }
+  if(!flat.length){
+    // BUG (real-browser UAT): cache turunan ini dulu TIDAK dikosongkan di
+    // sini, jadi renderKPortalStats() masih membaca kUnfulfilledCache basi
+    // dari render sebelumnya (mis. "34 toko belum terpenuhi" padahal card-nya
+    // sendiri sudah nampilkan "semua pesanan sudah terpenuhi"). Authoritative
+    // dataset (flat) kosong -> cache turunannya WAJIB ikut dikosongkan.
+    kUnfulfilledCache = [];
+    kUnfulfilledFlatCache = [];
+    card.style.display="none"; $("kUnfulfilledEmpty").style.display="block"; renderKPortalStats(); return;
+  }
   card.style.display="block"; $("kUnfulfilledEmpty").style.display="none";
   kUnfulfilledFlatCache = flat;
   kUnfulfilledCache = kPesananBelumTerpenuhiPerToko();
