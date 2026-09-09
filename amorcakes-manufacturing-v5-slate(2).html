@@ -1022,9 +1022,21 @@ details.sect>summary{padding:15px 16px}
         </div>
         <div class="grid2">
           <div><label class="fl">Ref. Delivery Order</label><input type="text" id="kInvRefDO" readonly></div>
-          <div><label class="fl">Harga Pabrik</label><input type="text" id="kInvPct" readonly></div>
+          <div><label class="fl">Rate Pabrik</label><input type="text" id="kInvPct" readonly></div>
         </div>
-        <div class="note">Qty Invoice boleh beda dari Qty DO (barang kurang/lebih/rusak saat serah terima). Harga terisi otomatis sesuai tipe toko — tetap bisa diubah manual.</div>
+        <div class="note">Qty Invoice boleh beda dari Qty DO (barang kurang/lebih/rusak saat serah terima). Harga terisi otomatis rate default 50% — tetap bisa diubah manual per baris.</div>
+        <div id="kInvOverrideWrap" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+          <label class="fl">Override Rate (khusus reprint/edit resmi)</label>
+          <div class="grid2">
+            <select id="kInvOverrideRate" onchange="kInvOverrideToggleReason()">
+              <option value="">Rate tersimpan (default 50%) — tidak override</option>
+              <option value="60">Override 60% — reprint/edit khusus</option>
+            </select>
+            <input type="text" id="kInvOverrideReason" placeholder="Alasan override (wajib diisi)">
+          </div>
+          <button type="button" class="btn ghost" style="margin-top:6px" onclick="kInvTerapkanOverride()">Terapkan Override ke Dokumen Ini</button>
+          <div class="note" id="kInvOverrideInfo" style="margin-top:6px"></div>
+        </div>
       </fieldset>
     </div>
 
@@ -1080,7 +1092,7 @@ details.sect>summary{padding:15px 16px}
   <details class="dd">
     <summary><span>Mutasi Antar Toko</span></summary>
     <div class="dd-body">
-      <div class="note">Kalau toko memindahkan stok ke toko lain (mis. potensi retur tinggi di toko asal), catat di sini. Invoice toko asal otomatis dikurangi qty-nya, dan invoice baru dibuat untuk toko tujuan sesuai tipe &amp; Harga Pabriknya sendiri (bisa beda kalau Ownership vs Franchise).</div>
+      <div class="note">Kalau toko memindahkan stok ke toko lain (mis. potensi retur tinggi di toko asal), catat di sini. Invoice toko asal otomatis dikurangi qty-nya, dan invoice baru dibuat untuk toko tujuan dengan Harga Pabrik flat 50% (sama utk semua toko).</div>
       <div class="row" style="margin-top:10px">
         <div><label class="fl">Tanggal</label><input type="date" id="mut-tgl"></div>
         <div><label class="fl">Produk</label><select id="mut-produk" onchange="mutIsiInfo()"><option value="">— pilih —</option></select></div>
@@ -1294,7 +1306,7 @@ details.sect>summary{padding:15px 16px}
           <div><label class="fl">Basis Omset Pabrik</label><select id="ps-pct" onchange="psHitung()"></select></div>
           <div><label class="fl">Jeda Produksi &rarr; Ambil</label><input type="text" id="ps-jeda" readonly></div>
         </div>
-        <div class="note">Harga ke pemesan selalu <b>100% (harga konsumen)</b>. Dropdown di atas menentukan berapa persen dari nilai itu yang dihitung sebagai <b>Omset Pabrik</b> &mdash; 100% kalau pesanan langsung ke pabrik, atau 55%/60% kalau lewat kanal Ownership/Franchise.</div>
+        <div class="note">Harga ke pemesan selalu <b>100% (harga konsumen)</b>. Dropdown di atas menentukan berapa persen dari nilai itu yang dihitung sebagai <b>Omset Pabrik</b> &mdash; 100% kalau pesanan langsung ke pabrik, atau 50% (default, flat semua toko/kanal). 60% hanya tersedia sbg override manual khusus dokumen ini, bukan pengaturan Ownership/Franchise.</div>
       </fieldset>
     </div>
 
@@ -1597,9 +1609,9 @@ details.sect>summary{padding:15px 16px}
   </details>
 
   <details class="dd">
-    <summary><span>Simulasi Persentase Omset <span style="font-size:9px;color:var(--mute);font-weight:400">Ownership vs Franchise — bukan laporan omset aktual</span></span></summary>
+    <summary><span>Simulasi Persentase Omset <span style="font-size:9px;color:var(--mute);font-weight:400">per kanal toko — bukan laporan omset aktual</span></span></summary>
     <div class="dd-body">
-      <div class="note">Omset 100% (harga konsumen) yang sama, dilihat di beberapa persentase sekaligus — supaya kelihatan bedanya kalau basisnya diganti. Baris yang bertanda adalah persentase yang sungguhan dipakai sekarang (diatur di Master → Omset Pabrik / Harga Invoice). Untuk angka omset aktual per hari/bakery, lihat menu <b>Laporan Omset</b>.</div>
+      <div class="note">Omset 100% (harga konsumen) yang sama, dilihat di beberapa persentase sekaligus — supaya kelihatan bedanya kalau basisnya diganti. Kolom Ownership/Franchise cuma pengelompokan kanal toko (metadata), rate Invoice/DO sungguhan <b>flat 50% untuk semua kanal</b> (diatur di Master → Rate Invoice / DO) — 60% cuma tersedia sbg override manual per-dokumen. Untuk angka omset aktual per hari/bakery, lihat menu <b>Laporan Omset</b>.</div>
       <div class="scrollY" style="overflow-x:auto;margin-top:10px">
       <table>
         <thead><tr><th class="l">Persentase</th><th>Ownership</th><th>Franchise</th><th>Total</th></tr></thead>
@@ -1680,7 +1692,7 @@ details.sect>summary{padding:15px 16px}
           <div><label class="fl">HPP / Modal (Rp)</label><input type="number" inputmode="numeric" id="mp-hpp" placeholder="0"></div>
           <div><label class="fl">Harga 100% / Konsumen (Rp)</label><input type="number" inputmode="numeric" id="mp-harga" placeholder="0"></div>
         </div>
-        <div class="note" id="mp-pctNote">Harga Pabrik (yang dipakai di Invoice) dihitung otomatis dari persentase Ownership/Franchise — atur di tab "Toko".</div>
+        <div class="note" id="mp-pctNote">Harga Pabrik (yang dipakai di Invoice/DO) dihitung otomatis flat 50% dari Harga 100% ini — atur/lihat detail di tab "Toko".</div>
         <label style="display:flex;align-items:center;gap:6px;margin-top:12px;font-size:11px;color:var(--mute)"><input type="checkbox" id="mp-aktif" checked style="width:auto"> Aktif diproduksi/dijual</label>
         <button class="btn" onclick="mpSimpanManual()">Simpan</button>
       </div>
@@ -1709,16 +1721,16 @@ details.sect>summary{padding:15px 16px}
     </div>
   </div>
   <div class="card">
-    <h3>Harga Invoice (Backoffice)</h3>
-    <div class="note">Harga Invoice = Harga 100% (Konsumen) × persentase di bawah, <b>tergantung tipe toko tujuan</b>. Dipakai sebagai isian awal Harga Satuan saat membuat Invoice ke toko — tetap bisa diubah manual per invoice kalau ada kondisi khusus. Angka ini untuk kebutuhan dokumen/backoffice, <b>bukan</b> Omset Pabrik.</div>
+    <h3>Rate Invoice / DO (Backoffice)</h3>
+    <div class="note">Keputusan bisnis final: rate Harga Invoice/DO <b>flat 50% (Default Rate) untuk semua toko</b> — Ownership maupun Franchise <b>tidak lagi</b> menentukan rate. Dipakai otomatis sbg isian awal Harga Satuan saat Invoice baru dibuat. Override 60% <b>hanya</b> tersedia per-dokumen saat reprint/edit invoice dengan permission yang benar (di layar Invoice, bukan di sini) — tidak pernah mengubah rate default toko atau dokumen historis lain.</div>
     <div class="row" style="margin-top:10px">
-      <div><label class="fl">% ke Toko Ownership</label><input type="number" inputmode="numeric" id="m-pctOwnership" onchange="setPctHarga('pctOwnership', this.value)"></div>
-      <div><label class="fl">% ke Toko Franchise</label><input type="number" inputmode="numeric" id="m-pctFranchise" onchange="setPctHarga('pctFranchise', this.value)"></div>
+      <div><label class="fl">Rate Default (semua toko)</label><input type="text" value="50% — flat, tidak bisa diubah per toko" readonly></div>
+      <div><label class="fl">Override Manual</label><input type="text" value="60% — per-dokumen saja, di layar Invoice" readonly></div>
     </div>
   </div>
   <div class="card">
     <h3>Toko / Kanal</h3>
-    <div class="note">Tandai tipe tiap toko — menentukan persentase Harga Invoice yang dipakai saat Invoice ke toko itu. Omset Pabrik tidak terpengaruh tipe toko.</div>
+    <div class="note">Tandai kanal tiap toko — Ownership/Franchise di sini murni metadata/pengelompokan laporan, <b>tidak lagi memengaruhi rate Invoice/DO</b> (selalu flat 50%, lihat kartu di atas).</div>
     <div id="ckt-wrap" style="display:none;margin-top:10px">
       <div class="warn-box" id="ckt-summary"></div>
       <div id="ckt-list" style="margin-top:6px"></div>
@@ -2091,7 +2103,8 @@ if(!Array.isArray(D.returTertahan)) D.returTertahan = [];
    Beda dari penjualan outlet (yang masuk lewat POS):
      - Harga ke pemesan SELALU 100% (harga konsumen).
      - Yang dihitung sebagai OMSET PABRIK adalah persentase yang dipilih per
-       pesanan (100% kalau langsung pabrik, atau 55%/60% kalau lewat kanal).
+       pesanan (100% kalau langsung pabrik, atau 50% default lewat kanal —
+       60% hanya override manual per-dokumen, bukan pengaturan kanal).
      - Pemenuhan bisa "produksi" (masuk target ceklis divisi) atau "stok"
        (ambil dari stok gudang yang sudah ada).
    {id,no,tglPesan,tglProduksi,tglAmbil,tipe,pemesan,kontak,alamat,pctOmset,sumber,
@@ -2167,24 +2180,43 @@ function muatKatalogBawaan(){
 if(!D.kategoriMap || typeof D.kategoriMap!=="object" || !Object.keys(D.kategoriMap).length) D.kategoriMap = Object.assign({}, DEFAULT_KATMAP);
 else Object.keys(DEFAULT_KATMAP).forEach(k=>{ if(!D.kategoriMap[k]) D.kategoriMap[k]=DEFAULT_KATMAP[k]; }); // kategori baru dari katalog bawaan
 if(!D.settings) D.settings = {targetMode:"jumlah"};
+// KEPUTUSAN BISNIS FINAL: rate faktur DEFAULT semua dokumen baru (DO/Invoice/
+// retur/reject/pesanan/mutasi) adalah FLAT 50%, SATU-SATUNYA sumber kebenaran
+// di bawah ini — jangan hardcode 50 di fungsi lain. Ownership/Franchise TIDAK
+// LAGI menentukan rate — keduanya tetap ada sbg metadata/kanal toko (dipakai
+// utk pengelompokan laporan), tapi tidak pernah dibaca oleh hargaPabrik().
+// pctOwnership/pctFranchise (55/60, legacy) TETAP disimpan di settings hanya
+// utk kebutuhan pengenalan harga lama (cek kecocokan/import) & sbg pilihan
+// override manual per-dokumen — BUKAN dipakai lagi sbg rate default toko.
+const DEFAULT_FACTORY_RATE_PCT = 50;   // = DEFAULT_FACTORY_RATE 0.50
+const OVERRIDE_FACTORY_RATE_PCT = 60;  // satu-satunya pilihan override manual per-dokumen
 if(D.settings.pctOwnership==null) D.settings.pctOwnership = 55;
 if(D.settings.pctFranchise==null) D.settings.pctFranchise = 60;
 // pctDasar = persentase OMSET PABRIK sesungguhnya (basedata), FLAT untuk semua
-// tipe toko. Beda dari pctOwnership/pctFranchise yang dipakai backoffice untuk
-// Invoice — dua kebutuhan itu sengaja dipisah:
-//   - Omset Pabrik (laporan/akuntansi) = Harga 100% × pctDasar, sama utk semua toko
-//   - Harga Invoice (dokumen ke toko)  = Harga 100% × pctOwnership/pctFranchise
-if(D.settings.pctDasar==null) D.settings.pctDasar = 50;
+// tipe toko — SAMA angkanya dgn DEFAULT_FACTORY_RATE_PCT (keduanya 50%), tapi
+// dipertahankan sbg field terpisah krn dipakai utk metrik akuntansi (Omset
+// Pabrik/Margin Kotor di Dashboard), bukan utk nilai dokumen (DO/Invoice).
+if(D.settings.pctDasar==null) D.settings.pctDasar = DEFAULT_FACTORY_RATE_PCT;
 if(!D.tokoTipe || typeof D.tokoTipe!=="object") D.tokoTipe = {};
 // Resolve via canonical bakery dulu (channel yg diset lewat Master Toko utk
 // SATU alias harus kepakai jg utk alias lain bakery yg sama), fallback ke
 // nama mentah (data lama yg tokoTipe-nya sudah diset sebelum ada canonical
-// mapping tetap terbaca — tidak ada yg direset).
+// mapping tetap terbaca — tidak ada yg direset). CATATAN: ini murni metadata
+// kanal (utk grouping laporan) — TIDAK LAGI dipakai utk menentukan rate.
 function tokoTipe(toko){ const canon = canonicalStoreName(toko); return D.tokoTipe[canon] || D.tokoTipe[toko] || "ownership"; }
-function pctUntukToko(toko){ return tokoTipe(toko)==="franchise" ? num(D.settings.pctFranchise) : num(D.settings.pctOwnership); }
-// Harga Invoice — dipakai backoffice utk dokumen (Invoice, Retur/Reject
-// sebagai referensi), TERGANTUNG tipe toko (Ownership/Franchise).
-function hargaPabrik(harga100, toko){ return Math.round(num(harga100) * pctUntukToko(toko) / 100); }
+// Harga Invoice — dipakai backoffice utk dokumen (Invoice, DO, Retur/Reject,
+// Pesanan). SELALU flat DEFAULT_FACTORY_RATE_PCT (50%), TIDAK PERNAH lagi
+// tergantung tipe toko (Ownership/Franchise) — parameter `toko` sengaja
+// dibiarkan (dipakai banyak caller lama) tapi tidak lagi memengaruhi hasil.
+// `ratePctOverride` opsional: satu-satunya jalan resmi utk memakai rate lain
+// (mis. 60%) per-dokumen — dipakai KHUSUS saat reprint/edit DO/Invoice dengan
+// permission yang benar (lihat kInvOverride di bagian Invoice). Dokumen lama
+// yang sudah tersimpan TIDAK berubah krn harga per-baris sudah dibekukan saat
+// disimpan; perubahan default rate ini hanya berlaku ke dokumen baru.
+function hargaPabrik(harga100, toko, ratePctOverride){
+  const pct = (ratePctOverride!=null && ratePctOverride!=="") ? num(ratePctOverride) : DEFAULT_FACTORY_RATE_PCT;
+  return Math.round(num(harga100) * pct / 100);
+}
 // Harga Dasar Omset — dipakai KHUSUS utk metrik "Omset Pabrik" di Dashboard,
 // FLAT sama untuk semua toko, TIDAK tergantung Ownership/Franchise.
 function hargaDasar(harga100){ return Math.round(num(harga100) * num(D.settings.pctDasar) / 100); }
@@ -4353,7 +4385,7 @@ function omsetKirimRow(r){
 function omsetReturRow(r){
   return num(r.qty) * hargaDasar(mpGet(r.produk).harga);
 }
-// Versi "Omset 100%" (harga konsumen, sebelum dipotong 55%/60%) — pembanding
+// Versi "Omset 100%" (harga konsumen, sebelum dipotong rate 50%) — pembanding
 // skala. Sama spt Omset Pabrik: selalu qty dikirim penuh, tidak ikut Invoice.
 function omset100KirimRow(r){
   return num(r.qty) * mpGet(r.produk).harga;
@@ -4497,7 +4529,7 @@ function renderDashArus(dari,sampai){
   $("db-arusBakery").innerHTML = dashArusTabelBaris(d.byBakery, k=>k==="cibadak"?"Cibadak":"Karangtengah");
   $("db-arusKategori").innerHTML = dashArusTabelBaris(d.byKategori, k=>k);
   renderRekonToko(dari,sampai);
-  $("db-arusChannel").innerHTML = dashArusTabelBaris(d.byChannel, k=>k==="franchise"?`Franchise (${D.settings.pctFranchise}%)`:`Ownership (${D.settings.pctOwnership}%)`);
+  $("db-arusChannel").innerHTML = dashArusTabelBaris(d.byChannel, k=>k==="franchise"?"Franchise":"Ownership");
 }
 /* Rekonsiliasi per toko: barang yang dikirim harus habis jadi salah satu dari
    terjual ke konsumen, retur, atau masih jadi stok di toko. Selisih besar =
@@ -5279,10 +5311,10 @@ function kBuildGrid(){
   const prev = {};
   if(!kKosongkanIsian) kList.forEach((p,i)=>{ const el=$("kq-"+i); if(el) prev[i]=el.value; });
 
-  // kepala dokumen
-  $("k-tipeToko").value = toko ? (tokoTipe(toko)==="franchise"
-      ? `Franchise — harga pabrik ${D.settings.pctFranchise}%`
-      : `Ownership — harga pabrik ${D.settings.pctOwnership}%`) : "—";
+  // kepala dokumen — Ownership/Franchise di sini murni label kanal (metadata),
+  // TIDAK menentukan rate. Rate Invoice/DO selalu default 50%, diatur saat
+  // Invoice dibuat (lihat kBukaInvoice), bukan di sini.
+  $("k-tipeToko").value = toko ? (tokoTipe(toko)==="franchise" ? "Franchise (kanal)" : "Ownership (kanal)") : "—";
   const tokoCanon = canonicalStoreName(toko);
   const facs = [...new Set(Object.values(D.po).flat().filter(r=>(r.stores||[]).some(x=>canonicalStoreName(x.toko)===tokoCanon)).map(r=>r.factory))];
   $("k-factoryInfo").value = facs.length ? facs.map(f=>f==="cibadak"?"Cibadak (Bolu)":"Karangtengah").join(" + ") : "—";
@@ -5653,22 +5685,57 @@ function simpanInvoicePerubahan(invoiceBatch){
   kirimSheets({jenis:"invoice", batch:invoiceBatch, invoiceNo:inv.invoiceNo, tanggal:inv.tgl, toko:inv.toko, noSJ:inv.noSJ||"", items:inv.items, total:inv.total, requestId:uid()});
 }
 // Bikin invoice baru utk toko TUJUAN mutasi — harga dihitung dari Harga 100%
-// Master Produk x persentase Ownership/Franchise milik toko tujuan sendiri
-// (bukan toko asal), karena tipe tokonya bisa beda.
+// Master Produk x DEFAULT_FACTORY_RATE_PCT (flat 50%, sama utk semua toko
+// tujuan — TIDAK lagi tergantung Ownership/Franchise toko tujuan).
 function buatInvoiceMutasi(tgl, tokoTujuan, produk, qty, keterangan){
   const kMap = produkKodeMap();
   const h100 = mpGet(produk).harga;
   const harga = hargaPabrik(h100, tokoTujuan);
   const batch = "mut-"+uid();
-  const item = {produk, kode:kMap[produk]||"", qtyDO:qty, qtyInvoice:qty, harga, subtotal:qty*harga, keterangan};
+  const rateMeta = {ratePct:DEFAULT_FACTORY_RATE_PCT, rateSource:"default", overrideReason:""};
+  const item = Object.assign({produk, kode:kMap[produk]||"", qtyDO:qty, qtyInvoice:qty, harga, subtotal:qty*harga, keterangan}, rateMeta);
   D.invoice[batch] = {
     invoiceNo: invoiceNomor(tgl), batch, tgl, toko:tokoTujuan, noSJ:"MUTASI",
-    items:[item], total:item.subtotal,
+    items:[item], total:item.subtotal, ...rateMeta,
     createdAt: new Date().toLocaleString("id-ID"), updatedAt: new Date().toLocaleString("id-ID")
   };
   return batch;
 }
 let kInvoiceCurrentBatch = null;
+// Override rate per-dokumen — HANYA dipakai saat reprint/edit invoice yang
+// SUDAH tersimpan (lihat kBukaInvoice). null = pakai rate default/tersimpan
+// apa adanya. Direset tiap kali dokumen lain dibuka, TIDAK PERNAH otomatis
+// terbawa ke invoice lain atau mengubah master rate toko.
+let kInvOverrideState = null;
+function kInvOverrideToggleReason(){
+  const sel = $("kInvOverrideRate");
+  const aktif = !!(sel && sel.value);
+  if($("kInvOverrideReason")) $("kInvOverrideReason").disabled = !aktif;
+}
+function kInvTerapkanOverride(){
+  if(!kInvoiceCurrentBatch) return toast("Buka invoice dulu");
+  const sel = $("kInvOverrideRate");
+  const ratePct = sel && sel.value ? num(sel.value) : null;
+  const reason = (($("kInvOverrideReason")&&$("kInvOverrideReason").value)||"").trim();
+  if(ratePct!=null && !reason) return toast("Isi alasan override dulu");
+  if(!confirm(ratePct!=null
+    ? `Terapkan override rate ${ratePct}% ke SEMUA baris invoice ini SAJA? Invoice/dokumen lain, dan rate default toko, tidak berubah.`
+    : `Lepas override, kembali ke rate default ${DEFAULT_FACTORY_RATE_PCT}%?`)) return;
+  const r0 = D.kirim.find(r=>r.batch===kInvoiceCurrentBatch);
+  document.querySelectorAll('#kInvoiceBody tr[data-produk]').forEach(tr=>{
+    const h100 = mpGet(tr.dataset.produk).harga;
+    const hargaBaru = hargaPabrik(h100, r0 ? r0.toko : null, ratePct);
+    const el = tr.querySelector('[data-c="harga"]');
+    if(el) el.value = hargaBaru;
+  });
+  kInvOverrideState = ratePct!=null ? {ratePct, reason} : null;
+  if($("kInvOverrideInfo")) $("kInvOverrideInfo").textContent = ratePct!=null
+    ? `Override aktif: ${ratePct}% — alasan: ${reason}. Berlaku hanya utk dokumen ini, tersimpan kalau di-Simpan.`
+    : "Override dilepas — baris di atas kembali ke rate default, klik Simpan utk menyimpan.";
+  $("kInvPct").value = ratePct!=null ? `${ratePct}% dari Harga 100% (override — ${reason})` : `${DEFAULT_FACTORY_RATE_PCT}% dari Harga 100% (default)`;
+  kInvoiceHitung();
+  toast(ratePct!=null ? `Override ${ratePct}% diterapkan ke baris di atas` : "Override dilepas");
+}
 function kInvTab(btn){
   document.querySelectorAll('#kInvoiceCard .doctab').forEach(b=>b.classList.toggle('on', b===btn));
   document.querySelectorAll('#kInvoiceCard .docpanel').forEach(pn=>pn.classList.toggle('on', pn.dataset.dp===btn.dataset.dp));
@@ -5691,14 +5758,26 @@ function kBukaInvoice(batch){
   const itemMap = {}; (existing?.items||[]).forEach(it=>itemMap[it.produk]=it);
   const kMap = produkKodeMap();
   const tipe = tokoTipe(r0.toko);
-  const pct = pctUntukToko(r0.toko);
+
+  // Reset state override tiap kali dokumen dibuka — override tidak pernah
+  // "nempel" diam-diam ke dokumen lain.
+  kInvOverrideState = null;
+  const rateMetaExisting = invoiceRateMeta(existing);
+  if($("kInvOverrideWrap")) $("kInvOverrideWrap").style.display = existing ? "block" : "none";
+  if($("kInvOverrideRate")) $("kInvOverrideRate").value = "";
+  if($("kInvOverrideReason")){ $("kInvOverrideReason").value=""; $("kInvOverrideReason").disabled = true; }
+  if($("kInvOverrideInfo")) $("kInvOverrideInfo").textContent = (existing && rateMetaExisting.rateSource==="manual_override")
+    ? `Rate tersimpan saat ini: override ${rateMetaExisting.ratePct}% — alasan: ${rateMetaExisting.overrideReason||'-'}. Pilih di atas utk ubah lagi, atau biarkan kosong utk cetak/simpan apa adanya.`
+    : "";
 
   $("kInvToko").value = r0.toko;
   $("kInvTipe").value = tipe==='franchise' ? 'Franchise' : 'Ownership';
   $("kInvNo").value = existing ? existing.invoiceNo : "(otomatis saat disimpan)";
   $("kInvTgl").value = fmtTgl(r0.tgl);
   $("kInvRefDO").value = r0.noSJ || doNomor(batch, r0.tgl);
-  $("kInvPct").value = `${pct}% dari Harga 100%`;
+  $("kInvPct").value = (existing && rateMetaExisting.rateSource==="manual_override")
+    ? `${rateMetaExisting.ratePct}% dari Harga 100% (override — ${rateMetaExisting.overrideReason||'-'})`
+    : `${DEFAULT_FACTORY_RATE_PCT}% dari Harga 100% (default)`;
   $("kInvTag").textContent = existing ? "Tersimpan" : "Draft";
   $("kInvTag").className = existing ? "tag ok" : "tag";
   $("kInvCetakBtn").style.display = existing ? "inline-block" : "none";
@@ -5787,26 +5866,49 @@ function kInvoiceBaca(){
     };
   });
 }
+// Baca metadata rate efektif sebuah invoice — field top-level dulu (sesi yg
+// sama), fallback ke metadata di baris item (bertahan lewat resync backend,
+// krn backend hanya menyimpan ItemsJSON utuh, field top-level lain tidak
+// py kolom sendiri). Tanpa metadata sama sekali (invoice lama sebelum patch
+// ini) dianggap default — TIDAK pernah menebak/mengubah harga yang sudah
+// tersimpan, cuma label tampilan.
+function invoiceRateMeta(inv){
+  if(!inv) return {ratePct:DEFAULT_FACTORY_RATE_PCT, rateSource:"default", overrideReason:""};
+  if(inv.rateSource) return {ratePct:inv.ratePct, rateSource:inv.rateSource, overrideReason:inv.overrideReason||""};
+  const it0 = (inv.items||[]).find(x=>x && x.rateSource);
+  if(it0) return {ratePct:it0.ratePct, rateSource:it0.rateSource, overrideReason:it0.overrideReason||""};
+  return {ratePct:DEFAULT_FACTORY_RATE_PCT, rateSource:"default", overrideReason:""};
+}
 function kInvoiceSimpan(){
   if(!kInvoiceCurrentBatch) return;
   const kirimRows = D.kirim.filter(r=>r.batch===kInvoiceCurrentBatch);
   if(!kirimRows.length) return toast("Data kiriman tidak ditemukan");
   const r0 = kirimRows[0];
-  const items = kInvoiceBaca();
-  const total = items.reduce((a,it)=>a+it.subtotal,0);
   const existing = D.invoice[kInvoiceCurrentBatch];
+  // Rate override HANYA berlaku kalau diterapkan eksplisit di sesi buka ini
+  // (kInvOverrideState) — kalau tidak disentuh, metadata rate invoice yang
+  // sudah tersimpan dipertahankan apa adanya (tidak diam-diam direset ke
+  // default saat user cuma mengedit qty/keterangan lalu Simpan lagi).
+  const rateMeta = kInvOverrideState
+    ? {ratePct:kInvOverrideState.ratePct, rateSource:"manual_override", overrideReason:kInvOverrideState.reason}
+    : invoiceRateMeta(existing);
+  const items = kInvoiceBaca().map(it=>Object.assign({}, it, rateMeta));
+  const total = items.reduce((a,it)=>a+it.subtotal,0);
   D.invoice[kInvoiceCurrentBatch] = {
     invoiceNo: existing ? existing.invoiceNo : invoiceNomor(r0.tgl),
     batch: kInvoiceCurrentBatch, tgl: r0.tgl, toko: r0.toko, noSJ: r0.noSJ||"",
-    items, total,
+    items, total, ...rateMeta,
     catatan: (($("kInvCatatan")&&$("kInvCatatan").value)||"").trim(),
     createdAt: existing ? existing.createdAt : new Date().toLocaleString("id-ID"),
     updatedAt: new Date().toLocaleString("id-ID")
   };
-  // CATATAN: harga di baris invoice = Harga Pabrik (sudah dikali 55%/60% & bisa
-  // disesuaikan manual per kejadian, mis. kurang/rusak). SENGAJA TIDAK ditulis
-  // balik ke Harga 100% Master Produk — itu bidang yang beda konsepnya, dan
-  // penyesuaian per-invoice tidak boleh diam-diam mengubah harga standar produk.
+  // CATATAN: harga di baris invoice = Harga Pabrik (default flat 50%, atau
+  // override manual per-dokumen bila diterapkan lewat kInvTerapkanOverride —
+  // lihat rateMeta di atas) & bisa disesuaikan manual per kejadian, mis.
+  // kurang/rusak. SENGAJA TIDAK ditulis balik ke Harga 100% Master Produk —
+  // itu bidang yang beda konsepnya, dan penyesuaian per-invoice tidak boleh
+  // diam-diam mengubah harga standar produk ataupun rate default toko.
+  kInvOverrideState = null;
   saveD();
   const simpanan = D.invoice[kInvoiceCurrentBatch];
   // Notif ditampilkan LANGSUNG (tidak menunggu balasan Sheets, yang bisa lambat
@@ -5829,11 +5931,16 @@ function kInvoiceSimpan(){
 function kInvoiceTutup(){
   $("kInvoiceCard").style.display="none";
   kInvoiceCurrentBatch=null;
+  kInvOverrideState=null;
   // bersihkan isian supaya invoice berikutnya tidak kebawa sisa yang lama
   $("kInvoiceBody").innerHTML="";
   ["kInvToko","kInvTipe","kInvNo","kInvTgl","kInvRefDO","kInvPct","kInvCatatan","kinv-cari"].forEach(id=>{ const el=$(id); if(el) el.value=""; });
   if($("kinv-bedaSaja")) $("kinv-bedaSaja").checked=false;
   if($("kInvoiceInfo")) $("kInvoiceInfo").innerHTML="";
+  if($("kInvOverrideWrap")) $("kInvOverrideWrap").style.display="none";
+  if($("kInvOverrideRate")) $("kInvOverrideRate").value="";
+  if($("kInvOverrideReason")){ $("kInvOverrideReason").value=""; $("kInvOverrideReason").disabled=true; }
+  if($("kInvOverrideInfo")) $("kInvOverrideInfo").textContent="";
   if($("kInvTag")){ $("kInvTag").textContent="Draft"; $("kInvTag").className="tag"; }
   if($("kInvCetakBtn")) $("kInvCetakBtn").style.display="none";
 }
@@ -6118,6 +6225,10 @@ function renderMutHist(){
 function kCetakInvoice(batch){
   const inv = D.invoice[batch];
   if(!inv){ toast("Simpan invoice dulu sebelum mencetak"); return; }
+  const rateMeta = invoiceRateMeta(inv);
+  const rateBadge = rateMeta.rateSource==="manual_override"
+    ? `<div style="font-size:9.5px;color:#a33;margin-top:6px;font-weight:700">RATE OVERRIDE ${rateMeta.ratePct}% — ${rateMeta.overrideReason||'-'}</div>`
+    : "";
   const body = inv.items.map((it,i)=>`<tr>
       <td style="padding:5px 6px;text-align:center;border-bottom:1px solid #999;background:#fff;color:#000">${i+1}</td>
       <td style="padding:5px 6px;text-align:center;border-bottom:1px solid #999;background:#fff;font-family:'Courier New',monospace;font-size:10.5px;color:#000">${it.kode||"-"}</td>
@@ -6147,6 +6258,7 @@ function kCetakInvoice(batch){
             </div>
             <div style="font-size:10px;color:#333;margin-top:8px">No. Invoice</div>
             <div style="font-size:13px;font-weight:800;color:#000">${inv.invoiceNo}</div>
+            ${rateBadge}
           </div>
         </div>
 
@@ -7197,8 +7309,8 @@ function psFillPctSelect(){
   const lama = sel.value;
   const opsi = [
     {v:100, t:`100% — pesanan langsung ke pabrik`},
-    {v:num(D.settings.pctFranchise), t:`${num(D.settings.pctFranchise)}% — lewat kanal Franchise`},
-    {v:num(D.settings.pctOwnership), t:`${num(D.settings.pctOwnership)}% — lewat kanal Ownership`}
+    {v:DEFAULT_FACTORY_RATE_PCT, t:`${DEFAULT_FACTORY_RATE_PCT}% — lewat toko/kanal (default)`},
+    {v:OVERRIDE_FACTORY_RATE_PCT, t:`${OVERRIDE_FACTORY_RATE_PCT}% — override manual (khusus dokumen ini)`}
   ];
   // buang duplikat kalau kebetulan persentasenya sama
   const unik = []; opsi.forEach(o=>{ if(!unik.some(x=>x.v===o.v)) unik.push(o); });
@@ -8219,32 +8331,32 @@ function renderRekapRingkasan(){
   }
 }
 // Menampilkan Omset 100% (harga konsumen, tetap) pada beberapa tingkat
-// persentase sekaligus — supaya perbandingan Ownership vs Franchise, dan
-// dampak ganti persentase, langsung kelihatan tanpa mengubah pengaturan.
-// Daftar persentase diambil dari pengaturan yang berlaku SEKARANG (bukan
-// angka tetap 100/60/55/50), jadi tabel ini otomatis ikut kalau nanti
-// persentasenya diubah di Master.
+// persentase sekaligus, dipecah per kanal toko (Ownership/Franchise cuma
+// pengelompokan metadata) — supaya dampak ganti persentase langsung
+// kelihatan tanpa mengubah pengaturan. Rate Invoice/DO sungguhan SELALU
+// DEFAULT_FACTORY_RATE_PCT (flat, sama semua kanal); OVERRIDE_FACTORY_RATE_PCT
+// cuma override manual per-dokumen — dua-duanya BUKAN ditentukan tipe toko.
 function renderRekapPersentase(){
   const el = $("rk-persentase"); if(!el) return;
   const dari = $("rk-dari").value, sampai = $("rk-sampai").value;
   const d = dashArusBarangData(dari, sampai);
   const own100 = d.byChannel.ownership ? d.byChannel.ownership.omset100 : 0;
   const fran100 = d.byChannel.franchise ? d.byChannel.franchise.omset100 : 0;
-  const pctOwn = num(D.settings.pctOwnership), pctFran = num(D.settings.pctFranchise), pctDasar = num(D.settings.pctDasar);
-  const daftarPct = [...new Set([100, pctFran, pctOwn, pctDasar])].sort((a,b)=>b-a);
+  const pctDasar = num(D.settings.pctDasar);
+  const daftarPct = [...new Set([100, OVERRIDE_FACTORY_RATE_PCT, DEFAULT_FACTORY_RATE_PCT, pctDasar])].sort((a,b)=>b-a);
 
   el.innerHTML = daftarPct.map(pct=>{
     const tag = [];
     if(pct===100) tag.push("Omset 100% / Konsumen");
     if(pct===pctDasar) tag.push("Omset Pabrik / Basedata");
-    if(pct===pctOwn) tag.push("Invoice Ownership");
-    if(pct===pctFran) tag.push("Invoice Franchise");
+    if(pct===DEFAULT_FACTORY_RATE_PCT) tag.push("Rate Invoice/DO Default (semua kanal)");
+    if(pct===OVERRIDE_FACTORY_RATE_PCT) tag.push("Override Manual (per-dokumen saja)");
     const vOwn = own100 * pct/100, vFran = fran100 * pct/100;
-    const solOwn = pct===pctOwn, solFran = pct===pctFran;
+    const solDefault = pct===DEFAULT_FACTORY_RATE_PCT;
     return `<tr>
       <td class="l">${pct}%${tag.length?` <span style="font-size:9px;color:var(--mute);font-weight:400">· ${tag.join(" · ")}</span>`:""}</td>
-      <td style="${solOwn?'font-weight:700;color:var(--brand)':''}">${rupiah(vOwn)}</td>
-      <td style="${solFran?'font-weight:700;color:var(--brand)':''}">${rupiah(vFran)}</td>
+      <td style="${solDefault?'font-weight:700;color:var(--brand)':''}">${rupiah(vOwn)}</td>
+      <td style="${solDefault?'font-weight:700;color:var(--brand)':''}">${rupiah(vFran)}</td>
       <td style="font-weight:600">${rupiah(vOwn+vFran)}</td>
     </tr>`;
   }).join("");
@@ -8341,17 +8453,15 @@ function renderMaster(){
   const esc = s => s.replace(/'/g,"\\'");
   $("m-divisiList").innerHTML = D.divisi.length? D.divisi.map(d=>`<div class="li"><span>${d}</span><button class="del" onclick="mHapus('divisi','${esc(d)}')">Hapus</button></div>`).join("") : '<div class="empty">Belum ada divisi.</div>';
   $("m-pctDasar").value = D.settings.pctDasar;
-  $("m-pctOwnership").value = D.settings.pctOwnership;
-  $("m-pctFranchise").value = D.settings.pctFranchise;
-  $("mp-pctNote").textContent = `Harga Invoice (dipakai backoffice, bukan Omset Pabrik): Ownership ${D.settings.pctOwnership}% · Franchise ${D.settings.pctFranchise}% dari Harga 100% ini. Omset Pabrik di Dashboard dihitung flat ${D.settings.pctDasar}% untuk semua tipe toko.`;
+  $("mp-pctNote").textContent = `Rate Invoice/DO (dipakai backoffice, bukan Omset Pabrik): flat ${DEFAULT_FACTORY_RATE_PCT}% dari Harga 100% ini, sama untuk semua toko — Ownership/Franchise tidak lagi memengaruhi rate. Override ${OVERRIDE_FACTORY_RATE_PCT}% hanya per-dokumen (reprint/edit invoice). Omset Pabrik di Dashboard dihitung flat ${D.settings.pctDasar}% untuk semua tipe toko.`;
   $("m-tokoList").innerHTML = D.stores.length? D.stores.slice().sort().map(s=>{
     const tipe = tokoTipe(s);
     return `<div class="li">
       <span>${s}</span>
       <span style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         <select style="width:auto;padding:5px 8px;font-size:11px" onchange="setTokoTipe('${esc(s)}',this.value)">
-          <option value="ownership" ${tipe==='ownership'?'selected':''}>Ownership (${D.settings.pctOwnership}%)</option>
-          <option value="franchise" ${tipe==='franchise'?'selected':''}>Franchise (${D.settings.pctFranchise}%)</option>
+          <option value="ownership" ${tipe==='ownership'?'selected':''}>Ownership (kanal)</option>
+          <option value="franchise" ${tipe==='franchise'?'selected':''}>Franchise (kanal)</option>
         </select>
         <button class="del" onclick="mHapus('toko','${esc(s)}')">Hapus</button>
       </span>
@@ -8366,11 +8476,14 @@ function renderMaster(){
   renderMasterToko();
 }
 function setPctHarga(field, val){
+  // Hanya pctDasar (Omset Pabrik) yang masih bisa diatur dari sini — rate
+  // Invoice/DO sudah flat DEFAULT_FACTORY_RATE_PCT, tidak lagi ada input
+  // pctOwnership/pctFranchise di Master Toko (lihat kartu "Rate Invoice / DO").
   D.settings[field] = num(val);
   saveD();
   kirimSheets({jenis:"settingsUpsert", pctDasar:D.settings.pctDasar, pctOwnership:D.settings.pctOwnership, pctFranchise:D.settings.pctFranchise, requestId:uid()});
   renderMaster();
-  toast(field==="pctDasar" ? "Persentase Omset Pabrik disimpan" : "Persentase Harga Invoice disimpan");
+  toast("Persentase Omset Pabrik disimpan");
 }
 function setTokoTipe(toko, tipe){
   D.tokoTipe[toko] = tipe;
