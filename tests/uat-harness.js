@@ -16,7 +16,7 @@ const appSrc = scriptMatch[1];
 
 const XLSX = require("xlsx");
 
-function loadApp({confirmAnswer=true, fetchImpl=null, promptAnswer=null}={}){
+function loadApp({confirmAnswer=true, fetchImpl=null, promptAnswer=null, seedLocalStorage=null}={}){
   // runScripts:"outside-only" -> the page's own <script> tags never auto-run
   // (so we control exactly when appSrc executes, after stubs are attached),
   // but window.eval() from outside is allowed and runs in the real window.
@@ -31,6 +31,12 @@ function loadApp({confirmAnswer=true, fetchImpl=null, promptAnswer=null}={}){
   w.alert = () => {};
   w.prompt = () => promptAnswer;
   w.fetch = fetchImpl || (() => Promise.reject(new Error("no-network-in-tests")));
+  // seedLocalStorage — simulasi "buka lagi di browser yang sama" (refresh):
+  // ditulis ke localStorage SEBELUM appSrc di-eval (app membaca localStorage
+  // sekali di baris teratas, `D = JSON.parse(localStorage.getItem(KEY))...`),
+  // beda dgn menyuntik lewat api.D setelah app jalan (itu tidak menguji jalur
+  // baca-dari-localStorage-saat-start sama sekali).
+  if(seedLocalStorage){ Object.keys(seedLocalStorage).forEach(k=>{ w.localStorage.setItem(k, seedLocalStorage[k]); }); }
   w.setInterval = () => 0; // don't keep a real 25s polling timer alive across tests
   w.console = console;
   w.structuredClone = w.structuredClone || (v => JSON.parse(JSON.stringify(v)));
@@ -49,7 +55,7 @@ function loadApp({confirmAnswer=true, fetchImpl=null, promptAnswer=null}={}){
     fgBuildPanel, fgSetPacked, fgSetStatus, fgSimpanProgres, fgRenderTable,
     kBuildGrid, kBaca, kHitung, kSimpan, kBaru, kTarikDariFG, kTarikDariFGBakery, kProdukPesanan, kSudahKirim,
     kInvoiceBaca, kInvoiceSimpan, kInvoiceHitung, kBukaInvoice, fillInvoiceTokoSelect,
-    invoiceNomor, doNomor, fgReadyList, fgReadyListByBakery, dashProdukData, poDeteksiKodeBentrok,
+    invoiceNomor, doNomor, fgReadyList, fgReadyListByBakery, renderFgReadyList, dashProdukData, poDeteksiKodeBentrok,
     normalizeStoreName, resolveStore, canonicalStoreName, storeIdentity, storeAliasIndex,
     ensureMasterToko, bootstrapTokoCanonicalDikenal, auditStoreAliases, tokoTipe, cocokToko, normTokoKunci,
     kFulfillmentFlatData, kPesananBelumTerpenuhiPerToko, fillTokoSelects, tokoOptionsCanonical,
@@ -63,6 +69,10 @@ function loadApp({confirmAnswer=true, fetchImpl=null, promptAnswer=null}={}){
     storeUsageAudit, renderStoreUsageAudit, renderMasterToko, fgTandaiSemuaSesuai,
     rowMenuReposition, wireRowMenus, renderRHist, renderRjHist, renderKHist,
     kirimSheetsVersioned, tampilkanKonflikVersi, pdBukaKembali,
+    muatSemua, poHapusFactory, renderPoHist, fgBukaKembali,
+    ceklisEffectiveClosed, fgPackingEffectiveClosed, withBusyBtn, renderTargeted, debounce,
+    pdApplyFilterDebounced, fgApplyFilterDebounced, renderPosisiStokDebounced,
+    CEKLIS_STATUS_NOT_STARTED, CEKLIS_STATUS_DRAFT, CEKLIS_STATUS_SUBMITTED, CEKLIS_STATUS_REOPENED, CEKLIS_STATUS_VERIFIED_FG,
     get poPreview(){ return poPreview; },
     get kList(){ return kList; },
     get kFgSource(){ return kFgSource; },

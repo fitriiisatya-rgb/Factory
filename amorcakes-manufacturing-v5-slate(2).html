@@ -559,7 +559,7 @@ details.sect>summary{padding:15px 16px}
       <div class="note" id="pdPartialNote" style="display:none;color:var(--brand)"></div>
       <div class="warn-box" id="pdOverNote" style="display:none"></div>
       <div class="tbar">
-        <input type="text" id="pd-cari" placeholder="Cari produk / kode…" oninput="pdApplyFilter()">
+        <input type="text" id="pd-cari" placeholder="Cari produk / kode…" oninput="pdApplyFilterDebounced()">
         <select id="pd-grup" onchange="prodBuildChecklist()">
           <option value="kategori">Kelompokkan: Kategori</option>
           <option value="divisi">Kelompokkan: Divisi</option>
@@ -578,7 +578,7 @@ details.sect>summary{padding:15px 16px}
       </table>
       </div>
       <div class="row">
-        <button class="btn ghost" id="pdTutupBtn" style="display:none" onclick="pdTutup()">Tutup / Selesai</button>
+        <button class="btn ghost" id="pdTutupBtn" style="display:none" onclick="pdTutup(this)">Tutup / Selesai</button>
         <button class="btn" onclick="pdSimpan()">Submit Produksi Hari Ini</button>
       </div>
     </div>
@@ -587,7 +587,7 @@ details.sect>summary{padding:15px 16px}
     </div>
     <div id="pdClosedWrap" style="display:none">
       <div class="warn-box" style="color:var(--warn)">✓ Ditutup <span id="pd-closedAt"></span> — tidak terpenuhi 100%<br><span id="pd-closedSummary"></span></div>
-      <button class="btn ghost" style="margin-top:10px" onclick="pdBukaKembali()">Buka Kembali</button>
+      <button class="btn ghost" style="margin-top:10px" onclick="pdBukaKembali(this)">Buka Kembali</button>
     </div>
   </div>
 
@@ -599,7 +599,7 @@ details.sect>summary{padding:15px 16px}
       <div><label class="fl">Filter Produk</label><select id="fg-fProduk" onchange="fgRenderTable()"></select></div>
     </div>
     <div class="tbar">
-      <input type="text" id="fg-cari" placeholder="Cari produk / toko…" oninput="fgApplyFilter()">
+      <input type="text" id="fg-cari" placeholder="Cari produk / toko…" oninput="fgApplyFilterDebounced()">
       <select id="fg-grup" onchange="fgRenderTable()">
         <option value="produk">Kelompokkan: Produk</option>
         <option value="toko">Kelompokkan: Toko</option>
@@ -617,15 +617,15 @@ details.sect>summary{padding:15px 16px}
       <tbody id="fgBody"></tbody>
     </table>
     </div>
-    <div class="row">
+    <div class="row" id="fgActiveActions1">
       <button type="button" class="btn ghost mini" style="flex:0" onclick="fgTandaiSemuaSesuai()">Tandai Semua "Belum Dicek" → Sesuai</button>
     </div>
-    <div class="row">
-      <button class="btn ghost" onclick="fgSimpanProgres()">Simpan Progres</button>
-      <button class="btn" onclick="fgTandaiSiap()">Tandai Siap Diambil Delivery</button>
+    <div class="row" id="fgActiveActions2">
+      <button class="btn ghost" onclick="fgSimpanProgres(this)">Simpan Progres</button>
+      <button class="btn" onclick="fgTandaiSiap(this)">Tandai Siap Diambil Delivery</button>
     </div>
-    <div class="note" style="margin-top:6px">"Simpan Progres" = cadangkan pekerjaan yang sedang berjalan (boleh belum lengkap, tidak memunculkan apapun ke Kirim Toko). "Tandai Siap Diambil Delivery" = mengunci packing hari ini sebagai FINAL dan memunculkannya di kartu "Siap Diambil Delivery" pada menu Kirim Toko — baru dari situ admin bisa buat Delivery Order. Baris yang masih "Belum Dicek" akan diperingatkan dulu sebelum boleh ditandai siap.</div>
-    <div class="ok-box" id="fg-ready" style="display:none">✓ Siap diambil delivery sejak <span id="fg-readyAt"></span></div>
+    <div class="note" id="fgActiveActionsNote" style="margin-top:6px">"Simpan Progres" = cadangkan pekerjaan yang sedang berjalan (boleh belum lengkap, tidak memunculkan apapun ke Kirim Toko). "Tandai Siap Diambil Delivery" = mengunci packing hari ini sebagai FINAL dan memunculkannya di kartu "Siap Diambil Delivery" pada menu Kirim Toko — baru dari situ admin bisa buat Delivery Order. Baris yang masih "Belum Dicek" akan diperingatkan dulu sebelum boleh ditandai siap.</div>
+    <div class="ok-box" id="fg-ready" style="display:none">✓ Siap diambil delivery sejak <span id="fg-readyAt"></span> — sudah final, tidak tampil lagi di pekerjaan aktif Produksi/FG (tetap ada di Kirim Toko &amp; riwayat). <button type="button" class="btn mini ghost" style="margin-top:0" onclick="fgBukaKembali(this)">Buka Kembali</button></div>
   </div>
 </div>
 
@@ -715,7 +715,7 @@ details.sect>summary{padding:15px 16px}
 
     <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
       <h4>Per Produk</h4>
-      <input type="text" id="dash-cari" placeholder="Cari produk atau kode…" oninput="dashProdukFilterRender()" style="margin-top:10px">
+      <input type="text" id="dash-cari" placeholder="Cari produk atau kode…" oninput="dashProdukFilterRenderDebounced()" style="margin-top:10px">
       <div class="scrollY" style="overflow-x:auto;margin-top:10px">
       <table>
         <thead><tr><th class="l">Produk</th><th class="l">Divisi</th><th>Target</th><th>Aktual</th><th>Reject</th><th>Fulfillment</th></tr></thead>
@@ -764,7 +764,7 @@ details.sect>summary{padding:15px 16px}
       </select>
     </div>
     <div class="row" style="margin-top:8px">
-      <input type="text" id="ku-cari" placeholder="Cari toko atau produk…" oninput="kUnfulfilledFilterRender()">
+      <input type="text" id="ku-cari" placeholder="Cari toko atau produk…" oninput="kUnfulfilledFilterRenderDebounced()">
       <select id="ku-fFactory" style="flex:0 0 160px" onchange="kUnfulfilledFilterRender()">
         <option value="">Semua Factory</option>
         <option value="karangtengah">Karangtengah</option>
@@ -832,7 +832,7 @@ details.sect>summary{padding:15px 16px}
 
     <div class="docpanel on" data-dp="item">
       <div class="gridtools">
-        <input type="text" id="k-cari" placeholder="Cari produk / kode…" oninput="kApplyFilter()">
+        <input type="text" id="k-cari" placeholder="Cari produk / kode…" oninput="kApplyFilterDebounced()">
         <select id="k-grup" onchange="kBuildGrid()">
           <option value="kategori">Kelompokkan: Kategori</option>
           <option value="divisi">Kelompokkan: Divisi</option>
@@ -917,7 +917,7 @@ details.sect>summary{padding:15px 16px}
       <div><label class="fl">Sampai Tanggal</label><input type="date" id="inv-sampai" onchange="renderInvoiceList()"></div>
     </div>
     <div class="tbar">
-      <input type="text" id="inv-cari" placeholder="Cari no. faktur / bakery…" oninput="renderInvoiceList()">
+      <input type="text" id="inv-cari" placeholder="Cari no. faktur / bakery…" oninput="renderInvoiceListDebounced()">
       <select id="inv-fToko" onchange="renderInvoiceList()"><option value="">Semua Toko</option></select>
       <select id="inv-fStatus" onchange="renderInvoiceList()">
         <option value="">Semua Status</option>
@@ -971,7 +971,7 @@ details.sect>summary{padding:15px 16px}
       <div class="note">DO yang <b>belum dibuatkan invoice</b>. Begitu invoicenya dibuat, DO-nya pindah ke <b>Daftar Invoice</b> di atas — jadi daftar ini isinya selalu pekerjaan yang masih harus diselesaikan.</div>
       <div class="note" id="kInvoiceSummaryTop" style="margin-top:4px;color:var(--hi)"></div>
       <div class="tbar">
-        <input type="text" id="kh-cari" placeholder="Cari toko / no. DO…" oninput="kHistFilter()">
+        <input type="text" id="kh-cari" placeholder="Cari toko / no. DO…" oninput="kHistFilterDebounced()">
         <select id="kh-fInv" onchange="kHistFilter()">
           <option value="belum">Belum dibuat invoice</option>
           <option value="">Semua DO (termasuk yang sudah)</option>
@@ -1034,7 +1034,7 @@ details.sect>summary{padding:15px 16px}
 
     <div class="docpanel on" data-dp="item">
       <div class="gridtools">
-        <input type="text" id="kinv-cari" placeholder="Cari produk / kode…" oninput="kInvoiceFilter()">
+        <input type="text" id="kinv-cari" placeholder="Cari produk / kode…" oninput="kInvoiceFilterDebounced()">
         <label class="tgl"><input type="checkbox" id="kinv-bedaSaja" onchange="kInvoiceFilter()"> hanya yang beda dari DO</label>
         <button type="button" class="linkbtn" onclick="kInvSamakanDO()">Samakan Semua = Qty DO</button>
         <span class="chip" id="kinv-count"></span>
@@ -1153,7 +1153,7 @@ details.sect>summary{padding:15px 16px}
     </div>
     <div class="bulanbar" id="rh-bulanbar"></div>
     <div class="tbar">
-      <input type="text" id="rh-cari" placeholder="Cari toko / produk…" oninput="renderRHist()">
+      <input type="text" id="rh-cari" placeholder="Cari toko / produk…" oninput="renderRHistDebounced()">
       <button type="button" class="linkbtn" onclick="rEkspor()">Ekspor Excel</button>
       <span class="chip" id="rh-count"></span>
     </div>
@@ -1190,7 +1190,7 @@ details.sect>summary{padding:15px 16px}
       <select id="rj-invoiceLink"><option value="">— Belum ada / tidak dipotong —</option></select>
       <div class="note">Wajib dipilih kalau ada baris bertindak lanjut "Potong Invoice".</div>
       <div class="tbar">
-        <input type="text" id="rj-cari" placeholder="Cari produk…" oninput="rjApplyFilter()">
+        <input type="text" id="rj-cari" placeholder="Cari produk…" oninput="rjApplyFilterDebounced()">
         <label class="tgl"><input type="checkbox" id="rj-showAll" onchange="rjBuildGrid()"> semua produk</label>
         <span class="chip" id="rj-count"></span>
       </div>
@@ -1230,7 +1230,7 @@ details.sect>summary{padding:15px 16px}
     </div>
     <div class="bulanbar" id="rjh-bulanbar"></div>
     <div class="tbar">
-      <input type="text" id="rjh-cari" placeholder="Cari toko / produk / alasan…" oninput="renderRjHist()">
+      <input type="text" id="rjh-cari" placeholder="Cari toko / produk / alasan…" oninput="renderRjHistDebounced()">
       <select id="rjh-filter" onchange="renderRjHist()">
         <option value="">Semua tindak lanjut</option>
         <option value="potong">Potong Invoice</option>
@@ -1363,7 +1363,7 @@ details.sect>summary{padding:15px 16px}
       <div><label class="fl">Sampai Tanggal</label><input type="date" id="psh-sampai" onchange="renderPsHist()"></div>
     </div>
     <div class="tbar">
-      <input type="text" id="psh-cari" placeholder="Cari pemesan / no. pesanan..." oninput="renderPsHist()">
+      <input type="text" id="psh-cari" placeholder="Cari pemesan / no. pesanan..." oninput="renderPsHistDebounced()">
       <select id="psh-status" onchange="renderPsHist()">
         <option value="">Semua status</option>
         <option value="baru">Pesanan</option>
@@ -1414,7 +1414,7 @@ details.sect>summary{padding:15px 16px}
     </div>
     <div class="bulanbar" id="jh-bulanbar"></div>
     <div class="tbar">
-      <input type="text" id="jh-cari" placeholder="Cari toko / produk…" oninput="renderJHist()">
+      <input type="text" id="jh-cari" placeholder="Cari toko / produk…" oninput="renderJHistDebounced()">
       <select id="jh-sumber" onchange="renderJHist()">
         <option value="">Semua sumber</option>
         <option value="pos">POS</option>
@@ -1454,7 +1454,7 @@ details.sect>summary{padding:15px 16px}
       <span style="color:var(--mute)">→</span>
       <input type="date" id="ks-sampai" onchange="renderKartuStok()">
       <select id="ks-produk" onchange="renderKartuStok()"></select>
-      <input type="text" id="ks-cari" placeholder="Cari produk…" oninput="renderKartuStok()">
+      <input type="text" id="ks-cari" placeholder="Cari produk…" oninput="renderKartuStokDebounced()">
       <select id="ks-mode" onchange="renderKartuStok()">
         <option value="tanggal">Rekap: per Tanggal → Produk</option>
         <option value="produk">Rekap: per Produk → Tanggal</option>
@@ -1497,7 +1497,7 @@ details.sect>summary{padding:15px 16px}
       <div class="note" id="adj-info"></div>
       <button class="btn" onclick="adjSimpan()">Simpan Penyesuaian</button>
       <div class="tbar" style="margin-top:16px">
-        <input type="text" id="adj-cari" placeholder="Cari produk / keterangan…" oninput="renderAdjHist()">
+        <input type="text" id="adj-cari" placeholder="Cari produk / keterangan…" oninput="renderAdjHistDebounced()">
         <span class="chip" id="adj-count"></span>
       </div>
       <div id="adj-hist" class="scrollY"></div>
@@ -1508,7 +1508,7 @@ details.sect>summary{padding:15px 16px}
     <h3>Posisi Stok Semua Produk <span style="font-size:9px;color:var(--mute);font-weight:400" id="ps-sub"></span></h3>
     <div class="note">Stok gudang saat ini beserta nilainya di HPP. Klik produk untuk membuka kartu stoknya.</div>
     <div class="tbar">
-      <input type="text" id="ps-cari" placeholder="Cari produk…" oninput="renderPosisiStok()">
+      <input type="text" id="ps-cari" placeholder="Cari produk…" oninput="renderPosisiStokDebounced()">
       <select id="ps-filter" onchange="renderPosisiStok()">
         <option value="adaStok">Hanya yang ada stok</option>
         <option value="">Semua produk</option>
@@ -1572,7 +1572,7 @@ details.sect>summary{padding:15px 16px}
         </select></div>
       </div>
       <div class="tbar">
-        <input type="text" id="rc-cari" placeholder="Cari produk…" oninput="renderRekonsiliasi()">
+        <input type="text" id="rc-cari" placeholder="Cari produk…" oninput="renderRekonsiliasiDebounced()">
         <button type="button" class="linkbtn" onclick="rekonsiliasiEkspor()">Ekspor Excel</button>
         <span class="chip" id="rc-count"></span>
       </div>
@@ -1622,7 +1622,7 @@ details.sect>summary{padding:15px 16px}
     </div>
     <div style="margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
       <h4>Per Produk</h4>
-      <input type="text" id="rk-cari" placeholder="Cari produk…" oninput="renderRekap()">
+      <input type="text" id="rk-cari" placeholder="Cari produk…" oninput="renderRekapDebounced()">
       <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--mute)"><input type="checkbox" id="rk-showAll" style="width:auto" onchange="renderRekap()"> Tampilkan produk tanpa aktivitas</label>
       <div class="scrollY" style="overflow-x:auto;margin-top:10px">
       <table>
@@ -1686,7 +1686,7 @@ details.sect>summary{padding:15px 16px}
       </div>
     </details>
 
-    <input type="text" id="mp-cari" placeholder="Cari produk…" oninput="renderMasterProduk()" style="margin-top:14px">
+    <input type="text" id="mp-cari" placeholder="Cari produk…" oninput="renderMasterProdukDebounced()" style="margin-top:14px">
     <div class="note" id="mp-summary" style="color:var(--hi)"></div>
     <div class="note" style="margin-top:2px">Dikelompokkan per kategori — ketuk nama kategori untuk buka/tutup.</div>
     <div id="mp-list" style="margin-top:8px"></div>
@@ -1738,7 +1738,7 @@ details.sect>summary{padding:15px 16px}
       <input type="text" id="mtk-canonBaru" placeholder="Nama Standar (mis. BAKERY CIKOLE)">
       <button class="btn sub" style="flex:0;margin-top:0" onclick="mtkTambahBakery()">Tambah Bakery</button>
     </div>
-    <input type="text" id="mtk-cari" placeholder="Cari store ID / nama / alias…" oninput="renderMasterToko()" style="margin-top:10px">
+    <input type="text" id="mtk-cari" placeholder="Cari store ID / nama / alias…" oninput="renderMasterTokoDebounced()" style="margin-top:10px">
     <div class="tblwrap" style="margin-top:10px">
     <table>
       <thead><tr><th class="l">Store ID</th><th class="l">Nama Standar</th><th class="l">Alias</th><th>Channel</th><th>Status</th><th>Action</th></tr></thead>
@@ -1999,6 +1999,37 @@ function fgKey(tgl, factory){ return tgl+"|"+factory; }
 // bukan memproduksi barang baru. Jadi angkanya TIDAK boleh ikut dijumlah ke
 // total produksi, kalau tidak satu barang terhitung dua kali.
 function divisiVerifikasi(divisi){ return divisi===SPECIAL_FG || divisi===SPECIAL_FG_CIBADAK; }
+// Status lifecycle Ceklis — CERMIN dari CEKLIS_STATUS_* di backend/Code.gs
+// (draft/submitted/reopened/verified_fg). Backend adalah authoritative source:
+// nilai ini datang dari muatSemua() (j.ceklis[].metaStatus), BUKAN ditebak dari
+// qty/closed di sisi client.
+const CEKLIS_STATUS_NOT_STARTED = "not_started";
+const CEKLIS_STATUS_DRAFT = "draft";
+const CEKLIS_STATUS_SUBMITTED = "submitted";
+const CEKLIS_STATUS_REOPENED = "reopened";
+const CEKLIS_STATUS_VERIFIED_FG = "verified_fg";
+// Satu-satunya tempat yang boleh memutuskan "record ini closed utk workspace
+// aktif Produksi/FG atau tidak". SEMUA render/selector Produksi & FG WAJIB
+// lewat sini (bukan cek `.closed` mentah-mentah sendiri-sendiri), supaya
+// begitu FG menekan "Tandai Siap Diambil Delivery" (metaStatus jadi
+// verified_fg di sisi divisi sumber lewat markCeklisVerifiedFg_ di backend),
+// record itu otomatis dianggap closed di sini juga — tanpa perlu ubah setiap
+// pemanggil satu-satu lagi di kemudian hari.
+function ceklisEffectiveClosed(c){
+  if(!c) return false;
+  if(c.closed) return true; // ditutup manual (pdTutup) — flag lokal segera, dikonfirmasi ulang oleh metaStatus stlh sync
+  return c.metaStatus===CEKLIS_STATUS_SUBMITTED || c.metaStatus===CEKLIS_STATUS_VERIFIED_FG;
+}
+// Sama utk panel packing FG (fgPacking, BUKAN D.ceklis) — closed begitu FG
+// menekan "Tandai Siap Diambil Delivery" (rec.readyAt terisi). Ini LOKAL saja
+// (fgPacking/fgReady sengaja tidak ditarik balik oleh doGet — lihat komentar
+// muatSemua()), jadi hanya otoritatif utk device yang melakukan aksi tsb;
+// device lain baru tahu setelah refresh manual/reload (residual risk, lihat
+// laporan akhir bagian D).
+function fgPackingEffectiveClosed(tgl, factory){
+  const rec = D.fgPacking[fgKey(tgl,factory)];
+  return !!(rec && rec.readyAt);
+}
 
 /* ================= STATE ================= */
 const KEY = "amorcakes-arus-v1";
@@ -2445,6 +2476,43 @@ function salinLinkMobile(){
     toast("Link disalin");
   }
 }
+// Section C.2/C.3 — inline loading state + cegah double-submit. `fn` boleh
+// mengembalikan Promise (aksi async lewat backend) atau nilai biasa. Selama
+// fn berjalan, tombol didisable — klik kedua saat request masih di udara
+// diabaikan sepenuhnya (BUKAN mengirim requestId baru; requestId dibuat
+// SEKALI oleh fn itu sendiri lewat uid(), sebelum fn dipanggil ulang).
+function withBusyBtn(btn, fn, labels){
+  labels = labels || {};
+  if(!btn) return fn();
+  if(btn.disabled) return; // request utk tombol ini masih berjalan — abaikan klik kedua/tap ganda
+  const orig = btn.textContent;
+  btn.disabled = true;
+  if(labels.busy) btn.textContent = labels.busy;
+  const selesai = (ok)=>{
+    btn.textContent = ok===false ? (labels.fail||orig) : (labels.done||orig);
+    setTimeout(()=>{ btn.disabled=false; btn.textContent=orig; }, ok===false?1400:900);
+  };
+  let hasil;
+  try{ hasil = fn(); }catch(e){ selesai(false); throw e; }
+  if(hasil && typeof hasil.then==="function"){
+    return hasil.then(v=>{ selesai(v!==false); return v; }, e=>{ selesai(false); throw e; });
+  }
+  selesai(hasil!==false);
+  return hasil;
+}
+// Section C.5 — debounce search/filter (150-250ms) supaya render ulang tabel
+// besar tidak terjadi di TIAP keystroke. Dibuat sbg wrapper TERPISAH per
+// fungsi (bukan menimpa fungsi aslinya) supaya pemanggil LAIN yang butuh hasil
+// filter segera (mis. renderPdRows() memanggil pdApplyFilter() sinkron abis
+// membangun baris) tetap jalan seperti biasa, tidak ikut tertunda.
+function debounce(fn, ms){
+  let t;
+  return function(){
+    const args = arguments, ctx = this;
+    clearTimeout(t);
+    t = setTimeout(()=>fn.apply(ctx, args), ms);
+  };
+}
 async function kirimSheets(payload){
   const url = ($("cfg-url").value||"").trim();
   if(!url) return "lokal";
@@ -2521,29 +2589,71 @@ async function muatSemua(diam){
           stores:Array.isArray(r.stores)?r.stores:[]
         });
       });
-      if(Object.keys(grp).length){
-        // PENTING: jangan timpa seluruh D.po. Sinkron hanya mengganti kombinasi
-        // tanggal+factory yang MEMANG dikirim balik server. PO yang baru disimpan
-        // lokal (mis. Cibadak/Bolu yang belum ditangani Apps Script) tetap aman.
-        const hasil = Object.assign({}, D.po);
-        Object.keys(grp).forEach(tgl=>{
-          const facServer = new Set(grp[tgl].map(r=>r.factory));
-          const lokalSisa = (D.po[tgl]||[]).filter(r=>!facServer.has(r.factory));
-          hasil[tgl] = lokalSisa.concat(grp[tgl]);
+      // Section B (akar bug "PO terhapus muncul lagi setelah refresh / di
+      // device lain"): j.po dari doGet SELALU berisi SELURUH sheet PO (bukan
+      // sebagian), jadi tanggal+factory yang TIDAK muncul di sini artinya salah
+      // satu dari dua hal: (a) baris lokal BARU yang belum sempat tersinkron
+      // sama sekali, atau (b) SUDAH DIHAPUS di backend (mis. poHapusFactory
+      // dari device lain) dan cache lokal device ini basi. Kode LAMA di sini
+      // selalu menganggap (a) — makanya PO yang sudah dihapus di backend tetap
+      // "hidup lagi" tiap kali sync. Baris (a) vs (b) dibedakan pakai
+      // j.versions.po: backend TIDAK PERNAH menghapus baris RecordVersion saat
+      // delete (cuma menaikkan versinya, lihat handleHapusPO_ backend/Code.gs)
+      // — jadi kalau j.versions.po sudah PERNAH punya entry utk key ini,
+      // backend authoritatively tahu soal key itu; absen dari j.po pada kondisi
+      // itu = SUDAH dihapus, bukan "belum sempat sync", dan wajib dibuang di
+      // sini juga. Diproses utk SEMUA tanggal lokal (bukan cuma yg ada di grp)
+      // supaya tanggal yang SELURUH factory-nya terhapus juga ikut terbuang —
+      // gate `if(Object.keys(grp).length)` yang lama melewatkan kasus ini sama
+      // sekali kalau server tidak mengembalikan APAPUN utk tanggal itu.
+      const versiPoServer = (j.versions && j.versions.po && typeof j.versions.po==="object") ? j.versions.po : {};
+      const semuaTgl = new Set([...Object.keys(D.po), ...Object.keys(grp)]);
+      const hasilPo = {};
+      semuaTgl.forEach(tgl=>{
+        const facServer = new Set((grp[tgl]||[]).map(r=>r.factory));
+        const lokalSisa = (D.po[tgl]||[]).filter(r=>{
+          if(facServer.has(r.factory)) return false; // digantikan baris server persis di bawah
+          const authoritativelyKnown = Object.prototype.hasOwnProperty.call(versiPoServer, tgl+"|"+r.factory);
+          return !authoritativelyKnown; // backend blm pernah tahu = lokal-baru, pertahankan. backend tahu tapi skrg absen = sudah dihapus, buang.
         });
-        D.po = hasil;
-        dikenali=true;
-      }
+        const gabung = lokalSisa.concat(grp[tgl]||[]);
+        if(gabung.length) hasilPo[tgl] = gabung;
+      });
+      D.po = hasilPo;
+      dikenali=true;
     }
     if(Array.isArray(j.ceklis)){
       const grp={};
       j.ceklis.forEach(r=>{
         if(!r || !r.tanggal || !r.divisi) return;
         const k = r.tanggal+"|"+r.divisi;
-        (grp[k] ||= {submitted:true, submittedAt:r.submittedAt||"", rows:[]});
+        // metaStatus/reopenReason = status lifecycle AUTHORITATIVE dari backend
+        // (CeklisMeta.Status) — sebelumnya field ini ditarik dari server tapi
+        // TIDAK PERNAH disimpan ke D.ceklis, jadi seluruh app selalu membaca
+        // `.closed` versi lokal saja (bisa basi lintas device/refresh). Ini akar
+        // masalah "closed record masih tampil aktif" (lihat ceklisEffectiveClosed).
+        (grp[k] ||= {submitted:true, submittedAt:r.submittedAt||"", metaStatus:r.metaStatus||CEKLIS_STATUS_NOT_STARTED, reopenReason:r.reopenReason||"", rows:[]});
         grp[k].rows.push({kode:r.kode||"",produk:r.produk||"",kategori:r.kategori||"",target:num(r.target),status:r.status||"sesuai",aktual:num(r.aktual),reject:num(r.reject),keterangan:r.keterangan||""});
       });
-      if(Object.keys(grp).length){ D.ceklis = Object.assign({}, D.ceklis, grp); dikenali=true; } // key lokal yg belum ada di server tetap dipertahankan
+      if(Object.keys(grp).length){
+        // Merge PER FIELD (bukan timpa seluruh objek per key) supaya flag lokal
+        // `closed`/`closedAt` yang baru saja diset optimistic (mis. abis pdTutup())
+        // TIDAK hilang begitu saja kalau respons sync ini kebetulan tiba sebelum
+        // backend selesai memproses submit-nya (closed lokal tetap jadi sinyal
+        // "segera dianggap closed" sampai metaStatus menyusul via ceklisEffectiveClosed).
+        Object.keys(grp).forEach(k=>{
+          const lama = D.ceklis[k] || {};
+          // Kalau backend BILANG record ini sedang tidak-closed (draft/reopened/
+          // not_started), itu menang atas flag lokal `closed` yang mungkin basi
+          // (mis. divisi lain baru saja pdBukaKembali() dari device lain) — supaya
+          // reopen dari device lain juga terlihat di sini, bukan cuma di device
+          // yang melakukan reopen-nya.
+          const metaBilangTerbuka = [CEKLIS_STATUS_DRAFT, CEKLIS_STATUS_REOPENED, CEKLIS_STATUS_NOT_STARTED].includes(grp[k].metaStatus);
+          const closed = metaBilangTerbuka ? false : (lama.closed || false);
+          D.ceklis[k] = Object.assign({}, lama, grp[k], {closed, closedAt: metaBilangTerbuka ? "" : (lama.closedAt||"")});
+        });
+        dikenali=true;
+      } // key lokal yg belum ada di server tetap dipertahankan
     }
     // Gabung per id: baris server menang utk id yang sama, baris lokal yang belum
     // sempat terkirim TIDAK ikut hilang.
@@ -3171,16 +3281,50 @@ function renderPoHist(){
       const rows = D.po[tgl];
       const byF = {};
       rows.forEach(r=>{ (byF[r.factory] ||= {n:0,total:0}); byF[r.factory].n++; byF[r.factory].total+=hitungTarget(r); });
-      const body = Object.keys(byF).map(f=>`<div class="li"><span>${f==='karangtengah'?'Karangtengah':'Cibadak'}</span><span style="text-align:right"><span class="t2">${byF[f].n} produk · target ${fmt(byF[f].total)}</span><button class="del" onclick="poHapusFactory('${tgl}','${f}')">Hapus</button></span></div>`).join("");
+      const body = Object.keys(byF).map(f=>`<div class="li"><span>${f==='karangtengah'?'Karangtengah':'Cibadak'}</span><span style="text-align:right"><span class="t2">${byF[f].n} produk · target ${fmt(byF[f].total)}</span><button class="del" onclick="poHapusFactory('${tgl}','${f}',this)">Hapus</button></span></div>`).join("");
       return `<details class="dd"><summary><span class="t1">${fmtTgl(tgl)}</span></summary><div class="dd-body">${body}</div></details>`;
     }).join("");
 }
-function poHapusFactory(tgl,factory){
+// Section B — delete SEKARANG backend-confirmation-first (BUKAN lagi optimis-
+// lokal-dulu-lalu-fire-and-forget spt sebelumnya): kirimSheets(mode:"no-cors")
+// lama TIDAK BISA dibaca responsnya sama sekali, jadi tidak ada cara tahu
+// apakah backend BENAR menghapus. Sekarang pakai kirimSheetsVersioned (fetch
+// sungguhan + expectedVersion, endpoint "hapusPO" di backend SUDAH lewat
+// mutateVersioned_ sejak awal — cuma frontend yang belum memakainya). Urutan
+// SESUAI spec: (1) backend hapus dulu & dikonfirmasi, baru (2) cache lokal
+// dibersihkan, (3) indeks turunan ikut re-render, (4) refetch state terbaru,
+// (5) rerender. Kalau gagal/timeout/conflict, data lokal TIDAK disentuh sama
+// sekali — drpd diam2 "menghilang" padahal backend belum tentu menghapusnya.
+function poHapusFactory(tgl, factory, btn){
   if(!confirm("Hapus data PO "+(factory==='karangtengah'?'Karangtengah':'Cibadak')+" tanggal "+fmtTgl(tgl)+"?")) return;
-  D.po[tgl] = (D.po[tgl]||[]).filter(r=>r.factory!==factory);
-  if(!D.po[tgl].length) delete D.po[tgl];
-  saveD(); renderAll();
-  kirimSheets({jenis:"hapusPO", tanggal:tgl, factory, requestId:uid()});
+  const poKey = tgl+"|"+factory;
+  const poExpectedVersion = (D.recordVersions.po||{})[poKey] || 0;
+  return withBusyBtn(btn, ()=>kirimSheetsVersioned({jenis:"hapusPO", tanggal:tgl, factory, requestId:uid(), expectedVersion:poExpectedVersion}).then(res=>{
+    if(res.ok){
+      // 1. Backend sudah mengonfirmasi hapus (fetch sungguhan, bukan no-cors).
+      if(res.version!=null) D.recordVersions.po[poKey]=res.version;
+      // 2+3. Cache lokal & indeks turunan (D.po adalah basis semua target
+      // Produksi/FG/Dashboard) baru dibersihkan SEKARANG, setelah konfirmasi.
+      D.po[tgl] = (D.po[tgl]||[]).filter(r=>r.factory!==factory);
+      if(!D.po[tgl] || !D.po[tgl].length) delete D.po[tgl];
+      saveD();
+      renderTargeted(["po"]); // 5. rerender view terkait — langsung terasa, tanpa nunggu refetch
+      toast("PO dihapus");
+      muatSemua(true); // 4. refetch state terbaru dr backend (jaring pengaman)
+      return true;
+    } else if(res.code==="VERSION_CONFLICT"){
+      // Ada perubahan lain (mis. upload PO baru) yg belum kelihatan di device
+      // ini — JANGAN hapus data yg belum tentu sama dgn yg dilihat user.
+      tampilkanKonflikVersi("PO tanggal/factory ini", poKey, res, ()=>muatSemua());
+      return false;
+    } else if(res.code==="LOCK_TIMEOUT"){
+      toast("Sistem sedang sibuk — coba hapus lagi sebentar lagi (data BELUM dihapus)");
+      return false;
+    } else {
+      toast("Gagal menghapus"+(res.code?" ("+res.code+")":"")+" — data TIDAK diubah, coba lagi");
+      return false;
+    }
+  }), {busy:"Menghapus…", done:"Terhapus", fail:"Gagal, coba lagi"});
 }
 
 /* ================= TARGET PER DIVISI ================= */
@@ -3285,7 +3429,7 @@ function prodBuildChecklist(){
     $("pdFormWrap").style.display="block"; $("pdDoneWrap").style.display="none"; $("pdClosedWrap").style.display="none";
     $("pdTutupBtn").style.display="none";
     if($("pd-count")) $("pd-count").textContent = "";
-  } else if(existing && existing.closed){
+  } else if(ceklisEffectiveClosed(existing)){
     $("pdFormWrap").style.display="none"; $("pdDoneWrap").style.display="none"; $("pdClosedWrap").style.display="block";
     $("pd-closedAt").textContent = existing.closedAt||"";
     $("pd-closedSummary").innerHTML = `Total dilaporkan <b>${fmt(totalSudahAktual)}</b> dari target <b>${fmt(totalTargetAsli)}</b> (${pct==null?'-':pct+'%'})${totalSudahReject?` · reject ${fmt(totalSudahReject)}`:''}`;
@@ -3385,7 +3529,7 @@ function pdBukaDivisi(divisi){
     window.scrollTo({top:y, behavior:"smooth"});
   }
 }
-function pdTutup(){
+function pdTutup(btn){
   const tgl=$("pd-tgl").value, divisi=$("pd-divisi").value;
   if(!tgl || !divisi) return;
   if(!confirm("Tutup produksi hari ini untuk divisi ini? Sisa target yang belum terpenuhi akan dianggap final (tidak akan dipenuhi lagi), dan berikutnya sistem mulai dari pesanan baru.")) return;
@@ -3393,32 +3537,32 @@ function pdTutup(){
   if(!D.ceklis[key]) D.ceklis[key] = {submitted:true, submittedAt:new Date().toLocaleString("id-ID"), rows:[], closed:false};
   D.ceklis[key].closed = true;
   D.ceklis[key].closedAt = new Date().toLocaleString("id-ID");
-  saveD(); renderAll();
+  saveD(); renderTargeted(["produksi"]);
   const submitExpectedVersion = (D.recordVersions.ceklis||{})[key] || 0;
-  kirimSheetsVersioned({jenis:"ceklisSubmit", tanggal:tgl, divisi, requestId:uid(), expectedVersion:submitExpectedVersion}).then(res=>{
-    if(res.ok){ if(res.version!=null) D.recordVersions.ceklis[key]=res.version; saveD(); toast("Ditutup & terkirim"); }
-    else if(res.code==="VERSION_CONFLICT") tampilkanKonflikVersi("produksi divisi ini", key, res, ()=>muatSemua());
-    else if(res.code==="LOCK_TIMEOUT") toast("Sistem sedang sibuk — coba tutup lagi sebentar lagi");
-    else toast("Ditutup (lokal)");
-  });
+  return withBusyBtn(btn, ()=>kirimSheetsVersioned({jenis:"ceklisSubmit", tanggal:tgl, divisi, requestId:uid(), expectedVersion:submitExpectedVersion}).then(res=>{
+    if(res.ok){ if(res.version!=null) D.recordVersions.ceklis[key]=res.version; saveD(); toast("Ditutup & terkirim"); return true; }
+    else if(res.code==="VERSION_CONFLICT"){ tampilkanKonflikVersi("produksi divisi ini", key, res, ()=>muatSemua()); return false; }
+    else if(res.code==="LOCK_TIMEOUT"){ toast("Sistem sedang sibuk — coba tutup lagi sebentar lagi"); return false; }
+    else { toast("Ditutup (lokal)"); return false; }
+  }), {busy:"Menutup…", done:"Tersimpan", fail:"Gagal, coba lagi"});
 }
 // Section 9: reopen WAJIB alasan (tercatat di audit trail server). Sebelumnya
 // fungsi ini TIDAK PERNAH mengirim apa pun ke backend (murni lokal) — reopen
 // jadi tidak tersinkron sama sekali. Sekarang tersinkron + tercatat.
-function pdBukaKembali(){
+function pdBukaKembali(btn){
   const tgl=$("pd-tgl").value, divisi=$("pd-divisi").value;
   const key = ceklisKey(tgl,divisi);
   if(!D.ceklis[key]) return;
   const reason = (prompt("Alasan membuka kembali produksi yang sudah ditutup ini (wajib diisi, tercatat di audit trail):")||"").trim();
   if(!reason) return toast("Dibatalkan — alasan wajib diisi");
-  D.ceklis[key].closed=false; saveD(); renderAll();
+  D.ceklis[key].closed=false; saveD(); renderTargeted(["produksi"]);
   const reopenExpectedVersion = (D.recordVersions.ceklis||{})[key] || 0;
-  kirimSheetsVersioned({jenis:"ceklisReopen", tanggal:tgl, divisi, requestId:uid(), expectedVersion:reopenExpectedVersion, reason}).then(res=>{
-    if(res.ok){ if(res.version!=null) D.recordVersions.ceklis[key]=res.version; saveD(); toast("Dibuka kembali & tercatat — bisa submit lagi"); }
-    else if(res.code==="VERSION_CONFLICT") tampilkanKonflikVersi("produksi divisi ini", key, res, ()=>muatSemua());
-    else if(res.code==="REASON_REQUIRED") toast("Alasan wajib diisi");
-    else toast("Dibuka kembali (lokal) — belum tersinkron ke server");
-  });
+  return withBusyBtn(btn, ()=>kirimSheetsVersioned({jenis:"ceklisReopen", tanggal:tgl, divisi, requestId:uid(), expectedVersion:reopenExpectedVersion, reason}).then(res=>{
+    if(res.ok){ if(res.version!=null) D.recordVersions.ceklis[key]=res.version; saveD(); toast("Dibuka kembali & tercatat — bisa submit lagi"); return true; }
+    else if(res.code==="VERSION_CONFLICT"){ tampilkanKonflikVersi("produksi divisi ini", key, res, ()=>muatSemua()); return false; }
+    else if(res.code==="REASON_REQUIRED"){ toast("Alasan wajib diisi"); return false; }
+    else { toast("Dibuka kembali (lokal) — belum tersinkron ke server"); return false; }
+  }), {busy:"Membuka…", done:"Tersimpan", fail:"Gagal, coba lagi"});
 }
 function pdFillFilterDivisiAsal(){
   const el = $("pd-fDivisiAsal"); if(!el) return;
@@ -3729,6 +3873,14 @@ function fgRenderTable(){
     ? (a.toko.localeCompare(b.toko) || a.produk.localeCompare(b.produk))
     : (a.produk.localeCompare(b.produk) || a.toko.localeCompare(b.toko)));
   const rec = D.fgPacking[fgKey(tgl,factory)] || {readyAt:null, packed:{}};
+  // Section A — closed record TIDAK dirender ulang sbg workspace aktif: begitu
+  // fgTandaiSiap() mengisi readyAt, baris di sini jadi read-only (bukan cuma
+  // di-CSS-hide — tombol status/qty/keterangan yang bisa mengubah data TIDAK
+  // ikut dibuat sama sekali), dan tombol aksi (Simpan Progres/Tandai Siap/
+  // Tandai Semua Sesuai) disembunyikan. Data tetap ada & tetap bisa dilihat
+  // (histori), hanya tidak lagi bisa diedit dari sini — kembali ke aktif
+  // hanya lewat "Buka Kembali" eksplisit (fgBukaKembali).
+  const closed = !!rec.readyAt;
   let selesai=0;
   const grup={};
   rows.forEach(r=>{
@@ -3747,24 +3899,32 @@ function fgRenderTable(){
       html += `<tr class="grp" data-g="${gi}" onclick="fgToggleGrup(${gi})"><td colspan="7">${g}
         <span class="gcount">${items.length} baris · ${belum?belum+" belum lengkap":"lengkap"}</span><span class="gcaret">▾</span></td></tr>`;
     }
-    html += items.map(({r,st,sisa})=>`<tr data-kode="${r.kode}" data-g="${gi}" data-toko="${r.toko}" data-produk="${String(r.produk).replace(/"/g,'&quot;')}" data-target="${r.target}" data-status="${st.status}" data-sisa="${sisa}">
-      <td class="l" title="${r.produk}">${r.produk}</td>
-      <td class="l" title="${r.toko}">${r.toko}</td>
-      <td>${fmt(r.target)}</td>
-      <td><div class="seg3">
+    html += items.map(({r,st,sisa})=>{
+      const statusCol = closed
+        ? `<span class="chip">${st.status==='sesuai'?'Sesuai':st.status==='tidak_sesuai'?'Tidak Sesuai':'Belum Dicek'}</span>`
+        : `<div class="seg3">
         <button type="button" class="segb neutral ${st.status==='belum'?'on':''}" onclick="fgSetStatus(this,'belum')">Belum Dicek</button>
         <button type="button" class="segb ${st.status==='sesuai'?'on':''}" onclick="fgSetStatus(this,'sesuai')">Sesuai</button>
         <button type="button" class="segb ${st.status==='tidak_sesuai'?'on':''}" onclick="fgSetStatus(this,'tidak_sesuai')">Tidak Sesuai</button>
-      </div></td>
-      <td><input type="number" inputmode="numeric" value="${st.qty||''}" placeholder="0" ${st.status==='sesuai'?'readonly':''} onchange="fgSetPacked(this)"></td>
+      </div>`;
+      const qtyCol = closed ? fmt(st.qty||0) : `<input type="number" inputmode="numeric" value="${st.qty||''}" placeholder="0" ${st.status==='sesuai'?'readonly':''} onchange="fgSetPacked(this)">`;
+      const ketCol = closed ? (st.keterangan||'-') : `<input type="text" class="wide" value="${st.keterangan||''}" placeholder="-" onchange="fgSetKeterangan(this)">`;
+      return `<tr data-kode="${r.kode}" data-g="${gi}" data-toko="${r.toko}" data-produk="${String(r.produk).replace(/"/g,'&quot;')}" data-target="${r.target}" data-status="${st.status}" data-sisa="${sisa}">
+      <td class="l" title="${r.produk}">${r.produk}</td>
+      <td class="l" title="${r.toko}">${r.toko}</td>
+      <td>${fmt(r.target)}</td>
+      <td>${statusCol}</td>
+      <td>${qtyCol}</td>
       <td class="${sisa<=0?'g':'r'}">${fmt(sisa)}</td>
-      <td><input type="text" class="wide" value="${st.keterangan||''}" placeholder="-" onchange="fgSetKeterangan(this)"></td>
-    </tr>`).join("");
+      <td class="l">${ketCol}</td>
+    </tr>`;
+    }).join("");
   });
   $("fgBody").innerHTML = html || '<tr><td colspan="7" class="empty">Tidak ada baris untuk filter ini.</td></tr>';
   $("fg-progress").textContent = rows.length? `${selesai} / ${rows.length} toko-produk lengkap` : 'Tidak ada target toko untuk tanggal ini (menunggu divisi sumber submit produksi).';
   if(rec.readyAt){ $("fg-ready").style.display="block"; $("fg-readyAt").textContent=rec.readyAt; }
   else { $("fg-ready").style.display="none"; }
+  [ "fgActiveActions1","fgActiveActions2","fgActiveActionsNote" ].forEach(id=>{ const el=$(id); if(el) el.style.display = closed ? "none" : ""; });
   fgApplyFilter();
 }
 const fgGrupTutup = new Set();
@@ -3853,7 +4013,7 @@ function fgUpdateProgressCounter(){
   rows.forEach(tr=>{ if(num(tr.dataset.sisa)<=0) selesai++; });
   $("fg-progress").textContent = rows.length? `${selesai} / ${rows.length} toko-produk lengkap` : '';
 }
-function fgSimpanProgres(){
+function fgSimpanProgres(btn){
   const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value);
   saveD();
   // Kirim array `rows` eksplisit {kode,produk,toko,...} — BUKAN LAGI map
@@ -3876,14 +4036,14 @@ function fgSimpanProgres(){
     return {kode, produk, toko, qty:isObj?val.qty:val, status:isObj?val.status:"sesuai", keterangan:isObj?val.keterangan:""};
   });
   const fgExpectedVersion = (D.recordVersions.fgPacking||{})[fgKeyStr] || 0;
-  kirimSheetsVersioned({jenis:"fgPacking", tanggal:tgl, factory, requestId:uid(), expectedVersion:fgExpectedVersion, rows:rowsOut}).then(res=>{
-    if(res.ok){ if(res.version!=null) D.recordVersions.fgPacking[fgKeyStr]=res.version; saveD(); toast("Progres packing tersimpan & terkirim"); }
-    else if(res.code==="VERSION_CONFLICT") tampilkanKonflikVersi("packing FG", fgKeyStr, res, ()=>muatSemua());
-    else if(res.code==="LOCK_TIMEOUT") toast("Sistem sedang sibuk — coba simpan progres lagi sebentar lagi");
-    else toast("Progres packing tersimpan (lokal)");
-  });
+  return withBusyBtn(btn, ()=>kirimSheetsVersioned({jenis:"fgPacking", tanggal:tgl, factory, requestId:uid(), expectedVersion:fgExpectedVersion, rows:rowsOut}).then(res=>{
+    if(res.ok){ if(res.version!=null) D.recordVersions.fgPacking[fgKeyStr]=res.version; saveD(); toast("Progres packing tersimpan & terkirim"); return true; }
+    else if(res.code==="VERSION_CONFLICT"){ tampilkanKonflikVersi("packing FG", fgKeyStr, res, ()=>muatSemua()); return false; }
+    else if(res.code==="LOCK_TIMEOUT"){ toast("Sistem sedang sibuk — coba simpan progres lagi sebentar lagi"); return false; }
+    else { toast("Progres packing tersimpan (lokal)"); return false; }
+  }), {busy:"Menyimpan…", done:"Tersimpan", fail:"Gagal, coba lagi"});
 }
-function fgTandaiSiap(){
+function fgTandaiSiap(btn){
   const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value);
   const rows = fgStoreRows(tgl, factory);
   // Dua kelompok DIPISAH biar pesannya jelas: "belum dicek sama sekali" (blm
@@ -3907,7 +4067,12 @@ function fgTandaiSiap(){
   const rec = D.fgPacking[key] || {readyAt:null, packed:{}};
   rec.readyAt = new Date().toLocaleString("id-ID");
   D.fgPacking[key] = rec;
-  saveD(); renderAll();
+  // Section A: readyAt terisi -> ceklisEffectiveClosed/fgPackingEffectiveClosed
+  // langsung menganggap record ini closed SEJAK SINI (optimistic, sebelum
+  // respons backend datang) — makanya renderTargeted (bukan renderAll) sudah
+  // cukup: prodBuildChecklist/renderDashboard/renderFgReadyList membaca ulang
+  // D.fgPacking[key].readyAt yang baru saja diset di atas.
+  saveD(); renderTargeted(["fg"]);
   // Section 17: sertakan versi produksi (ceklis) sumber yg dipakai FG saat
   // verifikasi, supaya backend bisa mendeteksi kalau produksi sumbernya
   // berubah LAGI setelah FG mulai verifikasi (warning, bukan hard block —
@@ -3916,20 +4081,45 @@ function fgTandaiSiap(){
   const sourceVersions = {};
   divisiSumber.forEach(dv=>{ sourceVersions[dv] = (D.recordVersions.ceklis||{})[tgl+"|"+dv] || 0; });
   const fgReadyExpectedVersion = (D.recordVersions.fgReady||{})[key] || 0;
-  kirimSheetsVersioned({jenis:"fgReady", tanggal:tgl, factory, requestId:uid(), expectedVersion:fgReadyExpectedVersion, readyAt:rec.readyAt, sourceVersions}).then(res=>{
+  return withBusyBtn(btn, ()=>kirimSheetsVersioned({jenis:"fgReady", tanggal:tgl, factory, requestId:uid(), expectedVersion:fgReadyExpectedVersion, readyAt:rec.readyAt, sourceVersions}).then(res=>{
     if(res.ok){
       if(res.version!=null) D.recordVersions.fgReady[key]=res.version;
       saveD();
       if(res.warning && res.warning.code==="STALE_PRODUCTION_SOURCE") toast(`⚠️ Ditandai siap, TAPI ${res.warning.message}`);
       else toast("Ditandai siap diambil delivery & terkirim");
+      return true;
     } else if(res.code==="VERSION_CONFLICT"){
       tampilkanKonflikVersi("status siap FG", key, res, ()=>muatSemua());
+      return false;
     } else if(res.code==="LOCK_TIMEOUT"){
       toast("Sistem sedang sibuk — coba tandai siap lagi sebentar lagi");
+      return false;
     } else {
       toast("Ditandai siap diambil delivery (lokal)");
+      return false;
     }
-  });
+  }), {busy:"Menandai…", done:"Tersimpan", fail:"Gagal, coba lagi"});
+}
+// Kebalikan fgTandaiSiap() — admin action eksplisit (satu-satunya jalan
+// kembali ke workspace aktif utk packing FG, sesuai aturan "closed hanya
+// bisa dibuka lewat reopen eksplisit"). readyAt dikosongkan lewat endpoint
+// fgReady YANG SAMA (bukan endpoint baru) — mutateVersioned_ di backend tetap
+// mencatatnya ke AuditLog & menaikkan versi spt mutasi lainnya.
+function fgBukaKembali(btn){
+  const tgl=$("pd-tgl").value, factory=fgFactoryForDivisi($("pd-divisi").value);
+  const key = fgKey(tgl,factory);
+  const rec = D.fgPacking[key];
+  if(!rec || !rec.readyAt) return;
+  if(!confirm("Buka kembali packing FG ini ke workspace aktif? Batch ini akan hilang dari kartu \"Siap Diambil Delivery\" di Kirim Toko sampai ditandai siap lagi.")) return;
+  rec.readyAt = null;
+  saveD(); renderTargeted(["fg"]);
+  const fgReadyExpectedVersion = (D.recordVersions.fgReady||{})[key] || 0;
+  return withBusyBtn(btn, ()=>kirimSheetsVersioned({jenis:"fgReady", tanggal:tgl, factory, requestId:uid(), expectedVersion:fgReadyExpectedVersion, readyAt:"", sourceVersions:{}}).then(res=>{
+    if(res.ok){ if(res.version!=null) D.recordVersions.fgReady[key]=res.version; saveD(); toast("Dibuka kembali — bisa diedit lagi"); return true; }
+    else if(res.code==="VERSION_CONFLICT"){ tampilkanKonflikVersi("status siap FG", key, res, ()=>muatSemua()); return false; }
+    else if(res.code==="LOCK_TIMEOUT"){ toast("Sistem sedang sibuk — coba lagi sebentar lagi"); return false; }
+    else { toast("Dibuka kembali (lokal) — belum tersinkron ke server"); return false; }
+  }), {busy:"Membuka…", done:"Tersimpan", fail:"Gagal, coba lagi"});
 }
 
 /* ================= DASHBOARD / LAPORAN PRODUKSI ================= */
@@ -3942,7 +4132,13 @@ function dashData(tgl){
     const totalAktual = c ? (c.rows||[]).reduce((a,r)=>a+num(r.aktual),0) : 0;
     const totalReject = c ? (c.rows||[]).reduce((a,r)=>a+num(r.reject),0) : 0;
     const factory = (d===SPECIAL_BOLU || d===SPECIAL_FG_CIBADAK) ? "Cibadak" : "Karangtengah";
-    return {divisi:d, target:totalTarget, aktual:totalAktual, reject:totalReject, submitted: !!(c && c.submitted), closed: !!(c && c.closed), factory};
+    // Section A: begitu FG menandai siap diambil delivery (fgPacking.readyAt),
+    // baris divisi FG ini SENDIRI juga harus berhenti dianggap "belum selesai"
+    // di ringkasan/dashboard — bukan cuma panel packing-nya (lihat fgRenderTable).
+    const fgFactory = fgFactoryForDivisi(d);
+    const deliveryReady = fgFactory ? fgPackingEffectiveClosed(tgl, fgFactory) : false;
+    const closed = ceklisEffectiveClosed(c) || deliveryReady;
+    return {divisi:d, target:totalTarget, aktual:totalAktual, reject:totalReject, submitted: !!(c && c.submitted), closed, factory};
   });
 }
 function renderDashStatusSubmit(tgl){
@@ -8915,6 +9111,67 @@ async function resetSemua(){
   saveD();
   location.reload();
 }
+
+/* ================= TARGETED REFRESH (Section C.1) =================
+   renderAll() me-render ULANG SELURUH 27 bagian tiap kali dipanggil — aman
+   tapi mahal utk aksi frekuensi tinggi (simpan progres/submit/verify FG/
+   hapus PO/invoice) yang cuma mengubah beberapa view terkait. renderTargeted
+   dipetakan MANUAL per aksi (bukan dependency-graph otomatis) supaya tetap
+   gampang diaudit & tidak diam-diam melewatkan view yang sebenarnya perlu
+   ikut diperbarui — daftar per grup SENGAJA agak longgar (boleh lebih
+   banyak drpd yg ketat-ketat perlu) demi correctness > kecepatan marjinal.
+   Dipakai HANYA sbg pengganti "saveD(); renderAll();" pada titik yang sama;
+   TIDAK menggantikan renderAll() itu sendiri (init & sync penuh tetap pakai
+   renderAll()). */
+const RENDER_GROUPS = {
+  // Ceklis Produksi disimpan/ditutup/dibuka lagi: checklist, ringkasan lintas
+  // divisi (bagian dari prodBuildChecklist), dashboard (baca D.ceklis), dan
+  // panel FG (target FG dihitung dari netto ceklis divisi sumber).
+  produksi: ["prodBuildChecklist","renderDashboard"],
+  // Packing FG disimpan/ditandai siap/dibuka lagi: checklist FG itu sendiri
+  // (bagian dari prodBuildChecklist->fgBuildPanel), daftar Siap Diambil
+  // Delivery di Kirim Toko, dan dashboard (closed FG row).
+  fg: ["prodBuildChecklist","renderFgReadyList","renderDashboard"],
+  // PO diupload/dihapus: riwayat upload, checklist Produksi/FG (target
+  // berasal dari PO), dashboard, dan pilihan toko/divisi yang mungkin ikut
+  // berubah (produk/toko baru dari PO).
+  po: ["renderPoHist","prodBuildChecklist","renderDashboard","fillTokoSelects","pdFillDivisiSelect"],
+  // Invoice dibuat/diubah: daftar invoice & histori kirim (status "sudah
+  // diinvoice" ikut berubah).
+  invoice: ["renderInvoiceList","renderKHist"],
+};
+function renderTargeted(groupNames){
+  const jalankan = (nama, fn) => { try{ fn(); }catch(e){ console.error("renderTargeted gagal di "+nama+":", e); } };
+  const set = new Set();
+  (groupNames||[]).forEach(g => (RENDER_GROUPS[g]||[]).forEach(fn=>set.add(fn)));
+  const FNS = {prodBuildChecklist, renderDashboard, renderFgReadyList, renderPoHist, fillTokoSelects, pdFillDivisiSelect, renderInvoiceList, renderKHist};
+  set.forEach(name => { if(typeof FNS[name]==="function") jalankan(name, FNS[name]); });
+}
+
+// Section C.5 — versi debounced (200ms) dari tiap handler `oninput` pencarian/
+// filter di seluruh app. Nama fungsi ASLI tidak diubah/dipindah (dipanggil
+// synchronous di tempat lain spt biasa) — hanya atribut `oninput=""` di HTML
+// yang diarahkan ke wrapper ini.
+const pdApplyFilterDebounced = debounce(()=>pdApplyFilter(), 200);
+const fgApplyFilterDebounced = debounce(()=>fgApplyFilter(), 200);
+const dashProdukFilterRenderDebounced = debounce(()=>dashProdukFilterRender(), 200);
+const kUnfulfilledFilterRenderDebounced = debounce(()=>kUnfulfilledFilterRender(), 200);
+const kApplyFilterDebounced = debounce(()=>kApplyFilter(), 200);
+const renderInvoiceListDebounced = debounce(()=>renderInvoiceList(), 200);
+const kHistFilterDebounced = debounce(()=>kHistFilter(), 200);
+const kInvoiceFilterDebounced = debounce(()=>kInvoiceFilter(), 200);
+const renderRHistDebounced = debounce(()=>renderRHist(), 200);
+const rjApplyFilterDebounced = debounce(()=>rjApplyFilter(), 200);
+const renderRjHistDebounced = debounce(()=>renderRjHist(), 200);
+const renderPsHistDebounced = debounce(()=>renderPsHist(), 200);
+const renderJHistDebounced = debounce(()=>renderJHist(), 200);
+const renderKartuStokDebounced = debounce(()=>renderKartuStok(), 200);
+const renderAdjHistDebounced = debounce(()=>renderAdjHist(), 200);
+const renderPosisiStokDebounced = debounce(()=>renderPosisiStok(), 200);
+const renderRekonsiliasiDebounced = debounce(()=>renderRekonsiliasi(), 200);
+const renderRekapDebounced = debounce(()=>renderRekap(), 200);
+const renderMasterProdukDebounced = debounce(()=>renderMasterProduk(), 200);
+const renderMasterTokoDebounced = debounce(()=>renderMasterToko(), 200);
 
 /* ================= RENDER ALL ================= */
 function renderAll(){
