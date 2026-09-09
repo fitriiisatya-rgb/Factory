@@ -143,6 +143,24 @@ const TEXT_COLS = ["Tanggal","Factory","Kategori","Kode","Id","Batch","Toko","No
 const LOCK_TIMEOUT_MS = 10000; // 10 detik — cukup utk beban beberapa divisi, lihat catatan tradeoff di laporan.
 const CACHE_TTL_SEC = 21600; // 6 jam — cukup panjang utk menutup retry jaringan HP yang telat, cache expiry BUKAN batas idempotency (RequestLog sheet yang permanen).
 
+// ============================================================
+//  FITUR SEMENTARA MASA TRIAL — JANGAN DIANGGAP FITUR NORMAL
+// ============================================================
+// "Hapus Batch Trial" (recordType "po" key tanggal|factory) menghapus
+// CASCADE seluruh data operasional satu batch PO — PO, Ceklis/CeklisMeta,
+// FGPacking, FGReady, Kirim/DO, Invoice, Pembayaran, Retur/Reject, Jual,
+// Mutasi, StokAdj (lihat cascadeDeleteTrialBatch_) — supaya admin bisa
+// membersihkan data percobaan selama UAT/trial tanpa mengarsipkan/reset
+// seluruh spreadsheet. Ini BUKAN pengganti hapusPO biasa (yang cuma
+// menghapus baris PO) dan BUKAN fitur produksi permanen.
+//
+// Setelah masa trial selesai, MATIKAN dengan mengubah baris di bawah ini
+// jadi `false` lalu deploy ulang — begitu false, handleTrialBatchDelete_
+// SELALU menolak dgn TRIAL_DELETE_DISABLED sebelum menyentuh lock/sheet
+// apa pun (tidak ada jalan pintas), dan tombol di sisi HTML juga otomatis
+// hilang/nonaktif kalau ENABLE_TRIAL_BATCH_DELETE di HTML ikut diset false.
+const ENABLE_TRIAL_BATCH_DELETE = true;
+
 // ---- Status eksplisit lifecycle Ceklis per tanggal+divisi ----
 // JANGAN infer status dari qty atau Closed di mana pun — field Status pada
 // CeklisMeta inilah SATU-SATUNYA sumber kebenaran, ditulis eksplisit oleh
@@ -807,6 +825,8 @@ function doPost(e){
     switch(payload.jenis){
       case "poUpload": resp = handlePoUpload_(payload, actor); break;
       case "hapusPO": resp = handleHapusPO_(payload, actor); break;
+      // FITUR SEMENTARA MASA TRIAL — lihat ENABLE_TRIAL_BATCH_DELETE di atas.
+      case "trialBatchDelete": resp = handleTrialBatchDelete_(payload, actor); break;
       // "ceklisProduksi" dipertahankan (replace penuh, cocok dgn client lama
       // yg belum diupgrade). Client yg sudah diupgrade pakai "productionProgress"
       // (delta-safe, section 6) dan "ceklisSubmit"/"ceklisReopen" (section 8/9).
@@ -900,6 +920,211 @@ function handleHapusPO_(payload, actor){
     deleteRowsWhere_(sh, r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory);
     return {record:{tanggal, factory, rowCount:0}, payloadSummary:"PO "+recordKey+" dihapus"};
   });
+}
+
+// ============================================================
+//  Handler — TRIAL BATCH DELETE (FITUR SEMENTARA MASA TRIAL)
+//  Lihat ENABLE_TRIAL_BATCH_DELETE di atas SEBELUM membaca fungsi ini.
+// ============================================================
+// Beda dgn handleHapusPO_ (cuma menghapus baris PO): ini CASCADE ke semua
+// sheet operasional yg berelasi dgn batch PO (tanggal+factory) tsb, supaya
+// admin bisa membersihkan SATU batch percobaan sampai bersih selama UAT.
+//
+// requestId WAJIB (idempotency — retry jaringan tidak boleh menghapus dua
+// kali/menghitung ganda) dan seluruh operasi dibungkus withLock_ yang sama
+// dgn mutasi lain, supaya tidak bentrok dgn poUpload/hapusPO/dst yang
+// jalan bersamaan. expectedVersion (opsional, versi record "po" di key
+// ini) dicek SAMA seperti mutateVersioned_ — kalau ada yang re-upload PO
+// utk tanggal+factory yang sama tepat sebelum tombol ini ditekan, hapusnya
+// ditolak VERSION_CONFLICT alih-alih diam-diam menghapus data yang baru.
+function handleTrialBatchDelete_(payload, actor){
+  if(!ENABLE_TRIAL_BATCH_DELETE){
+    logError_(payload, "trialBatchDelete ditolak — ENABLE_TRIAL_BATCH_DELETE=false");
+    return {ok:false, code:"TRIAL_DELETE_DISABLED", message:"Fitur hapus batch trial sudah dinonaktifkan (ENABLE_TRIAL_BATCH_DELETE=false di Code.gs)."};
+  }
+  const tanggal = normDate_(payload.tanggal), factory = str_(payload.factory);
+  if(!tanggal || !factory) return {ok:false, code:"BAD_PAYLOAD", message:"tanggal dan factory wajib diisi."};
+  const recordKey = tanggal + "|" + factory;
+  const requestId = payload.requestId;
+  if(!requestId) return {ok:false, code:"MISSING_REQUEST_ID", message:"requestId wajib utk endpoint ini."};
+
+  return withLock_(function(){
+    const cached = checkIdempotent_(requestId);
+    if(cached) return cached;
+
+    const current = getVersion_("po", recordKey);
+    if(payload.expectedVersion != null && current.rowExists && num_(payload.expectedVersion) !== current.version){
+      const resp = {ok:false, code:"VERSION_CONFLICT", currentVersion:current.version,
+        message:"Data PO batch ini sudah berubah oleh orang lain — muat ulang dulu sebelum menghapus."};
+      recordIdempotent_(requestId, "trialBatchDelete", recordKey, resp);
+      appendAudit_({requestId, userId:actor.userId, userName:actor.userName, role:actor.role,
+        action:"trial_batch_delete_conflict", tanggal, divisi:"", recordKey,
+        previousVersion:current.version, newVersion:current.version,
+        payloadSummary:"expectedVersion="+payload.expectedVersion+" currentVersion="+current.version, status:"conflict"});
+      return resp;
+    }
+
+    let result;
+    try{
+      result = cascadeDeleteTrialBatch_(tanggal, factory);
+    }catch(err){
+      const resp = {ok:false, code:"APPLY_ERROR", message:String(err)};
+      appendAudit_({requestId, userId:actor.userId, userName:actor.userName, role:actor.role,
+        action:"trial_batch_delete", tanggal, divisi:"", recordKey,
+        previousVersion:current.version, newVersion:current.version,
+        payloadSummary:String(err).slice(0,500), status:"error"});
+      // SENGAJA tidak direkam sbg ALREADY_APPLIED ke RequestLog — boleh diulang.
+      return resp;
+    }
+
+    const newVersion = current.version + 1;
+    setVersion_("po", recordKey, newVersion, actor.userName||actor.userId||"");
+    const resp = {ok:true, version:newVersion, updatedAt:new Date().toISOString(), record: result};
+    recordIdempotent_(requestId, "trialBatchDelete", recordKey, resp);
+    // Tombstone — AuditLog TETAP menyimpan bukti "batch trial ini pernah ada
+    // dan sengaja dihapus", walau seluruh baris operasionalnya sendiri sudah
+    // hilang dari sheet masing-masing (sesuai spesifikasi: AuditLog boleh
+    // menyimpan tombstone).
+    appendAudit_({requestId, userId:actor.userId, userName:actor.userName, role:actor.role,
+      action:"trial_batch_delete", tanggal, divisi:"", recordKey,
+      previousVersion:current.version, newVersion:newVersion,
+      payloadSummary:"TOMBSTONE trial batch dihapus "+recordKey+" — "+JSON.stringify(result), status:"ok"});
+    return resp;
+  });
+}
+
+// Cascade delete SATU batch trial (tanggal+factory) dari semua sheet
+// operasional yang diketahui berelasi. Join key dipilih per-sheet dari yang
+// PALING presisi yang tersedia:
+//   - FGReady py kolom Factory+Tanggal sendiri -> match langsung.
+//   - FGPacking py kolom Factory sendiri -> match Tanggal+Factory+Produk.
+//   - Kirim -> match Tanggal+Produk (join by produk krn tidak py kolom
+//     Factory), lalu Invoice/Pembayaran/sebagian Mutasi di-cascade lewat
+//     Batch Kirim/Invoice yg SUDAH pasti dihapus (presisi, bukan tebakan).
+//   - Ceklis -> match Tanggal+Produk (bukan Divisi, krn backend tidak py
+//     peta divisi->factory; katalog produk berbeda per factory jadi ini
+//     tetap presisi). CeklisMeta HANYA dihapus kalau divisi itu benar2
+//     tidak py sisa baris Ceklis lain di tanggal yg sama, supaya tidak
+//     menghapus meta milik PO lain yang kebetulan sama tanggal+divisi.
+//   - Retur/Reject/Jual -> tidak py kolom factory, match Tanggal+Produk
+//     (Reject juga dicek InvoiceBatch kalau sudah tertaut ke invoice yg
+//     dihapus, lebih presisi).
+//   - StokAdj -> TIDAK py join presisi sama sekali (tidak py kolom batch
+//     apa pun) — best-effort Tanggal+Produk SAJA. Ini persis kasus "bila
+//     dapat diidentifikasi dengan aman" di spesifikasi: risiko residual
+//     (atau overdelete) ada, tapi dibatasi Tanggal+Produk supaya tidak
+//     menyentuh penyesuaian stok produk lain/tanggal lain.
+function cascadeDeleteTrialBatch_(tanggal, factory){
+  const counts = {};
+
+  // 1. PO milik batch ini -> produkSet jadi join key utk sheet lain yang
+  //    tidak py kolom Factory sendiri.
+  const shPO = getOrCreateSheet(SHEET_PO);
+  const poRows = readAllAsObjects_(shPO).filter(r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory);
+  const produkSet = new Set(poRows.map(r=>str_(r.Produk)).filter(Boolean));
+  counts.po = poRows.length;
+  deleteRowsWhere_(shPO, r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory);
+
+  if(!produkSet.size){
+    return Object.assign(counts, {tanggal, factory, note:"Tidak ada baris PO ditemukan utk batch ini — cuma baris PO (kalau ada) yang dihapus, sheet lain tidak disentuh."});
+  }
+  const inSet = produk => produkSet.has(str_(produk));
+
+  // 2. Ceklis (Tanggal+Produk).
+  const shCeklis = getOrCreateSheet(SHEET_CEKLIS);
+  const ceklisRows = readAllAsObjects_(shCeklis);
+  const ceklisHapus = ceklisRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  const divisiTerdampak = new Set(ceklisHapus.map(r=>str_(r.Divisi)));
+  counts.ceklis = ceklisHapus.length;
+  deleteRowsWhere_(shCeklis, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+
+  // 3. CeklisMeta — hanya kalau divisi itu tidak py sisa Ceklis lain di
+  //    tanggal yg sama (baca ulang SETELAH baris Ceklis di atas dihapus).
+  const shMeta = getOrCreateSheet(SHEET_CEKLIS_META);
+  const sisaCeklis = readAllAsObjects_(shCeklis);
+  let metaHapus = 0;
+  divisiTerdampak.forEach(div=>{
+    const masihAda = sisaCeklis.some(r => normDate_(r.Tanggal)===tanggal && str_(r.Divisi)===div);
+    if(!masihAda){
+      deleteRowsWhere_(shMeta, r => normDate_(r.Tanggal)===tanggal && str_(r.Divisi)===div);
+      metaHapus++;
+    }
+  });
+  counts.ceklisMeta = metaHapus;
+
+  // 4. FGPacking (Tanggal+Factory+Produk — py kolom Factory sendiri).
+  const shFgp = getOrCreateSheet(SHEET_FGPACKING);
+  const fgpRows = readAllAsObjects_(shFgp);
+  counts.fgPacking = fgpRows.filter(r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory && inSet(r.Produk)).length;
+  deleteRowsWhere_(shFgp, r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory && inSet(r.Produk));
+
+  // 5. FGReady (Tanggal+Factory langsung, sesuai kontrak schema aslinya).
+  const shFgr = getOrCreateSheet(SHEET_FGREADY);
+  const fgrRows = readAllAsObjects_(shFgr);
+  counts.fgReady = fgrRows.filter(r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory).length;
+  deleteRowsWhere_(shFgr, r => normDate_(r.Tanggal)===tanggal && str_(r.Factory)===factory);
+
+  // 6. Kirim/DO (Tanggal+Produk) — kumpulkan Batch yg terpengaruh utk
+  //    cascade presisi ke Invoice/Pembayaran/Mutasi di bawah.
+  const shKirim = getOrCreateSheet(SHEET_KIRIM);
+  const kirimRows = readAllAsObjects_(shKirim);
+  const kirimHapus = kirimRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+  const batchKirimSet = new Set(kirimHapus.map(r=>str_(r.Batch)).filter(Boolean));
+  counts.kirim = kirimHapus.length;
+  deleteRowsWhere_(shKirim, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+
+  // 7. Invoice — join PRESISI lewat Batch = Batch Kirim yg baru dihapus
+  //    (satu batch kirim = satu invoice di app ini), bukan tebakan tanggal/produk.
+  const shInv = getOrCreateSheet(SHEET_INVOICE);
+  const invRows = readAllAsObjects_(shInv);
+  const invHapus = invRows.filter(r => batchKirimSet.has(str_(r.Batch)));
+  const batchInvoiceSet = new Set(invHapus.map(r=>str_(r.Batch)));
+  counts.invoice = invHapus.length;
+  deleteRowsWhere_(shInv, r => batchKirimSet.has(str_(r.Batch)));
+
+  // 8. Pembayaran — join presisi lewat Batch = Batch Invoice yg dihapus.
+  const shBayar = getOrCreateSheet(SHEET_PEMBAYARAN);
+  const bayarRows = readAllAsObjects_(shBayar);
+  counts.pembayaran = bayarRows.filter(r => batchInvoiceSet.has(str_(r.Batch))).length;
+  deleteRowsWhere_(shBayar, r => batchInvoiceSet.has(str_(r.Batch)));
+
+  // 9. Retur (Tanggal+Produk — tidak py join batch invoice).
+  const shRetur = getOrCreateSheet(SHEET_RETUR);
+  const returRows = readAllAsObjects_(shRetur);
+  counts.retur = returRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk)).length;
+  deleteRowsWhere_(shRetur, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+
+  // 10. Reject — union: Tanggal+Produk ATAU InvoiceBatch yg sudah dihapus.
+  const shRej = getOrCreateSheet(SHEET_REJECT);
+  const rejRows = readAllAsObjects_(shRej);
+  const rejMatch = r => (normDate_(r.Tanggal)===tanggal && inSet(r.Produk)) || batchInvoiceSet.has(str_(r.InvoiceBatch));
+  counts.reject = rejRows.filter(rejMatch).length;
+  deleteRowsWhere_(shRej, rejMatch);
+
+  // 11. Jual/penjualan outlet (Tanggal+Produk).
+  const shJual = getOrCreateSheet(SHEET_JUAL);
+  const jualRows = readAllAsObjects_(shJual);
+  counts.jual = jualRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk)).length;
+  deleteRowsWhere_(shJual, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+
+  // 12. Mutasi — union: Tanggal+Produk ATAU BatchAsal/BatchTujuan yg dihapus
+  //     (mutasi mengacu ke batch Kirim ASAL & batch Invoice TUJUAN yg baru dibuat).
+  const shMut = getOrCreateSheet(SHEET_MUTASI);
+  const mutRows = readAllAsObjects_(shMut);
+  const mutMatch = r => (normDate_(r.Tanggal)===tanggal && inSet(r.Produk))
+    || batchKirimSet.has(str_(r.BatchAsal)) || batchKirimSet.has(str_(r.BatchTujuan))
+    || batchInvoiceSet.has(str_(r.BatchAsal)) || batchInvoiceSet.has(str_(r.BatchTujuan));
+  counts.mutasi = mutRows.filter(mutMatch).length;
+  deleteRowsWhere_(shMut, mutMatch);
+
+  // 13. StokAdj — best-effort Tanggal+Produk SAJA (lihat catatan besar di
+  //     atas fungsi ini soal kenapa ini satu-satunya sheet tanpa join presisi).
+  const shStok = getOrCreateSheet(SHEET_STOKADJ);
+  const stokRows = readAllAsObjects_(shStok);
+  counts.stokAdj = stokRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk)).length;
+  deleteRowsWhere_(shStok, r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk));
+
+  return Object.assign(counts, {tanggal, factory, produkCount:produkSet.size});
 }
 
 // ============================================================

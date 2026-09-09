@@ -525,7 +525,11 @@ details.sect>summary{padding:15px 16px}
       <button class="btn" id="po-btnSimpan" onclick="poSimpanPreview()">Simpan sebagai Target Hari Ini</button>
     </div>
   </div>
-  <div class="card"><h3>Riwayat Upload PO</h3><div id="poHist"></div></div>
+  <div class="card">
+    <h3>Riwayat Upload PO</h3>
+    <div class="note" id="trialBatchDeleteBanner" style="display:none;color:var(--red);font-weight:700">⚠ FITUR SEMENTARA MASA TRIAL — tombol "Hapus Batch Trial" di bawah menghapus PERMANEN seluruh data satu batch (PO, Produksi, FG/Packing, Kirim/DO, Invoice, Pembayaran, Retur/Reject, penyesuaian stok terkait). Hanya utk membersihkan data percobaan selama UAT, JANGAN dipakai di data produksi sungguhan.</div>
+    <div id="poHist"></div>
+  </div>
 </div>
 
 <!-- ================= PRODUKSI (CEKLIS) ================= -->
@@ -2190,6 +2194,19 @@ if(!D.settings) D.settings = {targetMode:"jumlah"};
 // override manual per-dokumen — BUKAN dipakai lagi sbg rate default toko.
 const DEFAULT_FACTORY_RATE_PCT = 50;   // = DEFAULT_FACTORY_RATE 0.50
 const OVERRIDE_FACTORY_RATE_PCT = 60;  // satu-satunya pilihan override manual per-dokumen
+
+// ============================================================
+//  FITUR SEMENTARA MASA TRIAL — "Hapus Batch Trial" di Riwayat Upload PO.
+//  JANGAN dianggap fitur normal/produksi. Cascade delete PERMANEN seluruh
+//  data satu batch PO (key tanggal+factory) — lihat trialHapusBatch() &
+//  trialCascadeClearLocal_() di bawah, dan cascadeDeleteTrialBatch_ di
+//  backend/Code.gs utk cascade sisi server (yang authoritative).
+//  Setelah masa trial/UAT selesai: ubah baris di bawah jadi `false` (di
+//  SINI dan di backend/Code.gs), lalu deploy ulang keduanya — begitu false,
+//  tombolnya hilang dari Riwayat Upload PO DAN backend selalu menolak
+//  dengan TRIAL_DELETE_DISABLED walau ada yang memanggil endpoint-nya
+//  langsung (mis. lewat console/replay request lama).
+const ENABLE_TRIAL_BATCH_DELETE = true;
 if(D.settings.pctOwnership==null) D.settings.pctOwnership = 55;
 if(D.settings.pctFranchise==null) D.settings.pctFranchise = 60;
 // pctDasar = persentase OMSET PABRIK sesungguhnya (basedata), FLAT untuk semua
@@ -3308,12 +3325,14 @@ function poSimpanPreview(){
 }
 function renderPoHist(){
   const keys = Object.keys(D.po).sort().reverse();
+  const banner = $("trialBatchDeleteBanner");
+  if(banner) banner.style.display = (ENABLE_TRIAL_BATCH_DELETE && keys.length) ? "block" : "none";
   $("poHist").innerHTML = !keys.length ? '<div class="empty">Belum ada PO diupload.</div>' :
     keys.map(tgl=>{
       const rows = D.po[tgl];
       const byF = {};
       rows.forEach(r=>{ (byF[r.factory] ||= {n:0,total:0}); byF[r.factory].n++; byF[r.factory].total+=hitungTarget(r); });
-      const body = Object.keys(byF).map(f=>`<div class="li"><span>${f==='karangtengah'?'Karangtengah':'Cibadak'}</span><span style="text-align:right"><span class="t2">${byF[f].n} produk · target ${fmt(byF[f].total)}</span><button class="del" onclick="poHapusFactory('${tgl}','${f}',this)">Hapus</button></span></div>`).join("");
+      const body = Object.keys(byF).map(f=>`<div class="li"><span>${f==='karangtengah'?'Karangtengah':'Cibadak'}</span><span style="text-align:right"><span class="t2">${byF[f].n} produk · target ${fmt(byF[f].total)}</span><button class="del" onclick="poHapusFactory('${tgl}','${f}',this)">Hapus</button>${ENABLE_TRIAL_BATCH_DELETE?` <button class="del" style="background:var(--red,#c0392b);color:#fff;border-color:transparent" title="FITUR SEMENTARA MASA TRIAL" onclick="trialHapusBatch('${tgl}','${f}',this)">Hapus Batch Trial</button>`:''}</span></div>`).join("");
       return `<details class="dd"><summary><span class="t1">${fmtTgl(tgl)}</span></summary><div class="dd-body">${body}</div></details>`;
     }).join("");
 }
@@ -3357,6 +3376,130 @@ function poHapusFactory(tgl, factory, btn){
       return false;
     }
   }), {busy:"Menghapus…", done:"Terhapus", fail:"Gagal, coba lagi"});
+}
+
+/* ================= HAPUS BATCH TRIAL — FITUR SEMENTARA MASA TRIAL =================
+   Lihat ENABLE_TRIAL_BATCH_DELETE di atas SEBELUM membaca kode ini. Beda dgn
+   poHapusFactory (cuma menghapus baris PO): ini cascade delete PERMANEN ke
+   semua data operasional yang berelasi dgn batch (PO/Produksi/FG/Kirim-DO/
+   Invoice/Pembayaran/Retur-Reject/stok terkait), dipakai admin utk
+   membersihkan data percobaan selama UAT/trial. Backend adalah authoritative
+   source (cascadeDeleteTrialBatch_ di Code.gs) — urutan operasi di sini
+   SAMA persis dgn poHapusFactory: (1) backend hapus & konfirmasi dulu lewat
+   fetch sungguhan (bukan no-cors), (2) baru cache lokal dibersihkan lewat
+   trialCascadeClearLocal_, (3) rerender, (4) refetch backend sbg jaring
+   pengaman. Kalau gagal/timeout/conflict/disabled, data lokal SAMA SEKALI
+   tidak disentuh. */
+function trialHapusBatch(tgl, factory, btn){
+  if(!ENABLE_TRIAL_BATCH_DELETE) return toast("Fitur trial sudah dinonaktifkan");
+  const labelFactory = factory==='karangtengah' ? 'Karangtengah' : 'Cibadak';
+  // Konfirmasi 2 langkah — langkah 1: dialog ya/tidak.
+  if(!confirm(`FITUR SEMENTARA MASA TRIAL\n\nHapus seluruh data trial untuk ${fmtTgl(tgl)} ${labelFactory}?\n\nIni menghapus PERMANEN: PO, Produksi/Ceklis, FG/Packing, Kirim/DO, Invoice, Pembayaran, Retur/Reject, dan penyesuaian stok yang berasal dari batch ini. Tidak bisa dibatalkan.`)) return;
+  // Langkah 2: user WAJIB mengetik "HAPUS" persis.
+  const ketik = prompt(`Ketik HAPUS (huruf besar semua, tanpa tanda kutip) untuk mengonfirmasi penghapusan batch trial ${fmtTgl(tgl)} ${labelFactory}:`);
+  if(ketik !== "HAPUS"){ toast("Dibatalkan — konfirmasi tidak cocok, data tidak dihapus"); return; }
+
+  const poKey = tgl+"|"+factory;
+  const poExpectedVersion = (D.recordVersions.po||{})[poKey] || 0;
+  return withBusyBtn(btn, ()=>kirimSheetsVersioned({jenis:"trialBatchDelete", tanggal:tgl, factory, requestId:uid(), expectedVersion:poExpectedVersion}).then(res=>{
+    if(res.ok){
+      // 1. Backend SUDAH mengonfirmasi cascade delete (fetch sungguhan, bukan no-cors).
+      if(res.version!=null) D.recordVersions.po[poKey]=res.version;
+      // 2. Cache lokal (best-effort, mirror logika backend) dibersihkan SEKARANG,
+      //    setelah konfirmasi backend — bukan optimis-duluan.
+      trialCascadeClearLocal_(tgl, factory);
+      saveD();
+      // 3. Rerender — batch trial menyentuh banyak modul sekaligus (PO, Produksi,
+      //    FG, Kirim, Invoice, Dashboard, Laporan/Rekap), jadi full renderAll()
+      //    di sini lebih aman drpd menebak daftar targeted yang lengkap.
+      renderAll();
+      toast(`Batch trial ${fmtTgl(tgl)} ${labelFactory} dihapus`);
+      // 4. Refetch backend sbg jaring pengaman utk entitas yang memang disinkronkan
+      //    balik (PO/Ceklis/Kirim/Invoice/Retur/Jual) — lihat catatan gap sinkron
+      //    FGPacking/FGReady/Pembayaran/Mutasi/StokAdj di laporan pendamping.
+      muatSemua(true);
+      return true;
+    } else if(res.code==="TRIAL_DELETE_DISABLED"){
+      toast("Fitur hapus batch trial sudah dinonaktifkan di backend — data TIDAK dihapus");
+      return false;
+    } else if(res.code==="VERSION_CONFLICT"){
+      tampilkanKonflikVersi("Batch trial ini", poKey, res, ()=>muatSemua());
+      return false;
+    } else if(res.code==="LOCK_TIMEOUT"){
+      toast("Sistem sedang sibuk — coba lagi sebentar lagi (data BELUM dihapus)");
+      return false;
+    } else {
+      toast("Gagal menghapus batch trial"+(res.code?" ("+res.code+")":"")+" — data TIDAK diubah, coba lagi");
+      return false;
+    }
+  }), {busy:"Menghapus batch trial…", done:"Batch trial dihapus", fail:"Gagal, coba lagi"});
+}
+// Cascade clear LOCAL (best-effort, mirror cascadeDeleteTrialBatch_ di backend)
+// — HANYA dipanggil setelah backend mengonfirmasi sukses (lihat trialHapusBatch).
+// Bukan sumber kebenaran; muatSemua(true) sesudahnya tetap jadi jaring pengaman
+// utk entitas yang disinkronkan balik dari backend.
+function trialCascadeClearLocal_(tgl, factory){
+  const produkSet = new Set((D.po[tgl]||[]).filter(r=>r.factory===factory).map(r=>r.produk));
+  // PO
+  D.po[tgl] = (D.po[tgl]||[]).filter(r=>r.factory!==factory);
+  if(!D.po[tgl] || !D.po[tgl].length) delete D.po[tgl];
+  if(!produkSet.size) return; // tidak ada produk teridentifikasi dari batch ini -> selebihnya tidak disentuh, sama spt backend
+  const inSet = p => produkSet.has(p);
+  const produkSetNorm = new Set([...produkSet].map(normNama));
+
+  // Ceklis (key tgl|divisi, meta+rows jadi satu objek di sini) — hapus rows
+  // yg produknya masuk batch; kalau rows jadi kosong, hapus seluruh entry
+  // (ikut membersihkan status/submittedAt/closed-nya, spt CeklisMeta di backend).
+  Object.keys(D.ceklis).forEach(key=>{
+    if(!key.startsWith(tgl+"|")) return;
+    const c = D.ceklis[key];
+    if(!c || !Array.isArray(c.rows)) return;
+    c.rows = c.rows.filter(r=>!inSet(r.produk));
+    if(!c.rows.length) delete D.ceklis[key];
+  });
+
+  // FGPacking + FGReady lokal (readyAt embedded di objek yang sama, key tgl|factory
+  // langsung). packed di-key pakai skuId (kode+NAMA TERNORMALISASI), jadi
+  // dicocokkan pakai produkSetNorm, bukan produkSet mentah.
+  const fgpKey = fgKey(tgl, factory);
+  if(D.fgPacking[fgpKey]){
+    const p = D.fgPacking[fgpKey].packed || {};
+    Object.keys(p).forEach(key=>{
+      const produkBagianNorm = key.split("|")[0].split("\x1f")[1] || "";
+      if(produkSetNorm.has(produkBagianNorm)) delete p[key];
+    });
+    if(!Object.keys(p).length) delete D.fgPacking[fgpKey];
+  }
+
+  // Kirim/DO (tgl+produk) — kumpulkan batch id terpengaruh utk cascade
+  // Invoice/Pembayaran/Mutasi presisi di bawah.
+  const batchKirimSet = new Set(D.kirim.filter(r=>r.tgl===tgl && inSet(r.produk)).map(r=>r.batch));
+  D.kirim = D.kirim.filter(r=>!(r.tgl===tgl && inSet(r.produk)));
+
+  // Invoice — join presisi lewat Batch = Batch Kirim yg baru dihapus.
+  const batchInvoiceSet = new Set();
+  Object.keys(D.invoice).forEach(batch=>{
+    if(batchKirimSet.has(batch)){ batchInvoiceSet.add(batch); delete D.invoice[batch]; }
+  });
+
+  // Pembayaran — join presisi lewat Batch = Batch Invoice yg dihapus.
+  D.pembayaran = D.pembayaran.filter(b=>!batchInvoiceSet.has(b.batch));
+
+  // Retur/Jual — tidak py join batch invoice, best-effort tgl+produk.
+  D.retur = D.retur.filter(r=>!(r.tgl===tgl && inSet(r.produk)));
+  D.jual = D.jual.filter(r=>!(r.tgl===tgl && inSet(r.produk)));
+
+  // Reject — union: tgl+produk ATAU invoiceBatch yg sudah dihapus.
+  D.reject = D.reject.filter(r=>!((r.tgl===tgl && inSet(r.produk)) || batchInvoiceSet.has(r.invoiceBatch)));
+
+  // Mutasi — union: tgl+produk ATAU batchAsal/batchTujuan yg dihapus.
+  D.mutasi = D.mutasi.filter(m=>!((m.tgl===tgl && inSet(m.produk))
+    || batchKirimSet.has(m.batchAsal) || batchKirimSet.has(m.batchTujuan)
+    || batchInvoiceSet.has(m.batchAsal) || batchInvoiceSet.has(m.batchTujuan)));
+
+  // StokAdj — TIDAK py join presisi sama sekali, best-effort tgl+produk saja
+  // (sama seperti backend — lihat catatan besar di cascadeDeleteTrialBatch_).
+  D.stokAdj = D.stokAdj.filter(a=>!(a.tgl===tgl && inSet(a.produk)));
 }
 
 /* ================= TARGET PER DIVISI ================= */
