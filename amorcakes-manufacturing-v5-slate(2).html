@@ -892,8 +892,10 @@ details.sect>summary{padding:15px 16px}
     <div class="docactions">
       <div class="info" id="kDocInfo">Pilih tanggal &amp; toko untuk mulai.</div>
       <button type="button" class="btn ghost" onclick="kBaru()">Bersihkan</button>
+      <button type="button" class="btn ghost" onclick="doDraftBuat(this)">Buat DO Draft</button>
       <button type="button" class="btn" onclick="kSimpan()">Simpan Delivery Order</button>
     </div>
+    <div class="note" style="padding:0 14px 10px">"Buat DO Draft" = siapkan &amp; cetak dokumen lebih awal SEBELUM Finishgood selesai (qty masih rencana, TIDAK mengurangi stok/Omset). "Simpan Delivery Order" = kirim langsung sekarang (kalau barang sudah pasti tersedia).</div>
     </div>
     <div id="kDoneWrap" style="display:none;padding:14px">
       <div class="ok-box" id="kDoneMsg"></div>
@@ -904,6 +906,12 @@ details.sect>summary{padding:15px 16px}
       </div>
     </div>
   </div>
+  </div>
+
+  <div class="card" id="doDocListCard" style="display:none">
+    <h3>Delivery Order — Draft / Pre-Print / FG Ready <span style="font-size:9px;color:var(--mute);font-weight:400">belum shipped — qty masih rencana</span></h3>
+    <div class="note">DO yang dibuat lebih awal (sebelum Finishgood selesai) muncul di sini. Cetak kapan saja sebelum barang siap; setelah FG Ready/tersedia, konfirmasi Qty Aktual Kirim baru status jadi Shipped (mengurangi stok/masuk Omset/basis Invoice).</div>
+    <div id="doDocListBody" class="scrollY" style="margin-top:8px"></div>
   </div>
 
   </div>
@@ -2072,9 +2080,14 @@ if(!D.masterProduk || typeof D.masterProduk!=="object") D.masterProduk = {};
 // 0 utk tiap key, konsisten dgn backend yang menganggap record blm pernah
 // ada = versi 0.
 if(!D.recordVersions || typeof D.recordVersions!=="object") D.recordVersions = {};
-["po","ceklis","fgPacking","fgReady","invoice","masterProduk","tokoTipe"].forEach(k=>{
+["po","ceklis","fgPacking","fgReady","invoice","masterProduk","tokoTipe","doDoc"].forEach(k=>{
   if(!D.recordVersions[k] || typeof D.recordVersions[k]!=="object") D.recordVersions[k] = {};
 });
+// DO lifecycle (draft/preprinted/ready/shipped/cancelled) — keyed by id
+// dokumen. Backend authoritative (lihat readDoDocs_/handleDoDoc*_ di
+// Code.gs); localStorage di sini murni cache/mirror, DISINKRONKAN lewat
+// muatSemua() (bukan sumber kebenaran utk transaksi multi-user).
+if(!D.doDocs || typeof D.doDocs!=="object") D.doDocs = {};
 // FITUR SEMENTARA MASA TRIAL — {recordKey("tgl|factory"): version} batch
 // trial yg tombstone-nya SUDAH diproses (trialCascadeClearLocal_ sudah
 // dijalankan utk versi itu) di DEVICE INI, supaya muatSemua() tidak
@@ -2775,7 +2788,17 @@ async function muatSemua(diam){
       server.forEach(r=>{ if(r && r.id) map[r.id]=r; });
       return Object.values(map);
     };
-    if(Array.isArray(j.kirim) && j.kirim.length){ D.kirim = gabungPerId(D.kirim, j.kirim.map(r=>({id:r.id||uid(),batch:r.batch||r.id||uid(),tgl:r.tgl,toko:r.toko,produk:r.produk,qty:num(r.qty),noSJ:r.noSJ||"",catatan:r.catatan||""}))); dikenali=true; }
+    if(Array.isArray(j.kirim) && j.kirim.length){ D.kirim = gabungPerId(D.kirim, j.kirim.map(r=>({id:r.id||uid(),batch:r.batch||r.id||uid(),tgl:r.tgl,toko:r.toko,produk:r.produk,qty:num(r.qty),noSJ:r.noSJ||"",catatan:r.catatan||"",shipmentGroup:r.shipmentGroup||SHIPMENT_GROUP_MAIN}))); dikenali=true; }
+    // DO lifecycle (Section A/B) — backend authoritative, D.doDocs murni
+    // cache/mirror (sama pola dgn D.kirim di atas: server menang utk id yang
+    // sama, draft lokal yang belum sempat terkirim TIDAK ikut hilang).
+    if(Array.isArray(j.doDocs) && j.doDocs.length){
+      const map = {};
+      Object.values(D.doDocs).forEach(r=>{ if(r && r.id) map[r.id]=r; });
+      j.doDocs.forEach(r=>{ if(r && r.id) map[r.id]=r; });
+      D.doDocs = map;
+      dikenali=true;
+    }
     // Sheet "Retur" di dbfactory memuat DUA jenis: Retur (beban toko) dan
     // Reject (tanggungan pabrik). Dipisahkan di sini, bukan di spreadsheet.
     if(Array.isArray(j.retur) && j.retur.length){ serapReturSheet(j.retur); dikenali=true; }
@@ -3624,6 +3647,15 @@ function trialCascadeClearLocal_(tgl, factory){
   // terpulihkan) — SELALU skippedAmbiguousCounts saja, sama spt backend.
   skippedAmbiguousCounts.stokAdj = D.stokAdj.filter(a=>a.tgl===tgl && inSet(a.produk)).length;
 
+  // DO (dokumen lifecycle draft/preprinted/ready/shipped) — kebijakan SAMA
+  // dgn backend cascadeDeleteTrialBatch_ step 14: Tanggal+toko∈storeSet DAN
+  // minimal satu plannedItem produknya ada di batch ini, dihapus di SEMUA
+  // status (termasuk shipped) supaya tidak menyisakan dokumen DO yatim.
+  const doMatch = r => r && r.tgl===tgl && inStore(r.toko) && Array.isArray(r.plannedItems) && r.plannedItems.some(it=>inSet(it.produk));
+  const doIdsHapus = Object.values(D.doDocs).filter(doMatch).map(r=>r.id);
+  deletedCounts.doDoc = doIdsHapus.length;
+  doIdsHapus.forEach(id=>{ delete D.doDocs[id]; delete D.recordVersions.doDoc[id]; });
+
   return {deletedCounts, skippedAmbiguousCounts};
 }
 
@@ -3700,6 +3732,7 @@ function trialResetAllLocal_(){
   D.stokAdj = [];
   D.returImported = {};
   D.returTertahan = [];
+  D.doDocs = {}; // Section A/B — dokumen DO lifecycle (draft/preprinted/ready/shipped) ikut direset penuh
   // Toko/kanal/alias HASIL TRIAL — tidak ada "bawaan" utk toko sama sekali
   // di app ini (semua toko murni berasal dari PO/input user), aman
   // dikosongkan total.
@@ -3714,7 +3747,7 @@ function trialResetAllLocal_(){
   // Versi lokal utk record type yang barusan direset — supaya expectedVersion
   // berikutnya mulai dari 0 lagi, konsisten dgn RecordVersion backend yang
   // jg dibersihkan utk recordType yang sama (lihat resetAllTrialData_).
-  ["po","ceklis","fgPacking","fgReady","invoice","tokoTipe"].forEach(k=>{ D.recordVersions[k] = {}; });
+  ["po","ceklis","fgPacking","fgReady","invoice","tokoTipe","doDoc"].forEach(k=>{ D.recordVersions[k] = {}; });
   D.trialTombstonesProcessed = {};
 
   // Runtime cache turunan — kalau tidak ikut dikosongkan, bisa nampilkan
@@ -5358,48 +5391,590 @@ let kList = [], rList = [], jList = [];
 // + Cibadak utk bakery gabungan yg sama) tetap menandai KEDUA batch sbg
 // terkirim saat disimpan, bukan cuma batch yg terakhir ditarik.
 let kFgSource = [];
+// Grup pengiriman AKTIF (null = auto-split per produk saat Simpan/Buat DO
+// Draft — B1 default). Dipaksa ke satu grup tertentu saat qty ditarik dari
+// kartu "Proses Kirim [Grup]" FG Ready (lihat kTarikDariFG).
+let kActiveShipmentGroup = null;
+// Section A — cegah doDocMatchFgReady_ menembak ulang handleDoDocReady_ utk
+// dokumen yang sama selagi request sebelumnya masih di udara (renderFgReadyList
+// bisa terpanggil berkali-kali beruntun dari renderAll()).
+const doDocReadyInFlight = new Set();
+
+// ================= SHIPMENT GROUP (B1) =================
+// Field GENERAL (bukan hardcode "cuma kenal Pastry selamanya") — minimal
+// MAIN/PASTRY, "OTHER" dicadangkan utk kebutuhan masa depan. Default mapping
+// pakai divisi CANONICAL yang sudah ada (DIVISI_BAWAAN/kategoriMap lewat
+// mpGet), BUKAN string-contains nama produk.
+const SHIPMENT_GROUP_MAIN = "MAIN";
+const SHIPMENT_GROUP_PASTRY = "PASTRY";
+// Lifecycle status dokumen DO (Section A) — sama persis dgn konstanta backend
+// (lihat DO_STATUS_* di Code.gs). "print = shipped" TIDAK PERNAH benar:
+// preprinted TETAP planning, cuma sudah pernah dicetak; HANYA shipped yang
+// mengurangi stok/masuk Kirim/Omset/Invoice.
+const DO_STATUS_DRAFT = "draft";
+const DO_STATUS_PREPRINTED = "preprinted";
+const DO_STATUS_READY = "ready";
+const DO_STATUS_SHIPPED = "shipped";
+const DO_STATUS_CANCELLED = "cancelled";
+function shipmentGroupForProduk(produk){
+  const divisi = DIVISI_BAWAAN[normNama(produk)] || mpGet(produk).divisi || D.kategoriMap[mpGet(produk).kategori] || "";
+  return divisi==="Pastry" ? SHIPMENT_GROUP_PASTRY : SHIPMENT_GROUP_MAIN;
+}
+function shipmentGroupLabel(g){ return g===SHIPMENT_GROUP_PASTRY ? "Pastry" : (g===SHIPMENT_GROUP_MAIN ? "Pengiriman Utama" : (g||"Pengiriman Utama")); }
+// Kirim/DO lama (sebelum fitur shipmentGroup ada) TIDAK PERNAH ditulis ulang
+// — dibaca sbg MAIN utk backward-compat (section H spesifikasi).
+function kirimShipmentGroup(r){ return (r && r.shipmentGroup) || SHIPMENT_GROUP_MAIN; }
 
 function fgReadyList(){
   const out=[];
   Object.entries(D.fgPacking).forEach(([key,rec])=>{
     if(!rec || !rec.readyAt) return;
     const sep = key.lastIndexOf("|"); const tgl=key.slice(0,sep), factory=key.slice(sep+1);
-    const byToko={};
+    // B2: dipecah per (toko, shipmentGroup) — bakery yg sama pada tanggal yg
+    // sama BISA punya baris MAIN dan baris PASTRY terpisah, TIDAK digabung.
+    const byTokoGrup={};
     Object.entries(rec.packed||{}).forEach(([k,val])=>{
       const q = typeof val==="object" ? num(val.qty) : num(val);
       if(q<=0) return;
       const idx=k.lastIndexOf("|"); const toko=k.slice(idx+1);
-      byToko[toko]=(byToko[toko]||0)+q;
+      // Nama produk TERNORMALISASI dari skuId (kode\x1fnamaTernormalisasi) —
+      // cukup akurat utk resolusi divisi krn DIVISI_BAWAAN sendiri di-key
+      // pakai normNama().
+      const produkNorm = k.slice(0,idx).split("\x1f")[1] || "";
+      const grup = shipmentGroupForProduk(produkNorm);
+      const gk = toko+"\x1f"+grup;
+      byTokoGrup[gk] = (byTokoGrup[gk]||0)+q;
     });
     const sudah = rec.dikirimKe||[];
-    Object.entries(byToko).forEach(([toko,total])=>{ if(!sudah.includes(toko)) out.push({tgl,toko,total,factory}); });
+    Object.entries(byTokoGrup).forEach(([gk,total])=>{
+      const idx2 = gk.indexOf("\x1f"); const toko=gk.slice(0,idx2), grup=gk.slice(idx2+1);
+      // Backward-compat: entry LAMA di dikirimKe cuma nama toko polos (dari
+      // sebelum shipmentGroup ada) -> dianggap SEMUA grup sudah, bukan cuma MAIN.
+      if(sudah.includes(toko) || sudah.includes(toko+"|"+grup)) return;
+      out.push({tgl,toko,total,factory,shipmentGroup:grup});
+    });
   });
   return out.sort((a,b)=> b.tgl.localeCompare(a.tgl));
 }
-// Gabungkan baris fgReadyList() per bakery kanonik + tanggal — satu row per
-// bakery meski sumbernya >1 factory (mis. Karangtengah "CKLE" + Cibadak
-// "BAKERY CIKOLE"), dgn breakdown per-factory tetap tersimpan utk expand.
+// Gabungkan baris fgReadyList() per bakery kanonik + tanggal + shipmentGroup —
+// satu row per bakery+grup meski sumbernya >1 factory (mis. Karangtengah
+// "CKLE" + Cibadak "BAKERY CIKOLE"), dgn breakdown per-factory tetap
+// tersimpan utk expand. MAIN dan PASTRY bakery yg sama SENGAJA jadi baris
+// terpisah (B2) — jangan digabung jadi satu shipment.
 function fgReadyListByBakery(){
   const raw = fgReadyList();
   const byGroup = {};
   raw.forEach(r=>{
     const bakery = canonicalStoreName(r.toko);
-    const key = r.tgl+"|"+bakery;
-    if(!byGroup[key]) byGroup[key] = {tgl:r.tgl, bakery, total:0, breakdown:[]};
+    const key = r.tgl+"|"+bakery+"|"+r.shipmentGroup;
+    if(!byGroup[key]) byGroup[key] = {tgl:r.tgl, bakery, shipmentGroup:r.shipmentGroup, total:0, breakdown:[]};
     byGroup[key].total += r.total;
     byGroup[key].breakdown.push(r);
   });
-  return Object.values(byGroup).sort((a,b)=> b.tgl.localeCompare(a.tgl) || a.bakery.localeCompare(b.bakery));
+  return Object.values(byGroup).sort((a,b)=> b.tgl.localeCompare(a.tgl) || a.bakery.localeCompare(b.bakery) || a.shipmentGroup.localeCompare(b.shipmentGroup));
 }
-// Tarik SEMUA batch FG (bisa >1 factory) utk satu bakery+tanggal sekaligus —
-// dipakai tombol "Proses Kirim" pada row gabungan Siap Kirim. kTarikDariFG
-// sendiri sudah aman dipanggil berkali-kali beruntun (kFgSource
-// mengakumulasi, bukan menimpa, selama tgl+tokoCanon sama).
-function kTarikDariFGBakery(tgl,bakery){
-  const grup = fgReadyListByBakery().find(g=>g.tgl===tgl && g.bakery===bakery);
+// Tarik SEMUA batch FG (bisa >1 factory) utk satu bakery+tanggal+shipmentGroup
+// sekaligus — dipakai tombol "Proses Kirim [Grup]" pada row gabungan Siap
+// Kirim. kTarikDariFG sendiri sudah aman dipanggil berkali-kali beruntun
+// (kFgSource mengakumulasi, bukan menimpa, selama tgl+tokoCanon+grup sama).
+function kTarikDariFGBakery(tgl,bakery,shipmentGroup){
+  const grup = fgReadyListByBakery().find(g=>g.tgl===tgl && g.bakery===bakery && g.shipmentGroup===shipmentGroup);
   if(!grup || !grup.breakdown.length) return;
-  grup.breakdown.forEach(r=>{ kTarikDariFG(r.tgl, r.toko, r.factory); });
+  grup.breakdown.forEach(r=>{ kTarikDariFG(r.tgl, r.toko, r.factory, r.shipmentGroup); });
 }
+
+// ================= DO LIFECYCLE (Section A) =================
+// Draft/Pre-Print SEBELUM Finishgood selesai. Backend authoritative (lihat
+// handleDoDoc*_/readDoDocs_ di Code.gs) — D.doDocs di sini murni cache/mirror
+// (object keyed by id), disinkronkan lewat muatSemua(). "print = shipped"
+// TIDAK PERNAH benar: preprinted/ready TETAP planning (plannedItems), HANYA
+// status shipped yang mengurangi stok/masuk Kirim/Omset/basis Invoice — lewat
+// handleDoDocShip_ yang menulis baris Kirim ATOMIC di backend, jadi semua
+// turunan (stokGudang/Omset/Dashboard/fulfillment/Invoice) otomatis benar
+// begitu status shipped tanpa perlu disentuh terpisah di sini.
+//
+// ID dokumen DETERMINISTIK per (tgl, toko kanonik, shipmentGroup) — "Buat DO
+// Draft" berikutnya utk kombinasi yang SAMA mengUPDATE draft yang sama
+// (bukan bikin DO kedua), TAPI kalau dokumen dgn id itu sudah final
+// (shipped/cancelled), dibuatkan id BARU dgn akhiran angka — supaya satu
+// toko+tanggal+grup tetap boleh py >1 DO utk shipment yang genuinely
+// berurutan (mis. shipped pagi, lalu ada tambahan sore).
+function doDocIdFor(tgl, canonicalStore, shipmentGroup){
+  const slug = normNama(canonicalStore).replace(/[^A-Z0-9]+/g,"-").replace(/^-+|-+$/g,"") || "TOKO";
+  const base = "DO-"+tgl+"-"+slug+"-"+shipmentGroup;
+  const finalStatuses = [DO_STATUS_SHIPPED, DO_STATUS_CANCELLED];
+  if(!D.doDocs[base] || finalStatuses.indexOf(D.doDocs[base].status)===-1) return base;
+  let n = 2;
+  while(D.doDocs[base+"-"+n] && finalStatuses.indexOf(D.doDocs[base+"-"+n].status)===-1) n++;
+  return base+"-"+n;
+}
+// "Buat DO Draft" — qty di grid = RENCANA (Sisa PO toko, boleh diisi walau
+// stok/FG masih 0 — lihat catatan di kHitung()), TIDAK mengurangi stok/masuk
+// Kirim/Omset/fulfillment/Invoice otomatis (beda total dgn "Simpan Delivery
+// Order"/kSimpan yang langsung shipped). Auto-split per shipmentGroup (B1)
+// kecuali dipaksa satu grup (kActiveShipmentGroup, dari "Proses Kirim [Grup]").
+function doDraftBuat(btn){
+  const tgl=$("k-tgl").value, toko=$("k-toko").value;
+  if(!tgl) return toast("Isi tanggal dulu");
+  if(!toko) return toast("Pilih toko dulu");
+  const items = kBaca();
+  const extras = kExtraBaca();
+  const allItems = items.concat(extras);
+  if(!allItems.length) return toast("Belum ada qty diisi — boleh isi qty rencana walau stok/FG masih 0, ini baru DO Draft");
+  const tokoCanon = canonicalStoreName(toko);
+  const kodeMap = produkKodeMap();
+  const byGroup = {};
+  allItems.forEach(it=>{
+    const grup = kActiveShipmentGroup || shipmentGroupForProduk(it.produk);
+    (byGroup[grup] ||= []).push({kode:kodeMap[it.produk]||"", produk:it.produk, plannedQty:it.qty});
+  });
+  const catatan = (($("k-catatan")&&$("k-catatan").value)||"").trim();
+  const noSJ = ($("k-inv").value||"").trim();
+  const groups = Object.keys(byGroup);
+  return withBusyBtn(btn, ()=>Promise.all(groups.map(grup=>{
+    const id = doDocIdFor(tgl, tokoCanon, grup);
+    const existing = D.doDocs[id];
+    return kirimSheetsVersioned({
+      jenis:"doDocSave", id, tanggal:tgl, toko, canonicalStore:tokoCanon, shipmentGroup:grup,
+      plannedItems: byGroup[grup], catatan, noSJ, requestId:uid(),
+      expectedVersion: existing ? (D.recordVersions.doDoc[id]||0) : 0
+    }).then(res=>{
+      if(res.ok){
+        D.doDocs[id] = Object.assign({}, existing, {
+          id, noSJ, tgl, toko, canonicalStore:tokoCanon, shipmentGroup:grup,
+          status: (res.record && res.record.status) || DO_STATUS_DRAFT,
+          plannedItems: byGroup[grup],
+          availableItems: (existing && existing.availableItems) || [],
+          actualItems: (existing && existing.actualItems) || [],
+          catatan, batch: (existing && existing.batch) || "",
+          createdAt: (existing && existing.createdAt) || new Date().toISOString(),
+          createdBy: (existing && existing.createdBy) || "",
+          preprintedAt: (existing && existing.preprintedAt) || "",
+          readyAt: (existing && existing.readyAt) || "",
+          shippedAt: "", shippedBy: ""
+        });
+        D.recordVersions.doDoc[id] = res.version;
+        return true;
+      } else if(res.code==="VERSION_CONFLICT"){
+        tampilkanKonflikVersi("DO Draft "+id, id, res, ()=>muatSemua());
+        return false;
+      } else {
+        toast("Gagal simpan DO Draft"+(res.code?" ("+res.code+")":"")+(res.message?" — "+res.message:""));
+        return false;
+      }
+    });
+  })).then(results=>{
+    const ok = results.every(Boolean);
+    if(ok){
+      saveD();
+      toast(`✓ DO Draft tersimpan (${groups.length} dokumen) — qty masih RENCANA, belum mengurangi stok`);
+      kKosongkanIsian = true;
+      $("kFormWrap").style.display="none"; $("kDoneWrap").style.display="block";
+      $("kDoneMsg").innerHTML = `✓ DO Draft dibuat untuk <b>${toko}</b>, ${fmtTgl(tgl)} — cetak/kelola di daftar "Delivery Order — Draft / Pre-Print / FG Ready" di bawah.`;
+      renderDoDocList();
+      renderAll();
+    }
+    return ok;
+  }), {busy:"Menyimpan draft…", done:"DO Draft tersimpan", fail:"Gagal, coba lagi"});
+}
+function doDocStatusBadge_(status){
+  const map = {
+    [DO_STATUS_DRAFT]: ["Draft","sebagian"],
+    [DO_STATUS_PREPRINTED]: ["Pre-Printed","sebagian"],
+    [DO_STATUS_READY]: ["FG Ready","lunas"],
+    [DO_STATUS_SHIPPED]: ["Shipped","lunas"],
+    [DO_STATUS_CANCELLED]: ["Dibatalkan","r"]
+  };
+  const pair = map[status] || [status,""];
+  return `<span class="pill ${pair[1]}">${pair[0]}</span>`;
+}
+// Daftar dokumen DO yang masih relevan dilihat (semua status kecuali
+// cancelled — termasuk shipped supaya tetap bisa dicetak ulang read-only).
+// Dipanggil dari renderFgReadyList() (Kirim Toko) — lihat B/A5.
+function renderDoDocList(){
+  const card = $("doDocListCard"), body = $("doDocListBody");
+  if(!card || !body) return;
+  const order = {}; order[DO_STATUS_DRAFT]=0; order[DO_STATUS_PREPRINTED]=1; order[DO_STATUS_READY]=2; order[DO_STATUS_SHIPPED]=3;
+  const docs = Object.values(D.doDocs).filter(d=>d && d.status!==DO_STATUS_CANCELLED).sort((a,b)=>{
+    const oa = order[a.status]!=null?order[a.status]:9, ob = order[b.status]!=null?order[b.status]:9;
+    if(oa!==ob) return oa-ob;
+    return (b.tgl||"").localeCompare(a.tgl||"");
+  }).slice(0,60);
+  if(!docs.length){ card.style.display="none"; return; }
+  card.style.display="block";
+  body.innerHTML = docs.map(d=>{
+    const totalRencana = (d.plannedItems||[]).reduce((a,it)=>a+num(it.plannedQty),0);
+    const totalAktual = (d.actualItems||[]).reduce((a,it)=>a+num(it.actualShipQty),0);
+    const totalTersedia = (d.availableItems||[]).reduce((a,it)=>a+num(it.availableQty),0);
+    const grupLabel = shipmentGroupLabel(d.shipmentGroup);
+    const qtyLine = d.status===DO_STATUS_SHIPPED
+      ? `Terkirim: <b>${fmt(totalAktual)}</b> pcs`
+      : d.status===DO_STATUS_READY
+        ? `Rencana ${fmt(totalRencana)} pcs · FG Tersedia ${fmt(totalTersedia)} pcs`
+        : `Rencana: <b>${fmt(totalRencana)}</b> pcs (belum final)`;
+    const actions = [];
+    if(d.status===DO_STATUS_DRAFT || d.status===DO_STATUS_PREPRINTED){
+      actions.push(`<button type="button" class="btn mini ghost" onclick="doDocCetak('${d.id}')">${d.status===DO_STATUS_DRAFT?'Cetak Draft':'Cetak Ulang'}</button>`);
+      if(d.shipmentGroup===SHIPMENT_GROUP_PASTRY) actions.push(`<button type="button" class="btn mini ghost" onclick="doDocGabungKeMain('${d.id}')">Gabung ke Utama</button>`);
+      actions.push(`<button type="button" class="btn mini ghost red" onclick="doDocBatalkan('${d.id}')">Batalkan</button>`);
+    } else if(d.status===DO_STATUS_READY){
+      actions.push(`<button type="button" class="btn mini ghost" onclick="doDocCetak('${d.id}')">Cetak</button>`);
+      actions.push(`<button type="button" class="btn mini" onclick="doDocKonfirmasiKirimBuka('${d.id}')">Konfirmasi Dikirim</button>`);
+      actions.push(`<button type="button" class="btn mini ghost red" onclick="doDocBatalkan('${d.id}')">Batalkan</button>`);
+    } else if(d.status===DO_STATUS_SHIPPED){
+      actions.push(`<button type="button" class="btn mini ghost" onclick="doDocCetak('${d.id}')">Lihat/Cetak</button>`);
+    }
+    const warn = (d.status===DO_STATUS_SHIPPED && totalAktual < totalRencana)
+      ? `<div class="note" style="color:var(--red)">⚠ Qty aktual kirim (${fmt(totalAktual)}) berbeda dengan Qty Rencana (${fmt(totalRencana)}).</div>` : "";
+    return `<div class="li" id="doDocRow-${d.id}" style="flex-direction:column;align-items:stretch;gap:4px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <span><span class="t1">${d.toko||d.canonicalStore}</span><span class="t2">${fmtTgl(d.tgl)} · ${grupLabel} · ${d.id}</span></span>
+        <span style="display:flex;align-items:center;gap:6px">${doDocStatusBadge_(d.status)}<span>${qtyLine}</span></span>
+      </div>
+      ${warn}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${actions.join("")}</div>
+      <div id="doDocKonfirmasi-${d.id}"></div>
+    </div>`;
+  }).join("");
+}
+// Cetak — kalau masih draft, TRANSISI ke preprinted dulu (sekali, lewat
+// backend) sebelum membuka print, sesuai aturan "sekali dicetak sblm final =
+// preprinted, bukan diam2 dianggap shipped". Cetak ulang dokumen yang sudah
+// preprinted/ready/shipped TIDAK mengubah status lagi.
+function doDocCetak(id){
+  const doc = D.doDocs[id];
+  if(!doc) return toast("Dokumen DO tidak ditemukan");
+  if(doc.status===DO_STATUS_DRAFT){
+    return kirimSheetsVersioned({jenis:"doDocPreprint", id, requestId:uid(), expectedVersion:D.recordVersions.doDoc[id]||0}).then(res=>{
+      if(res.ok){
+        doc.status = (res.record && res.record.status) || DO_STATUS_PREPRINTED;
+        doc.preprintedAt = doc.preprintedAt || new Date().toISOString();
+        D.recordVersions.doDoc[id] = res.version;
+        saveD(); renderDoDocList();
+        doDocCetakPrint_(doc);
+      } else if(res.code==="VERSION_CONFLICT"){
+        tampilkanKonflikVersi("DO "+id, id, res, ()=>muatSemua());
+      } else {
+        toast("Gagal menandai preprint"+(res.code?" ("+res.code+")":""));
+      }
+    });
+  }
+  doDocCetakPrint_(doc);
+}
+// Template cetak — SENGAJA tidak py kolom harga sama sekali (DO memang tidak
+// py pricing di sistem ini). Draft/Pre-Print/Ready diberi watermark supaya
+// TIDAK terlihat seperti DO final; Shipped dicetak polos (dokumen final).
+function doDocCetakPrint_(doc){
+  const items = (doc.status===DO_STATUS_SHIPPED && doc.actualItems && doc.actualItems.length)
+    ? doc.actualItems.map(it=>({produk:it.produk, kode:it.kode, qty:it.actualShipQty}))
+    : (doc.plannedItems||[]).map(it=>({produk:it.produk, kode:it.kode, qty:it.plannedQty}));
+  if(!items.length) return toast("Dokumen DO ini belum punya item");
+  const isDraftLook = doc.status!==DO_STATUS_SHIPPED;
+  const doNo = doc.noSJ || doc.id;
+  const totalQty = items.reduce((a,r)=>a+num(r.qty),0);
+  const body = items.map((r,i)=>`<tr>
+      <td style="padding:5px 6px;text-align:center;border-bottom:1px solid #999;background:#fff;color:#000">${i+1}</td>
+      <td style="padding:5px 6px;text-align:center;border-bottom:1px solid #999;background:#fff;font-family:'Courier New',monospace;font-size:10.5px;color:#000">${r.kode||"-"}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #999;background:#fff;color:#000">${r.produk}</td>
+      <td style="padding:5px 6px;text-align:center;border-bottom:1px solid #999;background:#fff;color:#000">Pcs</td>
+      <td style="padding:5px 6px;text-align:center;border-bottom:1px solid #999;background:#fff;font-weight:700;color:#000">${fmt(r.qty)}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #999;background:#fff;color:#000"></td>
+    </tr>`).join("");
+  $("printArea").innerHTML = `
+    <div style="font-family:Arial,Helvetica,sans-serif;color:#000;max-width:800px;margin:0 auto">
+      <div style="padding:0 4px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:14px;border-bottom:2px solid #000">
+          <div style="display:flex;gap:14px;align-items:center">
+            ${LOGO_SVG}
+            <div>
+              <div style="font-size:18px;font-weight:800;letter-spacing:.02em;color:#000">CV. AMOR GROUP</div>
+              <div style="font-size:10px;color:#333;margin-top:4px;line-height:1.6">
+                Head Office : Jl. Ahmad Yani Nyomplong Warudoong, Kota Sukabumi<br>
+                Warehouse : Jl. Raya Karang Tengah No. 02 Karang Tengah, Cibadak 43351
+              </div>
+            </div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;padding-left:16px">
+            <div style="display:inline-block;border:2px solid #000;padding:6px 14px">
+              <div style="font-size:15px;font-weight:800;letter-spacing:.05em;color:#000;white-space:nowrap">DELIVERY ORDER</div>
+            </div>
+            <div style="font-size:10px;color:#333;margin-top:8px">No. Dokumen</div>
+            <div style="font-size:13px;font-weight:800;color:#000">${doNo}</div>
+          </div>
+        </div>
+        ${isDraftLook ? `<div style="margin-top:10px;padding:8px 12px;border:2px dashed #b00020;background:#fff5f5;color:#b00020;font-weight:800;font-size:12px;text-align:center;letter-spacing:.03em">
+          DO DRAFT / PRE-PRINT — Qty masih menunggu konfirmasi barang aktual${doc.status===DO_STATUS_READY?' (FG sudah tersedia — menunggu Konfirmasi Dikirim)':''}
+        </div>` : ""}
+        <table style="width:100%;border-collapse:collapse;margin-top:16px;background:#fff">
+          <tr>
+            <td style="width:56%;vertical-align:top;padding-right:20px">
+              <div style="font-size:9.5px;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">Kepada Yth.</div>
+              <div style="font-size:15px;font-weight:800;color:#000;border-bottom:1.5px solid #000;padding-bottom:8px">${doc.toko||doc.canonicalStore}</div>
+            </td>
+            <td style="width:44%;vertical-align:top">
+              <table style="width:100%;font-size:11px;border-collapse:collapse;background:#fff">
+                <tr><td style="padding:3px 0;background:#fff;color:#333;width:76px">Tanggal</td><td style="padding:3px 0;background:#fff;font-weight:700;color:#000">: ${fmtTgl(doc.tgl)}</td></tr>
+                <tr><td style="padding:3px 0;background:#fff;color:#333">Grup Kirim</td><td style="padding:3px 0;background:#fff;font-weight:700;color:#000">: ${shipmentGroupLabel(doc.shipmentGroup)}</td></tr>
+                <tr><td style="padding:3px 0;background:#fff;color:#333">Pemesan</td><td style="padding:3px 0;background:#fff;font-weight:700;color:#000">: .......................</td></tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:18px;border:1.5px solid #000;background:#fff;border-radius:0">
+          <thead>
+            <tr>
+              <th style="background:#fff;padding:7px 6px;color:#000;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;width:30px;border-bottom:1.5px solid #000">No</th>
+              <th style="background:#fff;padding:7px 6px;color:#000;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;width:78px;border-bottom:1.5px solid #000">Kode</th>
+              <th style="background:#fff;padding:7px 6px;color:#000;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;text-align:left;border-bottom:1.5px solid #000">Nama Barang</th>
+              <th style="background:#fff;padding:7px 6px;color:#000;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;width:58px;border-bottom:1.5px solid #000">Satuan</th>
+              <th style="background:#fff;padding:7px 6px;color:#000;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;width:64px;border-bottom:1.5px solid #000">${doc.status===DO_STATUS_SHIPPED?'Qty Kirim':'Qty Rencana'}</th>
+              <th style="background:#fff;padding:7px 6px;color:#000;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;border-bottom:1.5px solid #000">Keterangan</th>
+            </tr>
+          </thead>
+          <tbody>${body}</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="4" style="padding:8px 6px;text-align:right;font-weight:800;border-top:1.5px solid #000;color:#000">TOTAL QTY</td>
+              <td style="padding:8px 6px;text-align:center;font-weight:800;border-top:1.5px solid #000;color:#000">${fmt(totalQty)}</td>
+              <td style="border-top:1.5px solid #000"></td>
+            </tr>
+          </tfoot>
+        </table>
+        <div style="display:flex;justify-content:space-between;margin-top:50px;font-size:11px;text-align:center">
+          <div style="width:31%">
+            <div style="font-weight:700;color:#000">Pengirim</div>
+            <div style="margin-top:50px;border-top:1px solid #000;padding-top:4px;color:#000">(...................)</div>
+          </div>
+          <div style="width:31%">
+            <div style="font-weight:700;color:#000">Pengemudi</div>
+            <div style="margin-top:50px;border-top:1px solid #000;padding-top:4px;color:#000">(...................)</div>
+          </div>
+          <div style="width:31%">
+            <div style="font-weight:700;color:#000">Penerima</div>
+            <div style="margin-top:50px;border-top:1px solid #000;padding-top:4px;color:#000">(...................)</div>
+          </div>
+        </div>
+        <div style="font-size:8.5px;color:#555;margin-top:20px;padding-top:8px;border-top:1px solid #ccc">Dicetak ${new Date().toLocaleString("id-ID")} dari Amorcakes — Produksi &amp; Arus Barang</div>
+      </div>
+    </div>`;
+  window.print();
+}
+// Cocokkan DO Draft/Pre-Printed yang masih terbuka dengan FG yang baru siap
+// (A5) — dipanggil dari renderFgReadyList(). FG tetap satu-satunya source of
+// truth (availableItems dihitung ULANG dari D.fgPacking tiap match, bukan
+// dari cache DO) — DO Draft TIDAK PERNAH membuat FG Ready palsu, cuma
+// membaca yang sudah ada. Kalau sudah ADA dokumen utk shipment ini, TIDAK
+// dibuatkan dokumen baru (B3) — cukup ditransisikan ke status ready.
+function doDocAvailableItemsFor_(tgl, canonicalStore, shipmentGroup){
+  const byProduk = {};
+  Object.keys(D.fgPacking).forEach(fgpKey=>{
+    if(!fgpKey.startsWith(tgl+"|")) return;
+    const rec = D.fgPacking[fgpKey];
+    if(!rec || !rec.packed) return;
+    Object.entries(rec.packed).forEach(([k,val])=>{
+      const q = typeof val==="object" ? num(val.qty) : num(val);
+      if(q<=0) return;
+      const idx = k.lastIndexOf("|");
+      const tokoRaw = k.slice(idx+1);
+      if(canonicalStoreName(tokoRaw)!==canonicalStore) return;
+      const skuPart = k.slice(0,idx);
+      const sepI = skuPart.indexOf("\x1f");
+      const kode = sepI>=0 ? skuPart.slice(0,sepI) : "";
+      const normP = sepI>=0 ? skuPart.slice(sepI+1) : skuPart;
+      if(shipmentGroupForProduk(normP) !== shipmentGroup) return;
+      const key = kode+"\x1f"+normP;
+      if(!byProduk[key]) byProduk[key] = {kode, produk: D.products.find(p=>normNama(p)===normP) || normP, availableQty:0};
+      byProduk[key].availableQty += q;
+    });
+  });
+  return Object.values(byProduk);
+}
+function doDocMatchFgReady_(groups){
+  if(!groups || !groups.length) return;
+  groups.forEach(g=>{
+    const doc = Object.values(D.doDocs).find(d=>d && d.tgl===g.tgl && d.canonicalStore===g.bakery
+      && (d.shipmentGroup||SHIPMENT_GROUP_MAIN)===g.shipmentGroup
+      && (d.status===DO_STATUS_DRAFT || d.status===DO_STATUS_PREPRINTED));
+    if(!doc || doDocReadyInFlight.has(doc.id)) return;
+    const availableItems = doDocAvailableItemsFor_(g.tgl, g.bakery, g.shipmentGroup);
+    if(!availableItems.length) return;
+    doDocReadyInFlight.add(doc.id);
+    kirimSheetsVersioned({jenis:"doDocReady", id:doc.id, availableItems, requestId:uid(), expectedVersion:D.recordVersions.doDoc[doc.id]||0}).then(res=>{
+      doDocReadyInFlight.delete(doc.id);
+      if(res.ok){
+        D.doDocs[doc.id] = Object.assign({}, doc, {status:DO_STATUS_READY, availableItems, readyAt: doc.readyAt || new Date().toISOString()});
+        D.recordVersions.doDoc[doc.id] = res.version;
+        saveD();
+        renderDoDocList();
+        toast(`DO ${doc.noSJ||doc.id} → FG Ready (${g.bakery} · ${shipmentGroupLabel(g.shipmentGroup)})`);
+      }
+      // VERSION_CONFLICT/error lain sengaja dibiarkan (bukan ditimpa diam2) —
+      // sync berikutnya (muatSemua/render ulang) akan mencoba lagi.
+    }).catch(()=>{ doDocReadyInFlight.delete(doc.id); });
+  });
+}
+// Buka panel inline "Konfirmasi Dikirim" utk satu DO status ready — HANYA di
+// sinilah Qty Aktual Kirim per produk direview/diedit sblm status jadi
+// shipped (A4/A6). Default qty aktual = min(rencana, FG tersedia) supaya
+// admin tinggal konfirmasi kalau sudah pas, tapi TETAP bisa diedit manual.
+function doDocKonfirmasiKirimBuka(id){
+  const doc = D.doDocs[id];
+  const slot = $("doDocKonfirmasi-"+id);
+  if(!doc || !slot) return;
+  const avail = {};
+  (doc.availableItems||[]).forEach(it=>{ avail[(it.kode||"")+"\x1f"+it.produk] = num(it.availableQty); });
+  const rows = (doc.plannedItems||[]).map((it,i)=>{
+    const key = (it.kode||"")+"\x1f"+it.produk;
+    const tersedia = avail[key]!=null ? avail[key] : 0;
+    const def = Math.min(num(it.plannedQty), tersedia);
+    return `<tr>
+      <td class="l">${it.produk}</td>
+      <td>${fmt(it.plannedQty)}</td>
+      <td>${fmt(tersedia)}</td>
+      <td><input type="number" inputmode="numeric" class="cellin" id="doDocAq-${id}-${i}" value="${def}" min="0" oninput="doDocKonfirmasiKirimCekWarning('${id}')"></td>
+    </tr>`;
+  }).join("");
+  slot.innerHTML = `<div class="card" style="margin-top:8px">
+    <table class="mini-t"><thead><tr><th class="l">Produk</th><th>Rencana</th><th>FG Tersedia</th><th>Qty Aktual Kirim</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <div id="doDocWarn-${id}" class="note" style="color:var(--red)"></div>
+    <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px">
+      <button type="button" class="btn mini ghost" onclick="$('doDocKonfirmasi-${id}').innerHTML=''">Batal</button>
+      <button type="button" class="btn mini" onclick="doDocKonfirmasiKirimSimpan('${id}')">✓ Konfirmasi Dikirim</button>
+    </div>
+  </div>`;
+  doDocKonfirmasiKirimCekWarning(id);
+}
+function doDocKonfirmasiKirimCekWarning(id){
+  const doc = D.doDocs[id];
+  if(!doc) return;
+  let totalRencana=0, totalAktual=0;
+  (doc.plannedItems||[]).forEach((it,i)=>{
+    totalRencana += num(it.plannedQty);
+    const el = $("doDocAq-"+id+"-"+i);
+    totalAktual += el ? num(el.value) : 0;
+  });
+  const warnEl = $("doDocWarn-"+id);
+  if(warnEl) warnEl.textContent = totalAktual < totalRencana
+    ? `⚠ Qty aktual kirim (${fmt(totalAktual)}) berbeda dengan Qty Rencana (${fmt(totalRencana)}) — TIDAK dibatasi otomatis, akan tetap disimpan sesuai isian ini.`
+    : "";
+}
+// Konfirmasi Dikirim = SATU-SATUNYA titik di alur DO Draft yang mengubah
+// stok/Omset/Kirim/Invoice (A4/A6) — mirror lokal ke D.kirim pakai skema id
+// SAMA dgn backend (id+"-"+kode/idx) supaya muatSemua() berikutnya idempotent
+// (menimpa per id, bukan menduplikasi baris).
+function doDocKonfirmasiKirimSimpan(id){
+  const doc = D.doDocs[id];
+  if(!doc) return toast("Dokumen DO tidak ditemukan");
+  const actualItems = (doc.plannedItems||[]).map((it,i)=>{
+    const el = $("doDocAq-"+id+"-"+i);
+    return {kode:it.kode, produk:it.produk, actualShipQty: el ? Math.max(0,num(el.value)) : num(it.plannedQty)};
+  }).filter(it=>it.actualShipQty>0);
+  if(!actualItems.length) return toast("Qty aktual kirim minimal 1 produk harus > 0");
+  const btnSel = document.querySelector(`#doDocKonfirmasi-${id} .btn.mini:not(.ghost)`);
+  return withBusyBtn(btnSel, ()=>kirimSheetsVersioned({
+    jenis:"doDocShip", id, actualItems, requestId:uid(), expectedVersion:D.recordVersions.doDoc[id]||0
+  }).then(res=>{
+    if(res.ok){
+      const batch = (res.record && res.record.batch) || id;
+      doc.status = DO_STATUS_SHIPPED;
+      doc.actualItems = actualItems;
+      doc.batch = batch;
+      doc.shippedAt = new Date().toISOString();
+      D.recordVersions.doDoc[id] = res.version;
+      const mirrored = actualItems.map((it,idx)=>({
+        id: id+"-"+(it.kode||idx), batch, tgl:doc.tgl, toko:doc.toko, produk:it.produk,
+        qty:it.actualShipQty, noSJ:doc.noSJ||"", catatan:doc.catatan||"", shipmentGroup:doc.shipmentGroup||SHIPMENT_GROUP_MAIN
+      }));
+      const idsBaru = new Set(mirrored.map(r=>r.id));
+      D.kirim = D.kirim.filter(r=>!idsBaru.has(r.id)).concat(mirrored);
+      saveD();
+      const slot = $("doDocKonfirmasi-"+id); if(slot) slot.innerHTML="";
+      renderDoDocList();
+      renderAll();
+      toast(`✓ DO ${doc.noSJ||id} dikonfirmasi terkirim — ${fmt(actualItems.reduce((a,it)=>a+it.actualShipQty,0))} pcs`);
+      return true;
+    } else if(res.code==="VERSION_CONFLICT"){
+      tampilkanKonflikVersi("DO "+id, id, res, ()=>muatSemua());
+      return false;
+    } else {
+      toast("Gagal konfirmasi kirim"+(res.code?" ("+res.code+")":"")+(res.message?" — "+res.message:""));
+      return false;
+    }
+  }), {busy:"Mengonfirmasi…", done:"Terkirim", fail:"Gagal, coba lagi"});
+}
+function doDocBatalkan(id){
+  const doc = D.doDocs[id];
+  if(!doc) return toast("Dokumen DO tidak ditemukan");
+  if(doc.status===DO_STATUS_SHIPPED) return toast("DO yang sudah shipped tidak bisa dibatalkan");
+  if(!confirm(`Batalkan DO Draft ${doc.noSJ||id} (${doc.toko||doc.canonicalStore}, ${fmtTgl(doc.tgl)})? Qty rencana ini tidak jadi dikirim.`)) return;
+  return kirimSheetsVersioned({jenis:"doDocCancel", id, requestId:uid(), expectedVersion:D.recordVersions.doDoc[id]||0}).then(res=>{
+    if(res.ok){
+      doc.status = DO_STATUS_CANCELLED;
+      D.recordVersions.doDoc[id] = res.version;
+      saveD();
+      renderDoDocList();
+      toast("DO Draft dibatalkan");
+    } else if(res.code==="VERSION_CONFLICT"){
+      tampilkanKonflikVersi("DO "+id, id, res, ()=>muatSemua());
+    } else {
+      toast("Gagal membatalkan"+(res.code?" ("+res.code+")":""));
+    }
+  });
+}
+// Gabungkan DO Pastry ke DO MAIN (B4) — HANYA sebelum salah satunya shipped
+// (backend memblokir ALREADY_SHIPPED). Setelah sukses, refetch backend
+// (muatSemua) supaya dokumen MAIN hasil merge (baru ATAU sudah ada) tertarik
+// lengkap ke D.doDocs, bukan direkonstruksi dari tebakan lokal.
+function doDocGabungKeMain(id){
+  const doc = D.doDocs[id];
+  if(!doc) return toast("Dokumen DO tidak ditemukan");
+  if(doc.shipmentGroup!==SHIPMENT_GROUP_PASTRY) return toast("Hanya DO Pastry yang bisa digabung ke Pengiriman Utama");
+  if(doc.status===DO_STATUS_SHIPPED || doc.status===DO_STATUS_CANCELLED) return toast("DO ini sudah "+doc.status+" — tidak bisa digabung lagi");
+  if(!confirm(`Gabungkan DO Pastry ${doc.noSJ||id} ke Pengiriman Utama (MAIN) untuk ${doc.toko||doc.canonicalStore}, ${fmtTgl(doc.tgl)}? Produk Pastry akan ikut dalam satu DO/shipment dengan MAIN — hanya bisa dilakukan SEBELUM salah satu dokumen shipped.`)) return;
+  const mainCandidate = Object.values(D.doDocs).find(d=>d && d.tgl===doc.tgl && d.canonicalStore===doc.canonicalStore
+    && d.shipmentGroup===SHIPMENT_GROUP_MAIN && d.status!==DO_STATUS_CANCELLED && d.status!==DO_STATUS_SHIPPED && d.id!==id);
+  return kirimSheetsVersioned({jenis:"doDocMerge", pastryId:id, mainId: mainCandidate?mainCandidate.id:undefined, requestId:uid()}).then(res=>{
+    if(res.ok){
+      // Rekonstruksi lokal SEGERA (sama pola dgn doDraftBuat/doDocKonfirmasiKirimSimpan)
+      // — jangan cuma mengandalkan muatSemua() refetch, supaya tetap benar walau
+      // mode LOCAL_ONLY (tanpa cfg-url) yang tidak pernah refetch backend sungguhan.
+      const mainId = (res.record && res.record.mainId) || (mainCandidate ? mainCandidate.id : "MRG-"+id);
+      const byKey = {};
+      (mainCandidate ? (mainCandidate.plannedItems||[]) : []).forEach(it=>{ byKey[(it.kode||"")+"|"+it.produk] = Object.assign({}, it); });
+      (doc.plannedItems||[]).forEach(it=>{
+        const k = (it.kode||"")+"|"+it.produk;
+        if(byKey[k]) byKey[k].plannedQty = num(byKey[k].plannedQty) + num(it.plannedQty);
+        else byKey[k] = Object.assign({}, it);
+      });
+      D.doDocs[mainId] = Object.assign({}, mainCandidate, {
+        id: mainId, tgl:doc.tgl, toko:doc.toko, canonicalStore:doc.canonicalStore, shipmentGroup:SHIPMENT_GROUP_MAIN,
+        status: (mainCandidate && mainCandidate.status) || DO_STATUS_DRAFT,
+        noSJ: (mainCandidate && mainCandidate.noSJ) || doc.noSJ || "",
+        plannedItems: Object.values(byKey),
+        availableItems: (mainCandidate && mainCandidate.availableItems) || [],
+        actualItems: [],
+        catatan: (mainCandidate && mainCandidate.catatan) || doc.catatan || "",
+        batch: "", createdAt: (mainCandidate && mainCandidate.createdAt) || new Date().toISOString(), createdBy: "",
+        preprintedAt: "", readyAt: "", shippedAt: "", shippedBy: ""
+      });
+      if(res.record){
+        D.recordVersions.doDoc[mainId] = res.record.mainVersion;
+        D.recordVersions.doDoc[id] = res.record.pastryVersion;
+      }
+      doc.status = DO_STATUS_CANCELLED;
+      saveD();
+      toast(`✓ DO Pastry digabung ke DO Utama (${mainId})`);
+      renderDoDocList();
+      muatSemua(true); // jaring pengaman — kalau ada backend sungguhan, tarik ulang state authoritative-nya
+    } else if(res.code==="ALREADY_SHIPPED"){
+      toast("Gagal gabung — salah satu dokumen (Pastry/MAIN) sudah shipped");
+    } else {
+      toast("Gagal menggabungkan"+(res.code?" ("+res.code+")":""));
+    }
+  });
+}
+
 function totalPesananTokoFactory(toko, factory){
   let total = 0;
   Object.values(D.po).forEach(rows=>{
@@ -5416,7 +5991,11 @@ function renderFgReadyList(){
   const card = $("kFgReadyCard");
   const btn = $("kFgPullBtn");
   if(btn) btn.style.display = groups.length ? "inline-block" : "none";
-  if(!groups.length){ card.style.display="none"; $("kFgReadyEmpty").style.display="block"; renderKPortalStats(); return; }
+  // A5: setiap kali daftar FG Ready ditampilkan, cocokkan dgn DO Draft/
+  // Preprinted yang sudah ada (tanggal+bakery+shipmentGroup) — kalau cocok,
+  // tandai DO itu "ready" (TIDAK membuat DO baru, TIDAK mengurangi stok).
+  if(typeof doDocMatchFgReady_==="function") doDocMatchFgReady_(groups);
+  if(!groups.length){ card.style.display="none"; $("kFgReadyEmpty").style.display="block"; renderKPortalStats(); renderDoDocList(); return; }
   card.style.display="block"; $("kFgReadyEmpty").style.display="none";
   $("kFgReadyList").innerHTML = groups.map(g=>{
     const totalToko = g.breakdown.reduce((a,r)=>a+totalPesananTokoFactory(r.toko, r.factory),0);
@@ -5426,9 +6005,16 @@ function renderFgReadyList(){
           g.breakdown.map(r=>`<div style="padding-left:10px;color:var(--mute);font-size:12px">• ${r.factory==='cibadak'?'Cibadak':'Karangtengah'} (${r.toko}): ${fmt(r.total)} pcs</div>`).join("")
         }</div></details>`
       : "";
-    return `<div class="li"><span><span class="t1">${g.bakery}</span><span class="t2">${fmtTgl(g.tgl)} · <b style="color:var(--hi)">${fmt(g.total)} pcs</b> siap${ratio}</span>${detailBlock}</span><button class="btn mini ghost" onclick="kTarikDariFGBakery('${g.tgl}','${g.bakery.replace(/'/g,"\\'")}')">Proses Kirim →</button></div>`;
+    // B2/B3: label shipmentGroup eksplisit di tiap baris — MAIN & PASTRY bakery
+    // yg sama tampil sbg baris TERPISAH (bukan digabung), masing2 dgn tombol
+    // "Proses Kirim" sendiri.
+    const grupLabel = g.shipmentGroup===SHIPMENT_GROUP_PASTRY
+      ? `<span class="pill sebagian" style="margin-left:6px">Pastry</span>`
+      : `<span class="pill lunas" style="margin-left:6px">Pengiriman Utama</span>`;
+    return `<div class="li"><span><span class="t1">${g.bakery}${grupLabel}</span><span class="t2">${fmtTgl(g.tgl)} · <b style="color:var(--hi)">${fmt(g.total)} pcs</b> siap${ratio}</span>${detailBlock}</span><button class="btn mini ghost" onclick="kTarikDariFGBakery('${g.tgl}','${g.bakery.replace(/'/g,"\\'")}','${g.shipmentGroup}')">Proses Kirim ${g.shipmentGroup===SHIPMENT_GROUP_PASTRY?'Pastry':'Utama'} →</button></div>`;
   }).join("");
   renderKPortalStats();
+  renderDoDocList();
 }
 // Basis data LENGKAP (tidak difilter sisa>0) — dipakai utk mode filter Produk/Toko
 // yg butuh menampilkan status pemenuhan (termasuk yg sudah 100%).
@@ -5582,7 +6168,12 @@ function kUnfulfilledFilterRender(){
     </details>`;
   }).join("") : '<div class="empty">Tidak ada yang cocok dengan filter/pencarian.</div>';
 }
-function kTarikDariFG(tgl,toko,factory){
+// shipmentGroup (opsional) — kalau diisi (dipanggil dari "Proses Kirim
+// Utama/Pastry" di kartu Siap Diambil Delivery), HANYA produk grup itu yang
+// ditarik ke grid, dan kActiveShipmentGroup dipaksa ke grup itu (B1-B4):
+// simpanan berikutnya (kSimpan/doDraftBuat) memakai SATU grup ini utk semua
+// baris, bukan auto-split per produk.
+function kTarikDariFG(tgl,toko,factory,shipmentGroup){
   if($("kCard")) $("kCard").style.display = "block"; // DO form disembunyikan by default — tampilkan begitu "Proses Kirim" diklik
   if(toko && !D.stores.includes(toko)){ D.stores.push(toko); saveD(); ensureMasterToko(); }
   $("k-tgl").value = tgl;
@@ -5593,19 +6184,23 @@ function kTarikDariFG(tgl,toko,factory){
   $("k-toko").value = tokoCanon;
   if($("k-toko").value !== tokoCanon){ console.warn("Gagal set toko di dropdown:", tokoCanon); toast(`Toko "${tokoCanon}" gagal dipilih otomatis — pilih manual dari daftar Toko`); }
   if($("k-showAll")) $("k-showAll").checked = false; // biar filter sisa-pesanan tetap aktif; kalau produk yg ditarik ternyata di luar pesanan resmi, admin bisa centang manual
-  // Sumber FG diakumulasi per tgl+tokoCanon (bukan ditimpa) — supaya menarik
-  // batch Karangtengah lalu batch Cibadak (dua factory, satu bakery gabungan)
-  // dua kali berturut-turut tetap menandai KEDUA batch FG sbg terkirim saat
-  // Simpan, bukan cuma batch yg terakhir ditarik.
-  if(!kFgSource.length || kFgSource[0].tgl!==tgl || kFgSource[0].tokoCanon!==tokoCanon) kFgSource = [];
-  if(!kFgSource.some(s=>s.factory===factory && s.tokoRaw===toko)) kFgSource.push({tgl, tokoCanon, tokoRaw:toko, factory});
+  // Sumber FG diakumulasi per tgl+tokoCanon+shipmentGroup (bukan ditimpa) —
+  // supaya menarik batch Karangtengah lalu batch Cibadak (dua factory, satu
+  // bakery gabungan, grup yang SAMA) dua kali berturut-turut tetap menandai
+  // KEDUA batch FG sbg terkirim saat Simpan, bukan cuma batch yg terakhir
+  // ditarik. Ganti tgl/toko/grup -> mulai kFgSource baru.
+  if(!kFgSource.length || kFgSource[0].tgl!==tgl || kFgSource[0].tokoCanon!==tokoCanon || kActiveShipmentGroup!==(shipmentGroup||null)){
+    kFgSource = []; kActiveShipmentGroup = shipmentGroup||null;
+  }
+  if(!kFgSource.some(s=>s.factory===factory && s.tokoRaw===toko)) kFgSource.push({tgl, tokoCanon, tokoRaw:toko, factory, shipmentGroup});
   kBuildGrid();
   const rec = D.fgPacking[fgKey(tgl,factory)];
   if(rec){
     // Ambil produk langsung dari fgStoreRows (yg sudah py kode+produk+toko),
     // BUKAN dgn membongkar key "id|toko" balik ke produk lewat kode saja —
     // kode bisa dipakai >1 produk berbeda, jadi peta kode->produk tidak aman.
-    fgStoreRows(tgl, factory).filter(r=>r.toko===toko).forEach(r=>{
+    // Kalau shipmentGroup diminta, HANYA produk grup itu yang ditarik (B1).
+    fgStoreRows(tgl, factory).filter(r=>r.toko===toko && (!shipmentGroup || shipmentGroupForProduk(r.produk)===shipmentGroup)).forEach(r=>{
       const val = rec.packed[fgPackedKeyExisting(rec, skuId(r), r.toko)];
       const q = val==null ? 0 : (typeof val==="object" ? num(val.qty) : num(val));
       if(q<=0) return;
@@ -5616,7 +6211,7 @@ function kTarikDariFG(tgl,toko,factory){
   kHitung();
   $("kFormWrap").style.display="block"; $("kDoneWrap").style.display="none";
   $("kFgPullNote").style.display="block";
-  toast("Qty ditarik dari packing FG — silakan sesuaikan jika perlu, lalu Simpan Kiriman");
+  toast(`Qty ${shipmentGroup?shipmentGroupLabel(shipmentGroup)+" ":""}ditarik dari packing FG — silakan sesuaikan jika perlu, lalu Simpan/Buat DO Draft`);
   const target = $("kCard");
   if(target){
     const shell = document.querySelector(".shell");
@@ -5777,15 +6372,14 @@ function kHitung(){
     const el=$("kq-"+i);
     if(el){
       const maxQty = Math.max(0, stok);
-      if(maxQty<=0){
-        el.value = ""; el.setAttribute("disabled","disabled");
-        el.placeholder = "0"; el.title = "Stok gudang habis/minus — tidak bisa kirim";
-      } else {
-        el.removeAttribute("disabled"); el.placeholder=""; el.title=""; el.max = maxQty;
-        let v = num(el.value);
-        if(v>maxQty){ v=maxQty; el.value=maxQty; toast(`Qty ${p} dibatasi maks stok gudang (${fmt(maxQty)})`); }
-        if(v<0){ v=0; el.value=""; }
-      }
+      // Section A (DO Draft): TIDAK lagi dikunci/disable saat stok 0 — draft
+      // planning HARUS bisa diisi walau FG belum selesai (qty rencana, bukan
+      // aktual). Enforcement stok sungguhan tetap ada di kSimpan() (Simpan
+      // Delivery Order langsung/shipped), BUKAN di sini lagi.
+      el.removeAttribute("disabled"); el.placeholder="";
+      el.title = maxQty<=0 ? "Stok gudang habis/minus — boleh diisi utk DO Draft, tapi tidak bisa langsung Simpan Delivery Order" : "";
+      let v = num(el.value);
+      if(v<0){ v=0; el.value=""; }
       const q = num(el.value);
       tot+=q; if(q>0) jenis++;
       if(tr){
@@ -5873,22 +6467,31 @@ function kSimpan(){
   if(!allItems.length) return toast("Belum ada qty diisi");
   const batch = uid();
   const catatan = (($("k-catatan")&&$("k-catatan").value)||"").trim();
-  const rows = allItems.map(it=>({id:uid(),batch,tgl,toko,noSJ,catatan,produk:it.produk,qty:it.qty}));
+  // B1: shipmentGroup dipaksa (kActiveShipmentGroup, dari "Proses Kirim
+  // [Grup]" FG Ready) atau auto-split per produk (default mapping Pastry/
+  // Main) — dipakai jg utk baris item tambahan (default MAIN, bukan produk
+  // katalog jadi tidak py divisi Pastry).
+  const rows = allItems.map(it=>({id:uid(),batch,tgl,toko,noSJ,catatan,produk:it.produk,qty:it.qty,
+    shipmentGroup: kActiveShipmentGroup || shipmentGroupForProduk(it.produk)}));
   const totalQty = rows.reduce((a,r)=>a+r.qty,0);
   D.kirim.push(...rows);
   extras.forEach(it=>{ if(!D.products.includes(it.produk)) D.products.push(it.produk); });
   saveD();
   // Tandai SEMUA batch FG yg ditarik (bisa >1 factory utk bakery gabungan yg
   // sama) sbg sudah dikirim — masing2 pakai nama toko MENTAH milik factory-nya
-  // sendiri (tokoRaw), karena itulah yg dicocokkan oleh fgReadyList().
+  // sendiri (tokoRaw), karena itulah yg dicocokkan oleh fgReadyList(). Ditandai
+  // PER SHIPMENT GROUP (toko|grup) kalau grup-nya diketahui (ditarik dari FG
+  // Ready), supaya grup lain (mis. Pastry) utk toko yg sama TIDAK ikut
+  // hilang dari daftar Siap Diambil Delivery (lihat fgReadyList).
   kFgSource.filter(s=>s.tgl===tgl && s.tokoCanon===toko).forEach(s=>{
     const key = fgKey(tgl, s.factory);
     const rec = D.fgPacking[key] || {readyAt:null, packed:{}};
     rec.dikirimKe = rec.dikirimKe || [];
-    if(!rec.dikirimKe.includes(s.tokoRaw)) rec.dikirimKe.push(s.tokoRaw);
+    const mark = s.shipmentGroup ? (s.tokoRaw+"|"+s.shipmentGroup) : s.tokoRaw;
+    if(!rec.dikirimKe.includes(mark)) rec.dikirimKe.push(mark);
     D.fgPacking[key] = rec;
   });
-  if(kFgSource.length){ saveD(); kFgSource = []; }
+  if(kFgSource.length){ saveD(); kFgSource = []; kActiveShipmentGroup = null; }
   toast(`✓ Delivery Order tersimpan · ${fmt(totalQty)} pcs ke ${toko}`);
   kirimSheets({jenis:"kirim", rows, requestId:uid()});
   $("k-inv").value="";
@@ -5901,7 +6504,7 @@ function kSimpan(){
 }
 function kBaru(){
   $("kFormWrap").style.display="block"; $("kDoneWrap").style.display="none"; $("kFgPullNote").style.display="none";
-  kFgSource=[]; kExtraKosongkan();
+  kFgSource=[]; kActiveShipmentGroup=null; kExtraKosongkan();
   if($("k-inv")) $("k-inv").value="";
   if($("k-catatan")) $("k-catatan").value="";
   if($("k-cari")) $("k-cari").value="";

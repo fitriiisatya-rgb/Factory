@@ -101,6 +101,8 @@ const SHEET_MUTASI = "Mutasi";
 const SHEET_STOKADJ = "StokAdj";
 const SHEET_REJECT = "Reject";
 const SHEET_PESANAN = "Pesanan";
+// ---------- Sheet BARU (DO lifecycle draft/preprint/ready/shipped + shipment group) ----------
+const SHEET_DO = "DODoc";
 
 const HEADERS = {
   [SHEET_PO]: ["Tanggal","Factory","Kategori","Kode","Produk","POAwal","PORevisi","PB","StoresJSON","UpdatedAt"],
@@ -115,7 +117,11 @@ const HEADERS = {
   [SHEET_CEKLIS_META]: ["Tanggal","Divisi","Status","SubmittedAt","Closed","ClosedAt","ClosedBy","ReopenReason"],
   [SHEET_FGPACKING]: ["Tanggal","Factory","Kode","Produk","Toko","Qty","Status","Keterangan","UpdatedAt"],
   [SHEET_FGREADY]: ["Tanggal","Factory","ReadyAt","SourceVersionJSON"],
-  [SHEET_KIRIM]: ["Id","Batch","Tanggal","Toko","Produk","Qty","NoSJ","Pengemudi","Kendaraan","CreatedAt"],
+  // ShipmentGroup kolom BARU (kolom terakhir) — baris LAMA tanpa kolom ini
+  // dibaca sbg "" oleh readAllAsObjects_/readSimple_, FRONTEND yang memetakan
+  // "" -> "MAIN" (lihat kirimShipmentGroup() di HTML). TIDAK menulis ulang
+  // baris lama secara destruktif di sini.
+  [SHEET_KIRIM]: ["Id","Batch","Tanggal","Toko","Produk","Qty","NoSJ","Pengemudi","Kendaraan","CreatedAt","ShipmentGroup"],
   [SHEET_RETUR]: ["Id","Batch","Tanggal","Toko","Produk","Qty","Alasan","CreatedAt"],
   [SHEET_JUAL]: ["Id","Batch","Tanggal","Toko","Produk","Qty","CreatedAt"],
   [SHEET_MASTER]: ["Jenis","Nama"],
@@ -131,7 +137,19 @@ const HEADERS = {
   [SHEET_MUTASI]: ["Id","Tanggal","Produk","Asal","Tujuan","Qty","Keterangan","BatchAsal","BatchTujuan","CreatedAt"],
   [SHEET_STOKADJ]: ["Id","Tanggal","Produk","Tipe","Qty","Keterangan","CreatedAt"],
   [SHEET_REJECT]: ["Id","Batch","Tanggal","Toko","Produk","Qty","Alasan","Resolusi","Nilai","InvoiceBatch","CreatedAt"],
-  [SHEET_PESANAN]: ["Id","No","Status","PayloadJSON","CreatedAt","UpdatedAt"]
+  [SHEET_PESANAN]: ["Id","No","Status","PayloadJSON","CreatedAt","UpdatedAt"],
+  // DO lifecycle (draft/preprinted/ready/shipped/cancelled) + shipment group
+  // (MAIN/PASTRY/...). Satu dokumen = satu shipment (tanggal+toko+shipmentGroup),
+  // BUKAN lagi diasumsikan satu toko+tanggal = satu pengiriman. ItemsJSON
+  // menyimpan array {kode,produk,qty} apa adanya — planned = rencana dari sisa
+  // PO, available = qty FG yang terverifikasi siap, actual = qty yang BENAR2
+  // dikonfirmasi dikirim (basis stok/Kirim/Invoice/Omset, HANYA diisi saat
+  // status=shipped). Dokumen historis dari SEBELUM fitur ini ada tidak pernah
+  // muncul di sheet ini sama sekali (mereka cuma baris Kirim polos) — lihat
+  // catatan backward-compat di readDoDocs_.
+  [SHEET_DO]: ["Id","NoSJ","Tanggal","Toko","CanonicalStore","ShipmentGroup","Status",
+    "PlannedItemsJSON","AvailableItemsJSON","ActualItemsJSON","Catatan","Batch",
+    "CreatedAt","CreatedBy","PreprintedAt","ReadyAt","ShippedAt","ShippedBy","UpdatedAt"]
 };
 // Kolom yang dipaksa jadi teks polos, supaya Sheets tidak otomatis mengubah
 // jadi angka/tanggal (mis. "0079" jadi 79, "2026-08-11" jadi objek Date yang
@@ -182,6 +200,20 @@ const CEKLIS_STATUS_DRAFT = "draft";
 const CEKLIS_STATUS_SUBMITTED = "submitted";
 const CEKLIS_STATUS_REOPENED = "reopened";
 const CEKLIS_STATUS_VERIFIED_FG = "verified_fg";
+
+// ---- Lifecycle status dokumen DO (draft/preprint sebelum FG final -> ready
+// -> shipped) — lihat handleDoDoc*_ & readDoDocs_ di bawah. "print = shipped"
+// TIDAK PERNAH benar di sistem ini: preprinted TETAP planning, cuma sudah
+// pernah dicetak. HANYA shipped yang mengurangi stok/masuk Kirim/Omset/Invoice.
+const DO_STATUS_DRAFT = "draft";
+const DO_STATUS_PREPRINTED = "preprinted";
+const DO_STATUS_READY = "ready";
+const DO_STATUS_SHIPPED = "shipped";
+const DO_STATUS_CANCELLED = "cancelled";
+// shipmentGroup — field general (BUKAN hardcode "cuma kenal Pastry selamanya"),
+// minimal MAIN/PASTRY, OTHER dicadangkan utk kebutuhan masa depan.
+const SHIPMENT_GROUP_MAIN = "MAIN";
+const SHIPMENT_GROUP_PASTRY = "PASTRY";
 
 function setup(){
   Object.keys(HEADERS).forEach(name => getOrCreateSheet(name));
@@ -692,13 +724,17 @@ function doGet(e){
     toko: readMasterList_("toko"),
     po: readPO_(),
     ceklis: readCeklis_(),
-    kirim: readSimple_(SHEET_KIRIM, ["Id","Batch","Tanggal","Toko","Produk","Qty","NoSJ"], ["id","batch","tgl","toko","produk","qty","noSJ"]),
+    kirim: readSimple_(SHEET_KIRIM, ["Id","Batch","Tanggal","Toko","Produk","Qty","NoSJ","ShipmentGroup"], ["id","batch","tgl","toko","produk","qty","noSJ","shipmentGroup"]),
     retur: amorBacaRetur_(),
     jual: readSimple_(SHEET_JUAL, ["Id","Batch","Tanggal","Toko","Produk","Qty"], ["id","batch","tgl","toko","produk","qty"]),
     masterProduk: readMasterProduk_(),
     tokoTipe: readTokoTipe_(),
     settings: readSettings_(),
     invoice: readInvoice_(),
+    // DO lifecycle penuh (draft/preprinted/ready/shipped/cancelled) — lihat
+    // catatan volume di readDoDocs_ soal kenapa ini ditarik penuh (beda dgn
+    // FGPacking/Pembayaran/dst yang sengaja tetap lokal-saja).
+    doDocs: readDoDocs_(),
     // BARU: versi per record, supaya app bisa menyimpan expectedVersion
     // utk pengiriman berikutnya tanpa request terpisah. Data packing FG
     // per-toko SENGAJA TIDAK ditarik balik ke sini (tetap lokal saja,
@@ -713,7 +749,8 @@ function doGet(e){
       invoice: getAllVersions_("invoice"),
       masterProduk: getAllVersions_("masterProduk"),
       tokoTipe: getAllVersions_("tokoTipe"),
-      settings: getAllVersions_("settings")
+      settings: getAllVersions_("settings"),
+      doDoc: getAllVersions_("doDoc")
     },
     // FITUR SEMENTARA MASA TRIAL — tombstone RINGAN (bukan dataset penuh)
     // supaya device lain yg py cache lokal FGPacking/FGReady/Pembayaran/
@@ -856,6 +893,32 @@ function readSimple_(sheetName, cols, outKeys){
     return obj;
   });
 }
+function parseItemsJSON_(raw){
+  let items = [];
+  try{ items = JSON.parse(raw || "[]"); }catch(e){ items = []; }
+  return Array.isArray(items) ? items : [];
+}
+// Dokumen DO lengkap (draft/preprinted/ready/shipped/cancelled) — dataset ini
+// SENGAJA ditarik penuh (bukan tombstone ringan spt fitur trial) krn volumenya
+// setara Invoice (1 dokumen per shipment, bukan per baris), dan HARUS
+// authoritative cross-device (delivery/FG bisa beda device dari admin yang
+// bikin draft, lihat kebutuhan multi-user section A/E di spesifikasi).
+function readDoDocs_(){
+  const sh = getOrCreateSheet(SHEET_DO);
+  return readAllAsObjects_(sh).map(r=>({
+    id: str_(r.Id), noSJ: str_(r.NoSJ), tgl: normDate_(r.Tanggal), toko: str_(r.Toko),
+    canonicalStore: str_(r.CanonicalStore) || str_(r.Toko),
+    shipmentGroup: str_(r.ShipmentGroup) || SHIPMENT_GROUP_MAIN,
+    status: str_(r.Status) || DO_STATUS_DRAFT,
+    plannedItems: parseItemsJSON_(r.PlannedItemsJSON),
+    availableItems: parseItemsJSON_(r.AvailableItemsJSON),
+    actualItems: parseItemsJSON_(r.ActualItemsJSON),
+    catatan: str_(r.Catatan), batch: str_(r.Batch),
+    createdAt: str_(r.CreatedAt), createdBy: str_(r.CreatedBy),
+    preprintedAt: str_(r.PreprintedAt), readyAt: str_(r.ReadyAt),
+    shippedAt: str_(r.ShippedAt), shippedBy: str_(r.ShippedBy)
+  }));
+}
 
 // ============================================================
 //  doPost — terima satu aksi (payload.jenis) dari app
@@ -897,7 +960,13 @@ function doPost(e){
       case "ceklisReopen": resp = handleCeklisReopen_(payload, actor); break;
       case "fgPacking": resp = handleFgPacking_(payload, actor); break;
       case "fgReady": resp = handleFgReady_(payload, actor); break;
-      case "kirim": resp = handleAppendTransaksi_(SHEET_KIRIM, "kirim", payload, actor, ["Id","Batch","Tanggal","Toko","Produk","Qty","NoSJ","Pengemudi","Kendaraan"]); break;
+      case "kirim": resp = handleAppendTransaksi_(SHEET_KIRIM, "kirim", payload, actor, ["Id","Batch","Tanggal","Toko","Produk","Qty","NoSJ","Pengemudi","Kendaraan","ShipmentGroup"]); break;
+      case "doDocSave": resp = handleDoDocSave_(payload, actor); break;
+      case "doDocPreprint": resp = handleDoDocPreprint_(payload, actor); break;
+      case "doDocReady": resp = handleDoDocReady_(payload, actor); break;
+      case "doDocShip": resp = handleDoDocShip_(payload, actor); break;
+      case "doDocCancel": resp = handleDoDocCancel_(payload, actor); break;
+      case "doDocMerge": resp = handleDoDocMerge_(payload, actor); break;
       case "hapusKirim": resp = handleHapusById_(SHEET_KIRIM, "hapusKirim", payload, actor); break;
       case "retur": resp = handleAppendTransaksi_(SHEET_RETUR, "retur", payload, actor, ["Id","Batch","Tanggal","Toko","Produk","Qty","Alasan"]); break;
       case "hapusRetur": resp = handleHapusById_(SHEET_RETUR, "hapusRetur", payload, actor); break;
@@ -1247,6 +1316,21 @@ function cascadeDeleteTrialBatch_(tanggal, factory){
   const stokRows = readAllAsObjects_(shStok);
   skippedAmbiguousCounts.stokAdj = stokRows.filter(r => normDate_(r.Tanggal)===tanggal && inSet(r.Produk)).length;
 
+  // 14. DO (dokumen lifecycle draft/preprinted/ready/shipped) — Tanggal+
+  //     toko∈storeSet (kebijakan sama dgn Kirim) DAN minimal satu plannedItem
+  //     produknya ada di batch ini. Dihapus di SEMUA status (termasuk shipped)
+  //     supaya tidak menyisakan dokumen DO yatim yang merujuk batch yang baris
+  //     Kirim/Invoice-nya sendiri sudah ikut terhapus di atas.
+  const shDo = getOrCreateSheet(SHEET_DO);
+  const doRows = readAllAsObjects_(shDo);
+  const doMatch = r => normDate_(r.Tanggal)===tanggal && inStore(r.Toko)
+    && parseItemsJSON_(r.PlannedItemsJSON).some(it=>inSet(it.produk));
+  deletedCounts.doDoc = doRows.filter(doMatch).length;
+  deleteRowsWhere_(shDo, doMatch);
+  const shDoVer = getOrCreateSheet(SHEET_RECORDVERSION);
+  const doIdsHapus = new Set(doRows.filter(doMatch).map(r=>str_(r.Id)));
+  deleteRowsWhere_(shDoVer, r => str_(r.RecordType)==="doDoc" && doIdsHapus.has(str_(r.RecordKey)));
+
   return {tanggal, factory, produkCount:produkSet.size, deletedCounts, skippedAmbiguousCounts};
 }
 
@@ -1333,7 +1417,8 @@ function resetAllTrialData_(){
   const sheetsToClear = [
     SHEET_PO, SHEET_CEKLIS, SHEET_CEKLIS_META, SHEET_FGPACKING, SHEET_FGREADY,
     SHEET_KIRIM, SHEET_INVOICE, SHEET_PEMBAYARAN, SHEET_RETUR, SHEET_REJECT,
-    SHEET_JUAL, SHEET_PESANAN, SHEET_MUTASI, SHEET_STOKADJ, SHEET_TOKOTIPE, SHEET_MASTER
+    SHEET_JUAL, SHEET_PESANAN, SHEET_MUTASI, SHEET_STOKADJ, SHEET_TOKOTIPE, SHEET_MASTER,
+    SHEET_DO
   ];
   sheetsToClear.forEach(name=>{
     const sh = getOrCreateSheet(name);
@@ -1341,11 +1426,273 @@ function resetAllTrialData_(){
     rewriteAll_(sh, HEADERS[name], []);
   });
 
-  const resetRecordTypes = ["po","ceklis","fgPacking","fgReady","invoice","tokoTipe"];
+  const resetRecordTypes = ["po","ceklis","fgPacking","fgReady","invoice","tokoTipe","doDoc"];
   const shVer = getOrCreateSheet(SHEET_RECORDVERSION);
   deleteRowsWhere_(shVer, r => resetRecordTypes.indexOf(str_(r.RecordType)) !== -1);
 
   return {deletedCounts};
+}
+
+// ============================================================
+//  Handler — DO LIFECYCLE (recordType "doDoc", key = id dokumen)
+// ============================================================
+// draft -> preprinted -> ready -> shipped (atau cancelled dari draft/
+// preprinted/ready). "print = shipped" TIDAK PERNAH benar — preprinted TETAP
+// planning. HANYA doDocShip yang menulis baris ke Kirim (mengurangi stok/
+// masuk Omset/jadi basis Invoice lewat derivasi existing yang membaca
+// D.kirim), dan itu pun HANYA sekali per requestId (idempotency lewat
+// mutateVersioned_/checkIdempotent_ — retry requestId yang sama TIDAK PERNAH
+// menulis baris Kirim dua kali, lihat test DO05 di laporan pendamping).
+//
+// id dokumen SELALU dibuat client-side (uid(), sama seperti batch Kirim/
+// Invoice yang sudah ada) — backend cuma menyimpan apa yang dikirim, TIDAK
+// pernah membuat id sendiri utk doDocSave (supaya expectedVersion masuk akal
+// sejak baris pertama, versi 0 -> 1).
+function findDoDoc_(sh, id){
+  return readAllAsObjects_(sh).find(r=>str_(r.Id)===id);
+}
+function handleDoDocSave_(payload, actor){
+  const id = str_(payload.id);
+  if(!id) return {ok:false, code:"BAD_PAYLOAD", message:"id dokumen DO wajib diisi."};
+  const tanggal = normDate_(payload.tanggal);
+  const toko = str_(payload.toko);
+  if(!tanggal || !toko) return {ok:false, code:"BAD_PAYLOAD", message:"tanggal dan toko wajib diisi."};
+  return mutateVersioned_({
+    recordType:"doDoc", recordKey:id, requestId:payload.requestId, expectedVersion:payload.expectedVersion,
+    actor, action:"do_draft_create", tanggal, divisi:""
+  }, function(){
+    const sh = getOrCreateSheet(SHEET_DO);
+    const existing = findDoDoc_(sh, id);
+    const status = existing ? (str_(existing.Status)||DO_STATUS_DRAFT) : DO_STATUS_DRAFT;
+    if(status===DO_STATUS_SHIPPED || status===DO_STATUS_CANCELLED){
+      throw new Error("Dokumen DO ini sudah "+status+", tidak bisa diedit lagi.");
+    }
+    const now = new Date();
+    const shipmentGroup = str_(payload.shipmentGroup) || SHIPMENT_GROUP_MAIN;
+    const canonicalStore = str_(payload.canonicalStore) || toko;
+    deleteRowsWhere_(sh, r=>str_(r.Id)===id);
+    appendObjects_(sh, HEADERS[SHEET_DO], [{
+      Id:id, NoSJ:str_(payload.noSJ), Tanggal:tanggal, Toko:toko, CanonicalStore:canonicalStore,
+      ShipmentGroup:shipmentGroup, Status:status,
+      PlannedItemsJSON: JSON.stringify(payload.plannedItems||[]),
+      AvailableItemsJSON: existing ? str_(existing.AvailableItemsJSON) : "[]",
+      ActualItemsJSON: existing ? str_(existing.ActualItemsJSON) : "[]",
+      Catatan: str_(payload.catatan), Batch: existing ? str_(existing.Batch) : "",
+      CreatedAt: existing ? existing.CreatedAt : now, CreatedBy: existing ? str_(existing.CreatedBy) : (actor.userName||actor.userId||""),
+      PreprintedAt: existing ? str_(existing.PreprintedAt) : "",
+      ReadyAt: existing ? str_(existing.ReadyAt) : "",
+      ShippedAt: existing ? str_(existing.ShippedAt) : "",
+      ShippedBy: existing ? str_(existing.ShippedBy) : "",
+      UpdatedAt: now
+    }]);
+    return {record:{id, status}, payloadSummary:"DO "+(existing?"draft diperbarui":"draft dibuat")+" "+id+" utk "+toko+" ("+shipmentGroup+")"};
+  });
+}
+function handleDoDocPreprint_(payload, actor){
+  const id = str_(payload.id);
+  if(!id) return {ok:false, code:"BAD_PAYLOAD", message:"id dokumen DO wajib diisi."};
+  return mutateVersioned_({
+    recordType:"doDoc", recordKey:id, requestId:payload.requestId, expectedVersion:payload.expectedVersion,
+    actor, action:"do_preprint", tanggal:"", divisi:""
+  }, function(){
+    const sh = getOrCreateSheet(SHEET_DO);
+    const existing = findDoDoc_(sh, id);
+    if(!existing) throw new Error("Dokumen DO "+id+" tidak ditemukan.");
+    const status = str_(existing.Status)||DO_STATUS_DRAFT;
+    if(status===DO_STATUS_SHIPPED || status===DO_STATUS_CANCELLED) throw new Error("Dokumen DO ini sudah "+status+", tidak bisa dicetak sbg draft lagi.");
+    const now = new Date();
+    // Jangan mundur — kalau sudah preprinted/ready, cetak ulang tidak
+    // menurunkan status, cuma memastikan PreprintedAt terisi (kalau kosong).
+    const newStatus = status===DO_STATUS_DRAFT ? DO_STATUS_PREPRINTED : status;
+    deleteRowsWhere_(sh, r=>str_(r.Id)===id);
+    appendObjects_(sh, HEADERS[SHEET_DO], [Object.assign({}, existing, {
+      Status:newStatus, PreprintedAt: str_(existing.PreprintedAt) || now.toISOString(), UpdatedAt: now
+    })]);
+    return {record:{id, status:newStatus}, payloadSummary:"DO "+id+" preprint ("+status+" -> "+newStatus+")"};
+  });
+}
+// availableItems diisi dari sisi CLIENT (yang sudah py logika pencocokan FG
+// Ready -> DO, lihat doDocMatchFgReady_ di HTML) — backend cuma menyimpan &
+// menaikkan versi, TETAP authoritative krn tetap lewat mutateVersioned_
+// (expectedVersion salah -> VERSION_CONFLICT, bukan ditimpa diam-diam).
+function handleDoDocReady_(payload, actor){
+  const id = str_(payload.id);
+  if(!id) return {ok:false, code:"BAD_PAYLOAD", message:"id dokumen DO wajib diisi."};
+  return mutateVersioned_({
+    recordType:"doDoc", recordKey:id, requestId:payload.requestId, expectedVersion:payload.expectedVersion,
+    actor, action:"do_ready", tanggal:"", divisi:""
+  }, function(){
+    const sh = getOrCreateSheet(SHEET_DO);
+    const existing = findDoDoc_(sh, id);
+    if(!existing) throw new Error("Dokumen DO "+id+" tidak ditemukan.");
+    const status = str_(existing.Status)||DO_STATUS_DRAFT;
+    if(status===DO_STATUS_SHIPPED || status===DO_STATUS_CANCELLED) throw new Error("Dokumen DO ini sudah "+status+", tidak bisa ditandai FG Ready lagi.");
+    const now = new Date();
+    deleteRowsWhere_(sh, r=>str_(r.Id)===id);
+    appendObjects_(sh, HEADERS[SHEET_DO], [Object.assign({}, existing, {
+      Status:DO_STATUS_READY, AvailableItemsJSON: JSON.stringify(payload.availableItems||[]),
+      ReadyAt: str_(existing.ReadyAt) || now.toISOString(), UpdatedAt: now
+    })]);
+    return {record:{id, status:DO_STATUS_READY}, payloadSummary:"DO "+id+" FG ready"};
+  });
+}
+// SATU-SATUNYA titik yang menulis baris Kirim dari alur DO — di dalam lock +
+// mutateVersioned_ yang SAMA dgn transisi status, jadi "shipped tercatat" dan
+// "baris Kirim tertulis" ATOMIC (tidak bisa satu berhasil satu gagal secara
+// terpisah), dan idempotency requestId mencegah dobel tulis kalau tombol
+// "Konfirmasi Dikirim" ke-retry/ke-klik dgn requestId yang sama (lihat DO05).
+function handleDoDocShip_(payload, actor){
+  const id = str_(payload.id);
+  if(!id) return {ok:false, code:"BAD_PAYLOAD", message:"id dokumen DO wajib diisi."};
+  if(!payload.requestId) return {ok:false, code:"MISSING_REQUEST_ID", message:"requestId wajib utk konfirmasi kirim."};
+  return mutateVersioned_({
+    recordType:"doDoc", recordKey:id, requestId:payload.requestId, expectedVersion:payload.expectedVersion,
+    actor, action:"do_ship", tanggal:"", divisi:""
+  }, function(){
+    const sh = getOrCreateSheet(SHEET_DO);
+    const existing = findDoDoc_(sh, id);
+    if(!existing) throw new Error("Dokumen DO "+id+" tidak ditemukan.");
+    const status = str_(existing.Status)||DO_STATUS_DRAFT;
+    if(status===DO_STATUS_SHIPPED) throw new Error("Dokumen DO ini sudah shipped — tidak bisa dikonfirmasi dua kali.");
+    if(status===DO_STATUS_CANCELLED) throw new Error("Dokumen DO ini sudah dibatalkan.");
+    const plannedItems = parseItemsJSON_(existing.PlannedItemsJSON);
+    const actualItems = (payload.actualItems && payload.actualItems.length)
+      ? payload.actualItems
+      : plannedItems.map(it=>({kode:it.kode, produk:it.produk, actualShipQty:it.plannedQty}));
+    const now = new Date();
+    const batch = str_(existing.Batch) || id;
+    const shKirim = getOrCreateSheet(SHEET_KIRIM);
+    const kirimRows = actualItems.filter(it=>num_(it.actualShipQty!=null?it.actualShipQty:it.qty)>0).map((it,idx)=>({
+      Id: id+"-"+(it.kode||idx), Batch: batch, Tanggal: normDate_(existing.Tanggal), Toko: str_(existing.Toko),
+      Produk: str_(it.produk), Qty: num_(it.actualShipQty!=null?it.actualShipQty:it.qty),
+      NoSJ: str_(existing.NoSJ), Pengemudi:"", Kendaraan:"", CreatedAt: now,
+      ShipmentGroup: str_(existing.ShipmentGroup)||SHIPMENT_GROUP_MAIN
+    }));
+    appendObjects_(shKirim, HEADERS[SHEET_KIRIM], kirimRows);
+    deleteRowsWhere_(sh, r=>str_(r.Id)===id);
+    appendObjects_(sh, HEADERS[SHEET_DO], [Object.assign({}, existing, {
+      Status:DO_STATUS_SHIPPED, ActualItemsJSON: JSON.stringify(actualItems), Batch:batch,
+      ShippedAt: now.toISOString(), ShippedBy: actor.userName||actor.userId||"", UpdatedAt: now
+    })]);
+    return {record:{id, status:DO_STATUS_SHIPPED, batch, kirimRowCount:kirimRows.length}, payloadSummary:"DO "+id+" shipped -> "+kirimRows.length+" baris Kirim (batch "+batch+")"};
+  });
+}
+function handleDoDocCancel_(payload, actor){
+  const id = str_(payload.id);
+  if(!id) return {ok:false, code:"BAD_PAYLOAD", message:"id dokumen DO wajib diisi."};
+  return mutateVersioned_({
+    recordType:"doDoc", recordKey:id, requestId:payload.requestId, expectedVersion:payload.expectedVersion,
+    actor, action:"do_cancel", tanggal:"", divisi:""
+  }, function(){
+    const sh = getOrCreateSheet(SHEET_DO);
+    const existing = findDoDoc_(sh, id);
+    if(!existing) throw new Error("Dokumen DO "+id+" tidak ditemukan.");
+    const status = str_(existing.Status)||DO_STATUS_DRAFT;
+    if(status===DO_STATUS_SHIPPED) throw new Error("Dokumen DO yang sudah shipped tidak bisa dibatalkan.");
+    const now = new Date();
+    deleteRowsWhere_(sh, r=>str_(r.Id)===id);
+    appendObjects_(sh, HEADERS[SHEET_DO], [Object.assign({}, existing, {Status:DO_STATUS_CANCELLED, UpdatedAt: now})]);
+    return {record:{id, status:DO_STATUS_CANCELLED}, payloadSummary:"DO "+id+" dibatalkan"};
+  });
+}
+// Gabungkan dokumen PASTRY ke dokumen MAIN (tanggal+CanonicalStore yang sama)
+// SEBELUM salah satunya shipped — BLOCK total kalau salah satu sudah shipped
+// (supaya tidak menggandakan qty/shipment yang sudah tercatat sbg terkirim).
+// Menyentuh 2 record (MAIN + PASTRY) sekaligus, jadi TIDAK memakai
+// mutateVersioned_ (yang didesain utk 1 record) — pola custom yang sama dgn
+// cascadeDeleteTrialBatch_/handleTrialBatchDelete_: withLock_ manual +
+// checkIdempotent_/recordIdempotent_ + appendAudit_ sendiri.
+function handleDoDocMerge_(payload, actor){
+  const pastryId = str_(payload.pastryId);
+  if(!pastryId) return {ok:false, code:"BAD_PAYLOAD", message:"pastryId wajib diisi."};
+  const mainId = str_(payload.mainId);
+  const requestId = payload.requestId;
+  if(!requestId) return {ok:false, code:"MISSING_REQUEST_ID", message:"requestId wajib utk endpoint ini."};
+
+  return withLock_(function(){
+    const cached = checkIdempotent_(requestId);
+    if(cached) return cached;
+
+    const sh = getOrCreateSheet(SHEET_DO);
+    const rows = readAllAsObjects_(sh);
+    const pastry = rows.find(r=>str_(r.Id)===pastryId);
+    if(!pastry){
+      const resp = {ok:false, code:"NOT_FOUND", message:"Dokumen Pastry "+pastryId+" tidak ditemukan."};
+      recordIdempotent_(requestId, "doDoc", pastryId, resp);
+      return resp;
+    }
+    const pStatus = str_(pastry.Status)||DO_STATUS_DRAFT;
+    // Auto-cari MAIN HANYA di antara yang masih bisa digabung (bukan cancelled
+    // ATAUPUN shipped) — kalau tidak dibatasi begini, pencarian bisa kejegal
+    // dokumen MAIN historis yang sudah shipped utk tanggal+toko yang sama
+    // (mis. shipment hari sebelumnya yang kebetulan sama key-nya) dan salah
+    // menganggap merge "diblokir" padahal seharusnya tinggal buat MAIN baru.
+    // Dokumen shipped hanya relevan kalau dipilih EKSPLISIT lewat mainId
+    // (baris cek ALREADY_SHIPPED di bawah tetap menjaga itu).
+    let main = mainId ? rows.find(r=>str_(r.Id)===mainId)
+      : rows.find(r=>str_(r.Tanggal)===str_(pastry.Tanggal) && str_(r.CanonicalStore)===str_(pastry.CanonicalStore)
+          && str_(r.ShipmentGroup)===SHIPMENT_GROUP_MAIN && str_(r.Status)!==DO_STATUS_CANCELLED
+          && str_(r.Status)!==DO_STATUS_SHIPPED && str_(r.Id)!==pastryId);
+    const mStatus = main ? (str_(main.Status)||DO_STATUS_DRAFT) : null;
+    if(pStatus===DO_STATUS_SHIPPED || mStatus===DO_STATUS_SHIPPED){
+      const resp = {ok:false, code:"ALREADY_SHIPPED", message:"Salah satu dokumen (Pastry atau MAIN) sudah shipped — merge diblokir."};
+      recordIdempotent_(requestId, "doDoc", pastryId, resp);
+      appendAudit_({requestId, userId:actor.userId, userName:actor.userName, role:actor.role,
+        action:"do_merge_blocked", tanggal:str_(pastry.Tanggal), divisi:"", recordKey:pastryId,
+        previousVersion:0, newVersion:0, payloadSummary:"blocked: sudah shipped", status:"conflict"});
+      return resp;
+    }
+    if(pStatus===DO_STATUS_CANCELLED){
+      const resp = {ok:false, code:"BAD_PAYLOAD", message:"Dokumen Pastry ini sudah dibatalkan."};
+      recordIdempotent_(requestId, "doDoc", pastryId, resp);
+      return resp;
+    }
+
+    const now = new Date();
+    const pastryItems = parseItemsJSON_(pastry.PlannedItemsJSON);
+    let mainDoc, mainNewVersion;
+    if(main){
+      const mainItems = parseItemsJSON_(main.PlannedItemsJSON);
+      const byKey = {};
+      mainItems.forEach(it=>{ byKey[(it.kode||"")+"|"+it.produk] = Object.assign({}, it); });
+      pastryItems.forEach(it=>{
+        const k = (it.kode||"")+"|"+it.produk;
+        if(byKey[k]) byKey[k].plannedQty = num_(byKey[k].plannedQty) + num_(it.plannedQty);
+        else byKey[k] = Object.assign({}, it);
+      });
+      deleteRowsWhere_(sh, r=>str_(r.Id)===str_(main.Id));
+      mainDoc = Object.assign({}, main, {PlannedItemsJSON: JSON.stringify(Object.values(byKey)), UpdatedAt: now});
+      appendObjects_(sh, HEADERS[SHEET_DO], [mainDoc]);
+      mainNewVersion = getVersion_("doDoc", str_(main.Id)).version + 1;
+    } else {
+      const newId = "MRG-"+pastryId;
+      mainDoc = {
+        Id:newId, NoSJ:str_(pastry.NoSJ), Tanggal:str_(pastry.Tanggal), Toko:str_(pastry.Toko),
+        CanonicalStore:str_(pastry.CanonicalStore), ShipmentGroup:SHIPMENT_GROUP_MAIN, Status:DO_STATUS_DRAFT,
+        PlannedItemsJSON: JSON.stringify(pastryItems), AvailableItemsJSON:"[]", ActualItemsJSON:"[]",
+        Catatan: str_(pastry.Catatan), Batch:"", CreatedAt: now, CreatedBy: actor.userName||actor.userId||"",
+        PreprintedAt:"", ReadyAt:"", ShippedAt:"", ShippedBy:"", UpdatedAt: now
+      };
+      appendObjects_(sh, HEADERS[SHEET_DO], [mainDoc]);
+      mainNewVersion = 1;
+    }
+    setVersion_("doDoc", str_(mainDoc.Id), mainNewVersion, actor.userName||actor.userId||"");
+
+    deleteRowsWhere_(sh, r=>str_(r.Id)===pastryId);
+    appendObjects_(sh, HEADERS[SHEET_DO], [Object.assign({}, pastry, {
+      Status:DO_STATUS_CANCELLED, Catatan:(str_(pastry.Catatan)+" [digabung ke "+str_(mainDoc.Id)+"]").trim(), UpdatedAt: now
+    })]);
+    const pastryNewVersion = getVersion_("doDoc", pastryId).version + 1;
+    setVersion_("doDoc", pastryId, pastryNewVersion, actor.userName||actor.userId||"");
+
+    const resp = {ok:true, version:mainNewVersion, updatedAt:now.toISOString(),
+      record:{mainId:str_(mainDoc.Id), mainVersion:mainNewVersion, pastryId, pastryVersion:pastryNewVersion}};
+    recordIdempotent_(requestId, "doDoc", pastryId, resp);
+    appendAudit_({requestId, userId:actor.userId, userName:actor.userName, role:actor.role,
+      action:"do_merge", tanggal:str_(pastry.Tanggal), divisi:"", recordKey:pastryId+"->"+str_(mainDoc.Id),
+      previousVersion:0, newVersion:mainNewVersion, payloadSummary:"Pastry "+pastryId+" digabung ke MAIN "+str_(mainDoc.Id), status:"ok"});
+    return resp;
+  });
 }
 
 // ============================================================
@@ -1645,6 +1992,9 @@ function handleAppendTransaksi_(sheetName, actionName, payload, actor, headerFie
       if(headerFields.indexOf("NoSJ")!==-1) o.NoSJ = str_(r.noSJ);
       if(headerFields.indexOf("Pengemudi")!==-1) o.Pengemudi = str_(r.pengemudi);
       if(headerFields.indexOf("Kendaraan")!==-1) o.Kendaraan = str_(r.kendaraan);
+      // ShipmentGroup (MAIN/PASTRY) — baris lama/klien lama yang belum kirim
+      // field ini akan tertulis "" (dibaca sbg MAIN, lihat readDoDocs_/HTML).
+      if(headerFields.indexOf("ShipmentGroup")!==-1) o.ShipmentGroup = str_(r.shipmentGroup);
       if(headerFields.indexOf("Alasan")!==-1) o.Alasan = str_(r.alasan);
       if(headerFields.indexOf("InvoiceNo")!==-1) o.InvoiceNo = str_(r.invoiceNo);
       if(headerFields.indexOf("Jumlah")!==-1) o.Jumlah = num_(r.jumlah);
