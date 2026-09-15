@@ -542,7 +542,13 @@ details.sect>summary{padding:15px 16px}
     <div class="row" style="align-items:flex-end">
       <div><label class="fl">Tanggal</label><input type="date" id="pd-tgl" onchange="prodBuildChecklist()"></div>
       <div><label class="fl">Divisi</label><select id="pd-divisi" onchange="prodBuildChecklist()"></select></div>
+      <div><label class="fl">Filter PO</label><select id="pd-pofilter" onchange="pdApplyFilter();renderPdRingkasan()">
+        <option value="">Semua (PO Awal + Tambahan)</option>
+        <option value="awal">PO Awal</option>
+        <option value="tambahan">PO Tambahan</option>
+      </select></div>
     </div>
+    <div class="note">Filter ini murni tampilan/analisis — TIDAK membuat target produksi baru. Total Target &amp; Sisa produksi tetap kumulatif (PO Awal + PO Tambahan digabung), tidak terpecah jadi dua pekerjaan.</div>
   </div>
 
   <div class="card" id="pdRingkasanWrap" style="display:none">
@@ -550,7 +556,7 @@ details.sect>summary{padding:15px 16px}
     <div class="stat-grid" id="pdRingkasanStats" style="margin-top:10px"></div>
     <div class="tblwrap" style="margin-top:12px">
       <table>
-        <thead><tr><th class="l">Divisi</th><th>Target</th><th>Aktual</th><th>Sisa</th><th class="l">Status</th></tr></thead>
+        <thead><tr><th class="l">Divisi</th><th>PO Awal</th><th>PO Tambahan</th><th>Total Target</th><th>Aktual</th><th>Sisa</th><th class="l">Status</th></tr></thead>
         <tbody id="pdRingkasanBody"></tbody>
       </table>
     </div>
@@ -3939,6 +3945,10 @@ function renderPdRingkasan(){
   const rows = pdRingkasanHariIni(tgl);
   if(!tgl || !rows.length){ wrap.style.display="none"; return; }
   wrap.style.display="block";
+  // Section C — kartu total di atas SELALU dari rows LENGKAP (belum difilter
+  // PO Awal/Tambahan) supaya "Total Target"/"Sisa" tetap kumulatif dan tidak
+  // ikut terpecah oleh filter analisis di bawah (CRITICAL: filter presentasi
+  // saja, bukan job produksi baru).
   const utkTotal = rows.filter(r=>!divisiVerifikasi(r.divisi));
   const TT = utkTotal.reduce((a,r)=>a+r.target,0), TA = utkTotal.reduce((a,r)=>a+r.aktual,0), TR = utkTotal.reduce((a,r)=>a+r.reject,0);
   const TS = Math.max(0, TT-TA);
@@ -3947,10 +3957,21 @@ function renderPdRingkasan(){
     <div class="stat"><div class="lbl">Aktual</div><div class="val">${fmt(TA)}</div></div>
     <div class="stat"><div class="lbl">Reject</div><div class="val" style="color:${TR?'var(--red)':'var(--hi)'}">${fmt(TR)}</div></div>
     <div class="stat"><div class="lbl">Sisa</div><div class="val" style="color:${TS>0?'var(--warn)':'var(--green)'}">${fmt(TS)}</div></div>`;
-  $("pdRingkasanBody").innerHTML = rows.map(r=>{
+  // Filter PO Awal/Tambahan (Section C) — HANYA menentukan baris DIVISI mana
+  // yang tampil di tabel ini ("Tambahan" -> cuma divisi yang py PO Tambahan >
+  // 0, sesuai POF03); tidak mengubah rows dipakai utk kartu total di atas.
+  const poFilter = ($("pd-pofilter") && $("pd-pofilter").value) || "";
+  const rowsTampil = poFilter==="tambahan" ? rows.filter(r=>r.poTambahan>0) : rows;
+  if(!rowsTampil.length){
+    $("pdRingkasanBody").innerHTML = `<tr><td colspan="7" class="empty">Tidak ada divisi dengan PO Tambahan untuk tanggal ini.</td></tr>`;
+    return;
+  }
+  $("pdRingkasanBody").innerHTML = rowsTampil.map(r=>{
     const warna = r.status==="Selesai"||r.status==="Ditutup" ? "var(--green)" : (r.status==="Berjalan" ? "var(--warn)" : "var(--mute)");
     return `<tr style="cursor:pointer" onclick="pdBukaDivisi('${r.divisi.replace(/'/g,"\\'")}')">
       <td class="l">${r.divisi}</td>
+      <td style="color:var(--mute)">${fmt(r.poAwal)}</td>
+      <td style="color:${r.poTambahan>0?'var(--warn)':'var(--mute)'}">${fmt(r.poTambahan)}</td>
       <td>${fmt(r.target)}</td>
       <td>${fmt(r.aktual)}</td>
       <td style="color:${r.sisa>0?'var(--warn)':'var(--mute)'}">${fmt(r.sisa)}</td>
@@ -4035,8 +4056,11 @@ function renderPdRows(rows){
     html += items.map(t=>{
       const divisiAsal = divisiProduk(t) || "";
       const subInfo = t.sudahAktual>0 ? `<div class="sub">target awal ${fmt(t.targetAsli)} · sudah dilaporkan ${fmt(t.sudahAktual)}${t.sudahReject?` (reject ${fmt(t.sudahReject)})`:''}</div>` : '';
-      return `<tr data-kode="${t.kode}" data-g="${gi}" data-produk="${String(t.produk).replace(/"/g,'&quot;')}" data-kategori="${t.kategori}" data-target="${t.sisa}" data-target-asli="${t.targetAsli}" data-status="sesuai" data-divisiasal="${divisiAsal}">
-      <td class="l" title="${t.produk}">${t.produk}${subInfo}</td>
+      // Section C — info PO Awal/Tambahan per produk, murni tampilan (angka
+      // "Sisa" yang dipakai submit TETAP kumulatif, tidak berubah oleh ini).
+      const poInfo = num(t.poRevisi)>0 ? `<div class="sub">PO Awal ${fmt(t.poAwal)} · PO Tambahan ${fmt(t.poRevisi)}</div>` : '';
+      return `<tr data-kode="${t.kode}" data-g="${gi}" data-produk="${String(t.produk).replace(/"/g,'&quot;')}" data-kategori="${t.kategori}" data-target="${t.sisa}" data-target-asli="${t.targetAsli}" data-status="sesuai" data-divisiasal="${divisiAsal}" data-porevisi="${num(t.poRevisi)}">
+      <td class="l" title="${t.produk}">${t.produk}${subInfo}${poInfo}</td>
       <td>${fmt(t.sisa)}</td>
       <td><div class="seg3">
         <button type="button" class="segb on" onclick="pdSetStatus(this,'sesuai')">Sesuai</button>
@@ -4068,6 +4092,10 @@ function pdApplyFilter(){
   const wrapFg = $("pdFgFilterWrap");
   const fdv = (wrapFg && wrapFg.style.display!=="none" && $("pd-fDivisiAsal")) ? $("pd-fDivisiAsal").value : "";
   const onlyIsi = !!($("pd-onlyIsi") && $("pd-onlyIsi").checked);
+  // Section C (POF04) — "PO Tambahan" HANYA menampilkan produk yang py
+  // poRevisi>0 utk tanggal+divisi ini; TIDAK mengubah data-target/sisa yang
+  // dipakai submit (murni visibility, sama pola dgn filter cari/divisiAsal).
+  const poFilter = ($("pd-pofilter") && $("pd-pofilter").value) || "";
   const perGrup = {};
   let tampil=0, total=0;
   document.querySelectorAll('#pdBody tr[data-kode]').forEach(tr=>{
@@ -4076,6 +4104,7 @@ function pdApplyFilter(){
     let ok = true;
     if(q && !((tr.dataset.produk||"").toLowerCase().includes(q) || (tr.dataset.kode||"").toLowerCase().includes(q))) ok=false;
     if(ok && fdv && tr.dataset.divisiasal!==fdv) ok=false;
+    if(ok && poFilter==="tambahan" && num(tr.dataset.porevisi)<=0) ok=false;
     if(ok && onlyIsi){
       const diubah = tr.dataset.status!=="sesuai" || num(tr.querySelector('[data-c="reject"]').value)>0;
       if(!diubah) ok=false;
@@ -4567,6 +4596,12 @@ function dashData(tgl){
   return D.divisi.map(d=>{
     const targets = targetUntukDivisi(tgl,d);
     const totalTarget = targets.reduce((a,r)=>a+r.target,0);
+    // Section C — breakdown PO Awal/PO Tambahan (poRevisi), murni informasi
+    // analisis (PB selalu diabaikan, sama spt hitungTarget). TIDAK dipakai utk
+    // mengubah totalTarget di atas — itu tetap hasil hitungTarget() yang sudah
+    // ada (respek D.settings.targetMode), supaya semantik revisi tidak berubah.
+    const totalPoAwal = targets.reduce((a,r)=>a+num(r.poAwal),0);
+    const totalPoTambahan = targets.reduce((a,r)=>a+num(r.poRevisi),0);
     const key = ceklisKey(tgl,d);
     const c = D.ceklis[key];
     const totalAktual = c ? (c.rows||[]).reduce((a,r)=>a+num(r.aktual),0) : 0;
@@ -4578,7 +4613,7 @@ function dashData(tgl){
     const fgFactory = fgFactoryForDivisi(d);
     const deliveryReady = fgFactory ? fgPackingEffectiveClosed(tgl, fgFactory) : false;
     const closed = ceklisEffectiveClosed(c) || deliveryReady;
-    return {divisi:d, target:totalTarget, aktual:totalAktual, reject:totalReject, submitted: !!(c && c.submitted), closed, factory};
+    return {divisi:d, target:totalTarget, poAwal:totalPoAwal, poTambahan:totalPoTambahan, aktual:totalAktual, reject:totalReject, submitted: !!(c && c.submitted), closed, factory};
   });
 }
 function renderDashStatusSubmit(tgl){
@@ -4599,8 +4634,12 @@ function renderDashStatusSubmit(tgl){
     html += rows.map(r=>{
       const pctD = fulfil(r.aktual,r.reject,r.target);
       const status = r.closed ? '✓ ditutup' : (r.submitted ? '✓ sudah submit' : 'belum submit');
+      // Section C — "jika relatif ringan": breakdown PO Awal/Tambahan inline,
+      // TIDAK ditambahkan ke Dashboard Eksekutif utama (tetap ringan di sini,
+      // hanya muncul kalau memang ada PO Tambahan utk divisi ini).
+      const poBreakdown = r.poTambahan>0 ? ` <span style="color:var(--mute)">(Awal ${fmt(r.poAwal)} · Tambahan ${fmt(r.poTambahan)})</span>` : '';
       return `<div class="li"><span><span class="t1">${r.divisi}</span><span class="t2">${status}</span></span>
-        <span>${fmt(r.target)} → ${fmt(r.aktual)} <span class="${fulfilClass(pctD)}">(${pctD==null?'-':pctD+'%'})</span>${r.reject?` · reject ${fmt(r.reject)}`:''}</span></div>`;
+        <span>${fmt(r.target)}${poBreakdown} → ${fmt(r.aktual)} <span class="${fulfilClass(pctD)}">(${pctD==null?'-':pctD+'%'})</span>${r.reject?` · reject ${fmt(r.reject)}`:''}</span></div>`;
     }).join("");
     html += `</div>`;
   });
