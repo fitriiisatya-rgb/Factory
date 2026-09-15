@@ -627,7 +627,11 @@ function mutateVersioned_(opts, applyFn){
     try{
       result = applyFn(current) || {};
     }catch(err){
-      const resp = {ok:false, code:"APPLY_ERROR", message:String(err)};
+      // Kode error spesifik (mis. DO_NOT_READY/ACTUAL_EXCEEDS_PLANNED, lihat
+      // bizError_) dibaca dari err.code kalau applyFn melempar error bisnis
+      // eksplisit — default tetap APPLY_ERROR generik spt sebelumnya utk
+      // handler lain yang cuma throw new Error() biasa (tidak py .code).
+      const resp = {ok:false, code:(err && err.code) || "APPLY_ERROR", message:String(err)};
       appendAudit_({requestId, userId:actor.userId, userName:actor.userName, role:actor.role,
         action:opts.action, tanggal:opts.tanggal, divisi:opts.divisi, recordKey,
         previousVersion:current.version, newVersion:current.version,
@@ -1536,29 +1540,96 @@ function handleDoDocReady_(payload, actor){
     return {record:{id, status:DO_STATUS_READY}, payloadSummary:"DO "+id+" FG ready"};
   });
 }
+// Error bisnis eksplisit (kode spesifik, bukan APPLY_ERROR generik) — dibaca
+// balik oleh mutateVersioned_ lewat property .code (lihat catch block-nya).
+function bizError_(code, message){
+  const e = new Error(message);
+  e.code = code;
+  return e;
+}
+// Identitas item DO yang aman utk mencocokkan actual vs planned/available:
+// kode + nama produk TERNORMALISASI (uppercase/trim/collapse-spasi) — sama
+// prinsip dgn skuId() di frontend, supaya beda kapitalisasi/spasi tidak
+// dianggap produk yang berbeda.
+function normProdukNama_(v){ return str_(v).toUpperCase().trim().replace(/\s+/g," "); }
+function doDocItemKey_(kode, produk){ return str_(kode)+"\x1f"+normProdukNama_(produk); }
 // SATU-SATUNYA titik yang menulis baris Kirim dari alur DO — di dalam lock +
 // mutateVersioned_ yang SAMA dgn transisi status, jadi "shipped tercatat" dan
 // "baris Kirim tertulis" ATOMIC (tidak bisa satu berhasil satu gagal secara
 // terpisah), dan idempotency requestId mencegah dobel tulis kalau tombol
-// "Konfirmasi Dikirim" ke-retry/ke-klik dgn requestId yang sama (lihat DO05).
+// "Konfirmasi Dikirim" ke-retry/ke-klik dgn requestId yang sama (lihat DO05/
+// DO-BE08).
+//
+// Backend adalah FINAL business-rule guard — TIDAK boleh percaya begitu saja
+// pada payload client (client cuma UI convenience, tombol bisa disembunyikan
+// tapi endpoint tetap bisa dipanggil langsung):
+//   A. status existing WAJIB "ready" (bukan draft/preprinted/cancelled/shipped)
+//   B. tiap actual item WAJIB match planned item (identitas kode+nama
+//      ternormalisasi) — TIDAK boleh ada produk baru yang tidak direncanakan
+//   C. actualShipQty WAJIB <= availableQty dari AvailableItemsJSON yang
+//      TERSIMPAN di record (authoritative, BUKAN dari payload client)
+//   D. actualShipQty WAJIB <= plannedQty (sisa PO saat draft dibuat)
+//   E. actualItems WAJIB eksplisit dari client — TIDAK ADA fallback ke
+//      plannedItems lagi (shipped = transaksi fisik final, tidak boleh
+//      mengasumsikan Qty Rencana = Qty Aktual)
+// Tidak ada yang di-cap diam-diam — semua pelanggaran BLOCK dgn kode error
+// spesifik supaya client bisa menampilkan pesan yang tepat.
+//
+// G/catatan hardening lanjutan: AvailableItemsJSON sendiri saat ini masih
+// dihitung di CLIENT (doDocMatchFgReady_/doDocAvailableItemsFor_ di HTML) lalu
+// cuma disimpan+divalidasi di sini — backend BELUM menghitung ulang FG
+// availability dari nol. Itu tetap aman utk qty (batas C di atas memakai
+// angka yang SUDAH tersimpan di server, bukan yang baru dikirim ulang oleh
+// client saat ship), tapi kalau ada risiko client mengirim availableItems
+// yang keliru saat transisi ke ready, hardening berikutnya bisa memindahkan
+// komputasi FG availability penuh ke backend (query langsung dari sheet
+// FGPacking/sejenisnya saat doDocReady_, bukan menerima dari payload).
 function handleDoDocShip_(payload, actor){
   const id = str_(payload.id);
   if(!id) return {ok:false, code:"BAD_PAYLOAD", message:"id dokumen DO wajib diisi."};
   if(!payload.requestId) return {ok:false, code:"MISSING_REQUEST_ID", message:"requestId wajib utk konfirmasi kirim."};
+  // E — actualItems WAJIB eksplisit (tidak ada fallback ke plannedItems).
+  // Dicek SEBELUM mutateVersioned_ (sama pola dgn cek id/requestId di atas)
+  // supaya payload yang jelas tidak lengkap tidak ikut mengonsumsi lock/idempotency.
+  if(!Array.isArray(payload.actualItems) || !payload.actualItems.length){
+    return {ok:false, code:"MISSING_ACTUAL_ITEMS", message:"Qty aktual kirim wajib diisi eksplisit — sistem tidak lagi mengasumsikan Qty Rencana = Qty Aktual."};
+  }
   return mutateVersioned_({
     recordType:"doDoc", recordKey:id, requestId:payload.requestId, expectedVersion:payload.expectedVersion,
     actor, action:"do_ship", tanggal:"", divisi:""
   }, function(){
     const sh = getOrCreateSheet(SHEET_DO);
     const existing = findDoDoc_(sh, id);
-    if(!existing) throw new Error("Dokumen DO "+id+" tidak ditemukan.");
+    if(!existing) throw bizError_("NOT_FOUND", "Dokumen DO "+id+" tidak ditemukan.");
     const status = str_(existing.Status)||DO_STATUS_DRAFT;
-    if(status===DO_STATUS_SHIPPED) throw new Error("Dokumen DO ini sudah shipped — tidak bisa dikonfirmasi dua kali.");
-    if(status===DO_STATUS_CANCELLED) throw new Error("Dokumen DO ini sudah dibatalkan.");
+    // A — HANYA status ready yang boleh di-ship. Backend TIDAK mengandalkan
+    // UI menyembunyikan tombol "Konfirmasi Dikirim" utk mencegah ini.
+    if(status===DO_STATUS_SHIPPED) throw bizError_("DO_ALREADY_SHIPPED", "Dokumen DO ini sudah shipped — tidak bisa dikonfirmasi dua kali.");
+    if(status===DO_STATUS_CANCELLED) throw bizError_("DO_CANCELLED", "Dokumen DO ini sudah dibatalkan.");
+    if(status!==DO_STATUS_READY) throw bizError_("DO_NOT_READY", "Dokumen DO ini belum berstatus FG Ready (status saat ini: "+status+") — belum bisa dikonfirmasi kirim.");
+
     const plannedItems = parseItemsJSON_(existing.PlannedItemsJSON);
-    const actualItems = (payload.actualItems && payload.actualItems.length)
-      ? payload.actualItems
-      : plannedItems.map(it=>({kode:it.kode, produk:it.produk, actualShipQty:it.plannedQty}));
+    const availableItems = parseItemsJSON_(existing.AvailableItemsJSON);
+    const plannedByKey = {}; plannedItems.forEach(it=>{ plannedByKey[doDocItemKey_(it.kode, it.produk)] = it; });
+    const availableByKey = {}; availableItems.forEach(it=>{ availableByKey[doDocItemKey_(it.kode, it.produk)] = it; });
+
+    const actualItems = payload.actualItems;
+    actualItems.forEach(function(it){
+      const key = doDocItemKey_(it.kode, it.produk);
+      const planned = plannedByKey[key];
+      // B — actual TIDAK BOLEH memuat produk baru yang tidak ada di DO Draft.
+      if(!planned) throw bizError_("INVALID_DO_ITEM", "Produk '"+str_(it.produk)+"' ("+str_(it.kode)+") tidak ada di DO Draft ini.");
+      const qty = num_(it.actualShipQty!=null ? it.actualShipQty : it.qty);
+      if(qty<0) throw bizError_("INVALID_DO_ITEM", "Qty aktual kirim tidak boleh negatif utk "+str_(it.produk)+".");
+      // D — actual TIDAK BOLEH melebihi rencana (sisa PO saat draft dibuat).
+      if(qty > num_(planned.plannedQty)) throw bizError_("ACTUAL_EXCEEDS_PLANNED", "Qty aktual "+qty+" utk "+str_(it.produk)+" melebihi Qty Rencana "+num_(planned.plannedQty)+".");
+      // C — actual TIDAK BOLEH melebihi FG tersedia, dibaca dari
+      // AvailableItemsJSON yang TERSIMPAN di record (authoritative), BUKAN
+      // dari availableItems yang (kalau ada) ikut dikirim ulang di payload ini.
+      const available = num_((availableByKey[key]||{}).availableQty);
+      if(qty > available) throw bizError_("ACTUAL_EXCEEDS_FG_AVAILABLE", "Qty aktual "+qty+" utk "+str_(it.produk)+" melebihi FG tersedia "+available+".");
+    });
+
     const now = new Date();
     const batch = str_(existing.Batch) || id;
     const shKirim = getOrCreateSheet(SHEET_KIRIM);

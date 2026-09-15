@@ -3958,12 +3958,15 @@ function renderPdRingkasan(){
     <div class="stat"><div class="lbl">Reject</div><div class="val" style="color:${TR?'var(--red)':'var(--hi)'}">${fmt(TR)}</div></div>
     <div class="stat"><div class="lbl">Sisa</div><div class="val" style="color:${TS>0?'var(--warn)':'var(--green)'}">${fmt(TS)}</div></div>`;
   // Filter PO Awal/Tambahan (Section C) — HANYA menentukan baris DIVISI mana
-  // yang tampil di tabel ini ("Tambahan" -> cuma divisi yang py PO Tambahan >
-  // 0, sesuai POF03); tidak mengubah rows dipakai utk kartu total di atas.
+  // yang tampil di tabel ini ("Awal" -> cuma divisi dgn PO Awal > 0, "Tambahan"
+  // -> cuma divisi yang py PO Tambahan > 0, sesuai POF-A1/A3); tidak mengubah
+  // rows dipakai utk kartu total di atas.
   const poFilter = ($("pd-pofilter") && $("pd-pofilter").value) || "";
-  const rowsTampil = poFilter==="tambahan" ? rows.filter(r=>r.poTambahan>0) : rows;
+  const rowsTampil = poFilter==="tambahan" ? rows.filter(r=>r.poTambahan>0)
+    : poFilter==="awal" ? rows.filter(r=>r.poAwal>0)
+    : rows;
   if(!rowsTampil.length){
-    $("pdRingkasanBody").innerHTML = `<tr><td colspan="7" class="empty">Tidak ada divisi dengan PO Tambahan untuk tanggal ini.</td></tr>`;
+    $("pdRingkasanBody").innerHTML = `<tr><td colspan="7" class="empty">Tidak ada divisi yang cocok dengan filter PO ini untuk tanggal ini.</td></tr>`;
     return;
   }
   $("pdRingkasanBody").innerHTML = rowsTampil.map(r=>{
@@ -4059,7 +4062,7 @@ function renderPdRows(rows){
       // Section C — info PO Awal/Tambahan per produk, murni tampilan (angka
       // "Sisa" yang dipakai submit TETAP kumulatif, tidak berubah oleh ini).
       const poInfo = num(t.poRevisi)>0 ? `<div class="sub">PO Awal ${fmt(t.poAwal)} · PO Tambahan ${fmt(t.poRevisi)}</div>` : '';
-      return `<tr data-kode="${t.kode}" data-g="${gi}" data-produk="${String(t.produk).replace(/"/g,'&quot;')}" data-kategori="${t.kategori}" data-target="${t.sisa}" data-target-asli="${t.targetAsli}" data-status="sesuai" data-divisiasal="${divisiAsal}" data-porevisi="${num(t.poRevisi)}">
+      return `<tr data-kode="${t.kode}" data-g="${gi}" data-produk="${String(t.produk).replace(/"/g,'&quot;')}" data-kategori="${t.kategori}" data-target="${t.sisa}" data-target-asli="${t.targetAsli}" data-status="sesuai" data-divisiasal="${divisiAsal}" data-poawal="${num(t.poAwal)}" data-porevisi="${num(t.poRevisi)}">
       <td class="l" title="${t.produk}">${t.produk}${subInfo}${poInfo}</td>
       <td>${fmt(t.sisa)}</td>
       <td><div class="seg3">
@@ -4092,9 +4095,11 @@ function pdApplyFilter(){
   const wrapFg = $("pdFgFilterWrap");
   const fdv = (wrapFg && wrapFg.style.display!=="none" && $("pd-fDivisiAsal")) ? $("pd-fDivisiAsal").value : "";
   const onlyIsi = !!($("pd-onlyIsi") && $("pd-onlyIsi").checked);
-  // Section C (POF04) — "PO Tambahan" HANYA menampilkan produk yang py
-  // poRevisi>0 utk tanggal+divisi ini; TIDAK mengubah data-target/sisa yang
-  // dipakai submit (murni visibility, sama pola dgn filter cari/divisiAsal).
+  // Section C (POF-A1/A2/A3) — "PO Awal" HANYA produk dengan poAwal>0,
+  // "PO Tambahan" HANYA produk dengan poRevisi>0, utk tanggal+divisi ini;
+  // TIDAK mengubah data-target/sisa yang dipakai submit (murni visibility,
+  // sama pola dgn filter cari/divisiAsal — target/sisa kumulatif TIDAK pernah
+  // dipecah jadi job terpisah oleh filter presentasi ini).
   const poFilter = ($("pd-pofilter") && $("pd-pofilter").value) || "";
   const perGrup = {};
   let tampil=0, total=0;
@@ -4104,6 +4109,7 @@ function pdApplyFilter(){
     let ok = true;
     if(q && !((tr.dataset.produk||"").toLowerCase().includes(q) || (tr.dataset.kode||"").toLowerCase().includes(q))) ok=false;
     if(ok && fdv && tr.dataset.divisiasal!==fdv) ok=false;
+    if(ok && poFilter==="awal" && num(tr.dataset.poawal)<=0) ok=false;
     if(ok && poFilter==="tambahan" && num(tr.dataset.porevisi)<=0) ok=false;
     if(ok && onlyIsi){
       const diubah = tr.dataset.status!=="sesuai" || num(tr.querySelector('[data-c="reject"]').value)>0;
