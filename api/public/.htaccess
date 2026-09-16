@@ -1,0 +1,15 @@
+# Front-controller routing for shared-hosting/cPanel Apache.
+# Everything under this directory that is not a real file is routed to
+# index.php, which does its own routing (see ../src/Router.php).
+#
+# Security note: this directory (public/) must be the site's actual
+# document root (or the subdomain/subfolder root — see ../DEPLOY.md).
+# ../src, ../config, and ../migrations must sit OUTSIDE the document root
+# so they are never reachable over HTTP at all, regardless of any rewrite
+# rule here.
+RewriteEngine On
+
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^ - [L]
+
+RewriteRule ^ index.php [L]

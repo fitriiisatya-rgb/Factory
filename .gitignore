@@ -1,0 +1,11 @@
+# PHP staging skeleton — never commit real credentials or local env state
+api/config/config.php
+api/.env
+api/.env.local
+api/vendor/
+api/composer.lock
+
+# Local disposable validation artifacts (Phase 0 test runs)
+api/tests/.tmp/
+*.sqlite
+*.sqlite3
