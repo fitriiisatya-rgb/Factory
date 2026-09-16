@@ -392,6 +392,196 @@ final class Phase1Importer
     }
 
     // ------------------------------------------------------------------
+    // Store candidate review (operator-provided list — Phase 1 patch, item 7)
+    // ------------------------------------------------------------------
+    //
+    // This list (LegacyCatalogSource::storeCandidates()) came directly from
+    // the human operator's own business knowledge, NOT from source-code
+    // extraction — see database/legacy/phase1-store-candidates-v1.json's own
+    // "provenance" field. Every entry is therefore a review candidate only;
+    // CONFIRM/SKIP/EDIT is a state machine tracked in migration_store_map
+    // (source_table='operator_candidate_list'), never auto-resolved.
+    //
+    // These three methods deliberately do NOT reuse upsertMigrationMap()
+    // below: that helper's ON DUPLICATE KEY UPDATE only bumps
+    // occurrence_count/target_id (correct for "the same raw fact was
+    // harvested again"), not a deliberate pending -> confirmed/skipped state
+    // transition, which needs status/notes/resolved_by to actually change.
+
+    /** @return array<int,array{canonicalName:string,status:string,storeId:?int,pendingAliases:string[],note:?string}> */
+    public function previewStoreCandidates(): array
+    {
+        $out = [];
+        foreach (LegacyCatalogSource::storeCandidates() as $candidate) {
+            $name = $candidate['canonicalName'];
+
+            $stmt = $this->pdo->prepare('SELECT store_id FROM store WHERE LOWER(canonical_name) = LOWER(?)');
+            $stmt->execute([$name]);
+            $existingStoreId = $stmt->fetchColumn();
+
+            if ($existingStoreId !== false) {
+                $out[] = $this->storeCandidateRow($candidate, 'already_exists', (int) $existingStoreId);
+                continue;
+            }
+
+            $stmt = $this->pdo->prepare("SELECT status, target_id, notes FROM migration_store_map WHERE raw_name = ? AND source_table = 'operator_candidate_list'");
+            $stmt->execute([$name]);
+            $mapRow = $stmt->fetch();
+
+            if ($mapRow && $mapRow['status'] === 'mapped') {
+                $out[] = $this->storeCandidateRow($candidate, 'confirmed', (int) $mapRow['target_id']);
+            } elseif ($mapRow && str_starts_with((string) $mapRow['notes'], 'SKIPPED:')) {
+                $out[] = $this->storeCandidateRow($candidate, 'skipped', null);
+            } else {
+                $out[] = $this->storeCandidateRow($candidate, 'pending', null);
+            }
+        }
+        return $out;
+    }
+
+    private function storeCandidateRow(array $candidate, string $status, ?int $storeId): array
+    {
+        return [
+            'canonicalName' => $candidate['canonicalName'],
+            'status' => $status,
+            'storeId' => $storeId,
+            'pendingAliases' => $candidate['pendingAliases'] ?? [],
+            'note' => $candidate['note'] ?? null,
+        ];
+    }
+
+    /**
+     * Confirms one candidate under an (optionally admin-edited) final name.
+     * Matches an existing store by exact case-insensitive name instead of
+     * creating a duplicate (this is how "Bakery Cikole" recognizes the
+     * already-imported "BAKERY CIKOLE" without a second row). Creates any
+     * aliases tied to this specific candidate (e.g. SDRM for "Bakery
+     * Sudirman") in the SAME transaction — never before this exact
+     * candidate is confirmed by an admin.
+     *
+     * @throws \InvalidArgumentException if $originalCandidateName isn't in the bundled list
+     */
+    public function confirmStoreCandidate(string $originalCandidateName, string $finalCanonicalName, string $resolvedByLabel): array
+    {
+        $finalCanonicalName = trim($finalCanonicalName);
+        if ($finalCanonicalName === '') {
+            throw new \InvalidArgumentException('Final canonical name cannot be empty.');
+        }
+
+        $candidate = null;
+        foreach (LegacyCatalogSource::storeCandidates() as $c) {
+            if ($c['canonicalName'] === $originalCandidateName) {
+                $candidate = $c;
+                break;
+            }
+        }
+        if ($candidate === null) {
+            throw new \InvalidArgumentException("Unknown store candidate: {$originalCandidateName}");
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $stmt = $this->pdo->prepare('SELECT store_id FROM store WHERE LOWER(canonical_name) = LOWER(?)');
+            $stmt->execute([$finalCanonicalName]);
+            $storeId = $stmt->fetchColumn();
+
+            if ($storeId === false) {
+                $stmt = $this->pdo->prepare(
+                    'INSERT INTO store (canonical_name, channel, active, version, created_at) VALUES (?, NULL, 1, 1, UTC_TIMESTAMP())'
+                );
+                // channel intentionally NULL — Ownership/Franchise classification is not
+                // invented here (Phase 1 patch, item 8); it can be completed later.
+                $stmt->execute([$finalCanonicalName]);
+                $storeId = (int) $this->pdo->lastInsertId();
+            } else {
+                $storeId = (int) $storeId;
+            }
+
+            foreach ($candidate['pendingAliases'] ?? [] as $alias) {
+                $stmt = $this->pdo->prepare('SELECT store_id FROM store_alias WHERE raw_name = ?');
+                $stmt->execute([$alias]);
+                if ($stmt->fetchColumn() === false) {
+                    $this->pdo->prepare(
+                        'INSERT INTO store_alias (store_id, raw_name, factory_hint, created_at) VALUES (?, ?, NULL, UTC_TIMESTAMP())'
+                    )->execute([$storeId, $alias]);
+                    $this->setStoreCandidateMapStatus($alias, 'mapped', $storeId, $resolvedByLabel, null);
+                }
+            }
+
+            $this->setStoreCandidateMapStatus($originalCandidateName, 'mapped', $storeId, $resolvedByLabel, null);
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+
+        return ['storeId' => $storeId, 'canonicalName' => $finalCanonicalName];
+    }
+
+    public function skipStoreCandidate(string $candidateName, string $reasonNote, string $resolvedByLabel): void
+    {
+        $found = false;
+        foreach (LegacyCatalogSource::storeCandidates() as $c) {
+            if ($c['canonicalName'] === $candidateName) {
+                $found = true;
+                break;
+            }
+        }
+        if (!$found) {
+            throw new \InvalidArgumentException("Unknown store candidate: {$candidateName}");
+        }
+        $this->setStoreCandidateMapStatus($candidateName, 'unresolved', null, $resolvedByLabel, 'SKIPPED: ' . $reasonNote);
+    }
+
+    private function setStoreCandidateMapStatus(string $rawName, string $status, ?int $targetId, string $resolvedByLabel, ?string $notes): void
+    {
+        $stmt = $this->pdo->prepare("SELECT id FROM migration_store_map WHERE raw_name = ? AND source_table = 'operator_candidate_list'");
+        $stmt->execute([$rawName]);
+        $existingId = $stmt->fetchColumn();
+
+        if ($existingId === false) {
+            $stmt = $this->pdo->prepare(
+                "INSERT INTO migration_store_map (raw_name, raw_code, source_table, occurrence_count, target_id, status, resolved_by, resolved_at, notes, created_at)
+                 VALUES (?, '', 'operator_candidate_list', 1, ?, ?, ?, " . ($status === 'mapped' ? 'UTC_TIMESTAMP()' : 'NULL') . ", ?, UTC_TIMESTAMP())"
+            );
+            $stmt->execute([$rawName, $targetId, $status, $resolvedByLabel, $notes]);
+            return;
+        }
+
+        $stmt = $this->pdo->prepare(
+            "UPDATE migration_store_map SET target_id = ?, status = ?, resolved_by = ?, resolved_at = " . ($status === 'mapped' ? 'UTC_TIMESTAMP()' : 'NULL')
+            . ", notes = ?, occurrence_count = occurrence_count + 1 WHERE id = ?"
+        );
+        $stmt->execute([$targetId, $status, $resolvedByLabel, $notes, $existingId]);
+    }
+
+    /**
+     * Overall Phase 1 completion gate (Phase 1 patch, item 11). Never
+     * returns "complete" just because divisions+products are done — store
+     * review must have zero PENDING candidates too.
+     * @return array{productMasterComplete:bool,storeMasterComplete:bool,pendingStoreCandidates:int}
+     */
+    public function completionStatus(): array
+    {
+        $productPreview = $this->previewProducts();
+        $productMasterComplete = count($productPreview['review']) === 0
+            && count($productPreview['conflict']) === 0
+            && ($productPreview['alreadyMapped'] + count($productPreview['safe'])) > 0
+            && count($productPreview['safe']) === 0; // nothing left un-imported either
+
+        $storeCandidates = $this->previewStoreCandidates();
+        $pending = count(array_filter($storeCandidates, fn($c) => $c['status'] === 'pending'));
+        $storeMasterComplete = $pending === 0;
+
+        return [
+            'productMasterComplete' => $productMasterComplete,
+            'storeMasterComplete' => $storeMasterComplete,
+            'pendingStoreCandidates' => $pending,
+        ];
+    }
+
+    // ------------------------------------------------------------------
     // Shared
     // ------------------------------------------------------------------
 

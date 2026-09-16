@@ -14,7 +14,10 @@ beyond these steps until the smoke test checklist below is fully green.
 | Database | `u7566812_factory` (confirmed **EMPTY / newly created** as of Phase 0.5) |
 | Engine | MariaDB `10.11.19-MariaDB-cll-lve` (OD-4 CLOSED — see `docs/mysql-open-decisions-v1.md`) |
 | Connects via | `localhost` (standard cPanel same-host MySQL) |
-| Migration/admin DB user | `u7566812_adminfactory` (schema/DDL setup only — see section 6) |
+| Domain document root | `public_html/factory/` (confirmed against the live host — **not** `public_html/` itself; `factory.amorgroup.id`'s existing frontend `index.php` lives there and must never be touched) |
+| API filesystem path | `public_html/factory/api/` (the ZIP is extracted **inside `public_html/factory/`**, not `public_html/`) — the URL is still `https://factory.amorgroup.id/api/...`, unchanged, since routing reads `REQUEST_URI` directly |
+| Runtime DB user | `u7566812_factoryapp` (SELECT/INSERT/UPDATE/DELETE only — day-to-day `DB_USER`, confirmed live) |
+| Migration/admin DB user | `u7566812_adminfactory` (schema/DDL setup only, `MIGRATION_DB_*` — see section 6) |
 | Real passwords | **Never** written to this repo, docs, commits, test fixtures, or source — the operator enters them only into an untracked `config/config.php` on the server itself, or types them at an interactive prompt |
 
 Everything below assumes these exact values. If any of them changes, update
@@ -48,31 +51,42 @@ check by hand first.
 
 ### Step 2 — Upload code
 
-**This is now the easy-install package flow** (see `dist/README-FIRST-CPANEL.md`
-for the non-technical version of these same steps): upload
-`dist/amor-factory-api-preprod.zip` to the cPanel account (File Manager
-upload, or SFTP) and extract it while positioned **inside `public_html/`**
-so it produces `public_html/api/`. Since a technical operator with SSH can
-also just `git clone`/`rsync` the repo and run `bash dist/build-cpanel-package.sh`
-directly on the server (or upload the already-built ZIP the same way) — both
-land at the same `public_html/api/` result.
+**This is now the easy-install package flow** (see
+`dist/README-FIRST-CPANEL-PHASE1-V2.md` for the non-technical version of
+these same steps, and its correction notice if you're looking at an older
+README): upload `dist/amor-factory-api-phase1-easy-v2.zip` to the cPanel
+account (File Manager upload, or SFTP) and extract it while positioned
+**inside `public_html/factory/`** — the real document root for
+`factory.amorgroup.id` on this host — so it produces
+`public_html/factory/api/`. Since a technical operator with SSH can also
+just `git clone`/`rsync` the repo and run the packaging script directly on
+the server (or upload the already-built ZIP the same way) — both land at
+the same `public_html/factory/api/` result. **Do not extract into
+`public_html/` directly** — that would land at `public_html/api/`, which is
+not where this domain actually serves requests from, and would leave
+`public_html/factory/index.php` (the existing frontend) untouched but
+unreachable from the new `api/` folder's sibling path.
 
-**No document root change of any kind.** `factory.amorgroup.id`'s existing
-document root and frontend are untouched — `api/` is simply a new subfolder
-alongside them. `api/app/` (source, config, migrations) sits *inside* that
-same subfolder but is blocked from direct HTTP access by `api/app/.htaccess`
-(`Require all denied`) — see `api/DEPLOY.md` section 2 for the full
-reasoning, including the advanced/optional variant that moves `app/` fully
-outside `public_html/` for an operator who wants stronger isolation and has
-the access to arrange it.
+**No document root change of any kind, and the existing frontend is never
+touched.** `factory.amorgroup.id`'s existing document root is
+`public_html/factory/`, and its `index.php` there is untouched — `api/` is
+simply a new subfolder alongside it. `api/app/` (source, config,
+migrations) sits *inside* that same subfolder but is blocked from direct
+HTTP access by `api/app/.htaccess` (`Require all denied`) — see
+`api/DEPLOY.md` section 2 for the full reasoning, including the advanced/
+optional variant that moves `app/` fully outside `public_html/factory/` for
+an operator who wants stronger isolation and has the access to arrange it.
 
-**Expected output**: `https://factory.amorgroup.id/api/` is reachable (it
-will show a friendly "config not filled in yet" message from `_setup/`
-until step 4 below, not a raw 500).
-**Failure condition**: a 404 for anything under `/api/` means the ZIP wasn't
-extracted into `public_html/` correctly, or `.htaccess` isn't being honored
-(rare on cPanel — confirm `AllowOverride`/mod_rewrite are enabled, which is
-the standard cPanel/CloudLinux default).
+**Expected output**: `https://factory.amorgroup.id/api/` is reachable (the
+URL itself never includes `/factory/` — only the upload/extract filesystem
+destination does). It will show a friendly "config not filled in yet"
+message until step 4 below, not a raw 500.
+**Failure condition**: a 404 for anything under `/api/` most likely means
+the ZIP was extracted into `public_html/` instead of `public_html/factory/`
+(check the domain's actual document root in cPanel's "Domains" panel if
+unsure), or `.htaccess` isn't being honored (rare on cPanel — confirm
+`AllowOverride`/mod_rewrite are enabled, which is the standard cPanel/
+CloudLinux default).
 
 ### Step 3 — Create the private config
 

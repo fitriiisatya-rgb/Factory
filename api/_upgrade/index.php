@@ -11,10 +11,15 @@ declare(strict_types=1);
  * meant to be deleted after Phase 1), this tool is DESIGNED TO STAY — every
  * future phase that adds a migrations/NNNN_*.php file can be applied here
  * without re-uploading a setup wizard. It is safe to leave in place because:
- *   - it requires a real ADMIN login session (not a bootstrap token),
+ *   - it requires a real ADMIN login session (via api/_admin-login/, not a
+ *     bootstrap token),
  *   - it can only ever apply migration files that are already part of the
  *     deployed codebase (an admin account cannot use this to run arbitrary
  *     SQL — there is no free-text SQL input anywhere on this page),
+ *   - it uses a SEPARATE DDL-capable connection (Database::migrationPdo(),
+ *     MIGRATION_DB_* config keys) — the normal runtime connection
+ *     (DB_USER/DB_PASS, used by everything else including
+ *     api/_import-master/) never has schema-altering privileges at all,
  *   - MigrationRunner's own safety gate (EXPECTED_DB_NAME match, known-state
  *     check) still applies, and it never issues DROP/TRUNCATE — see
  *     app/src/Setup/MigrationRunner.php.
@@ -28,6 +33,7 @@ use Amor\Api\ApiException;
 use Amor\Api\Auth;
 use Amor\Api\Config;
 use Amor\Api\Database;
+use Amor\Api\MigrationCredentialsMissing;
 use Amor\Api\Setup\MigrationRunner;
 
 try {
@@ -42,13 +48,15 @@ try {
 
 Auth::bootSession();
 
+function esc(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
+
 if (Auth::currentUserId() === null) {
     http_response_code(200);
     header('Content-Type: text/html; charset=utf-8');
     echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Login diperlukan</title></head><body '
         . 'style="font-family:sans-serif;max-width:640px;margin:2rem auto;">'
-        . '<h1>Login diperlukan</h1><p>Login sebagai ADMIN dulu lewat aplikasi utama, lalu buka ulang halaman ini '
-        . 'di browser/tab yang sama.</p></body></html>';
+        . '<h1>Login diperlukan</h1><p>Buka <a href="../_admin-login/">../_admin-login/</a> dan login sebagai ADMIN dulu, '
+        . 'lalu buka ulang halaman ini di browser/tab yang sama.</p></body></html>';
     exit;
 }
 
@@ -64,9 +72,43 @@ try {
 }
 
 $csrfToken = (string) $_SESSION['csrf_token'];
-$pdo = Database::pdo();
 $dbName = (string) Config::get('DB_NAME');
 $expectedDbName = (string) Config::get('EXPECTED_DB_NAME', '');
+
+// --- Try the SEPARATE migration connection. Missing credentials is an
+// expected, friendly first-visit state, not a crash. ---------------------
+$migrationPdo = null;
+$credentialsMissing = false;
+try {
+    $migrationPdo = Database::migrationPdo();
+} catch (MigrationCredentialsMissing $e) {
+    $credentialsMissing = true;
+} catch (\Throwable $e) {
+    http_response_code(200);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;max-width:640px;margin:2rem auto;">'
+        . '<h1>Koneksi migrasi gagal</h1><p>Periksa MIGRATION_DB_HOST/MIGRATION_DB_NAME/MIGRATION_DB_USER/MIGRATION_DB_PASS '
+        . 'di <code>app/config/config.php</code>.</p></body></html>';
+    exit;
+}
+
+if ($credentialsMissing) {
+    http_response_code(200);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Perlu kredensial migrasi</title></head><body '
+        . 'style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:640px;margin:2rem auto;">'
+        . '<h1>Kredensial migrasi belum diisi</h1>'
+        . '<p>Untuk menerapkan pembaruan struktur database, isi 4 baris ini di <code>app/config/config.php</code> '
+        . '(lihat <code>app/config/config.example.php</code> untuk contohnya):</p>'
+        . '<pre style="background:#f4f4f4;padding:1rem;border-radius:6px;">MIGRATION_DB_HOST => \'localhost\',
+MIGRATION_DB_NAME => \'' . esc($dbName) . '\',
+MIGRATION_DB_USER => \'u7566812_adminfactory\',
+MIGRATION_DB_PASS => \'&lt;password migration user&gt;\',</pre>'
+        . '<p>Ini AMAN — kredensial ini terpisah total dari user aplikasi sehari-hari (<code>DB_USER</code>), '
+        . 'dan boleh dihapus lagi dari <code>config.php</code> setelah migrasi berhasil diterapkan.</p>'
+        . '<p>Setelah diisi, muat ulang halaman ini.</p></body></html>';
+    exit;
+}
 
 $actionResult = null;
 $postedCsrf = (string) ($_POST['csrf'] ?? '');
@@ -80,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'apply
         $actionResult = ['ok' => false, 'title' => 'Belum dikonfirmasi', 'message' => 'Centang kotak konfirmasi dulu.'];
     } else {
         try {
-            $runner = new MigrationRunner($pdo, $dbName);
+            $runner = new MigrationRunner($migrationPdo, $dbName);
             $runner->ensureBookkeepingTable();
             $state = $runner->checkKnownState();
             if (!$state['ok']) {
@@ -89,20 +131,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'apply
             $result = $runner->applyPending();
             $actionResult = $result['applied'] === []
                 ? ['ok' => true, 'title' => 'Tidak ada yang perlu diterapkan', 'message' => 'Semua migrasi sudah terpasang sebelumnya.']
-                : ['ok' => true, 'title' => 'Migrasi berhasil diterapkan', 'message' => 'Diterapkan: ' . implode(', ', $result['applied'])];
+                : ['ok' => true, 'title' => 'Migrasi berhasil diterapkan', 'message' => 'Diterapkan: ' . implode(', ', $result['applied'])
+                    . '. Anda sekarang boleh menghapus MIGRATION_DB_PASS dari config.php sampai pembaruan berikutnya.'];
         } catch (\Throwable $e) {
             $actionResult = ['ok' => false, 'title' => 'Migrasi gagal', 'message' => $e->getMessage()];
         }
     }
 }
 
-$runner = new MigrationRunner($pdo, $dbName);
+$runner = new MigrationRunner($migrationPdo, $dbName);
 $runner->ensureBookkeepingTable();
 $applied = $runner->appliedMigrations();
 $pending = array_map('basename', $runner->pendingMigrations());
 $businessTableCount = $runner->businessTableCount();
-
-function esc(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
+$dbVersion = (string) $migrationPdo->query('SELECT VERSION()')->fetchColumn();
+$actualDbName = (string) $migrationPdo->query('SELECT DATABASE()')->fetchColumn();
+$dbNameMatches = $actualDbName === $expectedDbName;
+$currentMigration = $applied === [] ? '(belum ada)' : end($applied);
 
 header('Content-Type: text/html; charset=utf-8');
 ?><!DOCTYPE html>
@@ -120,12 +165,13 @@ h1{font-size:1.4rem;}
 .result-error{background:#ffe6e6;border:1px solid #e99;padding:.75rem;border-radius:6px;}
 button{padding:.5rem 1.2rem;background:#0a5;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:bold;}
 ul{margin:.3rem 0;}
+table{border-collapse:collapse;width:100%;} td,th{text-align:left;padding:.3rem .6rem;border-bottom:1px solid #eee;}
 </style>
 </head>
 <body>
 <h1>Amor Factory — Upgrade Database</h1>
-<p>Login sebagai: <strong><?= esc((string) $_SESSION['username']) ?></strong>. Database: <code><?= esc($dbName) ?></code>.
-Tabel bisnis saat ini: <?= $businessTableCount ?>.</p>
+<p>Login sebagai: <strong><?= esc((string) $_SESSION['username']) ?></strong> &middot;
+<a href="../_admin-login/">logout</a></p>
 
 <?php if ($actionResult !== null): ?>
 <div class="<?= $actionResult['ok'] ? 'result-ok' : 'result-error' ?>">
@@ -135,12 +181,23 @@ Tabel bisnis saat ini: <?= $businessTableCount ?>.</p>
 <?php endif; ?>
 
 <div class="box">
+  <table>
+    <tr><td>Koneksi migrasi</td><td>TERHUBUNG</td></tr>
+    <tr><td>Versi MariaDB</td><td><?= esc($dbVersion) ?></td></tr>
+    <tr><td>Database aktual</td><td><code><?= esc($actualDbName) ?></code></td></tr>
+    <tr><td>Database yang diharapkan</td><td><code><?= esc($expectedDbName) ?></code> — <?= $dbNameMatches ? 'COCOK' : 'TIDAK COCOK' ?></td></tr>
+    <tr><td>Tabel bisnis saat ini</td><td><?= $businessTableCount ?></td></tr>
+    <tr><td>Migrasi saat ini</td><td><?= esc($currentMigration) ?></td></tr>
+  </table>
+</div>
+
+<div class="box">
   <p><strong>Sudah diterapkan (<?= count($applied) ?>):</strong></p>
   <ul><?php foreach ($applied as $m): ?><li><?= esc($m) ?></li><?php endforeach; ?></ul>
 
   <p><strong>Menunggu diterapkan (<?= count($pending) ?>):</strong></p>
-  <?php if ($pending === []): ?>
-    <p>Tidak ada. Database sudah versi terbaru.</p>
+  <?php if ($pending === [] || !$dbNameMatches): ?>
+    <p><?= $dbNameMatches ? 'Tidak ada. Database sudah versi terbaru.' : 'Ditahan — nama database tidak cocok dengan EXPECTED_DB_NAME.' ?></p>
   <?php else: ?>
     <ul><?php foreach ($pending as $m): ?><li><?= esc($m) ?></li><?php endforeach; ?></ul>
     <div class="warn"><p>Migrasi hanya menambah struktur (kolom/index baru) — tidak pernah menghapus tabel atau data.</p></div>

@@ -55,10 +55,17 @@ api/
   tests/
 ```
 
-**As of Phase 0.5's easy-install package, the deployment model is a
-subfolder of the existing `factory.amorgroup.id` site** (e.g.
-`public_html/api/`), not a dedicated document root — the whole point is to
-never touch the existing frontend's document root at all. `app/` sits
+**As of the real cPanel deployment, the deployment model is a subfolder of
+the existing `factory.amorgroup.id` site — but that site's actual document
+root is `public_html/factory/`, not `public_html/` itself**, so the real
+path is `public_html/factory/api/` (confirmed against the live host during
+the Phase 1 EASY V2 patch — see `api/DEPLOY-CPANEL-PREPROD.md` and
+`dist/README-FIRST-CPANEL-PHASE1-V2.md`). The URL stays
+`https://factory.amorgroup.id/api/...` either way (no `/factory/` in the
+URL) since `Router.php` reads `REQUEST_URI` directly — only the upload/
+extract *filesystem* destination changes. The whole point is still to never
+touch the existing frontend's document root or its `index.php` at all.
+`app/` sits
 *inside* that subfolder (there is normally no way to place it truly outside
 `public_html/` without a second upload location, which this package
 deliberately avoids for a non-technical operator), but is blocked from

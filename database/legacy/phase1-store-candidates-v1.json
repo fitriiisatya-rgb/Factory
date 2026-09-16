@@ -1,0 +1,29 @@
+{
+  "provenance": "OPERATOR-PROVIDED, NOT SOURCE-DERIVED. This list came directly from the human operator's own business/operational knowledge during the Phase 1 patch request — it does NOT appear anywhere in the frontend source code or test fixtures (unlike phase1-source-v1.json, which is a literal extraction). Every name here is a REVIEW CANDIDATE only: the import wizard requires an explicit ADMIN confirm action before any of these becomes a real `store` row. None are auto-authoritative.",
+  "candidates": [
+    { "canonicalName": "Bakery Abdul Gani" },
+    { "canonicalName": "Bakery Bangbarung" },
+    { "canonicalName": "Bakery Bantar Gebang" },
+    { "canonicalName": "Bakery Benhill" },
+    { "canonicalName": "Bakery Cibubur" },
+    { "canonicalName": "Bakery Cikaret" },
+    { "canonicalName": "Bakery Cikole", "note": "Likely the same store as the already source-confirmed 'BAKERY CIKOLE' — the import wizard recognizes this by exact case-insensitive name match and will not create a duplicate." },
+    { "canonicalName": "Bakery Cipayung" },
+    { "canonicalName": "Bakery Dramaga" },
+    { "canonicalName": "Bakery Harjamukti" },
+    { "canonicalName": "Bakery Jatimelati" },
+    { "canonicalName": "Bakery Kejayaan" },
+    { "canonicalName": "Bakery Mekarsari" },
+    { "canonicalName": "Bakery Pagelaran" },
+    { "canonicalName": "Bakery Pangleseran" },
+    { "canonicalName": "Bakery Pekapuran" },
+    { "canonicalName": "Bakery Perumnas" },
+    { "canonicalName": "Bakery Rawalumbu" },
+    { "canonicalName": "Bakery Sudirman", "pendingAliases": ["SDRM"], "note": "SDRM was mentioned as a known alias in an earlier request but has no corroborating occurrence anywhere in the frontend/test source. It only becomes an active store_alias row at the moment this candidate is confirmed here — never before, never automatically." },
+    { "canonicalName": "Bakery Sukahati" },
+    { "canonicalName": "Bakery Villa Nusa Indah" },
+    { "canonicalName": "Mini Bakery Cibinong" },
+    { "canonicalName": "Bakery Villa Bogor Indah" },
+    { "canonicalName": "RTM Depok" }
+  ]
+}

@@ -1,5 +1,17 @@
 # Amor Factory — Panduan Phase 1 (Master + Identity)
 
+> **⚠️ SUDAH DIGANTIKAN — jangan pakai panduan ini lagi.** Panduan ini
+> ditulis untuk `amor-factory-api-phase1-incremental.zip` dengan asumsi
+> path yang SALAH (`public_html/api/`). Setelah deployment nyata, path
+> yang benar adalah **`public_html/factory/api/`** (domain
+> `factory.amorgroup.id` document root-nya adalah `public_html/factory/`,
+> bukan `public_html/` itu sendiri). Gunakan
+> `dist/README-FIRST-CPANEL-PHASE1-V2.md` dan
+> `dist/amor-factory-api-phase1-easy-v2.zip` sebagai gantinya — panduan
+> itu juga menambahkan halaman login admin (`_admin-login/`) yang tidak
+> ada di paket ini, dan wizard review toko yang lebih lengkap. Sisa isi
+> file ini dibiarkan apa adanya sebagai catatan sejarah paket lama.
+
 **Baca ini setelah Phase 0.5 selesai** (skema database + data awal + admin
 sudah terpasang, `/api/health` sudah OK). Panduan ini untuk memasang divisi,
 katalog produk lama (472 item), dan data toko yang benar-benar ada di

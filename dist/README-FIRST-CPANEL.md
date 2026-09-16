@@ -1,5 +1,15 @@
 # Amor Factory — Panduan Instalasi Database (cPanel)
 
+> **⚠️ CATATAN SEJARAH — instalasi ini sudah selesai dilakukan.** Panduan
+> ini ditulis dengan asumsi path yang keliru (`public_html/api/`). Pada
+> deployment nyata, document root domain `factory.amorgroup.id` ternyata
+> adalah `public_html/factory/`, bukan `public_html/` itu sendiri — jadi
+> hasil instalasi yang benar (dan yang sudah benar-benar terjadi) ada di
+> `public_html/factory/api/`, bukan `public_html/api/` seperti tertulis
+> di bawah. Panduan ini dibiarkan apa adanya sebagai catatan sejarah;
+> untuk langkah selanjutnya gunakan
+> `dist/README-FIRST-CPANEL-PHASE1-V2.md`.
+
 **Baca ini dulu sebelum melakukan apa pun.** Panduan ini untuk siapa saja,
 walau tidak familiar dengan database atau coding. Tidak ada langkah yang
 mengharuskan Anda menjalankan perintah SQL manual atau membuka Terminal.

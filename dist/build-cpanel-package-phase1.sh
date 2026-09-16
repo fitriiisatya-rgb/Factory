@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# SUPERSEDED — see dist/build-cpanel-package-phase1-v2.sh instead. This
+# script's ZIP assumed the wrong upload path (public_html/api/); the real
+# host's document root for factory.amorgroup.id is public_html/factory/,
+# so the real path is public_html/factory/api/. Kept only as a historical
+# record of the amor-factory-api-phase1-incremental.zip that was already
+# built from it; do not build or ship from this script anymore.
+#
 # Builds dist/amor-factory-api-phase1-incremental.zip — the Phase 1
 # fast-track incremental update package for an EXISTING Phase 0.5
 # deployment (api/ already live at public_html/api/ with a working
