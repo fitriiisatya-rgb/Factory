@@ -7,32 +7,31 @@ This document assumes the reader has `docs/mysql-migration-audit.md` open for cr
 
 ---
 
-## 0. Target database version (must be confirmed before `database/schema-v1.sql` is finalized)
+## 0. Target database version — **OD-4 CLOSED / VERIFIED ON REAL CPANEL HOSTING (Phase 0.5)**
 
-This design has **not** been validated against the actual cPanel MySQL/MariaDB instance for `factory.amorgroup.id` — that instance's version was not accessible from this audit environment. Before the draft DDL is treated as anything more than a draft, run:
+The real `factory.amorgroup.id` cPanel hosting database's version has been confirmed by the human operator running `SELECT VERSION();` against it directly:
 
-```sql
-SELECT VERSION();
-SHOW VARIABLES LIKE 'version%';
+```
+10.11.19-MariaDB-cll-lve
 ```
 
-and confirm against the feature list below. Everything in this design works on **MySQL 5.7.8+ or MariaDB 10.2+** (the two lowest versions that support generated/virtual columns, which §11's DO-uniqueness design relies on as the primary approach) with one explicitly-documented fallback for anything older (§11). If the host is confirmed to run MySQL 8.0+/MariaDB 10.5+, nothing below needs to change — those also support everything used here, including `JSON` columns (used sparingly, see §5.6) and `CHECK` constraints (MySQL 8.0.16+/MariaDB 10.2+; treated as advisory/documentation-only below since older-but-supported versions silently ignore `CHECK` — see §12).
+(database `u7566812_factory`, connected via `localhost` from the app's perspective — standard cPanel same-host MySQL setup; `cll-lve` is CloudLinux's packaging/LVE tag, not a distinct SQL dialect). **This is the confirmation OD-4 asked for — see `docs/mysql-open-decisions-v1.md` OD-4 for the full closure record.** The disposable local MariaDB instances used during design and Phase 0 validation were never evidence about this real host and are not being retroactively treated as such; the version above is what closes this section.
 
-**Features this design relies on and their minimum version:**
+Everything in this design works on **MySQL 5.7.8+ or MariaDB 10.2+** (the two lowest versions that support generated/virtual columns, which §11's DO-uniqueness design relies on as the primary approach), and MariaDB 10.11.19 is comfortably above every floor listed below — no fallback path is needed.
 
-| Feature | Used for | Min. MySQL | Min. MariaDB |
-|---|---|---|---|
-| Generated (virtual/stored) columns | §11 partial-unique DO index | 5.7.6 | 10.2.0 (persistent), 5.2.0 (virtual, but virtual columns can't be indexed before 10.2 — see §11) |
-| `UNIQUE` index treating multiple `NULL`s as non-conflicting | §11 partial-unique pattern, `product_alias`/`store_alias` optionality | All supported versions | All supported versions |
-| `JSON` column type | §5.6 (only two columns in the whole schema) | 5.7.8 | 10.2.7 (as a real type; earlier MariaDB aliases `JSON` to `LONGTEXT` with `JSON_VALID` check — also acceptable here since these columns are read/written whole, never queried with JSON path functions) |
-| `InnoDB` row-level locking + transactions | §7, §11 (`SELECT ... FOR UPDATE`) | All supported versions (InnoDB is default since 5.5) | All supported versions |
-| `CHECK` constraints | Advisory only, see §12 | 8.0.16 (enforced) | 10.2.1 (enforced) |
+**Features this design relies on and their minimum version, checked against the real host:**
 
-**If the confirmed version is older than 5.7/10.2** (unlikely on a current cPanel host, but not verified): the one required change is §11's DO-uniqueness index, which falls back to pure application-level enforcement (documented inline). Nothing else in this design depends on a version floor above baseline InnoDB.
+| Feature | Used for | Min. MySQL | Min. MariaDB | Real host (10.11.19) |
+|---|---|---|---|---|
+| Generated (virtual/stored) columns | §11 partial-unique DO index | 5.7.6 | 10.2.0 (persistent) | ✅ |
+| `UNIQUE` index treating multiple `NULL`s as non-conflicting | §11 partial-unique pattern, `product_alias`/`store_alias` optionality | All supported versions | All supported versions | ✅ |
+| `JSON` column type | `idempotency_log.response_body` — the only `JSON` column in the schema (§5.6/§13) | 5.7.8 | 10.2.7 (as a real type; earlier MariaDB aliases `JSON` to `LONGTEXT` with `JSON_VALID` check — also acceptable here since this column is read/written whole, never queried with JSON path functions) | ✅ (real `JSON` type since 10.2.7) |
+| `InnoDB` row-level locking + transactions | §7, §11 (`SELECT ... FOR UPDATE`) | All supported versions (InnoDB is default since 5.5) | All supported versions | ✅ default engine |
+| `CHECK` constraints | Not actually used in `database/schema-v1.sql` — see §12; listed here only because it was evaluated | 8.0.16 (enforced) | 10.2.1 (enforced) | N/A — moot, none are used |
 
-**Validation performed (this pass, re-run after the shipment/store/auth corrections below)**: `database/schema-v1.sql` was applied against a disposable, local-only MariaDB 10.11.14 instance (spun up solely for this syntax/behavior check, then fully torn down immediately after — no live or persistent database was created or touched) to confirm the DDL is actually valid, not just plausible-looking. Result: all 45 tables created with zero errors; see §18 for the full list of behavioral checks re-run against this instance (shipment header+items, header-level void, synthetic non-outlet store, duplicate-open-DO blocking, and more).
+**Phase 0.5 MariaDB 10.11.19 compatibility pass — full line-by-line review of `database/schema-v1.sql`** (ENUM syntax, the `open_key` generated-STORED-column expression, FK constraint name lengths, utf8mb4 index-prefix byte limits, reserved words, `AUTO_INCREMENT BIGINT UNSIGNED`, `DECIMAL(12,2)`/`DECIMAL(14,2)`/`DECIMAL(5,2)` usage, `DATETIME` usage, `document_sequence`'s composite PK, `idempotency_log.response_body`): **no MySQL-only or version-sensitive construct was found anywhere in the DDL; zero patches were required.** Full detail in §18.1 below. This is a stronger, real-host-targeted compatibility statement than the disposable-local-instance validation in §18 — both now agree, but §18.1 is the one that actually closes OD-4.
 
-**This validates the design's internal correctness on MariaDB 10.11 — it proves nothing whatsoever about the actual `factory.amorgroup.id` cPanel database.** OD-4 (confirm `SELECT VERSION();` on the real host) is explicitly, deliberately kept **open** per review point 15 — the convenience of a disposable local instance must never be mistaken for, or silently substituted for, confirmation of the real target environment. `database/schema-v1.sql` remains a **draft** until that confirmation happens, full stop, regardless of how many times it validates cleanly elsewhere.
+**`database/schema-v1.sql` is no longer gated by OD-4.** It has still not been *applied* to the real `u7566812_factory` database as of this document revision — that is a separate, tracked Phase 0.5 step (see `api/DEPLOY-CPANEL-PREPROD.md`), not implied by this closure.
 
 ---
 
@@ -887,7 +886,7 @@ master_setting
 
 ## 18. Validation results (this pass, FINAL DESIGN CORRECTION)
 
-`database/schema-v1.sql` was applied against a **disposable, local-only MariaDB 10.11.14 instance**, installed via `mariadb-install-db`/`mariadbd --skip-networking --user=root` into a throwaway datadir, exercised, then fully torn down (`SHUTDOWN;` + `rm -rf` the datadir and socket) — no live or persistent database of any kind was created or touched. This is a syntax/behavior check on the draft DDL, not a deployment. See the caveat in §0: **this proves the design is internally consistent, not that it matches `factory.amorgroup.id`'s real MySQL/MariaDB version — OD-4 stays open.**
+`database/schema-v1.sql` was applied against a **disposable, local-only MariaDB 10.11.14 instance**, installed via `mariadb-install-db`/`mariadbd --skip-networking --user=root` into a throwaway datadir, exercised, then fully torn down (`SHUTDOWN;` + `rm -rf` the datadir and socket) — no live or persistent database of any kind was created or touched. This is a syntax/behavior check on the draft DDL, not a deployment. At the time this section was written, this proved the design internally consistent but said nothing about the real `factory.amorgroup.id` host's version. **That gap is closed as of Phase 0.5 — see §0 and §18.1: the real host is confirmed as MariaDB 10.11.19, OD-4 is CLOSED.** This section's disposable-instance results are kept as-is below since they remain accurate and are now corroborated, not superseded, by §18.1.
 
 **DDL build**: all 45 `CREATE TABLE` statements applied with zero errors (scenario 10). `SHOW TABLES` / `information_schema.tables` both confirm 45 tables in the resulting schema.
 
@@ -910,4 +909,29 @@ master_setting
 
 ---
 
-**Status: MYSQL DESIGN V1 FINAL-CANDIDATE READY FOR REVIEW.** Not implementation complete. Not production ready. No SQL has been executed against any live or persistent database — see §0 for what disposable-instance validation was performed and, critically, what it does **not** confirm (the actual `factory.amorgroup.id` database version, OD-4, remains open). A draft-only, explicitly-marked-not-for-production DDL rendering of this document is at `database/schema-v1.sql`.
+## 18.1. Phase 0.5 — MariaDB 10.11.19 compatibility pass (real host, OD-4 closure evidence)
+
+With the real host version confirmed (`10.11.19-MariaDB-cll-lve`, §0), `database/schema-v1.sql` was reviewed line-by-line against every item the Phase 0.5 request named specifically, independent of and in addition to the disposable-instance run in §18 above:
+
+| Check | Finding |
+|---|---|
+| `ENUM` syntax | All 18 `ENUM(...)` columns use plain quoted string literals, no version-sensitive syntax (e.g. no numeric-value shorthand). Standard since MySQL 3.23/all MariaDB versions. |
+| `JSON` columns | Exactly **one** in the whole schema: `idempotency_log.response_body JSON NOT NULL` (the §0 table above previously said "two columns" — that was a stale inaccuracy from an earlier draft, corrected here to one; it changes nothing about the compatibility conclusion). Read/written whole by the API, never queried with JSON path functions, so it behaves identically whether MariaDB treats it as a native `JSON` type or (pre-10.2.7) an aliased `LONGTEXT` + `JSON_VALID` `CHECK` — 10.11.19 has the native type regardless. |
+| `open_key` generated `STORED` column (`delivery_order`) | `GENERATED ALWAYS AS (CASE WHEN status NOT IN ('shipped','cancelled') THEN CONCAT(tanggal,'\|',store_id,'\|',shipment_group) ELSE NULL END) STORED`, with a `UNIQUE KEY` on it. Both the generated-`STORED`-column feature and indexing it are supported since MariaDB 10.2.0 — 10.11.19 is far beyond that floor. Already exercised end-to-end in §18 scenario 5 (duplicate-open-DO rejection) and again in the Phase 0 integration suite's P0-16. |
+| FK constraint names | Longest is `fk_stock_transfer_from_invoice` at 30 characters, every other name is shorter — well under MySQL/MariaDB's 64-character identifier limit. No truncation or collision risk. |
+| Index length under utf8mb4 | Largest single-column unique index is on `VARCHAR(255)` (e.g. `store.canonical_name`, `product.name`, `*_alias.raw_name`) = 255 × 4 bytes = 1,020 bytes; the largest composite is `migration_*_map`'s `(raw_name VARCHAR(255), raw_code VARCHAR(64))` = 1,276 bytes. Both are well under InnoDB's 3,072-byte index-prefix limit under `innodb_large_prefix`/`ROW_FORMAT=DYNAMIC`, which is the default on MariaDB 10.11. No index needs a prefix length or column shortening. |
+| `ON DELETE` behavior | Every `ON DELETE CASCADE` in the schema is a header→line-item relationship within the same transactional aggregate (e.g. `shipment_item` → `shipment`, `invoice_item`/`invoice_shipment` → `invoice`, `po_item`/`po_store_item` → `po_batch`/`po_item`, `do_item` → `delivery_order`, `customer_order_item` → `customer_order`, `fg_batch_source`/`fg_item` → `fg_batch`, `production_item` → `production_run`). Every FK that points at a master-data table (`product`, `store`) has no `ON DELETE` clause at all, i.e. plain `RESTRICT` — the InnoDB default on every supported version, including 10.11.19. This matches review point 11's "never cascade a master-data delete into transactional records" rule exactly, and needed no changes. |
+| `AUTO_INCREMENT BIGINT UNSIGNED` | Used on all 37 surrogate-PK tables (every table except the pure-junction/composite-PK ones: `user_roles`, `user_factory_access`, `user_division_access`, `invoice_shipment`, `document_sequence`, `idempotency_log`, `master_setting`). Standard InnoDB behavior, unaffected by MariaDB version. |
+| `DECIMAL(12,2)` / `DECIMAL(14,2)` / `DECIMAL(5,2)` | Used consistently for quantities (12,2 — review point 8, LOCKED as-is), money (14,2), and percentages (5,2). Fixed-point `DECIMAL` storage and arithmetic behavior is identical across all supported MySQL/MariaDB versions — no rounding or precision change from targeting 10.11.19 specifically. |
+| `DATETIME` | Used for all UTC timestamps (§14 convention); `DATE` for Asia/Jakarta business dates. No `TIMESTAMP` columns are used anywhere (deliberately — `TIMESTAMP`'s implicit timezone-conversion and 2038 range limit are both avoided by using `DATETIME` + storing UTC explicitly, application-enforced). No version sensitivity. |
+| Reserved words | Column/table names were checked against the MariaDB 10.11 reserved-word list (`YEAR`, `MONTH`, `STATUS`, `ACTION`, `KEY`, `VALUE` and similar near-miss names were the specific concern). None of `document_sequence.year`/`document_sequence.month`, `*.status`, `audit_log.action` are on MariaDB's actual reserved-word list — all were already used unquoted and applied successfully in the §18 disposable-instance run with zero syntax errors, which is empirical confirmation on top of the word-list check. |
+| `CHECK` constraints | None exist in `database/schema-v1.sql` — §12 documents `CHECK` as advisory/design-intent only, never emitted as real DDL, specifically to sidestep any enforced-vs-ignored version difference. Nothing to patch. |
+| Default values | All `DEFAULT` clauses are plain literals (numbers, quoted strings, `UTC_TIMESTAMP()` is used only in application-issued `INSERT`/`UPDATE` statements, never as a column `DEFAULT` — every `DATETIME` column is explicitly set by the application layer, never relies on an implicit default). No `DEFAULT (expression)` parenthesized-expression defaults (a MariaDB 10.2.1+/MySQL 8.0.13+ feature) are used anywhere, so there is no floor being silently assumed here either. |
+| `document_sequence` | Composite `PRIMARY KEY (document_type, year, month)`, no `AUTO_INCREMENT`. The `INSERT ... ON DUPLICATE KEY UPDATE last_number = LAST_INSERT_ID(last_number + 1)` allocator pattern (implemented in `api/src/Services/DocumentSequenceService.php`) relies only on `LAST_INSERT_ID(expr)`'s documented generic behavior (setting the session's last-insert-id value to an arbitrary expression, independent of `AUTO_INCREMENT`) — supported on every MySQL/MariaDB version this schema targets, confirmed working end-to-end (including under real concurrent access from separate connections) in the Phase 0 integration suite's P0-17. |
+| `idempotency_log.response_body JSON` | Covered under "JSON columns" above. Additionally: `idempotency_log`'s primary key is `request_id VARCHAR(64)`, not an `ENUM`/`JSON` field, so no version-sensitive indexing concern applies to the key itself. |
+
+**Conclusion: zero MySQL-only or version-sensitive constructs were found in `database/schema-v1.sql`. Zero patches were made or are required for MariaDB 10.11.19 compatibility.** The one stale documentation inaccuracy found (§0's old "two JSON columns" — actually one) has been corrected in this revision; it was a docs-only error, not a schema defect, and required no DDL change.
+
+---
+
+**Status: MYSQL DESIGN V1 FINAL-CANDIDATE READY FOR REVIEW.** Not implementation complete. Not production ready. **OD-4 is CLOSED** (§0, §18.1) — the real `factory.amorgroup.id`/`u7566812_factory` MariaDB version is confirmed (`10.11.19-MariaDB-cll-lve`) and fully compatible with this design, with zero patches required. The schema has still not been applied to that real database — see `api/DEPLOY-CPANEL-PREPROD.md` for that separate, gated step. A draft-only, explicitly-marked-not-for-production DDL rendering of this document is at `database/schema-v1.sql`.

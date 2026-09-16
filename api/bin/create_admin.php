@@ -3,10 +3,12 @@
 declare(strict_types=1);
 
 /**
- * Creates (or resets the password of) a staging ADMIN user. Never hardcodes
- * a password in source — reads it interactively (terminal echo disabled
- * where possible) or from the ADMIN_PASSWORD environment variable for
- * non-interactive/CI use.
+ * Creates (or resets the password of) a staging/preproduction ADMIN user.
+ * Never hardcodes a password in source — reads it interactively (terminal
+ * echo disabled where possible) or from the ADMIN_PASSWORD environment
+ * variable for non-interactive/CI use. Core logic lives in
+ * src/Setup/AdminCreator.php, shared with the optional
+ * public/_setup/create_admin.php web fallback.
  *
  * Usage:
  *   php api/bin/create_admin.php <username> [full name...]
@@ -17,13 +19,14 @@ declare(strict_types=1);
  *
  * Re-running with an existing username resets that user's password and
  * reactivates the account — this IS the documented "reset staging admin"
- * procedure (see api/DEPLOY.md).
+ * procedure (see api/DEPLOY.md / api/DEPLOY-CPANEL-PREPROD.md).
  */
 
 require __DIR__ . '/../autoload.php';
 
 use Amor\Api\Config;
 use Amor\Api\Database;
+use Amor\Api\Setup\AdminCreator;
 
 $username = $argv[1] ?? null;
 if ($username === null || trim($username) === '') {
@@ -41,37 +44,14 @@ if ($password === false || $password === '') {
         exit(1);
     }
 }
-if (strlen($password) < 10) {
-    fwrite(STDERR, "Password must be at least 10 characters.\n");
-    exit(1);
-}
 
 Config::load();
 $pdo = Database::pdo();
 
-$hash = password_hash($password, PASSWORD_DEFAULT);
-
-$pdo->beginTransaction();
 try {
-    $stmt = $pdo->prepare(
-        'INSERT INTO users (username, password_hash, full_name, active, created_at)
-         VALUES (?, ?, ?, 1, UTC_TIMESTAMP())
-         ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash), full_name = VALUES(full_name), active = 1, updated_at = UTC_TIMESTAMP()'
-    );
-    $stmt->execute([$username, $hash, $fullName]);
-
-    $userId = (int) $pdo->query('SELECT user_id FROM users WHERE username = ' . $pdo->quote($username))->fetchColumn();
-
-    $roleId = (int) $pdo->query("SELECT role_id FROM roles WHERE code = 'ADMIN'")->fetchColumn();
-    if ($roleId === 0) {
-        throw new RuntimeException("ADMIN role not found — run 'php api/bin/seed.php' first.");
-    }
-
-    $pdo->prepare('INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)')->execute([$userId, $roleId]);
-
-    $pdo->commit();
+    (new AdminCreator($pdo))->createOrReset($username, $fullName, $password);
 } catch (\Throwable $e) {
-    $pdo->rollBack();
+    // Never a password in this message — AdminCreator's own exceptions never include it.
     fwrite(STDERR, 'Failed: ' . $e->getMessage() . "\n");
     exit(1);
 }

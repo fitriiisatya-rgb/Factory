@@ -1,0 +1,4 @@
+# Defense in depth only — SetupGuard.php (SETUP_TOKEN + EXPECTED_DB_NAME +
+# APP_ENV check) is the actual access control for the scripts in this
+# directory. This just stops directory listing from leaking filenames.
+Options -Indexes

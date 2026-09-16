@@ -61,11 +61,30 @@ This document is the single place to check what still needs a human sign-off bef
 **Applied (no longer open)**: `POST /api/delivery-orders/{id}/ready` request body is now `{version}` only — **no client-supplied `availableItems` anywhere in the API.** The server loads the DO + items, queries the authoritative `fg_batch`/`fg_item` rows (matched by date/store/`shipment_group`/product and FG-ready-state), computes each item's available quantity itself, validates against `planned_qty`, persists the result onto `delivery_order_item.available_qty`, and transitions the DO atomically (incrementing `version`, writing `audit_log`). Ship-time validation (`actualShipQty <= plannedQty` AND `<= server-computed availableQty`) is unchanged.
 **Confirmation needed**: none technical — this closes the client-trust gap outright rather than deferring it to a v1.1 pass.
 
-### OD-4 — Confirm actual cPanel MySQL/MariaDB version — **still OPEN, explicitly not closed by local validation**
+### OD-4 — Confirm actual cPanel MySQL/MariaDB version — **CLOSED / VERIFIED ON REAL CPANEL HOSTING (Phase 0.5)**
 
 **Context**: `docs/mysql-schema-v1.md` §0/§11 — the DO-uniqueness generated-column approach needs MySQL 5.7.6+/MariaDB 10.2+.
-**Decision needed**: run `SELECT VERSION();` against the real `factory.amorgroup.id` hosting database and confirm. This audit had no access to that environment.
-**Explicitly does NOT close this OD**: this and the prior review pass both validated the draft DDL against a disposable local MariaDB 10.11 instance (installed and torn down purely for this review, never touching any live/persistent database). **That validation proves the design is internally consistent and buildable — it proves nothing whatsoever about the actual `factory.amorgroup.id` cPanel database's version.** MariaDB 10.11 was simply what the local disposable package manager installed; it is not evidence about the target host. `database/schema-v1.sql` remains DRAFT until the real `SELECT VERSION();` result is in hand.
+**Resolved**: the human operator ran `SELECT VERSION();` against the real `factory.amorgroup.id` cPanel hosting database (database `u7566812_factory`, host `localhost` from the app's perspective, i.e. the standard cPanel same-host MySQL socket/TCP setup) and reported the result back:
+
+```
+10.11.19-MariaDB-cll-lve
+```
+
+(`cll-lve` is CloudLinux's package/LVE tag — a packaging label, not a distinct SQL dialect; the SQL feature set is standard MariaDB 10.11.)
+
+**This is the evidence that closes OD-4** — not the disposable local MariaDB instances used during design/Phase 0 validation (those never claimed to be evidence about the real host, and are not being reinterpreted as such now). The real host is MariaDB **10.11.19**, well above every version floor this schema depends on:
+
+| Feature this schema uses | Floor required | Real host (10.11.19) |
+|---|---|---|
+| InnoDB (transactions, row locking, `SELECT ... FOR UPDATE`) | any supported version | ✅ default engine |
+| Generated (`GENERATED ALWAYS AS ... STORED`) columns | MariaDB 10.2.0 | ✅ (10.11.19 ≫ 10.2.0) |
+| `UNIQUE` index on a `STORED` generated column, multi-NULL-safe | MariaDB 10.2.0 | ✅ |
+| `JSON` column (`idempotency_log.response_body`) | MariaDB 10.2.7 (aliased to `LONGTEXT` + `JSON_VALID` `CHECK`) | ✅ — read/written whole in this design, never queried with JSON path functions, so the alias behavior is irrelevant either way |
+| Foreign keys, `ON DELETE CASCADE`/`RESTRICT` | InnoDB, any supported version | ✅ |
+| `SELECT ... FOR UPDATE` (§7 document-numbering fallback path) | InnoDB, any supported version | ✅ |
+
+**Full compatibility pass result**: see `docs/mysql-schema-v1.md` §0 and §18.1 (Phase 0.5 addendum) for the line-by-line review of `database/schema-v1.sql` against 10.11.19 specifically (ENUM syntax, generated-column expression, FK constraint name lengths, utf8mb4 index-prefix limits, reserved words, `CHECK` constraints, `AUTO_INCREMENT BIGINT UNSIGNED`, `DECIMAL`/`DATETIME` usage, `document_sequence`, `idempotency_log.response_body`). **Conclusion: no MySQL-only or version-sensitive constructs found; zero patches required.** `database/schema-v1.sql` is no longer gated by OD-4.
+**What remains true**: this closes the *version-compatibility* question only. The schema has still never been applied to the real `u7566812_factory` database as of this entry — that is Phase 0.5's actual apply step, tracked separately (see `api/DEPLOY-CPANEL-PREPROD.md`), and is not implied by this OD's closure.
 **Recommendation**: do this before writing any real (non-draft) DDL — it is a 30-second check that gates §11's design choice and is the only version-sensitive part of the entire schema.
 
 ### OD-5 — Quantity column type (`DECIMAL(12,2)` vs `INT`)
@@ -150,15 +169,31 @@ This document is the single place to check what still needs a human sign-off bef
 - [x] OD-3 (FG availability) — LOCKED this pass, server-side computation, no further decision needed
 - [x] OD-9 (`store_id` NOT NULL) — LOCKED this pass, contradiction closed, only the cosmetic label text needs PPIC/Finance confirmation
 - [x] OD-10 (stale UAT scripts) — RESOLVED, commit `b04cd53`
+- [x] **OD-4 (DB version) — CLOSED / VERIFIED ON REAL CPANEL HOSTING (Phase 0.5): `10.11.19-MariaDB-cll-lve`, full compatibility pass found zero patches required**
 - [ ] OD-2, OD-5, OD-6, OD-7, OD-8 each have an explicit decision recorded (even if it's "accept the recommendation as-is")
 - [ ] OD-13 (`po_closure`) and OD-14 (`shipment.status`) — already incorporated into `mysql-schema-v1.md`; confirm no objection
-- [ ] **OD-4 (DB version) confirmed against the real hosting environment — still OPEN, not satisfied by local disposable-MariaDB validation**
 - [ ] Business sign-off on OD-11 (real users/roles) obtained separately from this technical review
 - [ ] **OD-12 (overpayment tolerance) — BUSINESS CONFIRMATION REQUIRED BEFORE PRODUCTION** (not a blocker for schema/PHP staging build; may remain unchecked through staging)
 - [ ] `database/schema-v1.sql` reviewed against any changes agreed above before it is used for anything beyond reading
 
-Only after this checklist is complete should Phase 0 of `docs/mysql-migration-audit.md` §18 (data-quality pre-work) begin. Note: OD-4 and OD-11 gate real (non-draft) DDL; OD-12 gates production only, not staging.
+OD-4 no longer gates applying `database/schema-v1.sql` to the real `u7566812_factory` database — but that apply is a separate, not-yet-performed step (see `api/DEPLOY-CPANEL-PREPROD.md`), gated instead by the Phase 0.5 database-safety-gate and the human operator following that procedure. Note: OD-11 gates real (non-draft) DDL going further than infrastructure; OD-12 gates production only, not staging/preproduction.
 
 ---
 
-**Status: MYSQL DESIGN V1 FINAL-CANDIDATE READY FOR REVIEW.** Not implementation complete. Not production ready. OD-4 (actual cPanel DB version) remains explicitly open.
+## 6. Phase roadmap (updated Phase 0.5)
+
+- **Phase 0 — DONE.** PHP + MySQL staging skeleton (infrastructure only): cross-cutting auth/CSRF/idempotency/versioning/audit, health + master-read + minimal product/store CRUD endpoints, 17/17 local integration tests green. Commit `1f307da`.
+- **Phase 0.5 — THIS PASS.** Real cPanel database + API deployment preparation: OD-4 closed against the real host (`10.11.19-MariaDB-cll-lve`), MariaDB-10.11.19-specific compatibility pass on `database/schema-v1.sql` (zero patches required), a database safety gate added to the migration runner (`EXPECTED_DB_NAME`, known-state check, explicit confirmation, never `DROP`/`TRUNCATE`), migration-user/runtime-user privilege split documented, CLI and no-SSH web-fallback apply procedures written (`api/DEPLOY-CPANEL-PREPROD.md`), a CP-01..CP-20 real-host smoke test checklist defined. **The schema has not yet been applied to the real database as part of producing this revision** — that is the human operator's next action, following `api/DEPLOY-CPANEL-PREPROD.md`.
+- **Phase 1 — MASTER + IDENTITY + LEGACY MAPPING (redefined this pass — supersedes any earlier "Phase 1 = DO lifecycle" framing).** Explicitly:
+  - Product identity, product aliases, product legacy codes (`product`, `product_alias`, `product_legacy_code`)
+  - Store identity, store aliases (`store`, `store_alias`)
+  - Division/factory assignment
+  - `migration_product_map` / `migration_store_map` population (the harvest step, `docs/mysql-migration-map-v1.md` §1.1)
+  - Legacy identity extraction from the Sheets export
+  - Human review and resolution of `unresolved`/`conflict` rows (`docs/mysql-migration-map-v1.md` §1.3) — never an automated fuzzy-merge
+  - **DO lifecycle, shipment, stock, PO, production, FG, and invoice are explicitly NOT Phase 1.** Those come after identity resolution is trustworthy, not before — Phase 1's whole purpose is to make every later phase's `product_id`/`store_id` FK references meaningful instead of guessed.
+- Phase 1 does not begin until the real-host smoke test checklist (CP-01..CP-20 in `api/DEPLOY-CPANEL-PREPROD.md`) has been run and reported green by the human operator against `u7566812_factory`.
+
+---
+
+**Status: MYSQL DESIGN V1 FINAL-CANDIDATE READY FOR REVIEW.** Not implementation complete. Not production ready. OD-4 is now CLOSED (see above) — the real cPanel database version is confirmed and schema-compatible; the schema itself has not yet been applied there.

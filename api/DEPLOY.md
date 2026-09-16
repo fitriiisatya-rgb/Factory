@@ -7,15 +7,18 @@ Apps Script/Sheets frontend or at any live database — see item 19 of the
 Phase 0 brief ("DO NOT DO YET") and `src/Config.php`, which hard-refuses
 `APP_ENV=production`.
 
-## 0. Before you deploy this anywhere real
+## 0. Real cPanel deployment (Phase 0.5) — use that guide, not just this one
 
-Run `SELECT VERSION();` against the actual `factory.amorgroup.id` cPanel
-MySQL/MariaDB host and confirm it against `docs/mysql-schema-v1.md` §0's
-version requirements (MySQL 5.7.6+ / MariaDB 10.2+, for the generated-column
-DO-uniqueness pattern). **This has not been done as part of building this
-skeleton** — the session that built it has no network path to that host.
-See OD-4 in `docs/mysql-open-decisions-v1.md`. Do not apply `database/schema-v1.sql`
-to the real staging database until this is confirmed.
+**As of Phase 0.5, OD-4 is CLOSED**: the real cPanel hosting database is
+confirmed as `u7566812_factory` on MariaDB `10.11.19-MariaDB-cll-lve`, and
+`database/schema-v1.sql` has been reviewed line-by-line against that exact
+version with zero patches required (`docs/mysql-schema-v1.md` §18.1). This
+document (`DEPLOY.md`) remains the generic reference for the skeleton's
+structure, requirements, and local test suite; **for the actual real-host
+apply procedure — exact steps, safety gate, migration-user/runtime-user
+split, no-SSH fallback, and the CP-01..CP-20 smoke test checklist — use
+`api/DEPLOY-CPANEL-PREPROD.md` instead.** It supersedes sections 4–7 below
+for a real deployment; sections 1–3 and 8–9 here still apply as background.
 
 ## 1. Requirements
 
@@ -80,7 +83,9 @@ subdomain or a clearly-separate subfolder, per item 18 of the Phase 0 brief.
 3. Alternatively (or in addition — env vars always win, see `src/Config.php`),
    set the same keys as environment variables via cPanel's "Environment
    Variables" panel if the hosting plan exposes one.
-4. `APP_ENV` must be `staging`. Setting it to `production` is a hard
+4. `APP_ENV` must be `staging` (local/CI disposable instances) or
+   `preproduction` (real cPanel hosting, not yet live — see
+   `api/DEPLOY-CPANEL-PREPROD.md`). Setting it to `production` is a hard
    `RuntimeException` at boot in this codebase — that gate is deliberate and
    should stay in place until a real production-readiness review happens.
 

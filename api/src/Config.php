@@ -81,11 +81,14 @@ final class Config
         }
 
         if ($values['APP_ENV'] === 'production') {
-            // Phase 0 explicitly never runs against production. This is a hard stop,
-            // not a warning, so a misconfigured deploy cannot silently point at prod.
+            // This codebase has not been through a production-readiness review and must
+            // never run against production, at any phase. Valid values so far: 'staging'
+            // (local/CI disposable instances), 'preproduction' (real cPanel hosting,
+            // not yet live — Phase 0.5). This is a hard stop, not a warning, so a
+            // misconfigured deploy cannot silently point at prod.
             throw new \RuntimeException(
-                'APP_ENV=production is not permitted in this Phase 0 skeleton. '
-                . 'This codebase has not been through a production-readiness review.'
+                'APP_ENV=production is not permitted in this codebase yet. '
+                . 'It has not been through a production-readiness review.'
             );
         }
 
