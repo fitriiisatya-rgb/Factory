@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Amor\Api;
 
+use Amor\Api\Controllers\Admin\MigrationController;
 use Amor\Api\Controllers\AuthController;
 use Amor\Api\Controllers\DivisionController;
 use Amor\Api\Controllers\FactoryController;
@@ -39,14 +40,23 @@ final class App
         $router->get('/api/divisions', [DivisionController::class, 'index']);
 
         $router->get('/api/products', [ProductController::class, 'index']);
+        $router->get('/api/products/{id}', [ProductController::class, 'show']);
         $router->post('/api/products', [ProductController::class, 'create']);
         $router->put('/api/products/{id}', [ProductController::class, 'update']);
         $router->post('/api/products/{id}/aliases', [ProductController::class, 'addAlias']);
 
         $router->get('/api/stores', [StoreController::class, 'index']);
+        $router->get('/api/stores/{id}', [StoreController::class, 'show']);
         $router->post('/api/stores', [StoreController::class, 'create']);
         $router->put('/api/stores/{id}', [StoreController::class, 'update']);
         $router->post('/api/stores/{id}/aliases', [StoreController::class, 'addAlias']);
+
+        $router->get('/api/admin/migration/products', [MigrationController::class, 'indexProducts']);
+        $router->post('/api/admin/migration/products/{id}/resolve', [MigrationController::class, 'resolveProduct']);
+        $router->post('/api/admin/migration/products/{id}/flag-conflict', [MigrationController::class, 'flagConflictProduct']);
+        $router->get('/api/admin/migration/stores', [MigrationController::class, 'indexStores']);
+        $router->post('/api/admin/migration/stores/{id}/resolve', [MigrationController::class, 'resolveStore']);
+        $router->post('/api/admin/migration/stores/{id}/flag-conflict', [MigrationController::class, 'flagConflictStore']);
 
         $routeKey = $request->method . ' ' . $request->path;
         if ($request->method !== 'GET' && !in_array($routeKey, self::CSRF_EXEMPT, true)) {

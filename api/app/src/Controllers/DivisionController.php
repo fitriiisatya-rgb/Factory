@@ -14,7 +14,7 @@ final class DivisionController
     public static function index(Request $request): void
     {
         Auth::requireAuth();
-        $stmt = Database::pdo()->query('SELECT division_id, name, is_verification FROM division ORDER BY name');
+        $stmt = Database::pdo()->query('SELECT division_id, name, factory_id, is_verification FROM division ORDER BY name');
         Response::json($stmt->fetchAll());
     }
 }

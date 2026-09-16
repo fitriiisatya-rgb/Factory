@@ -26,6 +26,17 @@ final class StoreController
         Response::json($rows);
     }
 
+    public static function show(Request $request): void
+    {
+        Auth::requireAuth();
+        $id = (int) $request->routeParams['id'];
+        $store = (new StoreRepository())->findById(\Amor\Api\Database::pdo(), $id);
+        if ($store === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'Store not found');
+        }
+        Response::json($store);
+    }
+
     public static function create(Request $request): void
     {
         $userId = Auth::requireRole('ADMIN');

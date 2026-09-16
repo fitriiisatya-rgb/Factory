@@ -31,6 +31,17 @@ final class ProductController
         Response::json($rows);
     }
 
+    public static function show(Request $request): void
+    {
+        Auth::requireAuth();
+        $id = (int) $request->routeParams['id'];
+        $product = (new ProductRepository())->findById(\Amor\Api\Database::pdo(), $id);
+        if ($product === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'Product not found');
+        }
+        Response::json($product);
+    }
+
     public static function create(Request $request): void
     {
         $userId = Auth::requireRole('ADMIN', 'PPIC');

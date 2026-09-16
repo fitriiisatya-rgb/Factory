@@ -1,0 +1,3836 @@
+{
+    "extractedAt": "2026-09-16T13:44:02+00:00",
+    "sourceFile": "amorcakes-manufacturing-v5-slate(2).html",
+    "sourceNote": "products[] = KATALOG_BAWAAN verbatim. divisions[] = DEFAULT_DIVISI with factory/is_verification derived from divisiDari()/fgFactoryForDivisi()/divisiVerifikasi() in the same source file (see extractor comments). storeAliasGroups[] = the ONLY hardcoded store/alias data in this source (bootstrapTokoCanonicalDikenal) — this repo has no access to the live Sheets-backed store list, so nothing else is invented here.",
+    "divisions": [
+        {
+            "name": "Roti & Bollen",
+            "factory": "Karangtengah",
+            "is_verification": false
+        },
+        {
+            "name": "Basic",
+            "factory": "Karangtengah",
+            "is_verification": false
+        },
+        {
+            "name": "Donat/Mochi/AKB",
+            "factory": "Karangtengah",
+            "is_verification": false
+        },
+        {
+            "name": "Pastry",
+            "factory": "Karangtengah",
+            "is_verification": false
+        },
+        {
+            "name": "Cookies",
+            "factory": "Karangtengah",
+            "is_verification": false
+        },
+        {
+            "name": "Finishgood & Packing",
+            "factory": "Karangtengah",
+            "is_verification": true
+        },
+        {
+            "name": "Bolu",
+            "factory": "Cibadak",
+            "is_verification": false
+        },
+        {
+            "name": "Finishgood & Packing (Cibadak)",
+            "factory": "Cibadak",
+            "is_verification": true
+        }
+    ],
+    "products": [
+        {
+            "n": "LEMPER AYAM 2",
+            "kd": "100265",
+            "k": "AKB",
+            "h": 4000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "PUDDING ITALIA ALPENLIEBE",
+            "kd": "100255",
+            "k": "AKB",
+            "h": 27000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "PUDDING ITALIA CHOCOLATE",
+            "kd": "100256",
+            "k": "AKB",
+            "h": 27000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "PUDDING ITALIA MATCHA",
+            "kd": "100257",
+            "k": "AKB",
+            "h": 27000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "PUDDING ITALIA ORIGINAL",
+            "kd": "100258",
+            "k": "AKB",
+            "h": 27000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "PUDDING ITALIA THAITEA",
+            "kd": "100259",
+            "k": "AKB",
+            "h": 27000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "RISOL BEEF MAYO",
+            "kd": "100262",
+            "k": "AKB",
+            "h": 5000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "RISOL RAGOUT",
+            "kd": "100260",
+            "k": "AKB",
+            "h": 4000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "RISOL SAYUR",
+            "kd": "100261",
+            "k": "AKB",
+            "h": 4000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "SOSIS SOLO",
+            "kd": "100264",
+            "k": "AKB",
+            "h": 4000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "SUS BUAH",
+            "kd": "100250",
+            "k": "AKB",
+            "h": 7500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "SUS COKLAT",
+            "kd": "100251",
+            "k": "AKB",
+            "h": 6500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "SUS COKLAT MINI",
+            "kd": "100254",
+            "k": "AKB",
+            "h": 4500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "SUS DURIAN",
+            "kd": "100252",
+            "k": "AKB",
+            "h": 7000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "SUS ORIGINAL",
+            "kd": "100249",
+            "k": "AKB",
+            "h": 6000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "SUS ORI MINI",
+            "kd": "100253",
+            "k": "AKB",
+            "h": 4500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "PASTEL",
+            "kd": "100263",
+            "k": "AKB",
+            "h": 5000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "BENTO BLACK & WHITE",
+            "kd": "100015",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BENTO BLUE AURA",
+            "kd": "100025",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BENTO CHOCO GOLD",
+            "kd": "100017",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BENTO CHOCO LEAF",
+            "kd": "100018",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BENTO CHOCO WHITE",
+            "kd": "100016",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BENTO DAISY",
+            "kd": "100023",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BENTO GREEN DAISIES",
+            "kd": "100024",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BENTO HARLEY QUEEN",
+            "kd": "100022",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BENTO PINK FLOWER",
+            "kd": "100019",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BENTO PINKRED MARBLE",
+            "kd": "100021",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BENTO SINGLE STRAWBERRY",
+            "kd": "100020",
+            "k": "BIRTHDAY CAKE",
+            "h": 47000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BISCUIT CARNAVAL",
+            "kd": "100004",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST ARABIAN CHOCO 16",
+            "kd": "100084",
+            "k": "BIRTHDAY CAKE",
+            "h": 180000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST CHOCO CASTLE 16",
+            "kd": "100080",
+            "k": "BIRTHDAY CAKE",
+            "h": 150000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST CHOCO GARDEN 16",
+            "kd": "100088",
+            "k": "BIRTHDAY CAKE",
+            "h": 180000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST CHOCOLAND 16",
+            "kd": "100085",
+            "k": "BIRTHDAY CAKE",
+            "h": 180000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST CHOCO ROCK 16",
+            "kd": "100082",
+            "k": "BIRTHDAY CAKE",
+            "h": 150000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST CHOCO SNOW 16",
+            "kd": "100081",
+            "k": "BIRTHDAY CAKE",
+            "h": 150000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST KARAKTER 16",
+            "kd": "100160",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST KARAKTER 24",
+            "kd": "100161",
+            "k": "BIRTHDAY CAKE",
+            "h": 260000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST ROYAL CHOCO 16",
+            "kd": "100087",
+            "k": "BIRTHDAY CAKE",
+            "h": 180000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST TRAFIC LIGHT 16",
+            "kd": "100083",
+            "k": "BIRTHDAY CAKE",
+            "h": 150000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST ULTAH KOTAK 18",
+            "kd": "100147",
+            "k": "BIRTHDAY CAKE",
+            "h": 120000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST ULTAH KOTAK 20",
+            "kd": "100148",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST ULTAH KOTAK 24",
+            "kd": "100149",
+            "k": "BIRTHDAY CAKE",
+            "h": 240000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST ICE HOLE 22",
+            "kd": "100109",
+            "k": "BIRTHDAY CAKE",
+            "h": 315000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST VARIASI BUTTER 12",
+            "kd": "100150",
+            "k": "BIRTHDAY CAKE",
+            "h": 80000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST VARIASI BUTTER 14",
+            "kd": "100151",
+            "k": "BIRTHDAY CAKE",
+            "h": 95000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST VARIASI BUTTER 14+NAMA",
+            "kd": "100152",
+            "k": "BIRTHDAY CAKE",
+            "h": 100000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST VARIASI BUTTER 16",
+            "kd": "100153",
+            "k": "BIRTHDAY CAKE",
+            "h": 115000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST VARIASI BUTTER 16+NAMA",
+            "kd": "100154",
+            "k": "BIRTHDAY CAKE",
+            "h": 120000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST VARIASI BUTTER 18",
+            "kd": "100155",
+            "k": "BIRTHDAY CAKE",
+            "h": 145000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST VARIASI BUTTER 20",
+            "kd": "100156",
+            "k": "BIRTHDAY CAKE",
+            "h": 195000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST VARIASI BUTTER KOTAK 16",
+            "kd": "100157",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST VARIASI BUTTER KOTAK 18",
+            "kd": "100158",
+            "k": "BIRTHDAY CAKE",
+            "h": 160000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST VARIASI BUTTER KOTAK 20",
+            "kd": "100159",
+            "k": "BIRTHDAY CAKE",
+            "h": 195000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLACKFOREST ZEBRA WALL 16",
+            "kd": "100086",
+            "k": "BIRTHDAY CAKE",
+            "h": 180000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLUEBERRY CHEESE CAKE 16",
+            "kd": "100092",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLUEBERRY STRINGS MIKA",
+            "kd": "100035",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLUE OCEAN 16",
+            "kd": "100068",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CAS FONDAN 75",
+            "kd": "100128",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CAS KARAKTER 25",
+            "kd": "100123",
+            "k": "BIRTHDAY CAKE",
+            "h": 25000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CAS KARAKTER 50",
+            "kd": "100124",
+            "k": "BIRTHDAY CAKE",
+            "h": 50000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CAS TINGGI 100",
+            "kd": "100133",
+            "k": "BIRTHDAY CAKE",
+            "h": 100000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO CARNIVAL",
+            "kd": "100002",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO CHEESE CAKE 16",
+            "kd": "100090",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO CUBE 12",
+            "kd": "100048",
+            "k": "BIRTHDAY CAKE",
+            "h": 85000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO DUST MIKA",
+            "kd": "100034",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO DUST OREO 20",
+            "kd": "100105",
+            "k": "BIRTHDAY CAKE",
+            "h": 295000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO FLOWER MIKA",
+            "kd": "100033",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO MELTED MIKA",
+            "kd": "100029",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO PEANUT 16",
+            "kd": "100050",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO POWDER 16",
+            "kd": "100072",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO RING 16",
+            "kd": "100052",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO STRINGS 12",
+            "kd": "100044",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO STRIPE 16",
+            "kd": "100056",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CLASSIC CHOCOLATE 20",
+            "kd": "100106",
+            "k": "BIRTHDAY CAKE",
+            "h": 295000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CLASSIC GREENTEA 12",
+            "kd": "100040",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CLASSIC GREENTEA MIKA",
+            "kd": "100028",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CLOUDY BERRY 16",
+            "kd": "100063",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "COOKIES N CREAM 16",
+            "kd": "100066",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CUBE CHOCO ALMOND 16",
+            "kd": "100079",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CUBE CHOCO WAFFLE 16",
+            "kd": "100078",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CUBE MATCHA 20",
+            "kd": "100104",
+            "k": "BIRTHDAY CAKE",
+            "h": 295000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CUBE PURPLE 16",
+            "kd": "100076",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CUBE RED 16",
+            "kd": "100077",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 12",
+            "kd": "100110",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 12 KOTAK",
+            "kd": "100116",
+            "k": "BIRTHDAY CAKE",
+            "h": 85000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 16",
+            "kd": "100111",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 16 KOTAK",
+            "kd": "100117",
+            "k": "BIRTHDAY CAKE",
+            "h": 160000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 18",
+            "kd": "100112",
+            "k": "BIRTHDAY CAKE",
+            "h": 200000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 18 KOTAK",
+            "kd": "100118",
+            "k": "BIRTHDAY CAKE",
+            "h": 220000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 20",
+            "kd": "100113",
+            "k": "BIRTHDAY CAKE",
+            "h": 250000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 20 KOTAK",
+            "kd": "100119",
+            "k": "BIRTHDAY CAKE",
+            "h": 280000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 22",
+            "kd": "100114",
+            "k": "BIRTHDAY CAKE",
+            "h": 295000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 22 KOTAK",
+            "kd": "100120",
+            "k": "BIRTHDAY CAKE",
+            "h": 280000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 24",
+            "kd": "100115",
+            "k": "BIRTHDAY CAKE",
+            "h": 450000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 24 KOTAK",
+            "kd": "100121",
+            "k": "BIRTHDAY CAKE",
+            "h": 425000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DELUXE KARAKTER 30 KOTAK",
+            "kd": "100122",
+            "k": "BIRTHDAY CAKE",
+            "h": 525000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DOUBLE CHOCOLATE 16",
+            "kd": "100055",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "FRESH BLUEBERRY MIKA",
+            "kd": "100027",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "FULL MATCHA 12",
+            "kd": "100046",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "GREEN WHITE 16",
+            "kd": "100065",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "ICING 12",
+            "kd": "100134",
+            "k": "BIRTHDAY CAKE",
+            "h": 150000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "ICING 16",
+            "kd": "100135",
+            "k": "BIRTHDAY CAKE",
+            "h": 260000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "ICING 18",
+            "kd": "100136",
+            "k": "BIRTHDAY CAKE",
+            "h": 330000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "ICING 20",
+            "kd": "100137",
+            "k": "BIRTHDAY CAKE",
+            "h": 410000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "ICING 22",
+            "kd": "100138",
+            "k": "BIRTHDAY CAKE",
+            "h": 485000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "ICING 24",
+            "kd": "100139",
+            "k": "BIRTHDAY CAKE",
+            "h": 550000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "ICING 30",
+            "kd": "100140",
+            "k": "BIRTHDAY CAKE",
+            "h": 1150000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "LILAC BERRY 16",
+            "kd": "100059",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "LOTUS CARNIVAL",
+            "kd": "100005",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "LOVE BERRY 12",
+            "kd": "100043",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "LOVE CHOCO",
+            "kd": "100094",
+            "k": "BIRTHDAY CAKE",
+            "h": 195000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "LOVE LILAC",
+            "kd": "100096",
+            "k": "BIRTHDAY CAKE",
+            "h": 195000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "LOVE QUEEN",
+            "kd": "100095",
+            "k": "BIRTHDAY CAKE",
+            "h": 195000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MANGO CARNIVAL",
+            "kd": "100003",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MARBLE CHOCO 16",
+            "kd": "100071",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MATCHA SNOW 20",
+            "kd": "100103",
+            "k": "BIRTHDAY CAKE",
+            "h": 250000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MATCHA WAVE 16",
+            "kd": "100064",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MELTED BLUEBERRY 12",
+            "kd": "100037",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MELTED BLUEBERRY 16",
+            "kd": "100057",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MELTED BLUEBERRY 20",
+            "kd": "100097",
+            "k": "BIRTHDAY CAKE",
+            "h": 250000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MELTED CHOCO 12",
+            "kd": "100042",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MELTED CHOCO 16",
+            "kd": "100053",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MELTED MANGO 20",
+            "kd": "100102",
+            "k": "BIRTHDAY CAKE",
+            "h": 250000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MELTED STRAWBERRY 12",
+            "kd": "100038",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MELTED STRAWBERRY 16",
+            "kd": "100985",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MELTED STRAWBERRY 20",
+            "kd": "100101",
+            "k": "BIRTHDAY CAKE",
+            "h": 250000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MILKY VANILLA 12",
+            "kd": "100047",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MINI BLUEBERRY",
+            "kd": "100007",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MINI DELUX CHOCO DUST",
+            "kd": "100013",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MINI DELUX CHOCO DUST OREO",
+            "kd": "100010",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MINI DELUX DARK AND WHITE GLAZE",
+            "kd": "100012",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MINI DELUX HAIR CHOCO",
+            "kd": "100014",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MINI DELUX STRAWBERRY",
+            "kd": "100011",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MINI DELUX WHITE DOM",
+            "kd": "100009",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MINI LOTUS",
+            "kd": "100008",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "MINI STRAWBERRY",
+            "kd": "100006",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "OREO CHEESE CAKE 16",
+            "kd": "100093",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "ORIGINAL CHEESE CAKE 16",
+            "kd": "100091",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "PINKY BERRY 16",
+            "kd": "100060",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "PURPLE & WHITES 20",
+            "kd": "100099",
+            "k": "BIRTHDAY CAKE",
+            "h": 250000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "RED CARNIVAL",
+            "kd": "100001",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "RED CROSS MIKA",
+            "kd": "100032",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "REDVELVET 16",
+            "kd": "100075",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "REDVELVET HOLE 22",
+            "kd": "100107",
+            "k": "BIRTHDAY CAKE",
+            "h": 295000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "RED WHITES 20",
+            "kd": "100100",
+            "k": "BIRTHDAY CAKE",
+            "h": 250000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "RICH BLUEBERRY 16",
+            "kd": "100058",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "RICH BLUEBERRY 20",
+            "kd": "100098",
+            "k": "BIRTHDAY CAKE",
+            "h": 250000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "RICH CHOCO 16",
+            "kd": "100054",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "RICH STRAWBERRY 12",
+            "kd": "100045",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "RICH STRAWBERRY 16",
+            "kd": "100061",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "ROYAL CHOCO 16",
+            "kd": "100051",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "SNOW LILAC MIKA",
+            "kd": "100031",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "SNOWMAN CHOCO 12",
+            "kd": "100041",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "SNOW WHITE MIKA",
+            "kd": "100036",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "SNOWY GREY 16",
+            "kd": "100067",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "STRAWBERRY CHEESE 16",
+            "kd": "100089",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "STRAWBERRY MELTED MIKA",
+            "kd": "100030",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "SUN BERRY 16",
+            "kd": "100062",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "TIRAMISU CAKE 16",
+            "kd": "100074",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "TIRAMISU HOLE 22",
+            "kd": "100108",
+            "k": "BIRTHDAY CAKE",
+            "h": 295000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "TIRAMISU MOUNTAIN 16",
+            "kd": "100073",
+            "k": "BIRTHDAY CAKE",
+            "h": 170000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "VANILLA BLUEBERRY 16",
+            "kd": "100069",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "VELVET MILKY 12",
+            "kd": "100039",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "WEDDING CAKE 2 TAHAP",
+            "kd": "100144",
+            "k": "BIRTHDAY CAKE",
+            "h": 850000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "WEDDING CAKE 3 TAHAP",
+            "kd": "100145",
+            "k": "BIRTHDAY CAKE",
+            "h": 1500000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "WEDDING CAKE 4 TAHAP",
+            "kd": "100146",
+            "k": "BIRTHDAY CAKE",
+            "h": 2400000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "WEDDING CAKE TAHAP 3 ICING",
+            "kd": "100141",
+            "k": "BIRTHDAY CAKE",
+            "h": 1750000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "WEDDING CAKE TAHAP 4 ICING",
+            "kd": "100142",
+            "k": "BIRTHDAY CAKE",
+            "h": 2750000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "WEDDING CAKE TAHAP 5 ICING",
+            "kd": "100143",
+            "k": "BIRTHDAY CAKE",
+            "h": 3500000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "WHITE CUBE 12",
+            "kd": "100049",
+            "k": "BIRTHDAY CAKE",
+            "h": 85000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "WHITE SNOW CAKE 16",
+            "kd": "100070",
+            "k": "BIRTHDAY CAKE",
+            "h": 135000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CAS KARAKTER 100",
+            "kd": "100535",
+            "k": "BIRTHDAY CAKE",
+            "h": 100000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CAS KARAKTER 75",
+            "kd": "100536",
+            "k": "BIRTHDAY CAKE",
+            "h": 75000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CAS KARAKTER 15",
+            "kd": "CK15",
+            "k": "BIRTHDAY CAKE",
+            "h": 15000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CAS KARAKTER 30",
+            "kd": "CK-30",
+            "k": "BIRTHDAY CAKE",
+            "h": 30000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "FRESH MANGO MIKA",
+            "kd": "100026",
+            "k": "BIRTHDAY CAKE",
+            "h": 52000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BF HARAJUKU UK 24",
+            "kd": "45463ggf",
+            "k": "BIRTHDAY CAKE",
+            "h": 240000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "Bento Cake Karakter",
+            "kd": "Idufh488",
+            "k": "BIRTHDAY CAKE",
+            "h": 45000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CAS BUAH",
+            "kd": "80271",
+            "k": "BIRTHDAY CAKE",
+            "h": 20000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BOLLEN COKLAT",
+            "kd": "100195",
+            "k": "BOLLEN",
+            "h": 46000,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "BOLLEN COKLAT SATUAN",
+            "kd": "100209",
+            "k": "BOLLEN",
+            "h": 5500,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "BOLLEN KEJU",
+            "kd": "100196",
+            "k": "BOLLEN",
+            "h": 46000,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "BOLLEN KEJU SATUAN",
+            "kd": "100208",
+            "k": "BOLLEN",
+            "h": 5500,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "BOLLEN KOMBINASI",
+            "kd": "100197",
+            "k": "BOLLEN",
+            "h": 48000,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "BOLLEN LILIT COKLAT",
+            "kd": "100198",
+            "k": "BOLLEN",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "BOLLEN LILIT KEJU",
+            "kd": "100199",
+            "k": "BOLLEN",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "TINKLE PASTRY COKELAT",
+            "kd": "100203",
+            "k": "BOLLEN",
+            "h": 11000,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "TINKLE PASTRY KEJU",
+            "kd": "100204",
+            "k": "BOLLEN",
+            "h": 11000,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "PAKET HAMPERS",
+            "kd": "0",
+            "k": "COOKIES",
+            "h": 200000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "HAMPERS AMOR MUBAROK",
+            "kd": "100963",
+            "k": "COOKIES",
+            "h": 200000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "NASTAR SULTAN",
+            "kd": "NST85485",
+            "k": "COOKIES",
+            "h": 80000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "HAMPERS AMOR FITRI",
+            "kd": "100989",
+            "k": "COOKIES",
+            "h": 200000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "HAMPERS AMOR KAREEM",
+            "kd": "100990",
+            "k": "COOKIES",
+            "h": 200000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "Kastengels",
+            "kd": "KSHG547346",
+            "k": "COOKIES",
+            "h": 80000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "Lidah kucing",
+            "kd": "LDH384",
+            "k": "COOKIES",
+            "h": 60000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "merengue",
+            "kd": "MRN854HG",
+            "k": "COOKIES",
+            "h": 60000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "Mochi stick",
+            "kd": "MTSC95759",
+            "k": "COOKIES",
+            "h": 60000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "Putri salju",
+            "kd": "789UGJGJ",
+            "k": "COOKIES",
+            "h": 60000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "sagu keju",
+            "kd": "SGU9JR",
+            "k": "COOKIES",
+            "h": 60000,
+            "d": "Cookies",
+            "dv": "COOKIES"
+        },
+        {
+            "n": "Dubai Chewy Cookies",
+            "kd": "jghgjf74656",
+            "k": "COOKIES",
+            "h": 35000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "Dubai Chewy Cookies Megalodon",
+            "kd": "KLJD8783",
+            "k": "COOKIES",
+            "h": 85000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "AVOCADO BLUEBERI TART",
+            "kd": "100343",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "AVOCADO RING",
+            "kd": "100299",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "AVOCADO SHELL",
+            "kd": "100320",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "AVOCADO STRAWBERRY TART",
+            "kd": "100344",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "BERRY CHEESE RING",
+            "kd": "100315",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO ALMOND RING",
+            "kd": "100296",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO ALMOND SHELL",
+            "kd": "100318",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO BLUEBERRY TART",
+            "kd": "100331",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO CHIPS RING",
+            "kd": "100292",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO MEISES RING",
+            "kd": "100293",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO OREO SHELL",
+            "kd": "100327",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO PEANUT RING",
+            "kd": "100294",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO PEANUT SHELL",
+            "kd": "100319",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO STRAWBERRY TART",
+            "kd": "100330",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO ZEBRA RING",
+            "kd": "100311",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "DOUBLE CHOCO SHELL",
+            "kd": "100317",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "GREENTEA ALMOND RING",
+            "kd": "100297",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "GREENTEA BLUEBERRY TART",
+            "kd": "100333",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "GREEN TEA RING",
+            "kd": "100295",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "GREENTEA SHELL",
+            "kd": "100323",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "GREENTEA STRAWBERRY TART",
+            "kd": "100332",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "MEISES PEANUT RING",
+            "kd": "100302",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "MERAH PUTIH RING",
+            "kd": "100312",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "MIDDLE CHEESE SHELL",
+            "kd": "100316",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "MISNUT SHELL",
+            "kd": "100328",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "OREO RING",
+            "kd": "100298",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "SNOW BLUEBERRY TART",
+            "kd": "100339",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "SNOW STRAWBERRY TART",
+            "kd": "100338",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "STRAWBERRY BLUEBERRY TART",
+            "kd": "100341",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "STRAWBERRY OREO RING",
+            "kd": "100314",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "STRAWBERRY RING",
+            "kd": "100313",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "STRAWBERRY SHELL",
+            "kd": "100329",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "STRAWBERRY TART",
+            "kd": "100342",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TARO BLUEBERRY TART",
+            "kd": "100337",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TARO CHOCOCHIPS RING",
+            "kd": "100305",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TARO PEANUT ALMOND RING",
+            "kd": "100307",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TARO RING",
+            "kd": "100301",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TARO SHELL",
+            "kd": "100322",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TIRAMISU ALMOND RING",
+            "kd": "100310",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TIRAMISU BLUEBERRY TART",
+            "kd": "100340",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TIRAMISU CHOCOCHIP RING",
+            "kd": "100303",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TIRAMISU CHOCOCHIP SHELL",
+            "kd": "100326",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TIRAMISU PEANUT RING",
+            "kd": "100306",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TIRAMISU RING",
+            "kd": "100309",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TIRAMISU SHELL",
+            "kd": "100324",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "TIRAMISU STRAWBERRY TART",
+            "kd": "100336",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "Vanila Almond Ring",
+            "kd": "100291",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "VANILA BLUEBERRY TART",
+            "kd": "100335",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "VANILA PEANUT RING",
+            "kd": "100300",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "VANILA STRAWBERRY TART",
+            "kd": "100334",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "VANILLA SHELL",
+            "kd": "100321",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "WHITE COCONUT RING",
+            "kd": "100308",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "WHITE OREO RING",
+            "kd": "100304",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "WHITE OREO SHELL",
+            "kd": "100325",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "DONUT HEMAT ALL VARIAN",
+            "kd": "menu - 1002",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "DONUT LONG COKLAT",
+            "kd": "DLC",
+            "k": "DONUT",
+            "h": 12000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "DONUT LONG KEJU",
+            "kd": "DLK",
+            "k": "DONUT",
+            "h": 12000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "AVOCADO MEISES RING",
+            "kd": "AMR-01",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "CHOCO CHEESE RING",
+            "kd": "CCR-01",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "STRAWBERRY COCONUT RING",
+            "kd": "SCR",
+            "k": "DONUT",
+            "h": 8500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "DONUT"
+        },
+        {
+            "n": "MOCHI BLUEBERRY",
+            "kd": "100267",
+            "k": "MOCHI",
+            "h": 10500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI COKLAT",
+            "kd": "100266",
+            "k": "MOCHI",
+            "h": 10500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI CUP BLUEBERRY",
+            "kd": "100280",
+            "k": "MOCHI",
+            "h": 5500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI CUP COKLAT",
+            "kd": "100279",
+            "k": "MOCHI",
+            "h": 5500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI CUP DURIAN",
+            "kd": "100281",
+            "k": "MOCHI",
+            "h": 5500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI CUP MOCCA",
+            "kd": "100282",
+            "k": "MOCHI",
+            "h": 5500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI CUP PANDAN SUJI",
+            "kd": "100283",
+            "k": "MOCHI",
+            "h": 5500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI CUP STRAWBERRY",
+            "kd": "100284",
+            "k": "MOCHI",
+            "h": 5500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI DURIAN",
+            "kd": "100268",
+            "k": "MOCHI",
+            "h": 10500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI KERANJANG BLUEBERRY",
+            "kd": "100273",
+            "k": "MOCHI",
+            "h": 50000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI KERANJANG COKLAT",
+            "kd": "100272",
+            "k": "MOCHI",
+            "h": 50000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI KERANJANG DURIAN",
+            "kd": "100274",
+            "k": "MOCHI",
+            "h": 50000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI KERANJANG KOMBINASI",
+            "kd": "100278",
+            "k": "MOCHI",
+            "h": 50000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI KERANJANG MOCCA",
+            "kd": "100275",
+            "k": "MOCHI",
+            "h": 50000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI KERANJANG PANDAN SUJI",
+            "kd": "100276",
+            "k": "MOCHI",
+            "h": 50000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI KERANJANG STRAWBERRY",
+            "kd": "100277",
+            "k": "MOCHI",
+            "h": 50000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI MOCCA",
+            "kd": "100269",
+            "k": "MOCHI",
+            "h": 10500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI PANDAN SUJI",
+            "kd": "100270",
+            "k": "MOCHI",
+            "h": 10500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI SPECIAL COKLAT",
+            "kd": "100285",
+            "k": "MOCHI",
+            "h": 45000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI SPECIAL DURIAN",
+            "kd": "100286",
+            "k": "MOCHI",
+            "h": 49000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI SPECIAL KEJU",
+            "kd": "100288",
+            "k": "MOCHI",
+            "h": 47000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI SPECIAL OREO",
+            "kd": "100289",
+            "k": "MOCHI",
+            "h": 47000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI SPESIAL GREENTEA",
+            "kd": "100287",
+            "k": "MOCHI",
+            "h": 47000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI SPESIAL WIJEN",
+            "kd": "100290",
+            "k": "MOCHI",
+            "h": 47000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "MOCHI STRAWBERRY",
+            "kd": "100271",
+            "k": "MOCHI",
+            "h": 10500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "MOCHI"
+        },
+        {
+            "n": "AMERICA BROWNIES",
+            "kd": "100175",
+            "k": "PASTRY",
+            "h": 34000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "BANANA ROLL",
+            "kd": "100176",
+            "k": "PASTRY",
+            "h": 19500,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "BLACKFORRES ICE SLICE",
+            "kd": "100162",
+            "k": "PASTRY",
+            "h": 29500,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLUEBERRY CHEESECAKE MINI",
+            "kd": "100168",
+            "k": "PASTRY",
+            "h": 29500,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "BLUEBERRY SLICE",
+            "kd": "100167",
+            "k": "PASTRY",
+            "h": 29500,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHOCO PYRAMID",
+            "kd": "100188",
+            "k": "PASTRY",
+            "h": 31000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "CHOCO ROLL",
+            "kd": "100177",
+            "k": "PASTRY",
+            "h": 50000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "CUP CAKE",
+            "kd": "100170",
+            "k": "PASTRY",
+            "h": 19500,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "DESSERT BOX BLUEBERRY MOUSSE",
+            "kd": "100171",
+            "k": "PASTRY",
+            "h": 29000,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "DESSERT BOX CHOCO MOUSSE",
+            "kd": "100172",
+            "k": "PASTRY",
+            "h": 27500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "DESSERT BOX MANGO MOUSSE",
+            "kd": "100173",
+            "k": "PASTRY",
+            "h": 27500,
+            "d": "Donat/Mochi/AKB",
+            "dv": "AKB"
+        },
+        {
+            "n": "JAPANESE CHEESECAKE",
+            "kd": "100180",
+            "k": "PASTRY",
+            "h": 49000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "MELTED BROWNIES",
+            "kd": "100194",
+            "k": "PASTRY",
+            "h": 8500,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "MILKBATH COKLAT",
+            "kd": "100189",
+            "k": "PASTRY",
+            "h": 27000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "MILKBATH GREENTEA",
+            "kd": "100190",
+            "k": "PASTRY",
+            "h": 27000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "MILKBATH ORIGINAL",
+            "kd": "100191",
+            "k": "PASTRY",
+            "h": 27000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "MILKBATH REDVELVET",
+            "kd": "100192",
+            "k": "PASTRY",
+            "h": 27000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "MILKBATH TARO",
+            "kd": "100193",
+            "k": "PASTRY",
+            "h": 27000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "NAPOLEON ROLL REDVELVET",
+            "kd": "100183",
+            "k": "PASTRY",
+            "h": 65000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "NAPOLEON ROLL TIRAMISU",
+            "kd": "100184",
+            "k": "PASTRY",
+            "h": 65000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "NEW CHOCO ROLL",
+            "kd": "100178",
+            "k": "PASTRY",
+            "h": 49000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "OREO SLICE",
+            "kd": "100165",
+            "k": "PASTRY",
+            "h": 29500,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "PANDAN ROLL",
+            "kd": "100185",
+            "k": "PASTRY",
+            "h": 65000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "REDVELVET ROLL",
+            "kd": "100186",
+            "k": "PASTRY",
+            "h": 62000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "REDVELVET SLICE",
+            "kd": "100164",
+            "k": "PASTRY",
+            "h": 29500,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "STRAWBERRY CHEESE CAKE MINI",
+            "kd": "100169",
+            "k": "PASTRY",
+            "h": 29500,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "STRAWBERRY SLICE",
+            "kd": "100166",
+            "k": "PASTRY",
+            "h": 29500,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "TAPE ROLL",
+            "kd": "100174",
+            "k": "PASTRY",
+            "h": 22500,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "TIGER ROLL",
+            "kd": "100187",
+            "k": "PASTRY",
+            "h": 61000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "TIRAMISU SLICE",
+            "kd": "100163",
+            "k": "PASTRY",
+            "h": 29500,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "Minicakes Edible 6x10",
+            "kd": "MNE0001",
+            "k": "PASTRY",
+            "h": 40000,
+            "d": "Pastry",
+            "dv": "PASTRY"
+        },
+        {
+            "n": "CHICKEN MUSHROOM STRUDEL",
+            "kd": "100200",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "CURRY PUFF STRUDEL",
+            "kd": "100201",
+            "k": "ROTI",
+            "h": 8000,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "PINEAPPLLE STRUDEL",
+            "kd": "100202",
+            "k": "ROTI",
+            "h": 8000,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "CHOCOLATE MOULTEN",
+            "kd": "100179",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "MUFFIN COKLAT",
+            "kd": "100181",
+            "k": "ROTI",
+            "h": 7500,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "MUFFIN VANILLA",
+            "kd": "100182",
+            "k": "ROTI",
+            "h": 7500,
+            "d": "Basic",
+            "dv": "BASIC"
+        },
+        {
+            "n": "ROTI BUAYA",
+            "kd": "100444",
+            "k": "ROTI",
+            "h": 220000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI ABON",
+            "kd": "100349",
+            "k": "ROTI",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI ABON PEDAS",
+            "kd": "100350",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI ANGRY BIRD",
+            "kd": "100381",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI BAGELAN KERING",
+            "kd": "100351",
+            "k": "ROTI",
+            "h": 8000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI BANANA CHEESE",
+            "kd": "100352",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI BEEF CHEESE",
+            "kd": "100353",
+            "k": "ROTI",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI BEEF MUSHROOM",
+            "kd": "100354",
+            "k": "ROTI",
+            "h": 12500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CHEESE MILK",
+            "kd": "100355",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CHEESE SAUSAGE",
+            "kd": "100357",
+            "k": "ROTI",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CHOCOCHEESE BANANA",
+            "kd": "100362",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CHOCOCHEESE FILLET",
+            "kd": "100363",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CHOCO PUFF",
+            "kd": "100360",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CHOCO SNOW",
+            "kd": "100361",
+            "k": "ROTI",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI COKLAT",
+            "kd": "100364",
+            "k": "ROTI",
+            "h": 8000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI COKLAT BINTIK",
+            "kd": "100365",
+            "k": "ROTI",
+            "h": 9000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI COKLAT KACANG",
+            "kd": "100366",
+            "k": "ROTI",
+            "h": 9000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CREAM MEISES",
+            "kd": "100367",
+            "k": "ROTI",
+            "h": 7000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI DARK CHOCO CREAM CHEESE",
+            "kd": "100368",
+            "k": "ROTI",
+            "h": 11500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI DORAEMON",
+            "kd": "100379",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI EPI CHOCOCHEESE",
+            "kd": "100370",
+            "k": "ROTI",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI GULUNG ABON",
+            "kd": "100373",
+            "k": "ROTI",
+            "h": 11500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI GULUNG COKLAT",
+            "kd": "100376",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI GULUNG COKLAT KEJU",
+            "kd": "100375",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI GULUNG KEJU",
+            "kd": "100374",
+            "k": "ROTI",
+            "h": 10500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KACANG HIJAU",
+            "kd": "100377",
+            "k": "ROTI",
+            "h": 9000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KACANG MERAH",
+            "kd": "100378",
+            "k": "ROTI",
+            "h": 9000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KEROPI",
+            "kd": "100380",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KISMIS",
+            "kd": "100383",
+            "k": "ROTI",
+            "h": 8000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI MEXICO ALMOND",
+            "kd": "100384",
+            "k": "ROTI",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI PAKET SIUNYIL",
+            "kd": "100397",
+            "k": "ROTI",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI PIZZA",
+            "kd": "100398",
+            "k": "ROTI",
+            "h": 8000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI PIZZA SLICE",
+            "kd": "100399",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI RAISIN ALMOND",
+            "kd": "100402",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SISIR",
+            "kd": "100404",
+            "k": "ROTI",
+            "h": 9000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SMOKE BEEF",
+            "kd": "100405",
+            "k": "ROTI",
+            "h": 11500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SWEET BLUEBERRY CHEESE",
+            "kd": "100411",
+            "k": "ROTI",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SWEET CHEESE",
+            "kd": "100410",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SWEET STRAWBERRY CHEESE",
+            "kd": "100412",
+            "k": "ROTI",
+            "h": 9500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI TRIPLE CHEESE",
+            "kd": "100417",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI VIZTA",
+            "kd": "100419",
+            "k": "ROTI",
+            "h": 12000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI WHITE CHOCO CREAM CHEESE",
+            "kd": "100369",
+            "k": "ROTI",
+            "h": 11500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI ABON AYAM ORI",
+            "kd": "menu - 988",
+            "k": "ROTI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI ABON AYAM PEDAS",
+            "kd": "menu - 985",
+            "k": "ROTI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CHOCO PYRAMID",
+            "kd": "menu - 986",
+            "k": "ROTI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI COKLAT KEJU",
+            "kd": "menu - 980",
+            "k": "ROTI",
+            "h": 7000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI COKLAT PISANG",
+            "kd": "menu - 984",
+            "k": "ROTI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI JAPANESE CHEESE MELT",
+            "kd": "menu - 981",
+            "k": "ROTI",
+            "h": 8000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI LONG MEISES",
+            "kd": "menu - 983",
+            "k": "ROTI",
+            "h": 7000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI NANAS",
+            "kd": "menu - 989",
+            "k": "ROTI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI NYOKLAT",
+            "kd": "menu - 987",
+            "k": "ROTI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI RAISIN TWIST",
+            "kd": "menu - 982",
+            "k": "ROTI",
+            "h": 7000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI STRAWBERRY SPIRAL",
+            "kd": "menu - 990",
+            "k": "ROTI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SWEET ALMOND",
+            "kd": "menu - 979",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SWEET BLUEBERRY",
+            "kd": "menu - 991",
+            "k": "ROTI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI LONG KEJU",
+            "kd": "RLK",
+            "k": "ROTI",
+            "h": 6500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SISIR BOLOGNESE",
+            "kd": "RSB",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SISIR KEJU",
+            "kd": "RSK",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SISIR LOTUS",
+            "kd": "RSL",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SISIR MEISES",
+            "kd": "RSM",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SISIR ORIGINAL",
+            "kd": "RSO",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SISIR OVAMALTINE",
+            "kd": "RSV",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SISIR SILVERQUEEN",
+            "kd": "RSS",
+            "k": "ROTI",
+            "h": 8500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "BIG BANANA CHOCOCHEESE",
+            "kd": "BNN9384",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KEPANG BLUEBERRY CHOCOCHEESE",
+            "kd": "KP98866",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KEPANG CHEESE SAUSAGE",
+            "kd": "8373urhr",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KEPANG ORIGINAL",
+            "kd": "KP0876",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "Roti Love Greenbean",
+            "kd": "fgfds5454",
+            "k": "ROTI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "Roti LOVE REDBEAN",
+            "kd": "GSGERER",
+            "k": "ROTI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "roti sobek kacang ijo",
+            "kd": "jdhgj98558",
+            "k": "ROTI",
+            "h": 10000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "Family breakfast",
+            "kd": "7RTRT9",
+            "k": "ROTI",
+            "h": 27400,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "Hamtaro Blueberry",
+            "kd": "rhmt001",
+            "k": "ROTI",
+            "h": 3500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "roti sisir kacang hijau",
+            "kd": "t85756jkf",
+            "k": "ROTI",
+            "h": 12500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SISIR KACANG MERAH",
+            "kd": "67YFHHFH",
+            "k": "ROTI",
+            "h": 12500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI GIANT CHOCO",
+            "kd": "100371",
+            "k": "ROTI BESAR",
+            "h": 22000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI GIANT TIRAMISU",
+            "kd": "100372",
+            "k": "ROTI BESAR",
+            "h": 22000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KASUR COKLAT",
+            "kd": "100406",
+            "k": "ROTI BESAR",
+            "h": 17500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KASUR KEJU",
+            "kd": "100407",
+            "k": "ROTI BESAR",
+            "h": 17500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KASUR KOMBINASI",
+            "kd": "100408",
+            "k": "ROTI BESAR",
+            "h": 17500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI KESET CHEESE SAUSAGE",
+            "kd": "100382",
+            "k": "ROTI BESAR",
+            "h": 19500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "CHICKEN MUSHROOM STRUDEL MINI",
+            "kd": "100207",
+            "k": "ROTI MINI",
+            "h": 4000,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "CURRY PUFF STRUDEL MINI",
+            "kd": "100206",
+            "k": "ROTI MINI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "PINEAPPLLE STRUDEL MINI",
+            "kd": "100205",
+            "k": "ROTI MINI",
+            "h": 4500,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "ROTI MINI ABON",
+            "kd": "100387",
+            "k": "ROTI MINI",
+            "h": 3500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI MINI BLUEBERRY",
+            "kd": "100388",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI MINI BUTTER CARAMEL",
+            "kd": "100389",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI MINI COKLAT",
+            "kd": "100390",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI MINI KEJU",
+            "kd": "100391",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI MINI LEMON",
+            "kd": "100392",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI MINI SARIKAYA",
+            "kd": "100393",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI MINI STRAWBERRY",
+            "kd": "100394",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI MINI VANILLA",
+            "kd": "100395",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI BANANA PIZZA",
+            "kd": "menu - 994",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CHEESE PIZZA",
+            "kd": "menu - 992",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CHOCO CRUMB",
+            "kd": "menu - 996",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CHOCO TWIST",
+            "kd": "menu - 999",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CREAMY CHOCO",
+            "kd": "menu - 1000",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI CREAMY WHITE",
+            "kd": "menu - 995",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI LAVA CHEESE",
+            "kd": "menu - 1001",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI MIDLE CHEESE",
+            "kd": "menu - 997",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SAUSAGE CRUMB",
+            "kd": "menu - 998",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI SOSIS OREGANO",
+            "kd": "menu - 993",
+            "k": "ROTI MINI",
+            "h": 3000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "DANISH COKLAT BELEPOTAN",
+            "kd": "100348",
+            "k": "ROTI TAWAR",
+            "h": 13500,
+            "d": "Roti & Bollen",
+            "dv": "BOLLEN"
+        },
+        {
+            "n": "MILKBUN COKLAT",
+            "kd": "100346",
+            "k": "ROTI TAWAR",
+            "h": 31000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "MILKBUN ORI",
+            "kd": "100345",
+            "k": "ROTI TAWAR",
+            "h": 31000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "MILKBUN STRAWBERRY",
+            "kd": "100347",
+            "k": "ROTI TAWAR",
+            "h": 31000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI TAWAR",
+            "kd": "100414",
+            "k": "ROTI TAWAR",
+            "h": 10500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI TAWAR SPECIAL",
+            "kd": "100413",
+            "k": "ROTI TAWAR",
+            "h": 12500,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "ROTI TAWAR SPECIAL JUMBO",
+            "kd": "100415",
+            "k": "ROTI TAWAR",
+            "h": 18000,
+            "d": "Roti & Bollen",
+            "dv": "ROTI"
+        },
+        {
+            "n": "BOLU GULUNG CHOCO CRUNCHY",
+            "kd": "B001",
+            "k": "BOLU",
+            "h": 42000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU GULUNG FULL KEJU",
+            "kd": "B002",
+            "k": "BOLU",
+            "h": 42000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU GULUNG OREO",
+            "kd": "B003",
+            "k": "BOLU",
+            "h": 42000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU GULUNG PANDAN WANGI",
+            "kd": "B004",
+            "k": "BOLU",
+            "h": 42000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU GULUNG VANILA KEJU",
+            "kd": "B005",
+            "k": "BOLU",
+            "h": 42000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU KETAN HITAM",
+            "kd": "B006",
+            "k": "BOLU",
+            "h": 48000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PANDAN BESAR",
+            "kd": "B007",
+            "k": "BOLU",
+            "h": 46000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PANDAN",
+            "kd": "B008",
+            "k": "BOLU",
+            "h": 34000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PANDAN BULAT BESAR KEJU",
+            "kd": "B009",
+            "k": "BOLU",
+            "h": 56000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PANDAN KEJU",
+            "kd": "B010",
+            "k": "BOLU",
+            "h": 41000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG BULAT BESAR KEJU",
+            "kd": "B011",
+            "k": "BOLU",
+            "h": 59000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG BULAT BESAR MEISES",
+            "kd": "B012",
+            "k": "BOLU",
+            "h": 59000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG BULAT BESAR MEISES KEJU",
+            "kd": "B013",
+            "k": "BOLU",
+            "h": 59000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG BULAT KEJU",
+            "kd": "B014",
+            "k": "BOLU",
+            "h": 41000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG BULAT MEISES",
+            "kd": "B015",
+            "k": "BOLU",
+            "h": 41000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG BULAT MESES KEJU",
+            "kd": "B016",
+            "k": "BOLU",
+            "h": 42000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG CHOCOCHEESE",
+            "kd": "B017",
+            "k": "BOLU",
+            "h": 42000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG KEJU SPESIAL",
+            "kd": "B018",
+            "k": "BOLU",
+            "h": 42000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG ORIGINAL",
+            "kd": "B019",
+            "k": "BOLU",
+            "h": 34000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG ORIGINAL BESAR",
+            "kd": "B020",
+            "k": "BOLU",
+            "h": 47000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU TAPE MADU",
+            "kd": "B021",
+            "k": "BOLU",
+            "h": 42000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU VANILA BESAR",
+            "kd": "B022",
+            "k": "BOLU",
+            "h": 46000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU VANILA KEJU",
+            "kd": "B023",
+            "k": "BOLU",
+            "h": 41000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU VANILA",
+            "kd": "B024",
+            "k": "BOLU",
+            "h": 34000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU VANILLA BULAT BESAR KEJU",
+            "kd": "B025",
+            "k": "BOLU",
+            "h": 56000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BROWNIES KUKUS CHOCOCHEESE",
+            "kd": "B026",
+            "k": "BOLU",
+            "h": 53000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BROWNIES KUKUS KEJU SPESIAL",
+            "kd": "B027",
+            "k": "BOLU",
+            "h": 53000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BROWNIES KUKUS ORIGINAL",
+            "kd": "B028",
+            "k": "BOLU",
+            "h": 46000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "CHIFFON SENSASI COKLAT",
+            "kd": "B029",
+            "k": "BOLU",
+            "h": 31000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "CHIFFON SENSASI ORIGINAL",
+            "kd": "B030",
+            "k": "BOLU",
+            "h": 29000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "CHIFFON SENSASI PANDAN",
+            "kd": "B031",
+            "k": "BOLU",
+            "h": 29000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "CHIFFON SENSASI SPECIAL KEJU",
+            "kd": "B032",
+            "k": "BOLU",
+            "h": 33000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "LAPIS TALAS BROWNIES",
+            "kd": "B033",
+            "k": "BOLU",
+            "h": 39000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "LAPIS TALAS COCOPANDAN",
+            "kd": "B034",
+            "k": "BOLU",
+            "h": 39000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "LAPIS TALAS FULL TALAS",
+            "kd": "B035",
+            "k": "BOLU",
+            "h": 38000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "LAPIS TALAS ORIGINAL",
+            "kd": "B036",
+            "k": "BOLU",
+            "h": 38000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "ROSE CAKE",
+            "kd": "B037",
+            "k": "BOLU",
+            "h": 29000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "BOLU PISANG BLACKFOREST",
+            "kd": "B038",
+            "k": "BOLU",
+            "h": 42000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "LAPIS TALAS GREENTEA",
+            "kd": "B039",
+            "k": "BOLU",
+            "h": 38000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        },
+        {
+            "n": "LAPIS SURABAYA",
+            "kd": "B040",
+            "k": "BOLU",
+            "h": 62000,
+            "d": "Bolu",
+            "dv": "BOLU"
+        }
+    ],
+    "storeAliasGroups": [
+        {
+            "storeId": "CKLE",
+            "canonical": "BAKERY CIKOLE",
+            "aliases": [
+                "CKLE",
+                "CIKOLE",
+                "BAKERY CIKOLE"
+            ]
+        }
+    ]
+}
