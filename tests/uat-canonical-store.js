@@ -117,7 +117,10 @@ async function main(){
     JSON.stringify(readyBefore[0].breakdown.map(b=>({factory:b.factory,total:b.total})).sort((a,b)=>a.factory.localeCompare(b.factory))));
 
   // Proses Kirim SATU KALI klik utk bakery gabungan -> tarik KEDUA batch factory sekaligus.
-  api.kTarikDariFGBakery(TGL, "BAKERY CIKOLE");
+  // Kedua produk (ROTI COKELAT CIKOLE, BOLU KEJU CIKOLE) berkategori non-Pastry ->
+  // shipmentGroup MAIN (lihat shipmentGroupForProduk) -> arg ke-3 eksplisit "MAIN",
+  // sesuai signature kTarikDariFGBakery(tgl, bakery, shipmentGroup) saat ini.
+  api.kTarikDariFGBakery(TGL, "BAKERY CIKOLE", "MAIN");
   check("TEST1.tokoDropdownCanonical", "TEST 1 — Setelah 'Proses Kirim', dropdown toko terisi nama standar (BAKERY CIKOLE)",
     "BAKERY CIKOLE", api.$("k-toko").value);
   const idxKrt = api.kList.indexOf("ROTI COKELAT CIKOLE");
@@ -149,10 +152,13 @@ async function main(){
   // dikirim — bukan cuma yang terakhir ditarik (lihat kFgSource akumulasi).
   const recKrt = api.D.fgPacking[api.fgKey(TGL,"karangtengah")];
   const recCbd = api.D.fgPacking[api.fgKey(TGL,"cibadak")];
+  // Sejak shipmentGroup ada, dikirimKe ditandai "tokoRaw|GROUP" (bukan tokoRaw polos)
+  // saat shipmentGroup diketahui (lihat kSimpan() di app) — kedua produk di sini
+  // non-Pastry -> grup MAIN, sesuai kTarikDariFGBakery(...,"MAIN") di atas.
   check("TEST2.fgKrtMarkedDelivered", "TEST 2 — Batch FG Karangtengah (CKLE) ditandai sudah dikirim",
-    true, !!(recKrt && recKrt.dikirimKe && recKrt.dikirimKe.includes("CKLE")));
+    true, !!(recKrt && recKrt.dikirimKe && recKrt.dikirimKe.includes("CKLE|MAIN")));
   check("TEST2.fgCbdMarkedDelivered", "TEST 2 — Batch FG Cibadak (BAKERY CIKOLE) ditandai sudah dikirim",
-    true, !!(recCbd && recCbd.dikirimKe && recCbd.dikirimKe.includes("BAKERY CIKOLE")));
+    true, !!(recCbd && recCbd.dikirimKe && recCbd.dikirimKe.includes("BAKERY CIKOLE|MAIN")));
   const readyAfter = api.fgReadyListByBakery().filter(g=>g.tgl===TGL && g.bakery==="BAKERY CIKOLE");
   check("TEST2.notInReadyListAnymore", "TEST 2 — Setelah dikirim, BAKERY CIKOLE hilang dari daftar Siap Kirim (bukan nyangkut sebagian)",
     0, readyAfter.length);
@@ -186,7 +192,7 @@ async function main(){
   submitCeklis(api, TGL2, api.SPECIAL_FG_CIBADAK);
   markFgReady(api, TGL2, api.SPECIAL_FG_CIBADAK);
 
-  api.kTarikDariFGBakery(TGL2, "BAKERY CIKOLE");
+  api.kTarikDariFGBakery(TGL2, "BAKERY CIKOLE", "MAIN"); // non-Pastry products -> MAIN group
   api.kSimpan();
 
   const omsetRows = api.omsetPerBakeryData(TGL2, TGL2, {});

@@ -210,10 +210,27 @@ async function main(){
   check("SHIP04.canonicalOneRow", "SHIP04 — bakery canonical \"TOKO NAV\" tampil satu row (bukan duplikat)",
     1, readyGroups.filter(g=>g.bakery==="TOKO NAV").length);
 
-  api.kTarikDariFGBakery(TGL, "TOKO NAV");
+  // PROD NAV A/B berkategori non-Pastry -> shipmentGroup MAIN -> arg ke-3 eksplisit
+  // "MAIN", sesuai signature kTarikDariFGBakery(tgl, bakery, shipmentGroup) saat ini.
+  api.kTarikDariFGBakery(TGL, "TOKO NAV", "MAIN");
   check("SHIP03.prosesKirimOpensForm", "SHIP03 — klik \"Proses Kirim\" (kTarikDariFGBakery) membuka form DO",
     "block", api.$("kCard").style.display);
+  const idxB = api.kList.indexOf("PROD NAV B");
 
+  // kHitung() tidak lagi auto-cap qty ke stok (perubahan Section A/DO Draft:
+  // grid kirim harus tetap bisa diisi walau stok blm cukup, supaya DO Draft
+  // bisa direncanakan sebelum FG selesai — lihat amorcakes-manufacturing-v5-
+  // slate(2).html kHitung()). "Proses Kirim" di sini menarik PROD NAV B jg
+  // (packing "Tandai Semua Sesuai" sempat menandai sesuai=target PO 80pcs,
+  // meski produksi asalnya cuma netto 30) — qty tertarik (80) melebihi stok
+  // gudang riil (30), yg sekarang TIDAK auto-terpotong lagi di grid. kSimpan()
+  // sendiri MASIH menolak simpan kalau ADA satu baris pun qty>stok (proteksi
+  // yg sengaja dipertahankan utk jalur langsung/manual "Simpan Delivery
+  // Order" — beda dgn "Buat DO Draft" yg memang boleh lewat batas stok).
+  // Test ini fokus ke PROD NAV A saja -> kosongkan qty PROD NAV B dulu,
+  // persis seperti admin sungguhan yg melihat kelebihan itu & membetulkannya
+  // manual sebelum klik Simpan.
+  if(idxB>=0) api.$("kq-"+idxB).value = "";
   const qtyBefore = api.stokGudang("PROD NAV A");
   api.kSimpan();
   check("SHIP05.saveDoUnchanged", "SHIP05 — Simpan DO tetap mengurangi stok gudang seperti biasa (logika tidak berubah)",
