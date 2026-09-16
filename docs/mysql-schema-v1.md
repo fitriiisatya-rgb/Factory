@@ -1,7 +1,7 @@
 # Amor Factory — MySQL Schema Design V1
 
-**Status: MYSQL DESIGN V1 READY FOR FINAL REVIEW**
-No SQL has been deployed. No live database exists yet. This document finalizes the conceptual schema from `docs/mysql-migration-audit.md` §15 based on the review decisions below. A companion draft-only DDL file is at `database/schema-v1.sql` (explicitly marked not for production, not deployed).
+**Status: MYSQL DESIGN V1 FINAL-CANDIDATE READY FOR REVIEW**
+Not implementation complete. Not production ready. No SQL has been deployed. No live database exists yet. This document finalizes the conceptual schema from `docs/mysql-migration-audit.md` §15 based on the first review pass, then applies a second, corrective round of locked decisions (shipment header/item normalization, the store_id NOT NULL contradiction, server-side FG availability, session-based auth, the historical-invoice-without-evidence exception, and more — see each numbered section for "review point N"). A companion draft-only DDL file is at `database/schema-v1.sql` (explicitly marked not for production, not deployed).
 
 This document assumes the reader has `docs/mysql-migration-audit.md` open for cross-reference (cited as "Audit §N" throughout) and does not re-derive facts already established there.
 
@@ -30,7 +30,9 @@ and confirm against the feature list below. Everything in this design works on *
 
 **If the confirmed version is older than 5.7/10.2** (unlikely on a current cPanel host, but not verified): the one required change is §11's DO-uniqueness index, which falls back to pure application-level enforcement (documented inline). Nothing else in this design depends on a version floor above baseline InnoDB.
 
-**Validation performed**: `database/schema-v1.sql` was applied against a disposable, local-only MariaDB 10.11.14 instance (spun up solely for this syntax/behavior check, then fully torn down — no live or persistent database was created or touched) to confirm the DDL is actually valid, not just plausible-looking. Result: all 44 tables created with zero errors, and the `delivery_order.open_key` generated-column partial-unique pattern (§11) was functionally verified — a second `draft`/`preprinted`/`ready` row for the same `(tanggal, store_id, shipment_group)` correctly fails with `ERROR 1062 Duplicate entry ... for key 'uq_delivery_order_open'`, while `shipped`/`cancelled` rows for the same key coexist freely. This confirms the design works on at least MariaDB 10.11; it does **not** confirm the actual `factory.amorgroup.id` cPanel host's version, which is still OD-4's open item.
+**Validation performed (this pass, re-run after the shipment/store/auth corrections below)**: `database/schema-v1.sql` was applied against a disposable, local-only MariaDB 10.11.14 instance (spun up solely for this syntax/behavior check, then fully torn down immediately after — no live or persistent database was created or touched) to confirm the DDL is actually valid, not just plausible-looking. Result: all 45 tables created with zero errors; see §18 for the full list of behavioral checks re-run against this instance (shipment header+items, header-level void, synthetic non-outlet store, duplicate-open-DO blocking, and more).
+
+**This validates the design's internal correctness on MariaDB 10.11 — it proves nothing whatsoever about the actual `factory.amorgroup.id` cPanel database.** OD-4 (confirm `SELECT VERSION();` on the real host) is explicitly, deliberately kept **open** per review point 15 — the convenience of a disposable local instance must never be mistaken for, or silently substituted for, confirmation of the real target environment. `database/schema-v1.sql` remains a **draft** until that confirmation happens, full stop, regardless of how many times it validates cleanly elsewhere.
 
 ---
 
@@ -101,6 +103,10 @@ product_alias
 
 A raw name that would map to two different products is exactly the "conflict" case §4's staging table exists to catch *before* it ever reaches this table.
 
+### 2.3 Product delete rule (review point 11, LOCKED)
+
+`DELETE /api/products/{id}` (`docs/php-api-contract-v1.md` §3) is only permitted for a `product` that has **never** been referenced by any transactional row — the API checks every FK-referencing table (`po_item`, `production_item`, `fg_item`, `delivery_order_item`, `shipment_item`, `invoice_item`, `return_note`, `reject_note`, `retail_sale`, `stock_transfer`, `stock_adjustment`, `customer_order_item`, `stock_ledger`) before allowing the delete, and rejects with `409 PRODUCT_IN_USE` if any reference exists at all — even a single historical row. **A referenced product is retired via `aktif=0`, never deleted.** No FK on any table above ever cascades a `product` deletion into transactional rows — every FK from a transactional table to `product` is `RESTRICT` (or omitted `ON DELETE` entirely, which defaults to `RESTRICT` in InnoDB), never `CASCADE`, never `SET NULL`.
+
 ---
 
 ## 3. Store identity (review point 2)
@@ -130,6 +136,10 @@ store_alias
 ```
 
 **Canonical store is built fresh** (per review point 2 and Audit §10's finding that `D.masterToko` has zero backend persistence today) — there is no legacy `store`/`store_alias` table to migrate row-for-row; §4 and `docs/mysql-migration-map-v1.md` describe the one-time reconciliation process that populates these two tables from historical raw `toko` strings.
+
+### 3.1 Store delete rule (review point 11, LOCKED)
+
+Same principle as §2.3, applied to `store`: **a historically-referenced store is never hard-deleted.** `docs/php-api-contract-v1.md` §3 exposes only `active=0` (retire) and `POST /api/stores/{id}/merge` (alias consolidation into another canonical store) — there is no `DELETE /api/stores/{id}` endpoint at all in this design, because unlike `product` (which can legitimately have zero historical references if created and abandoned same-day), a `store` row reachable by the API has, in practice, always already been referenced by at least a `store_alias` harvested from real data by the time a human could act on it. Every FK from a transactional table to `store` is `RESTRICT`, never `CASCADE`/`SET NULL` — no master-data deletion can cascade into `shipment`, `customer_order`, `po_store_item`, `return_note`, `reject_note`, `retail_sale`, `stock_transfer`, or `po_closure`.
 
 ---
 
@@ -355,22 +365,22 @@ delivery_order_item
   UNIQUE KEY uq_do_item (delivery_order_id, product_id)
 ```
 
-### 5.6 Shipment (the sole KELUAR event — Audit §8) and the shipment-gated invoice rule (review point 3)
+### 5.6 Shipment header + item (review point 1 — CORRECTED this pass) and the shipment-gated invoice rule (review point 3)
+
+**Correction applied**: the previous draft made `shipment` one row per product (carrying `product_id`/`qty` directly on the header), which is wrong — a shipment is **one physical delivery event**, carrying **one or more products**. This is now normalized into a header (`shipment`) and a line-item child (`shipment_item`), exactly mirroring `delivery_order`/`delivery_order_item`.
 
 **Target-architecture rule, stated explicitly per the review's instruction — this supersedes the audit's "two invoice-creation triggers" finding as a going-forward default, not merely a documentation of the status quo:**
 
-> PO / Pesanan (Customer Order) = **demand**. A `shipment` row = **physical fulfillment** (goods actually leaving stock to a store or a customer). `invoice` is **only ever generated from one or more existing `shipment` rows.** There is no code path in the target architecture that creates an `invoice` directly from a `customer_order` without at least one `shipment` row existing first.
+> PO / Pesanan (Customer Order) = **demand**. A `shipment` = **one physical fulfillment event** (goods actually leaving stock to a store or a customer, possibly multiple products at once). `invoice` is **only ever generated from one or more existing `shipment` headers.** There is no code path in the target architecture that creates an `invoice` directly from a `customer_order` without at least one `shipment` existing first.
 
-To make this hold **uniformly** — including for `sumber:'stok'` Pesanan orders, which today skip straight to an invoice+StokAdj without ever touching `Kirim` (Audit §3/§9) — `shipment` is broadened from "a physical delivery-order dispatch" to "any confirmed transfer of goods out of stock to a store or a customer," discriminated by `source_type`:
+To make this hold **uniformly** — including for `sumber:'stok'` Pesanan orders, which today skip straight to an invoice+StokAdj without ever touching `Kirim` (Audit §3/§9) — `shipment` is broadened from "a physical delivery-order dispatch" to "any confirmed transfer of goods out of stock to a store or a customer," discriminated by `source_type`. **MAIN and PASTRY remain separate `shipment` headers** — a shipment never mixes two `shipment_group` values, matching the existing DO-level split.
 
 ```
 shipment
   shipment_id       BIGINT UNSIGNED PK AUTO_INCREMENT
   batch             VARCHAR(64)     NOT NULL
   tanggal           DATE            NOT NULL
-  store_id          BIGINT UNSIGNED NOT NULL FK -> store.store_id    -- always a real store row; walk-in/non-outlet customers resolve to a synthetic "NON-OUTLET / PERORANGAN" store (see mysql-open-decisions-v1.md OD-9), so this is never NULL
-  product_id        BIGINT UNSIGNED NOT NULL FK -> product.product_id
-  qty               DECIMAL(12,2)   NOT NULL
+  store_id          BIGINT UNSIGNED NOT NULL FK -> store.store_id    -- ALWAYS a real store row, NEVER NULL — walk-in/non-outlet customers resolve server-side to the synthetic "NON-OUTLET / PERORANGAN" store (mysql-open-decisions-v1.md OD-9, LOCKED — see §5.8.1)
   no_sj             VARCHAR(50)     NULL
   pengemudi         VARCHAR(100)    NULL
   kendaraan         VARCHAR(50)     NULL
@@ -378,33 +388,46 @@ shipment
   source_type       ENUM('delivery_order','manual_kirim','customer_order_fulfillment') NOT NULL
   delivery_order_id BIGINT UNSIGNED NULL FK -> delivery_order.delivery_order_id     -- set iff source_type='delivery_order'
   customer_order_id BIGINT UNSIGNED NULL FK -> customer_order.customer_order_id     -- set iff source_type='customer_order_fulfillment'
-  status            ENUM('active','void') NOT NULL DEFAULT 'active'   -- soft-cancel only (mysql-open-decisions-v1.md OD-14) — a shipment is never hard-deleted, since invoice_shipment/stock_transfer.source_shipment_id may reference it; "deleting" a shipment sets status='void' and writes a compensating stock_ledger reversal (§6) in the same transaction
+  status            ENUM('active','void') NOT NULL DEFAULT 'active'   -- soft-cancel only (OD-14) — a shipment header is never hard-deleted, since invoice_shipment/stock_transfer.source_shipment_id may reference it
+  voided_at         DATETIME        NULL
+  voided_by         BIGINT UNSIGNED NULL FK -> users.user_id
+  void_reason       VARCHAR(500)    NULL
+  version           INT UNSIGNED    NOT NULL DEFAULT 1   -- required per §12 (review point 7): the void transition IS an UPDATE (active->void), so this header — unlike the append-only shipment_item children — gets a version column like every other mutable entity, no exception
   created_at        DATETIME        NOT NULL
   KEY ix_shipment_tanggal_store (tanggal, store_id)
   KEY ix_shipment_batch (batch)
-  KEY ix_shipment_product (product_id)
+
+shipment_item
+  shipment_item_id  BIGINT UNSIGNED PK AUTO_INCREMENT
+  shipment_id       BIGINT UNSIGNED NOT NULL FK -> shipment.shipment_id ON DELETE CASCADE
+  product_id        BIGINT UNSIGNED NOT NULL FK -> product.product_id
+  qty               DECIMAL(12,2)   NOT NULL
+  UNIQUE KEY uq_shipment_item (shipment_id, product_id)
 ```
 
-`shipment` rows are immutable once created (no `version` column, and no field is ever edited in place) — a correction is a new, separate shipment row plus, if warranted, a `stock_ledger` reversal entry (§6). "Deletion" (`hapusKirim` today) is preserved as an operation but implemented as `status='void'` plus a compensating `stock_ledger` reversal in the same transaction, never a physical `DELETE` — this keeps every `invoice_shipment`/`stock_transfer.source_shipment_id` reference resolvable forever (OD-14). Reports/queries filter `WHERE status='active'` by default.
+**Void is header-level, applied once, never per-product**: "deleting" a shipment (`hapusKirim` today) sets `shipment.status='void'` + `voided_at`/`voided_by`/`void_reason` exactly once on the header, and — in the **same transaction** — writes one compensating `stock_ledger` reversal row **per `shipment_item`** belonging to that header (so every product's stock effect is individually reversed, but the void *action* is one atomic header-level operation, not N separate per-product voids that could partially fail). There is no way to void a single `shipment_item` while leaving its siblings active — the whole shipment is one physical event; if only some products were wrong, the correction is a **new** shipment (or, for a full mis-ship, void the whole thing and re-create it correctly). `shipment_item` rows themselves are never deleted or edited once inserted — see §6.
+
+`invoice_shipment`, `stock_transfer.source_shipment_id`, and every report/query reference the **shipment header** (`shipment_id`), never a `shipment_item_id` — an invoice's or a stock-transfer's originating shipment is "this whole delivery event"; invoice line items are read from the header's `shipment_item` rows at invoice-creation time, not stored as a second copy.
 
 ```
 invoice
-  invoice_id     BIGINT UNSIGNED PK AUTO_INCREMENT
-  invoice_no     VARCHAR(50)     NOT NULL UNIQUE   -- server-assigned, see document_sequence (§7)
-  batch          VARCHAR(64)     NOT NULL UNIQUE
-  tanggal        DATE            NOT NULL
-  store_id       BIGINT UNSIGNED NULL FK -> store.store_id
-  no_sj          VARCHAR(50)     NULL
-  total          DECIMAL(14,2)   NOT NULL DEFAULT 0
-  rate_pct       DECIMAL(5,2)    NOT NULL
-  rate_source    ENUM('default','override') NOT NULL DEFAULT 'default'
-  override_reason VARCHAR(500)  NULL
-  sumber         ENUM('kirim','pesanan','mutasi') NOT NULL DEFAULT 'kirim'  -- kept for historical/reporting labeling — see note below
-  version        INT UNSIGNED    NOT NULL DEFAULT 1
-  created_at     DATETIME        NOT NULL
-  updated_at     DATETIME        NULL
+  invoice_id                BIGINT UNSIGNED PK AUTO_INCREMENT
+  invoice_no                VARCHAR(50)     NOT NULL UNIQUE   -- server-assigned, see document_sequence (§7)
+  batch                     VARCHAR(64)     NOT NULL UNIQUE
+  tanggal                   DATE            NOT NULL
+  store_id                  BIGINT UNSIGNED NOT NULL FK -> store.store_id   -- NOT NULL, same synthetic-store rule as shipment (extended here for consistency — every invoice bills a store, even a synthetic non-outlet one)
+  no_sj                     VARCHAR(50)     NULL
+  total                     DECIMAL(14,2)   NOT NULL DEFAULT 0
+  rate_pct                  DECIMAL(5,2)    NOT NULL
+  rate_source               ENUM('default','override') NOT NULL DEFAULT 'default'
+  override_reason           VARCHAR(500)    NULL
+  sumber                    ENUM('kirim','pesanan','mutasi') NOT NULL DEFAULT 'kirim'  -- kept for historical/reporting labeling — see note below
+  legacy_fulfillment_status ENUM('verified','reconstructed','unverified') NOT NULL DEFAULT 'verified'   -- review point 5, see §5.6.1. Every invoice created by the NEW PHP API is always 'verified' (structurally guaranteed — creation requires >=1 real shipment). 'reconstructed' and 'unverified' can ONLY be written by the one-time migration ETL, never by any live API endpoint.
+  version                   INT UNSIGNED    NOT NULL DEFAULT 1
+  created_at                DATETIME        NOT NULL
+  updated_at                DATETIME        NULL
 
-invoice_shipment   -- NEW join table enforcing "invoice requires >=1 shipment" structurally
+invoice_shipment   -- join table enforcing "invoice requires >=1 shipment" structurally, for 'verified'/'reconstructed' invoices
   invoice_id     BIGINT UNSIGNED NOT NULL FK -> invoice.invoice_id ON DELETE CASCADE
   shipment_id    BIGINT UNSIGNED NOT NULL FK -> shipment.shipment_id
   PRIMARY KEY (invoice_id, shipment_id)
@@ -423,11 +446,23 @@ invoice_item
   UNIQUE KEY uq_invoice_item (invoice_id, product_id)
 ```
 
-**The application layer must enforce** (structurally guaranteed by `invoice_shipment` having `ON DELETE CASCADE` from `invoice` but `RESTRICT`-by-omission from `shipment`'s side — i.e., a `shipment` row can never be force-deleted while an `invoice_shipment` link still references it) that **no `invoice` row is ever inserted without at least one corresponding `invoice_shipment` row in the same transaction.**
+**The application layer must enforce** (structurally guaranteed by `invoice_shipment` having `ON DELETE CASCADE` from `invoice` but `RESTRICT`-by-omission from `shipment`'s side) that **every `invoice` with `legacy_fulfillment_status='verified'` has at least one `invoice_shipment` row inserted in the same transaction it is created — and the PHP API has no code path capable of creating an invoice any other way.** `invoice_item` rows for a normal (`verified`) invoice are populated by reading `shipment_item` for every linked `shipment_id`, not supplied freestanding by the caller — see `docs/php-api-contract-v1.md` §8.
 
-**On the legacy order-gated Pesanan invoice path (`psSyncInvoice`, Audit §9):** this is **not** carried into the target architecture as a normal path. It is documented in `docs/mysql-migration-map-v1.md` and `docs/mysql-open-decisions-v1.md` (OD-1) as a **migration-compatibility concern only** — i.e., how to correctly attribute *historical* invoices that were created this way (they may have no real corresponding shipment in the legacy data) during the one-time ETL, not as a rule the new PHP API implements going forward. Going forward, a `sumber:'stok'` Pesanan is fulfilled by creating a `shipment` row with `source_type='customer_order_fulfillment'` (which also produces the correct `stock_ledger` KELUAR event, unifying it with every other stock-out path — see §6) before its `invoice` can be created.
+#### 5.6.1 Historical invoices without fulfillment evidence (review point 5 — migration-only exception, LOCKED)
 
-**On the Mutasi-derived invoice (Audit §9's second nuance):** a `stock_transfer` (§8) does not, by itself, move goods out of the warehouse — the goods already left via an earlier `shipment`. The destination store's new invoice created by a Mutasi is therefore linked via `invoice_shipment` to that **original** `shipment_id` (traceable through `stock_transfer.source_shipment_id`, §8), not to a new shipment of its own. This preserves the "invoice always has >=1 real shipment behind it" invariant without inventing a fictitious second physical shipment for paperwork-only reallocation.
+Three cases, exactly as specified in the review — **no fake shipment is ever invented merely for schema compliance**:
+
+| Case | Legacy evidence | `legacy_fulfillment_status` | `invoice_shipment` | `stock_ledger` |
+|---|---|---|---|---|
+| **A** | Real legacy `Kirim` rows for the batch | `verified` | Linked to the migrated `shipment`(s) — mechanical | Normal `shipment_out` rows already exist for those shipments |
+| **B** | No `Kirim`, but a reliable `StokAdj`/other stock-out signal exists (e.g. Pesanan `selesai` + its `koreksi` StokAdj) | `reconstructed` | Linked to a `shipment`+`shipment_item` **synthesized** from that evidence, dated to the evidence's own date, `source_type='customer_order_fulfillment'` | The synthesized shipment gets a normal `shipment_out` ledger row — it's not fictitious, it's a faithful re-expression of real (if indirect) evidence |
+| **C** | **No** shipment, StokAdj, or any other reliable physical fulfillment evidence at all | `unverified` | **None — no `invoice_shipment` row, no synthetic shipment of any kind** | **No `shipment_out` ledger row is created.** Financial history (the invoice, its items, its payments) is fully preserved; the physical-fulfillment claim simply isn't asserted |
+
+For Case C specifically: the invoice and its `invoice_item`/`payment` rows migrate normally (financial history is never discarded), but `invoice_shipment` is empty for that invoice, and **no** `stock_ledger` row is written on its behalf. Reports (`docs/php-api-contract-v1.md` §11) must **exclude** `legacy_fulfillment_status<>'verified'` invoices from physical shipment/fulfillment KPIs by default (an explicit filter param can opt them back in for finance-side reconciliation views that need to see all money regardless of fulfillment evidence). This status is visibly stamped on the row forever — never silently reclassified to `'verified'` after the fact.
+
+**On the legacy order-gated Pesanan invoice path (`psSyncInvoice`, Audit §9):** this is **not** carried into the target architecture as a normal path — see §5.6.1 above for exactly how its historical output migrates (Case B in the ordinary case, Case C when even that evidence is missing). It is documented in `docs/mysql-migration-map-v1.md` §3 as a **migration-compatibility concern only**, not a rule the new PHP API implements going forward. Going forward, a `sumber:'stok'` Pesanan is fulfilled by creating a `shipment` (`source_type='customer_order_fulfillment'`), which also produces the correct `stock_ledger` KELUAR event, before its `invoice` can be created.
+
+**On the Mutasi-derived invoice (Audit §9's second nuance):** a `stock_transfer` (§8) does not, by itself, move goods out of the warehouse — the goods already left via an earlier `shipment`. The destination store's new invoice created by a Mutasi is therefore linked via `invoice_shipment` to that **original** `shipment_id` (traceable through `stock_transfer.source_shipment_id`, §8), not to a new shipment of its own.
 
 ### 5.7 Payments, returns, rejects, retail sales
 
@@ -483,7 +518,7 @@ retail_sale
 customer_order
   customer_order_id BIGINT UNSIGNED PK AUTO_INCREMENT
   order_no          VARCHAR(50)     NOT NULL UNIQUE
-  store_id          BIGINT UNSIGNED NOT NULL FK -> store.store_id   -- always a real store row; walk-in/individual customers resolve to the synthetic "NON-OUTLET / PERORANGAN" store (OD-9)
+  store_id          BIGINT UNSIGNED NOT NULL FK -> store.store_id   -- ALWAYS a real store row, NEVER NULL — walk-in/individual customers resolve server-side to the synthetic "NON-OUTLET / PERORANGAN" store — see §5.8.1
   tgl_pesan         DATE            NOT NULL
   tgl_produksi      DATE            NULL
   tgl_ambil         DATE            NULL
@@ -510,6 +545,19 @@ customer_order_item
 
 `customer_order` never has a direct FK from `invoice` — its only route to an invoice is through a `shipment` with `source_type='customer_order_fulfillment'` per §5.6.
 
+#### 5.8.1 `store_id` NOT NULL — LOCKED decision (review point 2), synthetic non-outlet store
+
+**This corrects a real contradiction in the previous draft** (§15/§5.6/§5.8 said `store_id NOT NULL` + a synthetic store; `docs/php-api-contract-v1.md` still described the resulting customer-order fulfillment shipment's `storeId` as nullable). **Final, locked rule: `shipment.store_id` and `customer_order.store_id` are `NOT NULL` in the schema — full stop. No code path, migration or live API, may ever insert `NULL` into either column.**
+
+- A seed row is inserted into `store` at migration/bootstrap time:
+  ```
+  canonical_name = 'NON-OUTLET / PERORANGAN'
+  channel        = NULL   -- channel is genuinely not applicable to this row; NULL is allowed HERE specifically because `store.channel` itself is a nullable column for every store (Audit §9 — channel is reporting metadata, not a required field for any store), not because store identity itself is ever optional
+  active          = 1
+  ```
+- The **API**, not the database, resolves optionality: `POST /api/customer-orders` may accept `storeId` as an **optional** request field (a genuine walk-in customer has no real outlet to pick). When omitted, the server resolves it to the synthetic store's `store_id` **before** the `INSERT` — the column itself never sees a `NULL`. See `docs/php-api-contract-v1.md` §9 for the corrected endpoint description (this was the ambiguous part before).
+- Reports/joins never need a `LEFT JOIN`/`COALESCE` special case for a missing store dimension — every `shipment`/`customer_order` row joins cleanly to exactly one `store` row, synthetic or real.
+
 ---
 
 ## 6. Stock ledger — append-only event log (review point 4)
@@ -523,8 +571,8 @@ stock_ledger
   location_id     BIGINT UNSIGNED NOT NULL FK -> location.location_id   -- defaults to the single 'GUDANG UTAMA' row for v1
   event_type      ENUM('production_in','shipment_out','adjustment','opening_balance','reversal') NOT NULL
   qty_delta       DECIMAL(12,2)   NOT NULL     -- signed: + increases stock, - decreases
-  source_type     ENUM('production_run','shipment','stock_adjustment','stock_transfer','opening_balance_cutover','historical_replay','reversal') NOT NULL
-  source_id       BIGINT UNSIGNED NULL         -- id in the source_type's table; NULL for opening_balance/historical_replay rows that reference a legacy identifier instead (see reversal_of / legacy_ref below)
+  source_type     ENUM('production_run','shipment_item','stock_adjustment','stock_transfer','opening_balance_cutover','historical_replay','reversal') NOT NULL
+  source_id       BIGINT UNSIGNED NULL         -- id in the source_type's table (for source_type='shipment_item' this is shipment_item_id, NOT shipment_id — one ledger row per line item; the header is still reachable via shipment_item.shipment_id for traceability); NULL for opening_balance/historical_replay rows that reference a legacy identifier instead (see reversal_of / legacy_ref below)
   reversal_of_id  BIGINT UNSIGNED NULL FK -> stock_ledger.stock_ledger_id   -- set only on event_type='reversal' rows, pointing at the ledger row being compensated
   legacy_ref      VARCHAR(100)    NULL         -- free-text pointer back to the legacy Sheets row/id for historical_replay/opening_balance rows, for audit traceability
   event_date      DATE            NOT NULL     -- business date (Asia/Jakarta), Audit §9
@@ -537,16 +585,18 @@ stock_ledger
 
 **Mapping from Audit §8's event table to `event_type`/`source_type`:**
 
-| Audit §8 source event | `event_type` | `source_type` |
-|---|---|---|
-| FG-verified production submitted (MASUK) | `production_in` | `production_run` |
-| Shipment created (any `source_type` per §5.6) | `shipment_out` | `shipment` |
-| Manual Stock Adjustment | `adjustment` | `stock_adjustment` |
-| Reject `ganti` (indirect, via its StokAdj) | `adjustment` | `stock_adjustment` (the `reject_note` row is referenced from the `stock_adjustment` row, not directly from the ledger — see §8) |
-| Customer order `selesai` (indirect, via its StokAdj) — **superseded**: per §5.6, this now goes through a `shipment` row (`shipment_out`) instead of a raw `stock_adjustment`, unifying it with the invoice-gating rule | `shipment_out` | `shipment` |
-| Opening balance at cutover | `opening_balance` | `opening_balance_cutover` |
-| Full historical replay | (whichever `event_type` the original event was) | `historical_replay` |
-| A correction/reversal of any prior ledger row | `reversal` | `reversal` |
+| Audit §8 source event | `event_type` | `source_type` | `source_id` |
+|---|---|---|---|
+| FG-verified production submitted (MASUK) | `production_in` | `production_run` | `production_run_id` |
+| Shipment created (review point 1/7 — **one ledger row per `shipment_item`**, not one per `shipment` header) | `shipment_out` | `shipment_item` | `shipment_item_id` |
+| Manual Stock Adjustment | `adjustment` | `stock_adjustment` | `stock_adjustment_id` |
+| Reject `ganti` (indirect, via its StokAdj) | `adjustment` | `stock_adjustment` (the `reject_note` row is referenced from the `stock_adjustment` row, not directly from the ledger — see §9) | `stock_adjustment_id` |
+| Customer order `selesai` (indirect, via its StokAdj) — **superseded**: per §5.6, this now goes through a `shipment`/`shipment_item` (`shipment_out`) instead of a raw `stock_adjustment`, unifying it with the invoice-gating rule | `shipment_out` | `shipment_item` | `shipment_item_id` |
+| Shipment voided (review point 1 — header-level action, one reversal per original item) | `reversal` | `reversal` | the **original** `stock_ledger_id` being reversed (via `reversal_of_id`); one new row per `shipment_item` that belonged to the voided header |
+| Opening balance at cutover | `opening_balance` | `opening_balance_cutover` | `NULL` (see `legacy_ref`) |
+| Full historical replay | (whichever `event_type` the original event was) | `historical_replay` | `NULL` (see `legacy_ref`) |
+
+**Void walkthrough (review point 7 — "one stock_ledger shipment_out row per item; void writes one reversal row per item"):** creating a `shipment` with 3 `shipment_item` rows writes exactly 3 `stock_ledger` rows (`event_type='shipment_out'`, one `source_id` per `shipment_item_id`). Voiding that shipment later writes exactly 3 **new** `stock_ledger` rows (`event_type='reversal'`, each `reversal_of_id` pointing at one of the original 3), each with the negated `qty_delta` — never edits or deletes the original 3. The void is one atomic transaction producing all 3 reversal rows together with the `shipment.status='void'` update; it cannot leave some items reversed and others not.
 
 Retur, Jual Konsumen, and Mutasi remain **not** represented in `stock_ledger` at all — confirmed by Audit §8 as having no warehouse-stock effect, and nothing in this review changes that rule.
 
@@ -693,7 +743,7 @@ This relies entirely on `FOR UPDATE` row locking within one transaction to preve
 
 ## 12. Concurrency — version columns (review point 7)
 
-**Every table listed in this document that supports `UPDATE` has a `version INT UNSIGNED NOT NULL DEFAULT 1` column, with no exceptions and no "version omitted" compatibility mode** (Audit §14 L15 is explicitly closed by this review point): `product`, `store`, `po_batch`, `production_run`, `fg_batch`, `delivery_order`, `invoice`, `customer_order`. (Line-item child tables, and pure-append tables like `shipment`/`return_note`/`reject_note`/`retail_sale`/`payment`/`stock_adjustment`/`stock_transfer`/`stock_ledger`/`audit_log`/`idempotency_log`, do not get one — they are never updated in place; a "correction" to any of them is a new compensating row, per §8/§9 above.)
+**Every table listed in this document that supports `UPDATE` has a `version INT UNSIGNED NOT NULL DEFAULT 1` column, with no exceptions and no "version omitted" compatibility mode** (Audit §14 L15 is explicitly closed by this review point): `product`, `store`, `po_batch`, `production_run`, `fg_batch`, `delivery_order`, `shipment` (the header only — its one legitimate in-place transition is `active`→`void`, §5.6), `invoice`, `customer_order`. (Line-item/child tables, and pure-append tables like `shipment_item`/`return_note`/`reject_note`/`retail_sale`/`payment`/`stock_adjustment`/`stock_transfer`/`stock_ledger`/`audit_log`/`idempotency_log`, do not get one — they are never updated in place; a "correction" to any of them is a new compensating row, per §8/§9 above.)
 
 **Every update statement must take the form:**
 
@@ -732,6 +782,8 @@ idempotency_log
 4. Found, and `request_fingerprint` does **not** match → **reject** with a distinct error (e.g. `IDEMPOTENCY_KEY_REUSE_MISMATCH`), explaining that this `request_id` was already used for a materially different request. **Never** silently accept the new payload under the old key, and never silently overwrite the stored response.
 
 This is a strengthening of the current Apps Script behavior (Audit §11's `checkIdempotent_`, which replays on `request_id` match alone with no payload-fingerprint check at all) — closes a theoretical gap where two unrelated requests could collide on a client-generated `requestId` and silently short-circuit.
+
+**Retention (review point 9, LOCKED): 90 days.** Unlike `audit_log` (§16, retained indefinitely), `idempotency_log` only needs to outlive the longest plausible client retry window — 90 days is generous against the legacy system's 6-hour cache TTL. A scheduled cleanup job (documented here, not implemented in this pass — this is a design decision, not a cron script) deletes `idempotency_log` rows where `created_at < NOW() - INTERVAL 90 DAY`. This job is a future implementation task; nothing in Phase 0/PHP-implementation is blocked by its absence, since an un-pruned table is a storage-growth concern, not a correctness one.
 
 ---
 
@@ -781,6 +833,19 @@ user_division_access
 
 This directly replaces the current system's complete absence of real authentication (Audit §6 "User/Role" entity, §19 R18 — the current Apps Script backend trusts client-supplied `{userId,userName,role}` purely as audit-label metadata, with zero verification, and is explicitly self-documented in `Code.gs`'s own header comment as an unsolved gap). Real auth is a **requirement** for the PHP/MySQL system before any public deployment, per the audit's own risk R18 and this review's point 6.
 
+### 15.1 Auth mechanism (review point 4, LOCKED — replaces the earlier "bearer or cookie, decided later" ambiguity)
+
+**Final choice: PHP server-side session, cookie-based.** Frontend and API are hosted on the same domain/site (`factory.amorgroup.id`), so there is no cross-origin reason to reach for a bearer token, and a bearer token would force `localStorage` storage — explicitly disallowed by the review (XSS-exposed, no `HttpOnly` protection). Concretely:
+
+- **Login** (`POST /api/auth/login`): verify credentials with `password_hash()`/`password_verify()` against `users.password_hash`; on success, call `session_regenerate_id(true)` (never reuse a pre-login session id — mitigates session fixation), then store `user_id` (and resolved roles) in `$_SESSION`.
+- **Session cookie**: `Secure` (HTTPS only — cPanel host must terminate TLS), `HttpOnly` (never readable from JS, so an XSS bug cannot exfiltrate it — this is *why* it beats a `localStorage` token, not just a style preference), `SameSite=Lax` as the default (upgrade to `Strict` if product confirms no cross-site-initiated-navigation login flows are needed — e.g. no "open a specific report link from an external chat message while already logged in" use case; `Lax` is the safer-by-default starting point for a same-domain app).
+- **Session lifetime**: configurable inactivity timeout (`session.gc_maxlifetime`, e.g. 30–60 minutes idle) plus an absolute maximum session age enforced in application code (`$_SESSION['login_at']` checked on every request) — both values are app config, not schema.
+- **Logout** (`POST /api/auth/logout`): `session_unset()` + `session_destroy()` server-side, plus clears the cookie — a logged-out session cannot be replayed even if the cookie value leaks afterward.
+- **`GET /api/auth/me`**: returns the current session's user + roles, or `401` if unauthenticated — this is how the frontend detects "am I logged in" on page load, replacing any client-stored token check.
+- **CSRF protection**: a per-session CSRF token (generated at login, stored in `$_SESSION`, **never in a table**) is required as a header (e.g. `X-CSRF-Token`) on every `POST`/`PUT`/`PATCH`/`DELETE`; the server rejects a mismatch with `403 CSRF_TOKEN_INVALID` before any business logic runs. **This is independent of and in addition to `Idempotency-Key`** (review point 4's explicit instruction) — CSRF protects against a forged request from a *different, unauthenticated* origin; idempotency protects against a *legitimate* client's own retry. A request can fail one check and pass the other; both are checked, neither substitutes for the other.
+
+**Does this need a `sessions` database table?** **No — documented decision, not an oversight.** PHP's native file-based session storage (the default `session.save_handler=files`) is sufficient for a single-server cPanel deployment (one PHP process pool, one filesystem, no load-balanced multi-server fan-out) — there is exactly one place sessions live, and the OS filesystem already handles it correctly and atomically for this deployment shape. **If** the hosting setup ever changes to multiple app servers behind a load balancer (not the case for this single cPanel account today), file-based sessions would stop being reliable (a session created on server A wouldn't be readable from server B) and a DB-backed (or Redis-backed) session store would become necessary at that point — this is called out here as a forward-looking note, not a requirement for this design.
+
 ---
 
 ## 16. Audit & config (carried over unchanged in spirit from Audit §15, with FK targets now numeric)
@@ -808,14 +873,41 @@ master_setting
 
 `master_setting` carries forward `targetMode` and `pctDasar` as live config, and `pctOwnership`/`pctFranchise` as **historical-only** rows (Audit §14 L4) — the application must not read the latter two for any new-transaction pricing decision; they exist solely so a report on very old, already-priced historical data can still explain what rate scheme was in effect at the time.
 
+**Retention (review point 9, LOCKED): `audit_log` is retained indefinitely — no partitioning is required at launch.** Partitioning-by-date remains a reasonable *future* performance option once row count actually justifies it, but it is not part of this design and not a launch blocker; nothing here schedules or requires it. This is a deliberate contrast with `idempotency_log`'s 90-day pruning (§13) — audit history is evidentiary and never expires by policy, idempotency history is purely a replay-protection window.
+
 ---
 
 ## 17. Full table list (reference index)
 
-`factory`, `division`, `location`, `product`, `product_legacy_code`, `product_alias`, `migration_product_map`, `store`, `store_alias`, `migration_store_map`, `po_batch`, `po_item`, `po_store_item`, `po_closure`, `production_run`, `production_item`, `fg_batch`, `fg_batch_source`, `fg_item`, `delivery_order`, `delivery_order_item`, `shipment`, `invoice`, `invoice_shipment`, `invoice_item`, `payment`, `return_note`, `reject_note`, `retail_sale`, `customer_order`, `customer_order_item`, `stock_ledger`, `stock_balance`, `stock_transfer`, `stock_adjustment`, `document_sequence`, `users`, `roles`, `user_roles`, `user_factory_access`, `user_division_access`, `audit_log`, `idempotency_log`, `master_setting`.
+`factory`, `division`, `location`, `product`, `product_legacy_code`, `product_alias`, `migration_product_map`, `store`, `store_alias`, `migration_store_map`, `po_batch`, `po_item`, `po_store_item`, `po_closure`, `production_run`, `production_item`, `fg_batch`, `fg_batch_source`, `fg_item`, `delivery_order`, `delivery_order_item`, `shipment`, `shipment_item`, `invoice`, `invoice_shipment`, `invoice_item`, `payment`, `return_note`, `reject_note`, `retail_sale`, `customer_order`, `customer_order_item`, `stock_ledger`, `stock_balance`, `stock_transfer`, `stock_adjustment`, `document_sequence`, `users`, `roles`, `user_roles`, `user_factory_access`, `user_division_access`, `audit_log`, `idempotency_log`, `master_setting`.
 
-**44 tables total.** See `docs/mysql-migration-map-v1.md` for the Sheet→table mapping and `docs/mysql-open-decisions-v1.md` for every point in this design still awaiting explicit sign-off.
+**45 tables total** (44 → 45: `shipment` split into `shipment` header + new `shipment_item`, review point 1). See `docs/mysql-migration-map-v1.md` for the Sheet→table mapping and `docs/mysql-open-decisions-v1.md` for every point in this design still awaiting explicit sign-off.
 
 ---
 
-**Status: MYSQL DESIGN V1 READY FOR FINAL REVIEW.** No SQL has been executed against any live database. A draft-only, explicitly-marked-not-for-production DDL rendering of this document is at `database/schema-v1.sql`.
+## 18. Validation results (this pass, FINAL DESIGN CORRECTION)
+
+`database/schema-v1.sql` was applied against a **disposable, local-only MariaDB 10.11.14 instance**, installed via `mariadb-install-db`/`mariadbd --skip-networking --user=root` into a throwaway datadir, exercised, then fully torn down (`SHUTDOWN;` + `rm -rf` the datadir and socket) — no live or persistent database of any kind was created or touched. This is a syntax/behavior check on the draft DDL, not a deployment. See the caveat in §0: **this proves the design is internally consistent, not that it matches `factory.amorgroup.id`'s real MySQL/MariaDB version — OD-4 stays open.**
+
+**DDL build**: all 45 `CREATE TABLE` statements applied with zero errors (scenario 10). `SHOW TABLES` / `information_schema.tables` both confirm 45 tables in the resulting schema.
+
+**Functional scenarios exercised** (seed data: 2 products, 1 real store, the synthetic `NON-OUTLET / PERORANGAN` store, 1 user):
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | `shipment` header with multiple items | PASS — one header row, two `shipment_item` rows under it |
+| 2 | Void shipment reverses every item once (conceptually) | PASS — header-level `UPDATE ... status='void', version=version+1` (once, not per item), followed by exactly one `stock_ledger` reversal row per original `shipment_item` row (2 in, 2 reversals out) |
+| 3 | Invoice links shipment header | PASS — `invoice_shipment` row created against the `shipment` header id, not a per-product id |
+| 4 | Synthetic `NON-OUTLET` store satisfies `store_id NOT NULL` | PASS (positive) — `customer_order` inserted against the synthetic store's id. PASS (negative) — a direct `INSERT ... store_id=NULL` on both `shipment` and `customer_order` was tried and correctly rejected: `ERROR 1048: Column 'store_id' cannot be null` |
+| 5 | Duplicate open DO still blocked | PASS — a second `delivery_order` insert with the same `(tanggal, store_id, shipment_group)` while both rows are in an "open" status (`draft`) was rejected: `ERROR 1062: Duplicate entry '2026-09-04\|1\|MAIN' for key 'uq_delivery_order_open'` (the generated-`STORED`-column partial-unique-index pattern from §11, confirmed still working after the shipment changes) |
+| 6 | Shipment/invoice document numbers unique | PASS — `document_sequence` seed row inserted cleanly; a duplicate `invoice_no` insert was rejected: `ERROR 1062: Duplicate entry 'INV-0001' for key 'uq_invoice_no'`. A duplicate `(shipment_id, product_id)` on `shipment_item` was also rejected (`uq_shipment_item`), confirming a shipment cannot silently gain two rows for the same product |
+| 7 | No FK cascade deletes historical transactions from a master delete | PASS — `DELETE FROM product WHERE product_id=1` (referenced by `shipment_item`) rejected: `ERROR 1451`. `DELETE FROM store WHERE store_id=1` (referenced by `delivery_order`) rejected: `ERROR 1451`. Both are plain `RESTRICT` (InnoDB default, no `ON DELETE CASCADE` on either FK) — no code path in the schema can cascade a master-data delete into transactional history |
+| 8 | Historical unverified invoice migrates without a physical shipment | PASS — `invoice` row inserted with `legacy_fulfillment_status='unverified'` and **zero** `invoice_shipment` rows; both the flag and the absent link were confirmed by direct query |
+| 9 | New normal invoice cannot exist without a shipment | **Confirmed as an application/API-layer invariant, not a raw SQL constraint** — nothing in `invoice`'s DDL by itself prevents an `invoice` row with zero `invoice_shipment` rows (there is no SQL-native way to express "must have ≥1 child row" as a table constraint). The enforcement point is `docs/php-api-contract-v1.md` §8's `POST /api/invoices`, which hard-requires a non-empty `shipmentIds` (`400 MISSING_SHIPMENTS` otherwise) and always sets `legacy_fulfillment_status='verified'` — there is no request shape that can produce a shipment-less "verified" invoice. This is stated explicitly here rather than glossed over: the schema alone does not and cannot enforce this invariant; the API contract does |
+| 10 | All 45 tables build cleanly | PASS — see "DDL build" above |
+
+**Net result: 9 of 10 scenarios are enforced at the database-constraint level and were positively confirmed; scenario 9 is (and can only be) an application-layer invariant, confirmed by inspection of the API contract rather than a SQL error.** No scenario failed or required a design change during this validation pass.
+
+---
+
+**Status: MYSQL DESIGN V1 FINAL-CANDIDATE READY FOR REVIEW.** Not implementation complete. Not production ready. No SQL has been executed against any live or persistent database — see §0 for what disposable-instance validation was performed and, critically, what it does **not** confirm (the actual `factory.amorgroup.id` database version, OD-4, remains open). A draft-only, explicitly-marked-not-for-production DDL rendering of this document is at `database/schema-v1.sql`.

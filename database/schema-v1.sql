@@ -422,13 +422,15 @@ CREATE TABLE customer_order_item (
 -- 11. Shipment — the sole KELUAR event (review point 3/4, OD-9, OD-14)
 -- ============================================================================
 
+-- shipment = header for ONE physical delivery event (review point 1, CORRECTED this pass).
+-- store_id NEVER NULL: walk-in/non-outlet customers resolve server-side to the synthetic
+-- "NON-OUTLET / PERORANGAN" store row (review point 2, LOCKED — see docs/mysql-schema-v1.md §5.8.1).
+-- Void is header-level only: see shipment_item and stock_ledger void walkthrough below.
 CREATE TABLE shipment (
   shipment_id       BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   batch             VARCHAR(64)     NOT NULL,
   tanggal           DATE            NOT NULL,
   store_id          BIGINT UNSIGNED NOT NULL,
-  product_id        BIGINT UNSIGNED NOT NULL,
-  qty               DECIMAL(12,2)   NOT NULL,
   no_sj             VARCHAR(50)     NULL,
   pengemudi         VARCHAR(100)    NULL,
   kendaraan         VARCHAR(50)     NULL,
@@ -437,40 +439,69 @@ CREATE TABLE shipment (
   delivery_order_id BIGINT UNSIGNED NULL,
   customer_order_id BIGINT UNSIGNED NULL,
   status            ENUM('active','void') NOT NULL DEFAULT 'active',
+  voided_at         DATETIME        NULL,
+  voided_by         BIGINT UNSIGNED NULL,
+  void_reason       VARCHAR(500)    NULL,
+  version           INT UNSIGNED    NOT NULL DEFAULT 1,
   created_at        DATETIME        NOT NULL,
   KEY ix_shipment_tanggal_store (tanggal, store_id),
   KEY ix_shipment_batch (batch),
-  KEY ix_shipment_product (product_id),
   CONSTRAINT fk_shipment_store FOREIGN KEY (store_id) REFERENCES store(store_id),
-  CONSTRAINT fk_shipment_product FOREIGN KEY (product_id) REFERENCES product(product_id),
   CONSTRAINT fk_shipment_do FOREIGN KEY (delivery_order_id) REFERENCES delivery_order(delivery_order_id),
-  CONSTRAINT fk_shipment_co FOREIGN KEY (customer_order_id) REFERENCES customer_order(customer_order_id)
+  CONSTRAINT fk_shipment_co FOREIGN KEY (customer_order_id) REFERENCES customer_order(customer_order_id),
+  CONSTRAINT fk_shipment_voided_by FOREIGN KEY (voided_by) REFERENCES users(user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- shipment_item = one row per product on the shipment (review point 1, NEW this pass).
+CREATE TABLE shipment_item (
+  shipment_item_id  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  shipment_id       BIGINT UNSIGNED NOT NULL,
+  product_id        BIGINT UNSIGNED NOT NULL,
+  qty               DECIMAL(12,2)   NOT NULL,
+  UNIQUE KEY uq_shipment_item (shipment_id, product_id),
+  KEY ix_shipment_item_product (product_id),
+  CONSTRAINT fk_shipment_item_shipment FOREIGN KEY (shipment_id) REFERENCES shipment(shipment_id) ON DELETE CASCADE,
+  CONSTRAINT fk_shipment_item_product FOREIGN KEY (product_id) REFERENCES product(product_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================================
 -- 12. Invoice, payments (review point 3 — shipment-gated)
 -- ============================================================================
 
+-- legacy_fulfillment_status (review point 5, LOCKED): migration-only escape hatch.
+-- 'verified'     = normal case, backed by a real shipment (post-cutover invariant).
+-- 'reconstructed'= migrated Pesanan-derived invoice, stock-out evidence exists but no
+--                  original shipment record (StokAdj or equivalent) -> synthesized shipment.
+-- 'unverified'   = migrated invoice with NO shipment/StokAdj/reliable evidence at all;
+--                  financial history preserved, but NO shipment_out ledger row is created
+--                  and it is excluded from physical shipment/fulfillment KPIs.
+-- New PHP API code must NEVER be able to INSERT an invoice with legacy_fulfillment_status
+-- other than 'verified' -- 'reconstructed'/'unverified' are migration-time-only values.
 CREATE TABLE invoice (
-  invoice_id      BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  invoice_no      VARCHAR(50)     NOT NULL,
-  batch           VARCHAR(64)     NOT NULL,
-  tanggal         DATE            NOT NULL,
-  store_id        BIGINT UNSIGNED NULL,
-  no_sj           VARCHAR(50)     NULL,
-  total           DECIMAL(14,2)   NOT NULL DEFAULT 0,
-  rate_pct        DECIMAL(5,2)    NOT NULL,
-  rate_source     ENUM('default','override') NOT NULL DEFAULT 'default',
-  override_reason VARCHAR(500)    NULL,
-  sumber          ENUM('kirim','pesanan','mutasi') NOT NULL DEFAULT 'kirim',
-  version         INT UNSIGNED    NOT NULL DEFAULT 1,
-  created_at      DATETIME        NOT NULL,
-  updated_at      DATETIME        NULL,
+  invoice_id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  invoice_no               VARCHAR(50)     NOT NULL,
+  batch                    VARCHAR(64)     NOT NULL,
+  tanggal                  DATE            NOT NULL,
+  store_id                 BIGINT UNSIGNED NOT NULL,
+  no_sj                    VARCHAR(50)     NULL,
+  total                    DECIMAL(14,2)   NOT NULL DEFAULT 0,
+  rate_pct                 DECIMAL(5,2)    NOT NULL,
+  rate_source              ENUM('default','override') NOT NULL DEFAULT 'default',
+  override_reason          VARCHAR(500)    NULL,
+  sumber                   ENUM('kirim','pesanan','mutasi') NOT NULL DEFAULT 'kirim',
+  legacy_fulfillment_status ENUM('verified','reconstructed','unverified') NOT NULL DEFAULT 'verified',
+  version                  INT UNSIGNED    NOT NULL DEFAULT 1,
+  created_at               DATETIME        NOT NULL,
+  updated_at               DATETIME        NULL,
   UNIQUE KEY uq_invoice_no (invoice_no),
   UNIQUE KEY uq_invoice_batch (batch),
   CONSTRAINT fk_invoice_store FOREIGN KEY (store_id) REFERENCES store(store_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- invoice_shipment references the shipment HEADER (one row per linked physical delivery
+-- event, not per product). Normal post-cutover invariant: a NEW invoice (legacy_fulfillment_status
+-- = 'verified') must reference >= 1 active shipment row. Migration-only 'unverified' invoices
+-- have zero rows here by design (review point 5).
 CREATE TABLE invoice_shipment (
   invoice_id  BIGINT UNSIGNED NOT NULL,
   shipment_id BIGINT UNSIGNED NOT NULL,
@@ -568,7 +599,7 @@ CREATE TABLE stock_ledger (
   location_id     BIGINT UNSIGNED NOT NULL,
   event_type      ENUM('production_in','shipment_out','adjustment','opening_balance','reversal') NOT NULL,
   qty_delta       DECIMAL(12,2)   NOT NULL,
-  source_type     ENUM('production_run','shipment','stock_adjustment','stock_transfer','opening_balance_cutover','historical_replay','reversal') NOT NULL,
+  source_type     ENUM('production_run','shipment_item','stock_adjustment','stock_transfer','opening_balance_cutover','historical_replay','reversal') NOT NULL,
   source_id       BIGINT UNSIGNED NULL,
   reversal_of_id  BIGINT UNSIGNED NULL,
   legacy_ref      VARCHAR(100)    NULL,
@@ -661,6 +692,11 @@ CREATE TABLE document_sequence (
 -- 18. Idempotency (review point 8)
 -- ============================================================================
 
+-- Retention (review point 9, LOCKED): 90 days. Rows older than 90 days are purged by a
+-- scheduled cleanup job (mechanism documented in docs/mysql-open-decisions-v1.md; not
+-- built in this pass). Same request_id + same request_fingerprint -> replay stored
+-- response_body. Same request_id + different request_fingerprint -> 409
+-- IDEMPOTENCY_KEY_REUSE_MISMATCH.
 CREATE TABLE idempotency_log (
   request_id           VARCHAR(64)   PRIMARY KEY,
   endpoint             VARCHAR(150)  NOT NULL,
@@ -676,6 +712,8 @@ CREATE TABLE idempotency_log (
 -- 19. Audit & config
 -- ============================================================================
 
+-- Retention (review point 9, LOCKED): audit_log is retained indefinitely. No partitioning
+-- is required at launch.
 CREATE TABLE audit_log (
   audit_log_id      BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   request_id        VARCHAR(64)     NULL,
@@ -699,7 +737,8 @@ CREATE TABLE master_setting (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ============================================================================
--- End of draft. 44 tables. See docs/mysql-schema-v1.md for full rationale,
+-- End of draft. 45 tables (44 -> 45: shipment split into shipment header + new
+-- shipment_item, review point 1). See docs/mysql-schema-v1.md for full rationale,
 -- docs/mysql-open-decisions-v1.md for what still needs sign-off, and
 -- docs/mysql-migration-map-v1.md for how legacy data populates these tables.
 -- ⚠️  DO NOT RUN THIS FILE AGAINST ANY DATABASE UNTIL THE SIGN-OFF CHECKLIST

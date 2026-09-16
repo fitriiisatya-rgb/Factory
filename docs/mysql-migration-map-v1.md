@@ -1,7 +1,7 @@
 # Amor Factory — Migration Map V1 (Sheets → MySQL)
 
-**Status: MYSQL DESIGN V1 READY FOR FINAL REVIEW**
-No ETL has been run. No live data has been touched. This document finalizes `docs/mysql-migration-audit.md` §17/§18 against the schema in `docs/mysql-schema-v1.md`.
+**Status: MYSQL DESIGN V1 FINAL-CANDIDATE READY FOR REVIEW**
+No ETL has been run. No live data has been touched. This document finalizes `docs/mysql-migration-audit.md` §17/§18 against the schema in `docs/mysql-schema-v1.md`. This revision replaces §3's old single "synthesize a shipment representation" rule with the locked three-case (A/verified, B/reconstructed, C/unverified) structure from schema §5.6.1 (review point 5) and reflects the `shipment`/`shipment_item` header+item split (review point 1).
 
 ---
 
@@ -44,8 +44,8 @@ If a business decision is made to proceed with cutover while some `migration_*_m
 | `PO` | `po_batch`, `po_item`, `po_store_item` | Header (`tanggal+factory`) + item + per-store breakdown split, per `docs/mysql-schema-v1.md` §5.2. `poAwal`/`poRevisi` freeze/replace semantics (Audit §7) preserved as an **application-layer rule**, not re-derivable from the schema alone — the ETL must replay the *final* state per key correctly (frozen awal = the value at first-ever upload for that key; revisi = the value from the most recent upload), not just copy the last row seen |
 | `Ceklis` + `CeklisMeta` | `production_run`, `production_item` | State machine (Audit §6.1) ported 1:1 into `production_run.status` |
 | `FGPacking` + `FGReady` | `fg_batch`, `fg_batch_source`, `fg_item` | `FGReady.SourceVersionJSON` unpacked into real `fg_batch_source` rows |
-| `Kirim` | `shipment` | `source_type='delivery_order'` for rows whose `Id` matches the `docId+"-"+kode` pattern from a `DODoc`-driven ship (Audit §6.2), else `source_type='manual_kirim'`. `ShipmentGroup` column maps directly; historical rows with no `ShipmentGroup` value → `'MAIN'` (Audit §17, unchanged) |
-| `DODoc` | `delivery_order`, `delivery_order_item` | JSON item blobs unpacked into `delivery_order_item` rows. Historical Kirim rows that predate this feature (Audit §6.2's "historical documents from before this feature never appear here") get **no** synthetic `delivery_order` row invented for them — they migrate as bare `shipment` rows only, exactly matching current behavior |
+| `Kirim` | `shipment` (header), `shipment_item` (one row per product) | **Header+item split (review point 1, NEW this pass).** Legacy `Kirim` rows are grouped into one `shipment` header per distinct physical delivery event (same `tanggal`+`store`(raw)+`batch`+`ShipmentGroup`), with each product line becoming a `shipment_item` row under that header — never one `shipment` row per product as the pre-correction design had it. `source_type='delivery_order'` for rows whose `Id` matches the `docId+"-"+kode` pattern from a `DODoc`-driven ship (Audit §6.2), else `source_type='manual_kirim'`. `ShipmentGroup` column maps directly to `shipment.shipment_group`; historical rows with no `ShipmentGroup` value → `'MAIN'` (Audit §17, unchanged). MAIN and PASTRY rows for the same date/store are always grouped into **separate** headers, never merged. `shipment.store_id` is resolved via `migration_store_map`; a `Kirim` row with no resolvable store (rare, walk-in) resolves to the synthetic `NON-OUTLET / PERORANGAN` store — see the store-seed note under §2 below, never NULL |
+| `DODoc` | `delivery_order`, `delivery_order_item` | JSON item blobs unpacked into `delivery_order_item` rows. Historical Kirim rows that predate this feature (Audit §6.2's "historical documents from before this feature never appear here") get **no** synthetic `delivery_order` row invented for them — they migrate as bare `shipment` header(s) (with their `shipment_item` rows) only, exactly matching current behavior |
 | `Invoice` | `invoice`, `invoice_item`, `invoice_shipment` | **The one non-mechanical step in this mapping** — see §3 below (invoice-to-shipment linking) |
 | `Pembayaran` | `payment` | |
 | `Retur` (+ the legacy `amorBacaRetur_` dual-purpose reader, Audit §14 L2) | `return_note` (Retur rows) and `reject_note` (Reject rows mixed in via the legacy `Jenis` column) | The two are split at ETL time using the exact same `jenis.startsWith("reject")` rule the frontend's `serapReturSheet` already uses (Audit §3/§14) — not reinterpreted, just relocated from client-side JS into the one-time ETL script |
@@ -62,7 +62,7 @@ If a business decision is made to proceed with cutover while some `migration_*_m
 | `RequestLog` | *(not migrated)* | Pure idempotency-protocol history, superseded by the new `idempotency_log` starting fresh at cutover |
 | `AuditLog` | `audit_log` | Migrated in full — this is the one sheet with genuine historical evidentiary value worth preserving verbatim (Audit §14 L14 flags growth/retention, not disposability) |
 | `Log` | *(not migrated)* | Debug-only, never had a read path (Audit §4) |
-| *(no legacy source)* | `store`, `store_alias` | Built fresh per §1, per review point 2 — there is nothing to map FROM for canonical store identity |
+| *(no legacy source)* | `store`, `store_alias` | Built fresh per §1, per review point 2 — there is nothing to map FROM for canonical store identity. **One additional row is seeded before any other store row (review point 2, LOCKED):** `canonical_name='NON-OUTLET / PERORANGAN'`, `channel=NULL`, `active=1`. Every historical row that has no resolvable real store (walk-in/non-outlet legacy transactions) resolves its `store_id` FK to this row at ETL time — `store_id` is `NOT NULL` on `shipment`/`customer_order` in the target schema, so nothing may migrate with a NULL store reference |
 | *(no legacy source)* | `product_alias` | Built fresh per §1 (informed by `D.produkAlias` where it exists, but not limited to it — `D.produkAlias` was never synced to the backend either, so this is also effectively a fresh-build, informed by whatever local export can be recovered from active devices before cutover) |
 | *(no legacy source)* | `migration_product_map`, `migration_store_map` | The staging tables themselves — see §1 |
 | *(no legacy source)* | `users`, `roles`, `user_roles`, `user_factory_access`, `user_division_access` | Real auth did not exist before (Audit §6/§19 R18) — user accounts are created fresh, with an initial `ADMIN` account and role assignments decided by the business, not derived from the free-text `actor.userName` values scattered through legacy `AuditLog`/`Kirim`/etc. (those remain as historical labels only, migrated verbatim into `audit_log`/wherever they already existed as text, never auto-promoted into real `users` rows) |
@@ -71,16 +71,33 @@ If a business decision is made to proceed with cutover while some `migration_*_m
 
 ---
 
-## 3. Invoice-to-shipment linking during migration (the one genuinely non-mechanical mapping step)
+## 3. Invoice-to-shipment linking during migration (the one genuinely non-mechanical mapping step) — LOCKED three-case structure (review point 5)
 
-Per `docs/mysql-schema-v1.md` §5.6, **every** migrated `invoice` row must have at least one `invoice_shipment` link before the ETL is considered complete — this is a structural invariant of the target schema, not optional cleanup.
+**Correction from the prior revision of this document (review point 5):** the earlier language here described a single "synthesize a shipment representation when evidence is thin" rule applied uniformly. That was wrong — it risked inventing fictitious physical deliveries for invoices that have **no** stock-out evidence at all. This section replaces that with the LOCKED three-case structure from `docs/mysql-schema-v1.md` §5.6.1. Every migrated `invoice` row gets exactly one of these three dispositions; there is no fourth path and no case is skipped.
 
-- **Shipment-gated legacy invoices** (created via `kBukaInvoice`, the normal path — the large majority): link directly to the migrated `shipment` row(s) sharing the same `batch`. Purely mechanical.
+### Case A — real shipment evidence exists (the normal path, the large majority)
+
+Legacy invoices created via `kBukaInvoice` (the normal path) and Mutasi-derived invoices both have real, identifiable fulfillment evidence:
+- **Shipment-gated legacy invoices**: link directly to the migrated `shipment` **header**(s) sharing the same `batch` (review point 1 — the link is to the header, never to an individual product line). Purely mechanical.
 - **Mutasi-derived legacy invoices**: link to the **original** `shipment_id` reachable via the migrated `stock_transfer.source_shipment_id` (Audit §9's nuance, carried into schema §5.6/§8). Mechanical once `stock_transfer` rows are migrated.
-- **Pesanan-derived legacy invoices** (the order-gated `psSyncInvoice` path, Audit §9 — the one case this review explicitly calls out as a migration-compatibility issue, not a business rule to keep): these historical invoices, by construction, often have **no** corresponding legacy `Kirim` row at all (the whole point of the bug being flagged is that the old system let an invoice exist before any physical fulfillment). For these:
-  1. If the Pesanan's `status` reached `selesai` and a corresponding `StokAdj` "koreksi" row exists (the legacy stock-out signal for this path, Audit §8), **synthesize** one `shipment` row per invoice item at ETL time, dated to the `StokAdj` row's `tanggal`, with `source_type='customer_order_fulfillment'`, and link the invoice to it. This retroactively makes the historical data conform to the new invariant using the best available evidence of when goods actually left, without inventing a fictitious delivery.
-  2. If the Pesanan never reached `selesai` (i.e., the legacy system created an invoice with no stock-out evidence at all — a real historical data-quality gap this review is explicitly surfacing, not one this migration can quietly paper over), the invoice is migrated but **flagged**: insert it with a synthetic `shipment` row dated to the invoice's own `tanggal` and a `notes`/audit-trail marker indicating "no legacy fulfillment evidence found — synthesized at migration time for schema compliance," so this is queryable and reviewable after cutover, not silently indistinguishable from a normally-evidenced shipment.
-  This handling is documented here precisely because the review asked for it to be treated as a **migration compatibility issue**, not a new default: **no code in the new PHP API is capable of reproducing case (b) going forward** — `docs/php-api-contract-v1.md` §8 has no endpoint that creates an invoice without a real, pre-existing `shipment`. Case (b) can only ever occur for pre-cutover historical data.
+
+Both migrate with `invoice.legacy_fulfillment_status='verified'`.
+
+### Case B — no original shipment record, but reliable stock-out evidence exists (Pesanan-derived, StokAdj-backed)
+
+Pesanan-derived legacy invoices (the order-gated `psSyncInvoice` path, Audit §9) whose Pesanan reached `status='selesai'` **and** have a corresponding `StokAdj` "koreksi" row (the legacy stock-out signal for this path, Audit §8): **synthesize** one `shipment` header (with one `shipment_item` row per invoice item) at ETL time, dated to the `StokAdj` row's `tanggal`, with `source_type='customer_order_fulfillment'`, and link the invoice to it. This is only done because reliable, independent stock-movement evidence (the `StokAdj` row) exists — it is a reconstruction from real evidence, not an invention. Migrates with `invoice.legacy_fulfillment_status='reconstructed'`.
+
+### Case C — invoice exists but NO shipment/StokAdj/reliable stock-out evidence at all (LOCKED, review point 5 — the actual correction)
+
+If a Pesanan-derived invoice's order never reached `selesai`, or reached it without any corresponding `StokAdj`/other reliable stock-movement evidence: **do NOT invent a shipment.** This is a real historical data-quality gap this review is explicitly surfacing, not something the migration is allowed to paper over with a fictitious delivery record. Instead:
+- The `invoice` row (and its `invoice_item`/`payment` rows — the full financial history) is migrated as-is, preserving the money trail.
+- `invoice.legacy_fulfillment_status='unverified'` is set.
+- **No `shipment`, `shipment_item`, or `stock_ledger` row is created for it at all.** There is nothing to link — `invoice_shipment` legitimately has zero rows for this invoice, which is the one documented exception to the "every invoice has >=1 shipment link" invariant (migration-only).
+- These invoices are excluded from physical shipment/fulfillment KPIs and reports by default (they are filtered on `legacy_fulfillment_status != 'unverified'` unless a report explicitly asks to include them), and are clearly marked in the migration run's own summary report as a distinct, counted bucket — not silently blended into "normal" invoices.
+
+### Why this is safe going forward
+
+**No code in the new PHP API can produce Case B or Case C.** `docs/php-api-contract-v1.md` §8's `POST /api/invoices` always sets `legacy_fulfillment_status='verified'` and always requires a non-empty `shipmentIds` referencing real, pre-existing `shipment` headers — there is no request shape that creates an invoice without a real shipment, and no field that lets a caller set `legacy_fulfillment_status` to anything else. Cases B and C can only ever occur for pre-cutover historical data produced by this one-time ETL.
 
 ---
 
@@ -117,4 +134,4 @@ Unchanged in spirit from `docs/mysql-migration-audit.md` §17's mapping table, n
 
 ---
 
-**Status: MYSQL DESIGN V1 READY FOR FINAL REVIEW.** No ETL has been executed; no legacy or live data has been read, copied, or modified as part of producing this document.
+**Status: MYSQL DESIGN V1 FINAL-CANDIDATE READY FOR REVIEW.** No ETL has been executed; no legacy or live data has been read, copied, or modified as part of producing this document. Not implementation complete. Not production ready.
