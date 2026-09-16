@@ -75,7 +75,7 @@ final class Config
         if ($missing !== []) {
             throw new \RuntimeException(
                 'Missing required config: ' . implode(', ', $missing)
-                . '. Copy api/config/config.example.php to api/config/config.php and fill it in,'
+                . '. Copy api/app/config/config.example.php to api/app/config/config.php and fill it in,'
                 . ' or set these as environment variables.'
             );
         }

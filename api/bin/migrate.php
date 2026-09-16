@@ -11,8 +11,8 @@ declare(strict_types=1);
  * migration is already applied reports it and stops cleanly — it never
  * blindly re-runs the 45 CREATE TABLE statements.
  *
- * Core apply logic lives in src/Setup/MigrationRunner.php, shared with the
- * optional public/_setup/migrate.php web fallback — both paths apply
+ * Core apply logic lives in app/src/Setup/MigrationRunner.php, shared with
+ * the optional _setup/index.php web setup wizard — both paths apply
  * exactly the same gate and the same migrations.
  *
  * Usage:
@@ -36,7 +36,7 @@ declare(strict_types=1);
  * no code path that can do so.
  */
 
-require __DIR__ . '/../autoload.php';
+require __DIR__ . '/../app/autoload.php';
 
 use Amor\Api\Config;
 use Amor\Api\Database;
@@ -59,7 +59,7 @@ fwrite(STDOUT, "Server: {$pdo->getAttribute(PDO::ATTR_SERVER_VERSION)}\n");
 // --- Safety gate 1: EXPECTED_DB_NAME must match DB_NAME -------------------
 if ($appEnv !== 'staging' && $expectedDbName === '') {
     fwrite(STDERR, "REFUSED: APP_ENV=$appEnv requires EXPECTED_DB_NAME to be set in config"
-        . " (see api/config/config.example.php) — refusing to run without it as a guard"
+        . " (see api/app/config/config.example.php) — refusing to run without it as a guard"
         . " against a misconfigured DB_NAME.\n");
     exit(1);
 }

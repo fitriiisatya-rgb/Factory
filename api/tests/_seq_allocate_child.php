@@ -7,7 +7,7 @@ declare(strict_types=1);
 // exactly one number, then prints it. The parent spawns many of these at once
 // via proc_open to get real concurrent connections hitting the same row.
 
-require __DIR__ . '/../autoload.php';
+require __DIR__ . '/../app/autoload.php';
 
 use Amor\Api\Config;
 use Amor\Api\Database;

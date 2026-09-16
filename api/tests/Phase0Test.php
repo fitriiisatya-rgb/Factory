@@ -9,7 +9,7 @@ declare(strict_types=1);
  * it creates/mutates real rows.
  */
 
-require __DIR__ . '/../autoload.php';
+require __DIR__ . '/../app/autoload.php';
 
 use Amor\Api\Config;
 use Amor\Api\Database;

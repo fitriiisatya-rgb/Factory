@@ -67,7 +67,7 @@ echo " host confirmed as 10.11.19-MariaDB-cll-lve — see OD-4, CLOSED, in"
 echo " docs/mysql-open-decisions-v1.md. This script never touches that real host.)"
 
 echo "--- 3/8: writing throwaway api/config/config.php for this test run ---"
-cat > "$API_ROOT/config/config.php" <<PHPCONFIG
+cat > "$API_ROOT/app/config/config.php" <<PHPCONFIG
 <?php
 return [
     'APP_ENV' => 'staging',
@@ -83,8 +83,8 @@ return [
 PHPCONFIG
 
 echo "--- 4/8: safety-gate proof: migrate.php must REFUSE on an EXPECTED_DB_NAME mismatch ---"
-cp "$API_ROOT/config/config.php" "$WORKDIR/config-correct.php"
-cat > "$API_ROOT/config/config.php" <<PHPCONFIG
+cp "$API_ROOT/app/config/config.php" "$WORKDIR/config-correct.php"
+cat > "$API_ROOT/app/config/config.php" <<PHPCONFIG
 <?php
 return [
     'APP_ENV' => 'staging',
@@ -111,7 +111,7 @@ else
     FAILURES=$((FAILURES+1))
   fi
 fi
-cp "$WORKDIR/config-correct.php" "$API_ROOT/config/config.php"
+cp "$WORKDIR/config-correct.php" "$API_ROOT/app/config/config.php"
 
 echo "--- 5/8: migrate (first real apply) + seed + create throwaway admin ---"
 php "$API_ROOT/bin/migrate.php" --yes || { echo "migrate.php FAILED"; exit 1; }
@@ -150,7 +150,7 @@ else
 fi
 
 echo "--- 7/8: starting php -S dev server on :$PHP_PORT ---"
-php -S "127.0.0.1:$PHP_PORT" -t "$API_ROOT/public" > "$WORKDIR/php-server.log" 2>&1 &
+php -S "127.0.0.1:$PHP_PORT" -t "$API_ROOT" > "$WORKDIR/php-server.log" 2>&1 &
 PHP_PID=$!
 sleep 1
 if ! kill -0 "$PHP_PID" 2>/dev/null; then
@@ -169,6 +169,6 @@ if [ "$FAILURES" -ne 0 ]; then
   RESULT=1
 fi
 
-rm -f "$API_ROOT/config/config.php"
+rm -f "$API_ROOT/app/config/config.php"
 
 exit $RESULT

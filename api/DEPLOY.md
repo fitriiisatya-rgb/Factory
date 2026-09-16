@@ -4,7 +4,7 @@
 lifecycle, shipment, invoice, payment, stock ledger, reports) are
 implemented. This skeleton must never be pointed at the production
 Apps Script/Sheets frontend or at any live database — see item 19 of the
-Phase 0 brief ("DO NOT DO YET") and `src/Config.php`, which hard-refuses
+Phase 0 brief ("DO NOT DO YET") and `app/src/Config.php`, which hard-refuses
 `APP_ENV=production`.
 
 ## 0. Real cPanel deployment (Phase 0.5) — use that guide, not just this one
@@ -39,48 +39,49 @@ for a real deployment; sections 1–3 and 8–9 here still apply as background.
   whatever cPanel's default is) are sufficient — no session-support DB table
   exists or is needed (locked decision, `docs/mysql-schema-v1.md` §15.1).
 
-## 2. Directory layout and document root
+## 2. Directory layout
 
 ```
 api/
-  public/       <- THIS must be the site's document root (or subdomain root)
-    index.php
-    .htaccess
-  src/          <- must NOT be reachable over HTTP
-  config/       <- must NOT be reachable over HTTP (holds config.php with real DB creds)
-  migrations/
+  index.php     <- front controller
+  .htaccess     <- front-controller routing
+  _setup/       <- guided one-time setup wizard (see api/DEPLOY-CPANEL-PREPROD.md)
+  app/          <- source, config, migrations — blocked from direct HTTP access by app/.htaccess
+    autoload.php
+    src/
+    config/     <- holds config.php with real DB creds; NEVER reachable over HTTP
+    migrations/
   bin/          <- CLI-only, run via SSH/cPanel Terminal, never over HTTP
   tests/
 ```
 
-On cPanel, when creating the staging subdomain (e.g. `staging-factory.amorgroup.id`)
-or subfolder (e.g. `factory.amorgroup.id/staging-api/`), set its **document
-root to `api/public`**, not to `api/`. This means `src/`, `config/`,
-`migrations/`, and `bin/` sit outside the web-servable tree entirely — they
-are unreachable over HTTP regardless of `.htaccess`, which is the actual
-protection (the `.htaccess` in `public/` only handles front-controller
-routing, it is not what keeps `config/config.php`'s DB password safe).
+**As of Phase 0.5's easy-install package, the deployment model is a
+subfolder of the existing `factory.amorgroup.id` site** (e.g.
+`public_html/api/`), not a dedicated document root — the whole point is to
+never touch the existing frontend's document root at all. `app/` sits
+*inside* that subfolder (there is normally no way to place it truly outside
+`public_html/` without a second upload location, which this package
+deliberately avoids for a non-technical operator), but is blocked from
+direct HTTP access by `app/.htaccess` (`Require all denied`) — defense in
+depth on top of the fact that nothing in `app/` ever echoes its own
+contents even if that block were somehow bypassed. See
+`api/DEPLOY-CPANEL-PREPROD.md` for the exact real-host procedure and an
+optional advanced variant that does move `app/` fully outside `public_html/`
+for an operator who wants that.
 
-If the cPanel account's subdomain tooling cannot point a document root
-outside a single shared tree, the fallback is a `factory.amorgroup.id/staging-api/`
-subfolder with `public/` as that subfolder's contents and `src/`/`config/`/
-`migrations/`/`bin/` placed one level above the account's public web root
-(e.g. in the account's home directory, not under `public_html/`) — whichever
-of the two `.htaccess`/subdomain options cPanel access actually allows is a
-deployment-time decision, not a design one.
-
-**Never deploy this into or under the existing `public_html/` path that
-serves the live Apps Script/Sheets-backed frontend.** Use a separate
-subdomain or a clearly-separate subfolder, per item 18 of the Phase 0 brief.
+**Never deploy this into or on top of the existing frontend files.** It
+lives in its own subfolder (`api/`) alongside them, never overwriting
+anything, per item 18 of the Phase 0 brief and item 2 of the Phase 0.5
+easy-install request.
 
 ## 3. Config
 
-1. Copy `api/config/config.example.php` to `api/config/config.php` on the
-   server (via SFTP/File Manager — never via a git deploy that would commit
-   it; it's gitignored for exactly this reason).
+1. Copy `api/app/config/config.example.php` to `api/app/config/config.php` on
+   the server (via SFTP/File Manager — never via a git deploy that would
+   commit it; it's gitignored for exactly this reason).
 2. Fill in real `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS` for the staging
    database created in §4 below.
-3. Alternatively (or in addition — env vars always win, see `src/Config.php`),
+3. Alternatively (or in addition — env vars always win, see `app/src/Config.php`),
    set the same keys as environment variables via cPanel's "Environment
    Variables" panel if the hosting plan exposes one.
 4. `APP_ENV` must be `staging` (local/CI disposable instances) or
@@ -111,7 +112,7 @@ On most cPanel accounts, database and username are prefixed
 
 ## 5. Apply the schema and seed
 
-Via SSH or cPanel Terminal, with `config/config.php` pointing at the
+Via SSH or cPanel Terminal, with `app/config/config.php` pointing at the
 staging DB from §4:
 
 ```bash
@@ -143,12 +144,12 @@ There is no separate "reset" command; re-creation IS the reset procedure.
 ## 7. Smoke test
 
 ```bash
-curl https://staging-factory.amorgroup.id/api/health
+curl https://factory.amorgroup.id/api/health
 ```
 
 Expected: `{"ok":true,"data":{"ok":true,"env":"staging","db":"connected","dbVersion":"...","schemaVersion":"v1"}}`
 
-If `db` comes back `"disconnected"`, check `config/config.php` credentials
+If `db` comes back `"disconnected"`, check `app/config/config.php` credentials
 and that the DB user/host/port are correct — the health endpoint deliberately
 never echoes the underlying PDO error message (see `HealthController.php`).
 

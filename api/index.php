@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-require __DIR__ . '/../autoload.php';
+require __DIR__ . '/app/autoload.php';
 
 use Amor\Api\App;
 use Amor\Api\ErrorHandler;

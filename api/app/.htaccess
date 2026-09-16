@@ -1,0 +1,12 @@
+# Blocks ALL direct HTTP access to this directory (source code, config,
+# migrations). The only legitimate way anything in here is reached is via
+# PHP `require` from ../index.php or ../_setup/index.php — never a direct
+# browser request. Defense in depth: even config.php (which never echoes
+# its contents) is covered by this, not just relying on that fact.
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

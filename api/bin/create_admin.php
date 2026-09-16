@@ -7,8 +7,8 @@ declare(strict_types=1);
  * Never hardcodes a password in source — reads it interactively (terminal
  * echo disabled where possible) or from the ADMIN_PASSWORD environment
  * variable for non-interactive/CI use. Core logic lives in
- * src/Setup/AdminCreator.php, shared with the optional
- * public/_setup/create_admin.php web fallback.
+ * app/src/Setup/AdminCreator.php, shared with the optional
+ * _setup/index.php web setup wizard.
  *
  * Usage:
  *   php api/bin/create_admin.php <username> [full name...]
@@ -22,7 +22,7 @@ declare(strict_types=1);
  * procedure (see api/DEPLOY.md / api/DEPLOY-CPANEL-PREPROD.md).
  */
 
-require __DIR__ . '/../autoload.php';
+require __DIR__ . '/../app/autoload.php';
 
 use Amor\Api\Config;
 use Amor\Api\Database;

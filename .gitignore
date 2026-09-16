@@ -1,5 +1,6 @@
 # PHP staging skeleton — never commit real credentials or local env state
-api/config/config.php
+api/app/config/config.php
+api/_setup/.disabled
 api/.env
 api/.env.local
 api/vendor/
@@ -9,3 +10,9 @@ api/composer.lock
 api/tests/.tmp/
 *.sqlite
 *.sqlite3
+
+# dist/amor-factory-api-preprod.zip IS committed deliberately (contains no
+# secrets — verified by build-cpanel-package.sh's own sanity check — and a
+# non-technical operator needs to download it directly, not run a build
+# script). Only the transient staging directory is ignored.
+dist/.stage/

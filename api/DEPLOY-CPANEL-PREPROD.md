@@ -18,10 +18,10 @@ beyond these steps until the smoke test checklist below is fully green.
 | Real passwords | **Never** written to this repo, docs, commits, test fixtures, or source — the operator enters them only into an untracked `config/config.php` on the server itself, or types them at an interactive prompt |
 
 Everything below assumes these exact values. If any of them changes, update
-`api/config/config.example.php`'s `EXPECTED_DB_NAME`/`DB_NAME` comments
+`api/app/config/config.example.php`'s `EXPECTED_DB_NAME`/`DB_NAME` comments
 accordingly before proceeding — the migration runner will refuse to run on
 a mismatch by design (see section 3 of the Phase 0.5 request, implemented in
-`api/bin/migrate.php` and `api/src/Setup/MigrationRunner.php`).
+`api/bin/migrate.php` and `api/app/src/Setup/MigrationRunner.php`).
 
 ---
 
@@ -48,42 +48,43 @@ check by hand first.
 
 ### Step 2 — Upload code
 
-Upload this repository (or at minimum the `api/` and `database/`
-directories) to the cPanel account, e.g. via Git deployment, SFTP, or
-cPanel's File Manager upload+extract. **Do not** upload `api/config/config.php`
-if one exists locally in your working copy — it's gitignored precisely so
-this doesn't happen, but double-check with your upload method (SFTP won't
-know about `.gitignore`).
+**This is now the easy-install package flow** (see `dist/README-FIRST-CPANEL.md`
+for the non-technical version of these same steps): upload
+`dist/amor-factory-api-preprod.zip` to the cPanel account (File Manager
+upload, or SFTP) and extract it while positioned **inside `public_html/`**
+so it produces `public_html/api/`. Since a technical operator with SSH can
+also just `git clone`/`rsync` the repo and run `bash dist/build-cpanel-package.sh`
+directly on the server (or upload the already-built ZIP the same way) — both
+land at the same `public_html/api/` result.
 
-**Document root placement** (see `api/DEPLOY.md` section 2 for full detail):
-the site/subdomain's document root must be `api/public/`, never `api/`
-itself and never inside the existing `public_html/` that serves the live
-Apps Script/Sheets frontend. Use a separate subdomain
-(`staging-factory.amorgroup.id`) or a clearly separate subfolder
-(`factory.amorgroup.id/preprod-api/`) — whichever cPanel access actually
-allows.
+**No document root change of any kind.** `factory.amorgroup.id`'s existing
+document root and frontend are untouched — `api/` is simply a new subfolder
+alongside them. `api/app/` (source, config, migrations) sits *inside* that
+same subfolder but is blocked from direct HTTP access by `api/app/.htaccess`
+(`Require all denied`) — see `api/DEPLOY.md` section 2 for the full
+reasoning, including the advanced/optional variant that moves `app/` fully
+outside `public_html/` for an operator who wants stronger isolation and has
+the access to arrange it.
 
-**Expected output**: `api/public/index.php` is reachable at whatever
-temporary URL cPanel gives you (even though it will 500 until config exists
-— that's expected at this point).
-**Failure condition**: a 404 for `index.php` itself means the document root
-is wrong, not a code problem.
+**Expected output**: `https://factory.amorgroup.id/api/` is reachable (it
+will show a friendly "config not filled in yet" message from `_setup/`
+until step 4 below, not a raw 500).
+**Failure condition**: a 404 for anything under `/api/` means the ZIP wasn't
+extracted into `public_html/` correctly, or `.htaccess` isn't being honored
+(rare on cPanel — confirm `AllowOverride`/mod_rewrite are enabled, which is
+the standard cPanel/CloudLinux default).
 
-### Step 3 — Create the private config outside the public document root where possible
+### Step 3 — Create the private config
 
-If the hosting layout allows `api/config/` to sit outside the document root
-entirely (see `api/DEPLOY.md` section 2), do that. If the cPanel plan only
-gives you one servable tree, `api/config/` sitting alongside `api/public/`
-(both under the account's home directory, only `public/` pointed to by the
-document root setting) is the fallback — either way, `config/config.php`
-must not be independently exposed at a guessable URL.
-
-Copy `api/config/config.example.php` to `api/config/config.php` on the
-server (SFTP/File Manager — never commit this file).
+Copy `api/app/config/config.example.php` to `api/app/config/config.php` on
+the server (File Manager's "Copy" + rename, or SFTP — never commit this
+file to any repository). `api/app/` is not reachable over HTTP (step 2), so
+this file cannot be requested directly by a browser regardless of its name
+or location within `app/`.
 
 ### Step 4 — Set DB credentials
 
-Edit the server's `api/config/config.php`:
+Edit the server's `api/app/config/config.php`:
 
 ```php
 <?php
@@ -182,7 +183,7 @@ php api/bin/seed.php
 store: NON-OUTLET / PERORANGAN seeded`.
 **Failure condition**: none expected — this only runs after step 6 succeeds,
 and every insert is upsert-on-conflict (safe to re-run, see
-`api/src/Setup/Seeder.php`).
+`api/app/src/Setup/Seeder.php`).
 
 ### Step 9 — Create the preproduction admin
 
@@ -207,7 +208,7 @@ at the migration user for now.
 
 ### Step 11 — Switch API config from migration user to runtime user
 
-Edit `api/config/config.php` again:
+Edit `api/app/config/config.php` again:
 
 ```php
 'DB_USER' => '<the new runtime user from step 10>',
@@ -226,13 +227,13 @@ item must pass before this phase is considered done.
 ### Step 13 — Remove temporary migration/test scripts from the web-accessible directory
 
 If Method B (section below) was used at any point, **delete the entire
-`api/public/_setup/` directory now** — it must never remain reachable after
+`api/_setup/` directory now** — it must never remain reachable after
 setup, regardless of how well-guarded its `SETUP_TOKEN` check is. If only
 Method A (CLI) was used, `_setup/` was never touched and this step is a
 no-op, but confirm it's not present anyway:
 
 ```bash
-ls api/public/_setup 2>/dev/null && echo "STILL THERE — DELETE IT" || echo "not present, OK"
+ls api/_setup 2>/dev/null && echo "STILL THERE — DELETE IT" || echo "not present, OK"
 ```
 
 Also see section 14 below regarding any pre-existing `db-test.php`-style
@@ -241,68 +242,75 @@ unrelated manual poking around on this hosting account.
 
 ---
 
-## Method B: no SSH — temporary protected web runner
+## Method B: no SSH — the guided setup wizard
 
-Use this only if cPanel's Terminal/SSH is genuinely unavailable. It performs
-the exact same steps as Method A (5, 6, 8, 9) but via a browser instead of a
-shell, with an extra layer of access control since these files sit inside
-the public document root.
+Use this if cPanel's Terminal/SSH is genuinely unavailable, or simply
+because a single guided page is easier to get right than five CLI commands.
+It performs the exact same steps as Method A (5, 6, 8, 9) but via one
+browser page instead of a shell, with an extra layer of access control
+since this page sits inside the public document root. **This is also the
+path the non-technical `dist/README-FIRST-CPANEL.md` guide uses — read that
+document for the plain-language walkthrough of the same wizard described
+technically here.**
 
 ### B.0 — Extra config before using this method
 
-Add one more key to `api/config/config.php` (in addition to everything in
+Add one more key to `api/app/config/config.php` (in addition to everything in
 step 4 above):
 
 ```php
 'SETUP_TOKEN' => '<a long random string, e.g. from `openssl rand -hex 32`>',
 ```
 
-Without `SETUP_TOKEN` set, **every** script under `api/public/_setup/`
-refuses outright (see `api/src/SetupGuard.php`) — this is not optional.
-Generate the token with a real random source, not something guessable.
+Without `SETUP_TOKEN` set, `api/_setup/index.php` refuses outright (see
+`api/app/src/SetupGuard.php`) — this is not optional. Generate the token
+with a real random source, not something guessable. The packaged ZIP
+includes `dist/generate-setup-token.php` (`php dist/generate-setup-token.php`)
+as a convenience if no other way to generate a random hex string is at hand.
 
-### B.1 — Run the migration
+### B.1 — Open the wizard
 
 Visit (replace `<token>` with your real `SETUP_TOKEN` value):
 
 ```
-https://<your-preprod-host>/_setup/migrate.php?token=<token>
+https://factory.amorgroup.id/api/_setup/?token=<token>
 ```
 
-This shows the planned action (same as CLI step 5's output) and a form
-requiring you to type `CONFIRM` before anything runs. Submitting applies
-the migration and shows a result page. **Expected/failure conditions are
-identical to CLI steps 5–7.**
+This single page shows a live 7-step checklist (Koneksi, Kompatibilitas
+Database, Instalasi Struktur Database, Data Awal, Buat Admin, Verifikasi,
+Selesai), each marked `BELUM` (not yet reached), `READY` (can run now),
+`BERHASIL` (done), or `ERROR`. Steps 1–2 (connection, compatibility) run
+automatically and read-only on every page load — nothing destructive ever
+runs without an explicit button click plus a confirmation checkbox.
 
-### B.2 — Run the seed
+### B.2 — Run steps 3–5 in order, on the same page
 
-```
-https://<your-preprod-host>/_setup/seed.php?token=<token>
-```
+The page enforces the order itself (a step's button only appears once the
+previous one is `BERHASIL`) — there is no separate migrate/seed/create-admin
+URL to visit in the wrong order. **Expected/failure conditions for steps
+3–5 are identical to CLI steps 5–9** (schema install, seed, admin
+creation), just presented as one page instead of terminal output.
 
-Same confirm-then-run pattern. **Expected/failure conditions identical to
-CLI step 8.**
+### B.3 — Step 6 (Verifikasi) and step 7 (Selesai)
 
-### B.3 — Create the preproduction admin
+Step 6 shows the same summary table as CP-01..CP-19 below, computed live.
+Step 7 shows the "SETUP COMPLETE" banner, the same "next required actions"
+list as section 9 of this document, and a **"Selesai & Nonaktifkan Setup"**
+button.
 
-```
-https://<your-preprod-host>/_setup/create_admin.php?token=<token>
-```
+### B.4 — Disable or delete `api/_setup/` immediately after
 
-Fill in username, full name, and password (typed twice) directly in the
-form. The password is hashed server-side immediately and is never echoed
-back, logged, or stored in plaintext. **Expected/failure conditions
-identical to CLI step 9.**
-
-### B.4 — Delete `api/public/_setup/` immediately after
-
-This is not optional and not deferred to "later cleanup" — do it in the
-same session, right after B.3 succeeds. Every successful result page in
-this directory displays **"DELETE THIS FILE NOW"** as a literal reminder.
-Continue with CLI steps 10–13 (creating the runtime user, switching config,
-smoke test) exactly as in Method A — those don't need SSH either, they're
-config-file edits and the smoke test is just HTTP requests (`curl` from
-your own machine, or a browser, works fine).
+Click "Selesai & Nonaktifkan Setup" — this writes a marker file that makes
+every request to `api/_setup/` return `404 Not Found` from then on. This is
+not optional and not deferred to "later cleanup" — do it in the same
+session, right after B.3 succeeds. Continue with CLI steps 10–13 (creating
+the runtime user, switching config, smoke test) exactly as in Method A —
+those don't need SSH either, they're config-file edits and the smoke test
+is just HTTP requests (`curl` from your own machine, or a browser, works
+fine). The single most reliable disable mechanism, stronger than the
+marker-file self-disable, is still to delete the entire `api/_setup/`
+folder via File Manager once you're done with it — do that when convenient,
+even after clicking the button.
 
 ---
 
@@ -322,7 +330,7 @@ Used **only** for:
   user — that's acceptable for this identity specifically, since it is
   never used by the running application after step 11)
 
-**Never used by `api/config/config.php` once step 11 is complete.**
+**Never used by `api/app/config/config.php` once step 11 is complete.**
 
 ### B. Runtime user — created fresh in step 10, name TBD by the operator (e.g. `u7566812_factoryapp`)
 
@@ -418,5 +426,5 @@ avoid. This repository does not recreate any such file — `GET /api/health`
 diagnostic, and it deliberately reports only `ok`/`env`/`db`/`dbVersion`/
 `schemaVersion`, never credentials, DB name, or filesystem paths. If a
 future diagnostic need comes up, it must read from `config/config.php` /
-environment variables like everything else in `api/src/Config.php` — never
+environment variables like everything else in `api/app/src/Config.php` — never
 a new hardcoded-credential file.
