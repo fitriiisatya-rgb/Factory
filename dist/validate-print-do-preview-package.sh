@@ -90,10 +90,10 @@ echo "--- 5/9: router script (extracted-tree-local) so /api/app/ui/assets/*.css 
 cat > "$WORKDIR/router.php" <<PHPROUTER
 <?php
 \$uri = urldecode((string) parse_url((string) \$_SERVER['REQUEST_URI'], PHP_URL_PATH));
-if (preg_match('#^/api/(app/ui/assets/[\w./-]+\.(css|js))\$#', \$uri, \$m)) {
+if (preg_match('#^/api/(app/ui/assets/[\w./-]+\.(css|js|png|jpg|jpeg|svg))\$#', \$uri, \$m)) {
     \$file = '$EXTRACT_DIR/api/' . \$m[1];
     if (is_file(\$file)) {
-        \$types = ['css' => 'text/css; charset=UTF-8', 'js' => 'application/javascript; charset=UTF-8'];
+        \$types = ['css' => 'text/css; charset=UTF-8', 'js' => 'application/javascript; charset=UTF-8', 'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'svg' => 'image/svg+xml'];
         header('Content-Type: ' . \$types[\$m[2]]);
         readfile(\$file);
         return true;

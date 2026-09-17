@@ -1,0 +1,108 @@
+/*
+ * Amor Factory System — Invoice print document styling.
+ * Loaded ONLY by the invoice preview/print page, never by the app shell
+ * or the DO print pages (which keep their own print.css, gray/black
+ * theme). This file follows the same screen/print split as print.css:
+ *
+ *  - SCREEN preview: dark backdrop behind a centered white/cream A4
+ *    "sheet" with a shadow, plus a small toolbar.
+ *  - @media print: backdrop/shadow/toolbar stripped out — the printed
+ *    page is ALWAYS white/cream with brown accents and dark readable
+ *    text. Dark mode must never produce a dark printed invoice.
+ */
+@page { size: A4 portrait; margin: 14mm 12mm; }
+
+:root {
+  --inv-bg-screen: #0b1220;
+  --inv-sheet-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+  --inv-brown: #7a4a2b;
+  --inv-brown-dark: #5c3620;
+  --inv-cream: #fbf6ef;
+  --inv-border: #e3d3c2;
+}
+
+html, body.print-doc.inv-doc {
+  background: var(--inv-bg-screen);
+  color: #2a1c12;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 12px;
+  margin: 0;
+  min-height: 100vh;
+}
+
+.print-toolbar { max-width: 210mm; margin: 6mm auto 4mm; padding: 0 4mm; display: flex; align-items: center; gap: 8px; }
+.print-toolbar .print-toolbar-title { color: #dbe3f0; font-family: -apple-system, sans-serif; font-size: 14px; font-weight: 700; margin-right: auto; }
+.print-toolbar button, .print-toolbar a {
+  font-family: -apple-system, Arial, sans-serif; font-size: 13px; font-weight: 700; padding: 9px 18px; border-radius: 8px;
+  border: 1px solid #2a3652; background: #16213a; color: #eef2f8; cursor: pointer; text-decoration: none;
+}
+.print-toolbar button.primary { background: var(--inv-brown); border-color: var(--inv-brown); color: #fff; }
+.print-toolbar a.secondary { background: transparent; }
+
+.inv-preview-notice {
+  max-width: 210mm; margin: 0 auto 4mm; padding: 8px 12px; border-radius: 8px;
+  background: #2a2110; border: 1px solid #6b5324; color: #f0d9a6; font-family: -apple-system, sans-serif;
+  font-size: 12px;
+}
+
+.print-page.inv-page {
+  max-width: 210mm; min-height: 297mm; margin: 0 auto 10mm; padding: 14mm 12mm;
+  position: relative; background: var(--inv-cream); box-shadow: var(--inv-sheet-shadow); box-sizing: border-box;
+}
+.print-page.inv-page:last-child { margin-bottom: 6mm; }
+
+.inv-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid var(--inv-brown); padding-bottom: 10px; margin-bottom: 14px; }
+.inv-company-address { font-size: 10px; color: #6b5540; margin-top: 3px; max-width: 260px; line-height: 1.4; }
+.inv-title-block { text-align: right; }
+.inv-title { font-size: 24px; font-weight: 800; color: var(--inv-brown-dark); letter-spacing: .04em; }
+.inv-title-meta { font-size: 11px; color: #4a3320; }
+
+.inv-info-grid { display: flex; gap: 18px; margin: 0 0 16px; }
+.inv-info-box { flex: 1; background: #fff; border: 1px solid var(--inv-border); border-radius: 6px; padding: 10px 12px; }
+.inv-info-title { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--inv-brown); font-weight: 700; margin-bottom: 6px; }
+.inv-info-row { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; padding: 2px 0; }
+.inv-info-row b { color: #6b5540; font-weight: 600; }
+.inv-info-row span { text-align: right; }
+
+table.print-table.inv-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+table.print-table.inv-table thead { display: table-header-group; }
+table.print-table.inv-table th, table.print-table.inv-table td { border: 1px solid var(--inv-border); padding: 6px 8px; font-size: 11px; text-align: left; }
+table.print-table.inv-table th { background: #f2e6d8; text-transform: uppercase; font-size: 9px; letter-spacing: .03em; color: var(--inv-brown-dark); }
+table.print-table.inv-table td.num, table.print-table.inv-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.inv-summary-wrap { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+.inv-summary-box { width: 260px; }
+.inv-summary-row { display: flex; justify-content: space-between; font-size: 11px; padding: 5px 10px; }
+.inv-summary-row span:last-child { font-variant-numeric: tabular-nums; }
+.inv-summary-total { background: var(--inv-brown); color: #fff; font-weight: 700; font-size: 13px; border-radius: 4px; margin-top: 2px; padding: 8px 10px; }
+
+/* Base print-notes/print-sign-grid/print-footer-note styling — this page
+   loads ONLY print-invoice.css (never print.css, which is DO-specific), so
+   these shared class names used by print-invoice-template.php need their
+   own definitions here rather than depending on the DO stylesheet. */
+.print-notes { margin: 4px 0 20px; font-size: 11px; position: relative; z-index: 1; }
+.print-notes > b { display: block; font-size: 9px; text-transform: uppercase; color: #6b5540; letter-spacing: .03em; margin-bottom: 4px; }
+.print-notes-body { min-height: 14px; line-height: 1.5; }
+.inv-notes { margin: 4px 0 18px; }
+
+.inv-thanks { text-align: center; margin: 18px 0 10px; }
+.inv-thanks-title { font-size: 14px; font-weight: 700; color: var(--inv-brown-dark); }
+.inv-thanks-sub { font-size: 10px; color: #7a6650; margin-top: 2px; }
+
+.print-sign-grid { display: flex; justify-content: space-between; margin-top: 36px; text-align: center; position: relative; z-index: 1; }
+.print-sign-box { width: 30%; font-size: 11px; }
+.print-sign-line { margin-top: 46px; border-top: 1px solid #6b5540; padding-top: 4px; }
+.inv-sign-grid { margin-top: 30px; }
+
+.print-footer-note { margin-top: 16px; font-size: 9px; color: #7a6650; display: flex; justify-content: space-between; gap: 8px; position: relative; z-index: 1; }
+.inv-footer { margin-top: 14px; }
+
+@media print {
+  html, body.print-doc.inv-doc { background: #fff; }
+  .print-toolbar, .inv-preview-notice { display: none; }
+  .print-page.inv-page {
+    background: #fff; box-shadow: none; margin: 0; max-width: none; min-height: 0;
+    page-break-after: always;
+  }
+  .print-page.inv-page:last-child { page-break-after: auto; }
+}

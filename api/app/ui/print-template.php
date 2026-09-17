@@ -64,7 +64,7 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
 
   <div class="print-header">
     <div class="print-brand">
-      <div class="print-brand-mark">A</div>
+      <img class="print-brand-mark" src="/api/app/ui/assets/img/amor-logo.png" alt="Amor" width="40" height="40">
       <div>
         <div class="print-brand-name">Amorcakes &amp; Bakery</div>
         <div class="print-doc-title">Delivery Order / Surat Jalan</div>

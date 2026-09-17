@@ -48,7 +48,7 @@ html, body.print-doc {
 
 .print-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #111; padding-bottom: 8px; margin-bottom: 10px; }
 .print-brand { display: flex; align-items: center; gap: 10px; }
-.print-brand-mark { width: 36px; height: 36px; border-radius: 8px; background: #111; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; flex: none; }
+.print-brand-mark { width: 40px; height: 40px; object-fit: contain; flex: none; }
 .print-brand-name { font-size: 16px; font-weight: 700; letter-spacing: .01em; }
 .print-doc-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #444; margin-top: 3px; }
 .print-meta-right { text-align: right; font-size: 11px; }
