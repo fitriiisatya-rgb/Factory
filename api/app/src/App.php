@@ -7,6 +7,7 @@ namespace Amor\Api;
 use Amor\Api\Controllers\Admin\MigrationController;
 use Amor\Api\Controllers\AuthController;
 use Amor\Api\Controllers\DivisionController;
+use Amor\Api\Controllers\DoController;
 use Amor\Api\Controllers\FactoryController;
 use Amor\Api\Controllers\FgController;
 use Amor\Api\Controllers\HealthController;
@@ -79,6 +80,20 @@ final class App
         $router->patch('/api/fg/{id}', [FgController::class, 'update']);
         $router->post('/api/fg/{id}/submit', [FgController::class, 'submit']);
         $router->post('/api/fg/{id}/reopen', [FgController::class, 'reopen']);
+
+        $router->get('/api/do/preview', [DoController::class, 'preview']);
+        $router->get('/api/do/stores', [DoController::class, 'stores']);
+        $router->get('/api/do/history', [DoController::class, 'history']);
+        $router->get('/api/do', [DoController::class, 'index']);
+        $router->post('/api/do', [DoController::class, 'create']);
+        $router->post('/api/do/generate-bulk', [DoController::class, 'generateBulk']);
+        $router->get('/api/do/{id}', [DoController::class, 'show']);
+        $router->post('/api/do/{id}/preprint', [DoController::class, 'preprint']);
+        $router->post('/api/do/{id}/refresh-po', [DoController::class, 'refreshPo']);
+        $router->post('/api/do/{id}/cancel', [DoController::class, 'cancel']);
+        $router->get('/api/do/{id}/shipments', [DoController::class, 'shipments']);
+        $router->post('/api/do/{id}/shipment-preview', [DoController::class, 'shipmentPreview']);
+        $router->post('/api/do/{id}/ship', [DoController::class, 'ship']);
 
         $router->get('/api/admin/migration/products', [MigrationController::class, 'indexProducts']);
         $router->post('/api/admin/migration/products/{id}/resolve', [MigrationController::class, 'resolveProduct']);
