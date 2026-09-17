@@ -8,6 +8,7 @@ use Amor\Api\Controllers\Admin\MigrationController;
 use Amor\Api\Controllers\AuthController;
 use Amor\Api\Controllers\DivisionController;
 use Amor\Api\Controllers\FactoryController;
+use Amor\Api\Controllers\FgController;
 use Amor\Api\Controllers\HealthController;
 use Amor\Api\Controllers\PoController;
 use Amor\Api\Controllers\ProductController;
@@ -68,6 +69,16 @@ final class App
         $router->patch('/api/production/{id}', [ProductionController::class, 'update']);
         $router->post('/api/production/{id}/submit', [ProductionController::class, 'submit']);
         $router->post('/api/production/{id}/reopen', [ProductionController::class, 'reopen']);
+
+        $router->get('/api/fg/target', [FgController::class, 'target']);
+        $router->get('/api/fg/availability', [FgController::class, 'availability']);
+        $router->get('/api/fg/history', [FgController::class, 'history']);
+        $router->get('/api/fg', [FgController::class, 'index']);
+        $router->post('/api/fg', [FgController::class, 'create']);
+        $router->get('/api/fg/{id}', [FgController::class, 'show']);
+        $router->patch('/api/fg/{id}', [FgController::class, 'update']);
+        $router->post('/api/fg/{id}/submit', [FgController::class, 'submit']);
+        $router->post('/api/fg/{id}/reopen', [FgController::class, 'reopen']);
 
         $router->get('/api/admin/migration/products', [MigrationController::class, 'indexProducts']);
         $router->post('/api/admin/migration/products/{id}/resolve', [MigrationController::class, 'resolveProduct']);
