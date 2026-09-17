@@ -233,6 +233,17 @@ final class PoImporter
         $productUnresolved = 0;
         $storeMapped = 0;
         $storeUnresolved = 0;
+        // $storeMapped/$storeUnresolved above count ROW OCCURRENCES (once per
+        // product x store line in the file — a real file has many rows per
+        // store, so this is naturally much larger than the store count a
+        // human expects from "toko terpetakan"). These two track DISTINCT
+        // stores instead, so the wizard can show both numbers labeled
+        // correctly rather than one ambiguous "toko terpetakan" that a real
+        // cPanel UAT run showed as 1986 for a file with only ~400 actual
+        // stores — a display-clarity fix only; nothing here changes which
+        // rows resolve, which lines get written, or any committed total.
+        $uniqueStoreIdsMapped = [];
+        $uniqueStoreNamesUnresolved = [];
         $unresolvedProductSamples = [];
         $unresolvedStoreSamples = [];
         /** @var array<int,array{productId:int,kategori:?string,pb:float}> */
@@ -308,6 +319,7 @@ final class PoImporter
                 $storeResolution = $this->resolver->resolveStore($s['toko']);
                 if ($storeResolution['status'] !== 'resolved') {
                     $storeUnresolved++;
+                    $uniqueStoreNamesUnresolved[mb_strtolower(trim($s['toko']))] = true;
                     if (count($unresolvedStoreSamples) < 25) {
                         $unresolvedStoreSamples[] = $s['toko'];
                     }
@@ -320,6 +332,7 @@ final class PoImporter
                     continue;
                 }
                 $storeMapped++;
+                $uniqueStoreIdsMapped[$storeResolution['storeId']] = true;
                 $newLines[] = [
                     'productId' => $productId,
                     'storeId' => $storeResolution['storeId'],
@@ -381,7 +394,16 @@ final class PoImporter
             'committedPoAwal' => $committedPoAwal,
             'committedPoRevisi' => $committedPoRevisi,
             'productResolution' => ['mapped' => $productMapped, 'unresolved' => $productUnresolved, 'samples' => $unresolvedProductSamples],
-            'storeResolution' => ['mapped' => $storeMapped, 'unresolved' => $storeUnresolved, 'samples' => $unresolvedStoreSamples],
+            // 'mapped'/'unresolved' are row-occurrence counts (unchanged, same
+            // meaning as before this patch — po_import.stores_mapped/
+            // stores_unresolved history columns keep recording exactly this).
+            // 'uniqueMapped'/'uniqueUnresolved' are the new distinct-store
+            // counts, additive only, for the wizard's clarified labels.
+            'storeResolution' => [
+                'mapped' => $storeMapped, 'unresolved' => $storeUnresolved,
+                'uniqueMapped' => count($uniqueStoreIdsMapped), 'uniqueUnresolved' => count($uniqueStoreNamesUnresolved),
+                'samples' => $unresolvedStoreSamples,
+            ],
             'warnings' => $warnings,
             'hasExistingItems' => $hasExistingItems,
             'duplicateOf' => $duplicateOf,

@@ -450,8 +450,10 @@ Tidak ada data Produksi/FG/Packing/DO/Pengiriman/Stok/Invoice yang disentuh — 
     <tr><td>Baris dengan PB (selalu diabaikan, tidak memengaruhi target)</td><td><?= $plan['rowsPbIgnored'] ?></td></tr>
     <tr><td>Produk terpetakan</td><td><span class="badge b-ok"><?= $plan['productResolution']['mapped'] ?></span></td></tr>
     <tr><td>Produk BELUM terpetakan</td><td><span class="badge <?= $plan['productResolution']['unresolved'] > 0 ? 'b-bad' : 'b-ok' ?>"><?= $plan['productResolution']['unresolved'] ?></span></td></tr>
-    <tr><td>Toko terpetakan</td><td><span class="badge b-ok"><?= $plan['storeResolution']['mapped'] ?></span></td></tr>
-    <tr><td>Toko BELUM terpetakan</td><td><span class="badge <?= $plan['storeResolution']['unresolved'] > 0 ? 'b-bad' : 'b-ok' ?>"><?= $plan['storeResolution']['unresolved'] ?></span></td></tr>
+    <tr><td>Toko unik terpetakan <span style="color:#666;">(jumlah toko berbeda, bukan baris)</span></td><td><span class="badge b-ok"><?= $plan['storeResolution']['uniqueMapped'] ?></span></td></tr>
+    <tr><td>Toko unik BELUM terpetakan <span style="color:#666;">(nama toko berbeda)</span></td><td><span class="badge <?= $plan['storeResolution']['uniqueUnresolved'] > 0 ? 'b-bad' : 'b-ok' ?>"><?= $plan['storeResolution']['uniqueUnresolved'] ?></span></td></tr>
+    <tr><td>Kemunculan/baris toko terpetakan <span style="color:#666;">(1 toko bisa muncul di banyak baris produk)</span></td><td><span class="badge b-info"><?= $plan['storeResolution']['mapped'] ?></span></td></tr>
+    <tr><td>Kemunculan/baris toko BELUM terpetakan</td><td><span class="badge <?= $plan['storeResolution']['unresolved'] > 0 ? 'b-bad' : 'b-info' ?>"><?= $plan['storeResolution']['unresolved'] ?></span></td></tr>
   </table>
 
   <?php if ($plan['uploadType'] === 'initial'): ?>

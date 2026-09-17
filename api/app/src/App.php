@@ -11,6 +11,7 @@ use Amor\Api\Controllers\FactoryController;
 use Amor\Api\Controllers\HealthController;
 use Amor\Api\Controllers\PoController;
 use Amor\Api\Controllers\ProductController;
+use Amor\Api\Controllers\ProductionController;
 use Amor\Api\Controllers\StoreController;
 
 /**
@@ -58,6 +59,15 @@ final class App
         $router->post('/api/po/preview', [PoController::class, 'preview']);
         $router->post('/api/po/import', [PoController::class, 'import']);
         $router->get('/api/po/{batchId}', [PoController::class, 'show']);
+
+        $router->get('/api/production/target', [ProductionController::class, 'target']);
+        $router->get('/api/production/history', [ProductionController::class, 'history']);
+        $router->get('/api/production', [ProductionController::class, 'index']);
+        $router->post('/api/production', [ProductionController::class, 'create']);
+        $router->get('/api/production/{id}', [ProductionController::class, 'show']);
+        $router->patch('/api/production/{id}', [ProductionController::class, 'update']);
+        $router->post('/api/production/{id}/submit', [ProductionController::class, 'submit']);
+        $router->post('/api/production/{id}/reopen', [ProductionController::class, 'reopen']);
 
         $router->get('/api/admin/migration/products', [MigrationController::class, 'indexProducts']);
         $router->post('/api/admin/migration/products/{id}/resolve', [MigrationController::class, 'resolveProduct']);
