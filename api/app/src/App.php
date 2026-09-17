@@ -9,6 +9,7 @@ use Amor\Api\Controllers\AuthController;
 use Amor\Api\Controllers\DivisionController;
 use Amor\Api\Controllers\FactoryController;
 use Amor\Api\Controllers\HealthController;
+use Amor\Api\Controllers\PoController;
 use Amor\Api\Controllers\ProductController;
 use Amor\Api\Controllers\StoreController;
 
@@ -50,6 +51,13 @@ final class App
         $router->post('/api/stores', [StoreController::class, 'create']);
         $router->put('/api/stores/{id}', [StoreController::class, 'update']);
         $router->post('/api/stores/{id}/aliases', [StoreController::class, 'addAlias']);
+
+        $router->get('/api/po', [PoController::class, 'index']);
+        $router->get('/api/po/current', [PoController::class, 'current']);
+        $router->get('/api/po/history', [PoController::class, 'history']);
+        $router->post('/api/po/preview', [PoController::class, 'preview']);
+        $router->post('/api/po/import', [PoController::class, 'import']);
+        $router->get('/api/po/{batchId}', [PoController::class, 'show']);
 
         $router->get('/api/admin/migration/products', [MigrationController::class, 'indexProducts']);
         $router->post('/api/admin/migration/products/{id}/resolve', [MigrationController::class, 'resolveProduct']);

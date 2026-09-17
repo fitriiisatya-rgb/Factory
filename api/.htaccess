@@ -9,7 +9,16 @@
 # rule here.
 RewriteEngine On
 
-RewriteCond %{REQUEST_FILENAME} -f
+# Real files AND real directories (e.g. _admin-login/, _upgrade/, _import-po/)
+# must bypass the front-controller rewrite below, or Apache rewrites every
+# request — including ones for these wizards' own index.php — straight into
+# api/index.php's Router, which only knows /api/... paths and 404s them.
+# Regressing this to "-f" alone (files only, no "-d") breaks every real
+# subdirectory wizard on live Apache even though it looks fine under PHP's
+# built-in dev server (php -S), which ignores .htaccess entirely — confirmed
+# during real cPanel deployment; do not regress this again.
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
 
 RewriteRule ^ index.php [L]
