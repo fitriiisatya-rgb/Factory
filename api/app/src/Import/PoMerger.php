@@ -18,8 +18,12 @@ namespace Amor\Api\Import;
  * downstream impact — every future Production/FG/Packing/Stock/DO module
  * computes its target from this merged state):
  *   - INITIAL upload: establishes po_awal for every (product,store) line in
- *     the file. po_revisi is taken from the file as parsed (normally 0 for
- *     a genuine initial file, which has no second TOTAL column at all).
+ *     the file. po_revisi is ALWAYS forced to 0, regardless of whatever the
+ *     file's own PO Revisi/PB columns contain — a real file can carry all
+ *     three blocks in one sheet even when the operator is uploading it as
+ *     "PO Awal" (confirmed against a real cPanel UAT upload that exposed
+ *     this exact bug — see mergeInitial()'s own comment for the full
+ *     story). Upload TYPE decides what gets committed, never file content.
  *   - REVISION upload: for a (product,store) pair that already has a
  *     stored line, po_awal is LOCKED (never taken from the new file) and
  *     po_revisi is REPLACED with the new file's value as a full snapshot —
@@ -54,11 +58,36 @@ final class PoMerger
         return $line['productId'] . '|' . $line['storeId'];
     }
 
-    /** @return array{lines:array,summary:array} */
+    /**
+     * po_revisi is ALWAYS forced to 0 here, regardless of what the file's
+     * own PO Revisi columns contain. Real Karangtengah/Bolu files commonly
+     * carry both PO Awal AND PO Revisi/PB blocks in the very same sheet
+     * (audited against a real cPanel UAT upload — a "PO AWAL" upload is
+     * not a guarantee the revisi columns are blank), so this can never be
+     * left as "normally 0 for a genuine initial file" — that assumption
+     * previously let an initial upload's own revisi column leak straight
+     * into the committed po_revisi and inflate the preview target by
+     * exactly the file's raw revisi total. Upload TYPE, not file content,
+     * decides what an initial upload commits (task rule: "PO AWAL MODE:
+     * commit ONLY PO Awal baseline... ignore PO Revisi for initial
+     * target"). The raw revisi figure is still available for informational
+     * preview display via PoImporter's own row-loop totals (totalPoRevisi)
+     * — computed before this merge step, so this zeroing never hides it
+     * from the operator, only from what actually gets written.
+     *
+     * @return array{lines:array,summary:array}
+     */
     private static function mergeInitial(array $newLines): array
     {
-        $summary = ['newLines' => count($newLines), 'lockedLines' => 0, 'changedLines' => 0, 'unchangedLines' => 0];
-        return ['lines' => $newLines, 'summary' => $summary];
+        $lines = array_map(static fn (array $l): array => [
+            'productId' => $l['productId'],
+            'storeId' => $l['storeId'],
+            'poAwal' => $l['poAwal'],
+            'poRevisi' => 0.0,
+            'kategori' => $l['kategori'],
+        ], $newLines);
+        $summary = ['newLines' => count($lines), 'lockedLines' => 0, 'changedLines' => 0, 'unchangedLines' => 0];
+        return ['lines' => $lines, 'summary' => $summary];
     }
 
     /** @return array{lines:array,summary:array} */

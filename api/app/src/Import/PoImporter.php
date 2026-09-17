@@ -228,6 +228,7 @@ final class PoImporter
         $rowsPbIgnored = 0;
         $totalPoAwalRaw = 0.0;
         $totalPoRevisiRaw = 0.0;
+        $totalPbRaw = 0.0;
         $productMapped = 0;
         $productUnresolved = 0;
         $storeMapped = 0;
@@ -263,6 +264,7 @@ final class PoImporter
             }
             $totalPoAwalRaw += $row['poAwal'];
             $totalPoRevisiRaw += $row['poRevisi'];
+            $totalPbRaw += $row['pb'];
             foreach ($row['catatan'] as $c) {
                 $warnings[] = ['produk' => $row['produkAsli'], 'tipe' => $c['tipe'], 'pesan' => $c['pesan']];
             }
@@ -342,12 +344,16 @@ final class PoImporter
 
         $mergePreview = ['lines' => [], 'summary' => []];
         $targetTotal = 0.0;
+        $committedPoAwal = 0.0;
+        $committedPoRevisi = 0.0;
         if ($canImport) {
             $existingLines = $poBatchId !== null ? $this->repo->findExistingLines($this->pdo, $poBatchId) : [];
             $mergePreview = PoMerger::merge($existingLines, $newLines, $uploadType);
             foreach ($mergePreview['lines'] as $line) {
-                $targetTotal += $line['poAwal'] + $line['poRevisi'];
+                $committedPoAwal += $line['poAwal'];
+                $committedPoRevisi += $line['poRevisi'];
             }
+            $targetTotal = $committedPoAwal + $committedPoRevisi;
         }
 
         return [
@@ -360,8 +366,20 @@ final class PoImporter
             'rowsPoAwal' => $rowsPoAwal,
             'rowsPoRevisi' => $rowsPoRevisi,
             'rowsPbIgnored' => $rowsPbIgnored,
+            // Raw, as literally read from the file — informational only,
+            // never what gets committed (see committedPoAwal/committedPoRevisi
+            // below for that).
             'totalPoAwal' => $totalPoAwalRaw,
             'totalPoRevisi' => $totalPoRevisiRaw,
+            'totalPb' => $totalPbRaw,
+            // What will actually be written if Import is confirmed now —
+            // always the authoritative numbers to show as "will be
+            // imported", regardless of upload mode (initial: revisi is
+            // always 0 here per PoMerger::mergeInitial(); revision:
+            // poAwal here is always the EXISTING locked baseline, poRevisi
+            // is the new snapshot).
+            'committedPoAwal' => $committedPoAwal,
+            'committedPoRevisi' => $committedPoRevisi,
             'productResolution' => ['mapped' => $productMapped, 'unresolved' => $productUnresolved, 'samples' => $unresolvedProductSamples],
             'storeResolution' => ['mapped' => $storeMapped, 'unresolved' => $storeUnresolved, 'samples' => $unresolvedStoreSamples],
             'warnings' => $warnings,

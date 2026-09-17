@@ -393,8 +393,9 @@ Tidak ada data Produksi/FG/Packing/DO/Pengiriman/Stok/Invoice yang disentuh — 
   <p>Yang akan diperbarui hanya PO Tambahan / Revisi berdasarkan snapshot terbaru pada file ini.</p>
   <p style="background:#f4f4f4;padding:.75rem;border-radius:6px;">Contoh: PO Awal 100 + Revisi lama 20, lalu file
   terbaru Revisi 35 &rarr; target menjadi <strong>135</strong>, bukan 155.</p>
-  <p>Target hasil aktual untuk file ini sekarang: <strong><?= fmtNum($plan['targetTotal']) ?></strong>
-  (lihat rincian per baris di bawah).</p>
+  <p>PO Awal existing (tidak berubah): <strong><?= fmtNum($plan['committedPoAwal']) ?></strong> &middot;
+  PO Tambahan terbaru: <strong><?= fmtNum($plan['committedPoRevisi']) ?></strong> &middot;
+  Target setelah revisi: <strong><?= fmtNum($plan['targetTotal']) ?></strong> (lihat rincian per baris di bawah).</p>
   <p><strong>Lanjutkan proses PO Revisi?</strong></p>
   <div style="display:flex;gap:.6rem;flex-wrap:wrap;">
     <form method="post"><input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
@@ -446,13 +447,28 @@ Tidak ada data Produksi/FG/Packing/DO/Pengiriman/Stok/Invoice yang disentuh — 
     <tr><td>Baris produk terbaca</td><td><?= $plan['parsedRowCount'] ?></td></tr>
     <tr><td>Baris dengan PO Awal &gt; 0</td><td><?= $plan['rowsPoAwal'] ?></td></tr>
     <tr><td>Baris dengan PO Revisi &gt; 0</td><td><?= $plan['rowsPoRevisi'] ?></td></tr>
-    <tr><td>Baris dengan PB (diabaikan, tidak memengaruhi target)</td><td><?= $plan['rowsPbIgnored'] ?></td></tr>
+    <tr><td>Baris dengan PB (selalu diabaikan, tidak memengaruhi target)</td><td><?= $plan['rowsPbIgnored'] ?></td></tr>
     <tr><td>Produk terpetakan</td><td><span class="badge b-ok"><?= $plan['productResolution']['mapped'] ?></span></td></tr>
     <tr><td>Produk BELUM terpetakan</td><td><span class="badge <?= $plan['productResolution']['unresolved'] > 0 ? 'b-bad' : 'b-ok' ?>"><?= $plan['productResolution']['unresolved'] ?></span></td></tr>
     <tr><td>Toko terpetakan</td><td><span class="badge b-ok"><?= $plan['storeResolution']['mapped'] ?></span></td></tr>
     <tr><td>Toko BELUM terpetakan</td><td><span class="badge <?= $plan['storeResolution']['unresolved'] > 0 ? 'b-bad' : 'b-ok' ?>"><?= $plan['storeResolution']['unresolved'] ?></span></td></tr>
-    <tr><td><strong>Target hasil (jika diimpor sekarang)</strong></td><td><strong><?= fmtNum($plan['targetTotal']) ?></strong></td></tr>
   </table>
+
+  <?php if ($plan['uploadType'] === 'initial'): ?>
+  <table>
+    <tr><td>PO Awal terdeteksi (dari file)</td><td><strong><?= fmtNum($plan['totalPoAwal']) ?></strong></td></tr>
+    <tr><td>PO Tambahan terdeteksi <span style="color:#666;">(file ini juga berisi kolom Revisi, tapi diabaikan sepenuhnya untuk upload PO Awal — tidak pernah ikut tersimpan)</span></td><td><?= fmtNum($plan['totalPoRevisi']) ?></td></tr>
+    <tr><td>PB terdeteksi <span style="color:#666;">(selalu diabaikan total)</span></td><td><?= fmtNum($plan['totalPb']) ?></td></tr>
+    <tr><td><strong>Akan diimpor sekarang (PO Awal saja)</strong></td><td><strong><?= fmtNum($plan['committedPoAwal']) ?></strong></td></tr>
+  </table>
+  <?php else: ?>
+  <table>
+    <tr><td>PO Awal existing <span style="color:#666;">(terkunci, tidak berubah)</span></td><td><?= fmtNum($plan['committedPoAwal']) ?></td></tr>
+    <tr><td>PO Tambahan terbaru (dari file ini)</td><td><?= fmtNum($plan['committedPoRevisi']) ?></td></tr>
+    <tr><td>PB terdeteksi <span style="color:#666;">(selalu diabaikan total)</span></td><td><?= fmtNum($plan['totalPb']) ?></td></tr>
+    <tr><td><strong>Target setelah revisi (PO Awal + PO Tambahan terbaru)</strong></td><td><strong><?= fmtNum($plan['targetTotal']) ?></strong></td></tr>
+  </table>
+  <?php endif; ?>
 
   <?php if ($plan['blockReason'] === 'INITIAL_PO_ALREADY_EXISTS'): ?>
   <div class="result-error"><strong>PO Awal sudah ada</strong><p>Tanggal &amp; pabrik ini sudah punya PO Awal dari file
