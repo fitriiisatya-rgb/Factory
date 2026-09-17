@@ -1,0 +1,4 @@
+# Defense in depth only — every page requires a real authenticated session
+# (redirects to _admin-login otherwise). This just stops directory listing
+# from leaking filenames.
+Options -Indexes

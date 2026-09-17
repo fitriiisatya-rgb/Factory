@@ -6,6 +6,7 @@ namespace Amor\Api;
 
 use Amor\Api\Controllers\Admin\MigrationController;
 use Amor\Api\Controllers\AuthController;
+use Amor\Api\Controllers\DashboardController;
 use Amor\Api\Controllers\DivisionController;
 use Amor\Api\Controllers\DoController;
 use Amor\Api\Controllers\FactoryController;
@@ -94,6 +95,8 @@ final class App
         $router->get('/api/do/{id}/shipments', [DoController::class, 'shipments']);
         $router->post('/api/do/{id}/shipment-preview', [DoController::class, 'shipmentPreview']);
         $router->post('/api/do/{id}/ship', [DoController::class, 'ship']);
+
+        $router->get('/api/dashboard/summary', [DashboardController::class, 'summary']);
 
         $router->get('/api/admin/migration/products', [MigrationController::class, 'indexProducts']);
         $router->post('/api/admin/migration/products/{id}/resolve', [MigrationController::class, 'resolveProduct']);

@@ -1,0 +1,91 @@
+/*
+ * Amor Factory System — design tokens.
+ * Central CSS variables only — no component rules here (see app.css).
+ * Dark mode is the default/priority theme; :root[data-theme="light"]
+ * below is a real, usable second theme (not a stub) so the toggle in
+ * app.js has something correct to switch to, per the task's
+ * "structurally ready for light mode" requirement.
+ */
+:root {
+  /* Surfaces */
+  --bg: #0b1220;
+  --bg-sidebar: #0a0f1c;
+  --surface: #111a2e;
+  --surface-2: #16213a;
+  --surface-hover: #1c2942;
+  --border: #24304a;
+
+  /* Text */
+  --text: #eef2f8;
+  --text-muted: #93a1bd;
+  --text-faint: #5f6d8c;
+
+  /* Accents */
+  --primary: #3d7bfa;
+  --primary-hover: #2f66e0;
+  --primary-soft: rgba(61, 123, 250, 0.15);
+  --success: #22c55e;
+  --success-soft: rgba(34, 197, 94, 0.15);
+  --warning: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.15);
+  --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.15);
+  --neutral: #7b8aa8;
+  --neutral-soft: rgba(123, 138, 168, 0.15);
+
+  /* Shape / spacing scale */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Typography */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+
+  /* Controls */
+  --control-height: 40px;
+  --control-height-sm: 32px;
+  --table-row-height: 48px;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-modal: 0 24px 60px -12px rgba(0, 0, 0, 0.7);
+
+  --sidebar-width: 248px;
+  --sidebar-width-collapsed: 72px;
+  --topbar-height: 64px;
+}
+
+/* Light theme — same token NAMES, different values. Never referenced by
+   component CSS directly; components always read the variable, so this
+   block is the entire light-mode implementation. */
+:root[data-theme="light"] {
+  --bg: #f3f5f9;
+  --bg-sidebar: #101828;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-hover: #eef2f7;
+  --border: #e2e8f0;
+
+  --text: #0f172a;
+  --text-muted: #55637d;
+  --text-faint: #94a3b8;
+
+  --primary-soft: rgba(61, 123, 250, 0.1);
+  --success-soft: rgba(34, 197, 94, 0.12);
+  --warning-soft: rgba(245, 158, 11, 0.12);
+  --danger-soft: rgba(239, 68, 68, 0.12);
+  --neutral-soft: rgba(123, 138, 168, 0.12);
+
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px -8px rgba(15, 23, 42, 0.12);
+  --shadow-modal: 0 24px 60px -12px rgba(15, 23, 42, 0.35);
+}
