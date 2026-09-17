@@ -438,6 +438,13 @@ final class DoService
             'cancelledAt' => $do['cancelled_at'],
             'cancelledBy' => $do['cancelled_by'] !== null ? (int) $do['cancelled_by'] : null,
             'cancelReason' => $do['cancel_reason'],
+            // Read-only passthrough of the already-existing (0001 schema)
+            // delivery_order.catatan column — no API currently writes it,
+            // so this is null today, but the print template reads it
+            // through this DTO rather than querying the table directly
+            // (task's own "use existing service, no duplicate
+            // calculations" rule for the print redesign).
+            'catatan' => $do['catatan'] ?? null,
             'sourcePoChanged' => $sourceCheck['changed'],
             'sourcePoChangedDetails' => $sourceCheck['details'],
             'items' => $items,

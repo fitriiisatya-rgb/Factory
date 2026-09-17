@@ -3,15 +3,22 @@
 declare(strict_types=1);
 
 /**
- * Redesigned single-DO print page — professional A4 "Surat Jalan /
- * Delivery Order" document. Read-only; reuses DoService::getDo() exactly
- * like the old api/_do-uat/print.php did, only the presentation changes.
- * Same DRAFT/PREPRINT watermark rule (never shows a fake "shipped" look
- * before an actual SHIP commit).
+ * Redesigned single-DO print page — professional A4 "Delivery Order /
+ * Surat Jalan" document, matching the reference mockup. Read-only;
+ * reuses DoService::getDo() exactly like the old api/_do-uat/print.php
+ * did (that page is untouched and stays as a fallback route — see its
+ * own file). DRAFT/PREPRINT/DIBATALKAN watermark rule unchanged; a
+ * SHIPPED DO prints with no watermark (a real, final document) but its
+ * status is still shown as "TERKIRIM" in the header.
+ *
+ * READ-ONLY: this file only calls DoService::getDo() (a SELECT) — it
+ * never bumps delivery_order.version, never touches stock_ledger, never
+ * creates a shipment. Opening/printing is a pure read.
  */
 
 require __DIR__ . '/../app/ui/bootstrap.php';
 require_once __DIR__ . '/../app/ui/labels.php';
+require_once __DIR__ . '/../app/ui/print-template.php';
 
 use Amor\Api\Delivery\DoService;
 
@@ -28,14 +35,12 @@ try {
     exit;
 }
 
-$watermark = null;
-if ($do['status'] === 'draft') {
-    $watermark = 'DRAFT';
-} elseif ($do['status'] === 'preprinted') {
-    $watermark = 'PREPRINT';
-} elseif ($do['status'] === 'cancelled') {
-    $watermark = 'DIBATALKAN';
+$factoryNamesById = [];
+foreach ($ui['pdo']->query('SELECT factory_id, name FROM factory')->fetchAll() as $f) {
+    $factoryNamesById[(int) $f['factory_id']] = $f['name'];
 }
+$factoryLabel = ui_print_factory_label($do, $factoryNamesById);
+$printedByName = $ui['fullName'] !== '' ? $ui['fullName'] : $ui['username'];
 
 header('Content-Type: text/html; charset=utf-8');
 ?><!DOCTYPE html>
@@ -49,58 +54,11 @@ header('Content-Type: text/html; charset=utf-8');
 </head>
 <body class="print-doc">
 <div class="print-toolbar">
-  <button type="button" onclick="window.print()">Cetak</button>
   <a class="secondary" href="/api/_ui-preview/?page=delivery-order-detail&doId=<?= (int) $do['doId'] ?>">&larr; Kembali</a>
+  <span class="print-toolbar-title"><?= ui_esc($do['docNo']) ?></span>
+  <button type="button" class="primary" onclick="window.print()">Cetak</button>
 </div>
 
-<div class="print-page">
-  <?php if ($watermark !== null): ?><div class="print-watermark"><?= ui_esc($watermark) ?></div><?php endif; ?>
-  <div class="print-header">
-    <div class="print-brand">
-      <div class="print-brand-mark">A</div>
-      <div>
-        <div class="print-brand-name">CV. AMOR GROUP</div>
-        <div class="print-brand-sub">Amor Factory System</div>
-        <div class="print-doc-title">Surat Jalan / Delivery Order</div>
-      </div>
-    </div>
-    <div class="print-meta-right">
-      <div class="doc-no"><?= ui_esc($do['docNo']) ?></div>
-      <div><?= ui_esc(strtoupper(ui_do_status_label($do['status']))) ?></div>
-    </div>
-  </div>
-
-  <div class="print-meta-grid">
-    <div><b>Tanggal</b><?= ui_esc($do['tanggal']) ?></div>
-    <div><b>Toko</b><?= ui_esc((string) $do['storeName']) ?></div>
-    <div><b>Jumlah Produk</b><?= (int) $do['summary']['productCount'] ?></div>
-  </div>
-
-  <table class="print-table">
-    <thead><tr><th style="width:24px;">No</th><th>Produk</th><th>Divisi</th><th class="num">Qty Rencana</th></tr></thead>
-    <tbody>
-    <?php foreach ($do['items'] as $i => $it): ?>
-    <tr>
-      <td><?= $i + 1 ?></td>
-      <td><?= ui_esc($it['productName']) ?></td>
-      <td><?= ui_esc((string) $it['divisionName']) ?></td>
-      <td class="num"><?= ui_fmt_num($it['plannedQty']) ?></td>
-    </tr>
-    <?php endforeach; ?>
-    </tbody>
-    <tfoot><tr><td colspan="3">Total</td><td class="num"><?= ui_fmt_num($do['summary']['totalPlanned']) ?></td></tr></tfoot>
-  </table>
-
-  <div class="print-sign-grid">
-    <div class="print-sign-box"><div class="print-sign-line">Disiapkan oleh</div></div>
-    <div class="print-sign-box"><div class="print-sign-line">Dikirim oleh</div></div>
-    <div class="print-sign-box"><div class="print-sign-line">Diterima oleh</div></div>
-  </div>
-
-  <div class="print-footer-note">
-    <span>Dicetak: <?= ui_esc(date('Y-m-d H:i')) ?></span>
-    <span>Amor Factory System</span>
-  </div>
-</div>
+<?php ui_render_do_print_document($do, $factoryLabel, $printedByName, 1, 1); ?>
 </body>
 </html>

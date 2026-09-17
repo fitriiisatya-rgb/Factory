@@ -1,60 +1,91 @@
 /*
  * Amor Factory System — print document styling (DO / Surat Jalan).
- * Loaded ONLY by the print pages, never by the app shell. Always renders
- * on a plain white background with dark text, regardless of the viewer's
- * dark-mode preference — a printed page is not a themed surface.
+ * Loaded ONLY by the print pages, never by the app shell.
+ *
+ * Two distinct modes, deliberately separated:
+ *  - SCREEN preview: dark app-like backdrop behind a centered white A4
+ *    "sheet" with a shadow, plus a small toolbar — matches the reference
+ *    mockup's on-screen look.
+ *  - @media print: the dark backdrop, shadow, and toolbar are all
+ *    stripped out — the printed page is ALWAYS plain white with dark
+ *    text, regardless of the viewer's dark-mode preference. Dark mode
+ *    must never produce a dark printed document.
  */
-@page { size: A4; margin: 14mm 12mm; }
+@page { size: A4 portrait; margin: 14mm 12mm; }
 
-body.print-doc {
-  background: #fff;
+:root {
+  --print-bg-screen: #0b1220;
+  --print-sheet-shadow: 0 12px 40px rgba(0, 0, 0, .5);
+}
+
+html, body.print-doc {
+  background: var(--print-bg-screen);
   color: #111;
   font-family: Arial, Helvetica, sans-serif;
   font-size: 12px;
   margin: 0;
+  min-height: 100vh;
 }
-.print-page { max-width: 190mm; margin: 0 auto; padding: 6mm 0; position: relative; page-break-after: always; }
-.print-page:last-child { page-break-after: auto; }
 
-.print-toolbar { max-width: 190mm; margin: 4mm auto; display: flex; gap: 8px; }
-.print-toolbar button, .print-toolbar a {
-  font-family: Arial, sans-serif; font-size: 13px; padding: 8px 16px; border-radius: 6px;
-  border: 1px solid #cbd5e1; background: #0f172a; color: #fff; cursor: pointer; text-decoration: none;
+.print-toolbar {
+  max-width: 210mm; margin: 6mm auto 4mm; padding: 0 4mm; display: flex; align-items: center; gap: 8px;
 }
-.print-toolbar a.secondary { background: #fff; color: #0f172a; }
+.print-toolbar .print-toolbar-title { color: #dbe3f0; font-family: -apple-system, sans-serif; font-size: 14px; font-weight: 700; margin-right: auto; }
+.print-toolbar button, .print-toolbar a {
+  font-family: -apple-system, Arial, sans-serif; font-size: 13px; font-weight: 700; padding: 9px 18px; border-radius: 8px;
+  border: 1px solid #2a3652; background: #16213a; color: #eef2f8; cursor: pointer; text-decoration: none;
+}
+.print-toolbar button.primary { background: #3d7bfa; border-color: #3d7bfa; color: #fff; }
+.print-toolbar a.secondary { background: transparent; }
+
+/* The "sheet": on screen it's a centered, shadowed white A4 page; in
+   print it becomes the page itself, edge to edge, no shadow/centering. */
+.print-page {
+  max-width: 210mm; min-height: 297mm; margin: 0 auto 10mm; padding: 14mm 12mm;
+  position: relative; background: #fff; box-shadow: var(--print-sheet-shadow); box-sizing: border-box;
+}
+.print-page:last-child { margin-bottom: 6mm; }
 
 .print-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #111; padding-bottom: 8px; margin-bottom: 10px; }
 .print-brand { display: flex; align-items: center; gap: 10px; }
-.print-brand-mark { width: 34px; height: 34px; border-radius: 8px; background: #111; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
-.print-brand-name { font-size: 15px; font-weight: 700; }
-.print-brand-sub { font-size: 10px; color: #555; }
-.print-doc-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-top: 6px; }
+.print-brand-mark { width: 36px; height: 36px; border-radius: 8px; background: #111; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; flex: none; }
+.print-brand-name { font-size: 16px; font-weight: 700; letter-spacing: .01em; }
+.print-doc-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #444; margin-top: 3px; }
 .print-meta-right { text-align: right; font-size: 11px; }
-.print-meta-right .doc-no { font-size: 14px; font-weight: 700; }
+.print-meta-right .doc-no { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
 
-.print-meta-grid { display: flex; gap: 24px; margin: 10px 0 14px; font-size: 11px; }
-.print-meta-grid div b { display: block; font-size: 9px; text-transform: uppercase; color: #666; font-weight: 600; letter-spacing: .03em; }
+.print-meta-grid { display: flex; gap: 24px; margin: 12px 0 16px; font-size: 11px; flex-wrap: wrap; }
+.print-meta-grid div b { display: block; font-size: 9px; text-transform: uppercase; color: #666; font-weight: 600; letter-spacing: .03em; margin-bottom: 2px; }
 
 table.print-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
 table.print-table thead { display: table-header-group; } /* repeat header across pages where the print engine supports it */
-table.print-table th, table.print-table td { border: 1px solid #999; padding: 5px 8px; font-size: 11px; text-align: left; }
-table.print-table th { background: #f1f1f1; text-transform: uppercase; font-size: 9px; letter-spacing: .03em; }
-table.print-table td.num, table.print-table th.num { text-align: right; }
-table.print-table tfoot td { font-weight: 700; background: #fafafa; }
+table.print-table th, table.print-table td { border: 1px solid #ccc; padding: 6px 8px; font-size: 11px; text-align: left; }
+table.print-table th { background: #f1f1f1; text-transform: uppercase; font-size: 9px; letter-spacing: .03em; color: #333; }
+table.print-table td.num, table.print-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.print-table tfoot td { font-weight: 700; background: #fafafa; border-top: 2px solid #999; }
 
 .print-watermark {
-  position: absolute; top: 38%; left: 0; right: 0; text-align: center;
-  font-size: 46px; font-weight: 700; color: rgba(160, 30, 30, .16);
-  transform: rotate(-24deg); pointer-events: none; text-transform: uppercase; letter-spacing: .05em;
+  position: absolute; top: 42%; left: 0; right: 0; text-align: center;
+  font-size: 64px; font-weight: 800; color: rgba(0, 0, 0, .07);
+  transform: rotate(-28deg); pointer-events: none; text-transform: uppercase; letter-spacing: .08em; z-index: 0;
 }
 
-.print-sign-grid { display: flex; justify-content: space-between; margin-top: 40px; text-align: center; }
+.print-notes { margin: 4px 0 20px; font-size: 11px; position: relative; z-index: 1; }
+.print-notes > b { display: block; font-size: 9px; text-transform: uppercase; color: #666; letter-spacing: .03em; margin-bottom: 4px; }
+.print-notes-body { min-height: 14px; line-height: 1.5; }
+
+.print-sign-grid { display: flex; justify-content: space-between; margin-top: 36px; text-align: center; position: relative; z-index: 1; }
 .print-sign-box { width: 30%; font-size: 11px; }
 .print-sign-line { margin-top: 46px; border-top: 1px solid #333; padding-top: 4px; }
 
-.print-footer-note { margin-top: 16px; font-size: 9px; color: #666; display: flex; justify-content: space-between; }
+.print-footer-note { margin-top: 16px; font-size: 9px; color: #666; display: flex; justify-content: space-between; gap: 8px; position: relative; z-index: 1; }
 
 @media print {
+  html, body.print-doc { background: #fff; }
   .print-toolbar { display: none; }
-  .print-page { page-break-after: always; }
+  .print-page {
+    box-shadow: none; margin: 0; max-width: none; min-height: 0;
+    page-break-after: always;
+  }
+  .print-page:last-child { page-break-after: auto; }
 }
