@@ -243,11 +243,11 @@ function productsInDivision(PDO $pdo, int $divisionId, int $limit): array
     return $stmt->fetchAll();
 }
 
-$rotiProducts = productsInDivision($pdo, $rotiBollenDivId, 9);
+$rotiProducts = productsInDivision($pdo, $rotiBollenDivId, 11);
 $basicProducts = productsInDivision($pdo, $basicDivId, 2);
 $boluProducts = productsInDivision($pdo, $boluDivId, 1);
-expect(count($rotiProducts) >= 9 && count($basicProducts) >= 2 && count($boluProducts) >= 1, 'expected enough katalog products per division after bootstrap');
-[$prodA, $prodB, $prodC, $prodD, $prodE, $prodF, $prodG, $prodH, $bigBanana] = $rotiProducts;
+expect(count($rotiProducts) >= 11 && count($basicProducts) >= 2 && count($boluProducts) >= 1, 'expected enough katalog products per division after bootstrap');
+[$prodA, $prodB, $prodC, $prodD, $prodE, $prodF, $prodG, $prodH, $bigBanana, $prodVar1, $prodVar2] = $rotiProducts;
 $prodBasic = $basicProducts[0];
 $prodBasic2 = $basicProducts[1];
 $prodBolu = $boluProducts[0];
@@ -386,7 +386,7 @@ runTest('P4-08 FG Verified > Production actual is blocked', function () use ($ht
     expect($r['status'] === 400 && $r['json']['code'] === 'FG_EXCEEDS_PRODUCTION', 'expected 400 FG_EXCEEDS_PRODUCTION: ' . json_encode($r['json']));
 });
 
-runTest('P4-09 variance is computed correctly (FG Verified - Production actual)', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodC) {
+runTest('P4-09 variance is computed correctly (production_actual - FG Verified)', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodC) {
     $tanggal = '2026-03-13';
     createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodC['product_id'], 10.0, 5.0);
     $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-09')));
@@ -394,7 +394,73 @@ runTest('P4-09 variance is computed correctly (FG Verified - Production actual)'
     $v = $create['json']['data']['version'];
     $r = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodC['product_id'], 'fgVerified' => 3, 'packed' => 0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-09b')));
     $item = current(array_filter($r['json']['data']['items'], fn ($i) => $i['productId'] === $prodC['product_id']));
-    expect((float) $item['variance'] === -2.0, 'expected variance -2 (3-5), got ' . $item['variance']);
+    expect((float) $item['variance'] === 2.0, 'expected variance +2 (5-3, production not yet verified into FG), got ' . $item['variance']);
+});
+
+// ---------------------------------------------------------------------
+// P4-VAR01..04 — variance sign fix (variance_fg = production_actual -
+// fg_verified). Root cause was a reversed subtraction in
+// FgService::buildItemDto (backend calculation, not just display) — see
+// commit message for the full audit.
+// ---------------------------------------------------------------------
+runTest('P4-VAR01 production 4, FG 3 => variance +1', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodVar1) {
+    $tanggal = '2026-04-02';
+    createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodVar1['product_id'], 5.0, 4.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-var01')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $r = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodVar1['product_id'], 'fgVerified' => 3, 'packed' => 3]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-var01b')));
+    expect($r['status'] === 200, 'save failed: ' . json_encode($r['json']));
+    $item = current(array_filter($r['json']['data']['items'], fn ($i) => $i['productId'] === $prodVar1['product_id']));
+    expect((float) $item['variance'] === 1.0, 'expected variance +1 (production 4 - FG 3), got ' . $item['variance']);
+});
+
+runTest('P4-VAR02 production 4, FG 4 => variance 0', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodVar2) {
+    $tanggal = '2026-04-03';
+    createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodVar2['product_id'], 5.0, 4.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-var02')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $r = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodVar2['product_id'], 'fgVerified' => 4, 'packed' => 4]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-var02b')));
+    expect($r['status'] === 200, 'save failed: ' . json_encode($r['json']));
+    $item = current(array_filter($r['json']['data']['items'], fn ($i) => $i['productId'] === $prodVar2['product_id']));
+    expect((float) $item['variance'] === 0.0, 'expected variance 0 (production 4 - FG 4), got ' . $item['variance']);
+});
+
+runTest('P4-VAR03 save draft still creates no stock ledger movement', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodVar1) {
+    $tanggal = '2026-04-04';
+    createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodVar1['product_id'], 5.0, 4.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-var03')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $r = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodVar1['product_id'], 'fgVerified' => 3, 'packed' => 3]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-var03b')));
+    expect($r['status'] === 200, 'save failed: ' . json_encode($r['json']));
+
+    $locId = locationIdForFactory($pdo, $karangtengahId);
+    $stmt = $pdo->prepare('SELECT COUNT(*) FROM stock_ledger WHERE product_id = ? AND location_id = ? AND event_date = ?');
+    $stmt->execute([$prodVar1['product_id'], $locId, $tanggal]);
+    expect((int) $stmt->fetchColumn() === 0, 'expected zero stock_ledger rows for this date after a draft-only save (variance fix must not touch stock)');
+});
+
+runTest('P4-VAR04 packed value remains unchanged when only FG Verified is edited', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodVar2) {
+    $tanggal = '2026-04-05';
+    createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodVar2['product_id'], 8.0, 6.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-var04')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $save1 = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodVar2['product_id'], 'fgVerified' => 3, 'packed' => 3]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-var04b')));
+    $item1 = current(array_filter($save1['json']['data']['items'], fn ($i) => $i['productId'] === $prodVar2['product_id']));
+    expect((float) $item1['packed'] === 3.0, 'expected packed 3 after first save');
+    $v = $save1['json']['data']['version'];
+
+    // Edit FG Verified only (packed resent at the same value, 3, not omitted
+    // — the API has no partial-field update, so "unchanged" here means the
+    // operator kept the same packed number while the variance recalculates).
+    $save2 = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodVar2['product_id'], 'fgVerified' => 4, 'packed' => 3]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p4-var04c')));
+    expect($save2['status'] === 200, 'second save failed: ' . json_encode($save2['json']));
+    $item2 = current(array_filter($save2['json']['data']['items'], fn ($i) => $i['productId'] === $prodVar2['product_id']));
+    expect((float) $item2['packed'] === 3.0, 'expected packed to remain 3 (unaffected by the FG Verified edit / variance fix), got ' . $item2['packed']);
+    expect((float) $item2['variance'] === 2.0, 'expected variance to recompute to +2 (production 6 - FG 4), got ' . $item2['variance']);
 });
 
 runTest('P4-10 draft save creates NO stock movement', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodD) {

@@ -373,7 +373,7 @@ Produksi/PO. Belum ada DO, Pengiriman, Invoice, Pembayaran, atau Retur di sini.<
     <div class="summary-cell">Production Actual<br><span class="n"><?= fmtNum($batchView['summary']['productionActualTotal']) ?></span></div>
     <div class="summary-cell">FG Verified<br><span class="n"><?= fmtNum($batchView['summary']['fgVerifiedTotal']) ?></span></div>
     <div class="summary-cell">Packed<br><span class="n"><?= fmtNum($batchView['summary']['packedTotal']) ?></span></div>
-    <div class="summary-cell">Variance<br><span class="n" style="<?= $batchView['summary']['varianceTotal'] != 0 ? 'color:#b00;' : '' ?>"><?= fmtNum($batchView['summary']['varianceTotal']) ?></span></div>
+    <div class="summary-cell">Variance / Selisih Belum Masuk FG<br><span class="n" style="<?= $batchView['summary']['varianceTotal'] < 0 ? 'color:#b00;' : '' ?>"><?= fmtNum($batchView['summary']['varianceTotal']) ?></span></div>
   </div>
   <div class="summary-grid">
     <div class="summary-cell">Belum Diverifikasi<br><span class="n"><?= $batchView['summary']['jumlahBelumDiverifikasi'] ?></span></div>
@@ -388,7 +388,7 @@ Produksi/PO. Belum ada DO, Pengiriman, Invoice, Pembayaran, atau Retur di sini.<
     <input type="hidden" name="batchId" value="<?= (int) $batchView['fgBatchId'] ?>">
     <input type="hidden" name="expectedVersion" value="<?= (int) $batchView['version'] ?>">
     <table>
-      <tr><th>Produk</th><th>Production Actual</th><th>FG Verified</th><th>Variance</th><th>Packed</th><th>Available</th><th>FG Status</th><th>Packing Status</th><th>Catatan</th></tr>
+      <tr><th>Produk</th><th>Production Actual</th><th>FG Verified</th><th>Variance / Selisih Belum Masuk FG</th><th>Packed</th><th>Available</th><th>FG Status</th><th>Packing Status</th><th>Catatan</th></tr>
       <?php foreach ($batchView['items'] as $it): ?>
       <tr>
         <td><?= esc($it['productName']) ?></td>

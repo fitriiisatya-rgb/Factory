@@ -460,7 +460,7 @@ final class FgService
                 'productionActualTotal' => $totalActual,
                 'fgVerifiedTotal' => $totalVerified,
                 'packedTotal' => $totalPacked,
-                'varianceTotal' => $totalVerified - $totalActual,
+                'varianceTotal' => $totalActual - $totalVerified,
                 'productCount' => count($rawItems),
                 'jumlahBelumDiverifikasi' => $statusCounts['belum_diverifikasi'],
                 'jumlahSebagianTerverifikasi' => $statusCounts['sebagian_terverifikasi'],
@@ -481,7 +481,12 @@ final class FgService
         $snapshot = (float) $item['production_actual_snapshot'];
         $fgVerified = (float) $item['qty'];
         $packed = (float) $item['packed_qty'];
-        $variance = $fgVerified - $snapshot;
+        // variance_fg = production_actual - fg_verified (agreed Phase 4
+        // definition): positive means "this much Production is not yet
+        // verified into FG". FG_EXCEEDS_PRODUCTION already blocks
+        // fgVerified > snapshot in normal operator flow, so this should
+        // never go negative outside that blocked case.
+        $variance = $snapshot - $fgVerified;
 
         $balance = $this->repo->findBalance($this->pdo, $productId, $locationId);
         $available = $balance !== null ? (float) $balance['qty_on_hand'] : $this->repo->sumLedger($this->pdo, $productId, $locationId);
