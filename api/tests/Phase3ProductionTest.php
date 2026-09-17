@@ -652,6 +652,110 @@ runTest('P3-24 Phase 2 store-count UI patch: unique stores vs row occurrences ar
     expect($sr['uniqueMapped'] === 1, 'expected unique store count = 1 (both rows use the same TSA store), got ' . $sr['uniqueMapped']);
 });
 
+// ---------------------------------------------------------------------
+// P3-UX01..06 — display-status label patch (presentation layer only, see
+// ProductionService::classifyDisplayStatus). None of these touch the
+// business rules already covered by P3-01..24 above; they only check the
+// NEW displayStatusCode/displayStatusLabel fields and that the OLD 'status'
+// DB-backed field is still present unchanged.
+// ---------------------------------------------------------------------
+runTest('P3-UX01 actual 0 -> Belum Diproduksi', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodA) {
+    $tanggal = '2026-02-25';
+    seedPo($pdo, $tanggal, $karangtengahId, [$prodA['product_id'] => ['poAwal' => 5.0, 'poRevisi' => 0.0]]);
+    $create = $http->request('POST', '/api/production', ['tanggal' => $tanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux01')));
+    $item = current(array_filter($create['json']['data']['items'], fn ($i) => $i['productId'] === $prodA['product_id']));
+    expect((float) $item['actual'] === 0.0, 'expected fresh draft actual to be 0');
+    expect($item['displayStatusCode'] === 'not_produced', 'expected code not_produced, got ' . $item['displayStatusCode']);
+    expect($item['displayStatusLabel'] === 'Belum Diproduksi', 'expected label "Belum Diproduksi", got ' . $item['displayStatusLabel']);
+});
+
+runTest('P3-UX02 0<actual<target -> Belum Sesuai Target', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodB) {
+    $tanggal = '2026-02-26';
+    seedPo($pdo, $tanggal, $karangtengahId, [$prodB['product_id'] => ['poAwal' => 5.0, 'poRevisi' => 0.0]]);
+    $create = $http->request('POST', '/api/production', ['tanggal' => $tanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux02')));
+    $runId = $create['json']['data']['productionRunId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/production/{$runId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodB['product_id'], 'actualQty' => 3]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux02b')));
+    $item = current(array_filter($save['json']['data']['items'], fn ($i) => $i['productId'] === $prodB['product_id']));
+    expect($item['displayStatusCode'] === 'below_target', 'expected code below_target, got ' . $item['displayStatusCode']);
+    expect($item['displayStatusLabel'] === 'Belum Sesuai Target', 'expected label "Belum Sesuai Target", got ' . $item['displayStatusLabel']);
+});
+
+runTest('P3-UX03 actual=target -> Sesuai Target', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodC) {
+    $tanggal = '2026-02-27';
+    seedPo($pdo, $tanggal, $karangtengahId, [$prodC['product_id'] => ['poAwal' => 5.0, 'poRevisi' => 0.0]]);
+    $create = $http->request('POST', '/api/production', ['tanggal' => $tanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux03')));
+    $runId = $create['json']['data']['productionRunId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/production/{$runId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodC['product_id'], 'actualQty' => 5]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux03b')));
+    $item = current(array_filter($save['json']['data']['items'], fn ($i) => $i['productId'] === $prodC['product_id']));
+    expect($item['displayStatusCode'] === 'on_target', 'expected code on_target, got ' . $item['displayStatusCode']);
+    expect($item['displayStatusLabel'] === 'Sesuai Target', 'expected label "Sesuai Target", got ' . $item['displayStatusLabel']);
+});
+
+runTest('P3-UX04 actual>target -> Overproduction', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodA) {
+    $tanggal = '2026-02-28';
+    seedPo($pdo, $tanggal, $karangtengahId, [$prodA['product_id'] => ['poAwal' => 5.0, 'poRevisi' => 0.0]]);
+    $create = $http->request('POST', '/api/production', ['tanggal' => $tanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux04')));
+    $runId = $create['json']['data']['productionRunId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/production/{$runId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodA['product_id'], 'actualQty' => 6]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux04b')));
+    $item = current(array_filter($save['json']['data']['items'], fn ($i) => $i['productId'] === $prodA['product_id']));
+    expect($item['displayStatusCode'] === 'overproduction', 'expected code overproduction, got ' . $item['displayStatusCode']);
+    expect($item['displayStatusLabel'] === 'Overproduction', 'expected label "Overproduction", got ' . $item['displayStatusLabel']);
+});
+
+runTest('P3-UX05 lifecycle status draft/submitted/reopened does not change the classification logic', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodB) {
+    $tanggal = '2026-03-01';
+    seedPo($pdo, $tanggal, $karangtengahId, [$prodB['product_id'] => ['poAwal' => 5.0, 'poRevisi' => 0.0]]);
+    $create = $http->request('POST', '/api/production', ['tanggal' => $tanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux05')));
+    $runId = $create['json']['data']['productionRunId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/production/{$runId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodB['product_id'], 'actualQty' => 6]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux05b')));
+    $v = $save['json']['data']['version'];
+    $itemDraft = current(array_filter($save['json']['data']['items'], fn ($i) => $i['productId'] === $prodB['product_id']));
+    expect($itemDraft['displayStatusCode'] === 'overproduction', 'expected overproduction while draft');
+
+    $submit = $http->request('POST', "/api/production/{$runId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux05c')));
+    $v = $submit['json']['data']['version'];
+    $itemSubmitted = current(array_filter($submit['json']['data']['items'], fn ($i) => $i['productId'] === $prodB['product_id']));
+    expect($submit['json']['data']['status'] === 'submitted', 'expected run status submitted');
+    expect($itemSubmitted['displayStatusCode'] === 'overproduction', 'expected classification unchanged (still overproduction) after submit — lifecycle status must not affect it');
+
+    $reopen = $http->request('POST', "/api/production/{$runId}/reopen", ['expectedVersion' => $v, 'reason' => 'cek label'], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux05d')));
+    $itemReopened = current(array_filter($reopen['json']['data']['items'], fn ($i) => $i['productId'] === $prodB['product_id']));
+    expect($reopen['json']['data']['status'] === 'reopened', 'expected run status reopened');
+    expect($itemReopened['displayStatusCode'] === 'overproduction', 'expected classification still unchanged (overproduction) after reopen — same actual/target, same label regardless of run lifecycle status');
+});
+
+runTest('P3-UX06 no schema/API business-contract regression (internal status kept, business fields unaffected)', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodC) {
+    $tanggal = '2026-03-02';
+    seedPo($pdo, $tanggal, $karangtengahId, [$prodC['product_id'] => ['poAwal' => 10.0, 'poRevisi' => 0.0]]);
+    $create = $http->request('POST', '/api/production', ['tanggal' => $tanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux06')));
+    $runId = $create['json']['data']['productionRunId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/production/{$runId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodC['product_id'], 'actualQty' => 4]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-ux06b')));
+    $item = current(array_filter($save['json']['data']['items'], fn ($i) => $i['productId'] === $prodC['product_id']));
+
+    // The OLD internal field must still be present and unchanged in shape
+    // (still the DB enum 'sesuai'/'tidak_sesuai') — this patch is additive only.
+    expect(isset($item['status']), 'expected the pre-existing "status" field to still be present in the API response');
+    expect(in_array($item['status'], ['sesuai', 'tidak_sesuai'], true), 'expected internal status to still be one of the original DB enum values, got ' . $item['status']);
+    expect((float) $item['remaining'] === 6.0, 'expected remaining formula unchanged (max(0, target-actual) = 10-4 = 6), got ' . $item['remaining']);
+    expect((float) $item['overproduction'] === 0.0, 'expected overproduction formula unchanged, got ' . $item['overproduction']);
+    expect((float) $item['liveTarget'] === 10.0, 'expected liveTarget unaffected by the label patch');
+
+    // production_item.status DB column itself must be untouched by this patch —
+    // still whatever ProductionRepository::updateItemActual already computed
+    // before this patch existed (unchanged logic: target>0 && actual>=target ? sesuai : tidak_sesuai).
+    $dbStatus = $pdo->prepare(
+        'SELECT pi.status FROM production_item pi INNER JOIN production_run pr ON pr.production_run_id = pi.production_run_id
+         WHERE pr.production_run_id = ? AND pi.product_id = ?'
+    );
+    $dbStatus->execute([$runId, $prodC['product_id']]);
+    expect((string) $dbStatus->fetchColumn() === 'tidak_sesuai', 'expected DB status column unchanged by this patch (4 < 10 -> tidak_sesuai)');
+});
+
 $failed = array_filter($results, fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests run, ' . count($failed) . " failed.\n");
 exit($failed === [] ? 0 : 1);

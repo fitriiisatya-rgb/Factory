@@ -51,6 +51,11 @@ Auth::bootSession();
 
 function esc(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 function fmtNum(float $n): string { return rtrim(rtrim(number_format($n, 2, ',', '.'), '0'), ','); }
+/** Badge color for a product line's displayStatusCode — text label always carries the meaning, color is a secondary cue only. */
+function productionStatusBadgeClass(string $code): string
+{
+    return ['not_produced' => 'b-neutral', 'below_target' => 'b-warn', 'on_target' => 'b-ok', 'overproduction' => 'b-bad'][$code] ?? 'b-neutral';
+}
 
 if (Auth::currentUserId() === null) {
     http_response_code(200);
@@ -261,7 +266,7 @@ input[type=text],input[type=date],input[type=number],select{padding:.4rem;font-s
 table{border-collapse:collapse;width:100%;margin:.5rem 0;}
 td,th{text-align:left;padding:.3rem .6rem;border-bottom:1px solid #eee;font-size:.9em;vertical-align:middle;}
 .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:.8em;font-weight:bold;color:#fff;}
-.b-ok{background:#080;} .b-bad{background:#b00;} .b-info{background:#06c;} .b-warn{background:#e90;}
+.b-ok{background:#080;} .b-bad{background:#b00;} .b-info{background:#06c;} .b-warn{background:#e90;} .b-neutral{background:#888;}
 form.inline{display:inline;}
 label{display:block;margin:.5rem 0;}
 .summary-grid{display:flex;gap:1rem;flex-wrap:wrap;margin:.5rem 0;}
@@ -354,6 +359,12 @@ Belum ada verifikasi FG, Packing, DO, Pengiriman, Invoice, Pembayaran, atau Retu
     <div class="summary-cell">Sisa Produksi<br><span class="n"><?= fmtNum($runView['summary']['sisaProduksi']) ?></span></div>
     <div class="summary-cell">Overproduction<br><span class="n" style="<?= $runView['summary']['overproduction'] > 0 ? 'color:#b00;' : '' ?>"><?= fmtNum($runView['summary']['overproduction']) ?></span></div>
   </div>
+  <div class="summary-grid">
+    <div class="summary-cell">Jumlah Belum Diproduksi<br><span class="n"><?= $runView['summary']['jumlahBelumDiproduksi'] ?></span></div>
+    <div class="summary-cell">Jumlah Belum Sesuai Target<br><span class="n"><?= $runView['summary']['jumlahBelumSesuaiTarget'] ?></span></div>
+    <div class="summary-cell">Jumlah Sesuai Target<br><span class="n"><?= $runView['summary']['jumlahSesuaiTarget'] ?></span></div>
+    <div class="summary-cell">Jumlah Overproduction<br><span class="n" style="<?= $runView['summary']['jumlahOverproduction'] > 0 ? 'color:#b00;' : '' ?>"><?= $runView['summary']['jumlahOverproduction'] ?></span></div>
+  </div>
 
   <form method="post">
     <input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
@@ -368,7 +379,7 @@ Belum ada verifikasi FG, Packing, DO, Pengiriman, Invoice, Pembayaran, atau Retu
         <td><?php if ($editable): ?><input type="number" step="0.01" min="0" name="actual[<?= (int) $it['productId'] ?>]" value="<?= fmtNum($it['actual']) ?>" style="width:6rem;"><?php else: ?><?= fmtNum($it['actual']) ?><?php endif; ?></td>
         <td><?= fmtNum($it['remaining']) ?></td>
         <td><?= $it['overproduction'] > 0 ? '<span class="badge b-bad">' . fmtNum($it['overproduction']) . '</span>' : '0' ?></td>
-        <td><span class="badge <?= $it['status'] === 'sesuai' ? 'b-ok' : 'b-bad' ?>"><?= esc($it['status']) ?></span></td>
+        <td><span class="badge <?= productionStatusBadgeClass($it['displayStatusCode']) ?>"><?= esc($it['displayStatusLabel']) ?></span></td>
         <td><?php if ($editable): ?><input type="text" name="notes[<?= (int) $it['productId'] ?>]" value="<?= esc((string) $it['notes']) ?>" style="width:8rem;"><?php else: ?><?= esc((string) $it['notes']) ?><?php endif; ?></td>
       </tr>
       <?php endforeach; ?>

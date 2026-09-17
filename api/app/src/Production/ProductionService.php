@@ -337,6 +337,7 @@ final class ProductionService
         $totalRemaining = 0.0;
         $totalOverproduction = 0.0;
         $anyTargetChanged = false;
+        $displayStatusCounts = ['not_produced' => 0, 'below_target' => 0, 'on_target' => 0, 'overproduction' => 0];
 
         // Summary totals must reflect live targets regardless of $includeItems
         // (list views still show correct Target/Actual/Remaining sums), so the
@@ -350,6 +351,7 @@ final class ProductionService
             $totalActual += $dto['actual'];
             $totalRemaining += $dto['remaining'];
             $totalOverproduction += $dto['overproduction'];
+            $displayStatusCounts[$dto['displayStatusCode']]++;
             if ($includeItems) {
                 $items[] = $dto;
             }
@@ -379,6 +381,13 @@ final class ProductionService
                 'sisaProduksi' => $totalRemaining,
                 'overproduction' => $totalOverproduction,
                 'productCount' => count($liveTargets),
+                // Optional, additive-only counts by the new display classification
+                // (task: "Tambahkan summary jika mudah... Prioritas utama adalah
+                // per-row status label"). Never used for any business decision.
+                'jumlahBelumDiproduksi' => $displayStatusCounts['not_produced'],
+                'jumlahBelumSesuaiTarget' => $displayStatusCounts['below_target'],
+                'jumlahSesuaiTarget' => $displayStatusCounts['on_target'],
+                'jumlahOverproduction' => $displayStatusCounts['overproduction'],
             ],
         ];
         if ($includeItems) {
@@ -393,6 +402,7 @@ final class ProductionService
         $snapshot = (float) $item['target'];
         $remaining = max(0.0, $liveTarget - $actual);
         $overproduction = max(0.0, $actual - $liveTarget);
+        $displayStatus = self::classifyDisplayStatus($actual, $remaining, $overproduction);
         return [
             'productId' => (int) $item['product_id'],
             'productName' => $item['product_name'],
@@ -401,9 +411,49 @@ final class ProductionService
             'actual' => $actual,
             'remaining' => $remaining,
             'overproduction' => $overproduction,
+            // Internal DB status (production_item.status, 'sesuai'/'tidak_sesuai')
+            // — UNCHANGED, kept only for backward compatibility with anything
+            // already reading it. displayStatusCode/displayStatusLabel below
+            // are the presentation-layer classification a human should read;
+            // see classifyDisplayStatus()'s own docblock.
             'status' => $item['status'],
+            'displayStatusCode' => $displayStatus['code'],
+            'displayStatusLabel' => $displayStatus['label'],
             'notes' => $item['keterangan'],
             'targetChangedSinceDraft' => abs($liveTarget - $snapshot) > 0.0001,
         ];
+    }
+
+    /**
+     * Presentation-only classification of a product line's production
+     * status — derived purely from the already-computed $remaining/
+     * $overproduction (both already use the LIVE target per the class
+     * docblock's core rule, never the frozen snapshot), so this can never
+     * disagree with what the UI already shows for those two numbers. Does
+     * NOT touch production_item.status (the DB enum 'sesuai'/'tidak_sesuai'
+     * kept as-is for compatibility) — this is purely a friendlier label for
+     * humans, computed fresh on every read, never stored.
+     *
+     * Rules (exact, in order — task's own spec):
+     *   1. actual == 0                    -> Belum Diproduksi (not_produced)
+     *   2. 0 < actual < live target        -> Belum Sesuai Target (below_target)
+     *   3. actual == live target           -> Sesuai Target (on_target)
+     *   4. actual > live target            -> Overproduction (overproduction)
+     *
+     * @return array{code:string,label:string}
+     */
+    private static function classifyDisplayStatus(float $actual, float $remaining, float $overproduction): array
+    {
+        $eps = 0.0001;
+        if ($actual <= $eps) {
+            return ['code' => 'not_produced', 'label' => 'Belum Diproduksi'];
+        }
+        if ($overproduction > $eps) {
+            return ['code' => 'overproduction', 'label' => 'Overproduction'];
+        }
+        if ($remaining > $eps) {
+            return ['code' => 'below_target', 'label' => 'Belum Sesuai Target'];
+        }
+        return ['code' => 'on_target', 'label' => 'Sesuai Target'];
     }
 }
