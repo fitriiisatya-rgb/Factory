@@ -77,13 +77,31 @@ final class PoImporter
     }
 
     /**
+     * The raw (pre-resolution) identity key for one product row — the same
+     * key PoResolver's own migration_product_map staging uses conceptually
+     * (raw code + raw name), exposed here so callers (the wizard) can name
+     * a specific unresolved row to skip via $skipProductKeys below without
+     * depending on any resolved product_id (which doesn't exist yet).
+     */
+    public static function productRawKey(string $rawCode, string $rawName): string
+    {
+        return trim($rawCode) . "\x1f" . trim($rawName);
+    }
+
+    /**
      * Preview only — never writes. Returns the same shape used to decide
      * whether Import may proceed, so the wizard and the API show exactly
      * what will happen before anyone confirms.
+     *
+     * $skipProductKeys (optional, default none — existing callers are
+     * completely unaffected) names raw product rows (via productRawKey())
+     * to exclude entirely from this run, e.g. a row an admin explicitly
+     * chose to skip during New Product Review — never a way to bypass
+     * resolution for a row that is still being imported.
      */
-    public function preview(array $rows, string $tanggal, string $uploadType, string $sourceHash, ?string $sourceFilename): array
+    public function preview(array $rows, string $tanggal, string $uploadType, string $sourceHash, ?string $sourceFilename, array $skipProductKeys = []): array
     {
-        return $this->buildPlan($rows, $tanggal, $uploadType, $sourceHash, $sourceFilename, stageUnresolved: false);
+        return $this->buildPlan($rows, $tanggal, $uploadType, $sourceHash, $sourceFilename, stageUnresolved: false, skipProductKeys: $skipProductKeys);
     }
 
     /**
@@ -95,12 +113,19 @@ final class PoImporter
      *
      * @return array{ok:bool,code:?string,message:?string,data:?array}
      */
-    public function import(array $rows, string $tanggal, string $uploadType, string $sourceHash, ?string $sourceFilename, ?int $uploadedBy): array
+    public function import(array $rows, string $tanggal, string $uploadType, string $sourceHash, ?string $sourceFilename, ?int $uploadedBy, array $skipProductKeys = []): array
     {
-        $plan = $this->buildPlan($rows, $tanggal, $uploadType, $sourceHash, $sourceFilename, stageUnresolved: true);
+        $plan = $this->buildPlan($rows, $tanggal, $uploadType, $sourceHash, $sourceFilename, stageUnresolved: true, skipProductKeys: $skipProductKeys);
 
         $historyResult = $plan['canImport'] ? 'imported' : ($plan['blockReason'] === 'DUPLICATE_FILE' ? 'duplicate_file' : 'rejected_unresolved');
         $poBatchId = $plan['poBatchId'];
+        // Skipped-row info is folded into the existing warnings_json column
+        // (no schema change) rather than a dedicated po_import column.
+        $historyWarnings = $plan['warnings'];
+        foreach ($plan['skippedProductRows'] as $sp) {
+            $historyWarnings[] = ['produk' => $sp['nama'], 'tipe' => 'skipped_by_admin', 'pesan' =>
+                "Baris ini dilewati oleh admin lewat New Product Review (kode='{$sp['kode']}') — tidak diimpor."];
+        }
 
         if (!$plan['canImport']) {
             $this->repo->recordImportHistory($this->pdo, [
@@ -111,7 +136,7 @@ final class PoImporter
                 'productsMapped' => $plan['productResolution']['mapped'], 'productsUnresolved' => $plan['productResolution']['unresolved'],
                 'storesMapped' => $plan['storeResolution']['mapped'], 'storesUnresolved' => $plan['storeResolution']['unresolved'],
                 'totalPoAwal' => $plan['totalPoAwal'], 'totalPoRevisi' => $plan['totalPoRevisi'],
-                'warnings' => $plan['warnings'], 'result' => $historyResult, 'uploadedBy' => $uploadedBy,
+                'warnings' => $historyWarnings, 'result' => $historyResult, 'uploadedBy' => $uploadedBy,
             ]);
 
             return match ($plan['blockReason']) {
@@ -140,7 +165,7 @@ final class PoImporter
             'productsMapped' => $plan['productResolution']['mapped'], 'productsUnresolved' => 0,
             'storesMapped' => $plan['storeResolution']['mapped'], 'storesUnresolved' => 0,
             'totalPoAwal' => $plan['totalPoAwal'], 'totalPoRevisi' => $plan['totalPoRevisi'],
-            'warnings' => $plan['warnings'], 'result' => 'imported', 'uploadedBy' => $uploadedBy,
+            'warnings' => $historyWarnings, 'result' => 'imported', 'uploadedBy' => $uploadedBy,
         ]);
 
         return ['ok' => true, 'code' => null, 'message' => null, 'data' => [
@@ -153,6 +178,7 @@ final class PoImporter
             'targetTotal' => $plan['targetTotal'],
             'mergeSummary' => $plan['mergePreview']['summary'],
             'duplicateOfImportId' => $plan['duplicateOf']['po_import_id'] ?? null,
+            'skippedProductRows' => $plan['skippedProductRows'],
         ]];
     }
 
@@ -164,7 +190,7 @@ final class PoImporter
      * "existing lines" so a concurrent revision upload can never read a
      * stale snapshot (see PoRepository::findOrCreateBatch).
      */
-    private function buildPlan(array $rows, string $tanggal, string $uploadType, string $sourceHash, ?string $sourceFilename, bool $stageUnresolved): array
+    private function buildPlan(array $rows, string $tanggal, string $uploadType, string $sourceHash, ?string $sourceFilename, bool $stageUnresolved, array $skipProductKeys = []): array
     {
         if (!in_array($uploadType, ['initial', 'revision'], true)) {
             throw new \InvalidArgumentException("uploadType must be 'initial' or 'revision', got '{$uploadType}'.");
@@ -212,8 +238,20 @@ final class PoImporter
         $resolvedProductRows = [];
         /** @var array<int,array{productId:int,storeId:int,poAwal:float,poRevisi:float,kategori:?string}> */
         $newLines = [];
+        /** @var array<int,array{kode:string,nama:string}> rows explicitly excluded by an admin (New Product Review "skip") */
+        $skippedProductRows = [];
+        $skipKeySet = array_flip($skipProductKeys);
 
         foreach ($parsed['rows'] as $row) {
+            if (isset($skipKeySet[self::productRawKey($row['kode'], $row['produkAsli'])])) {
+                // Explicitly excluded by the admin (New Product Review "Lewati") —
+                // never counted, never staged as unresolved, never imported. Kept
+                // out of every total below exactly as if this row were absent
+                // from the file for this import, per the task's explicit
+                // "skip excludes only that product row" requirement.
+                $skippedProductRows[] = ['kode' => $row['kode'], 'nama' => $row['produkAsli']];
+                continue;
+            }
             if ($row['poAwal'] > 0) {
                 $rowsPoAwal++;
             }
@@ -233,7 +271,7 @@ final class PoImporter
             if ($productResolution['status'] !== 'resolved') {
                 $productUnresolved++;
                 if (count($unresolvedProductSamples) < 25) {
-                    $unresolvedProductSamples[] = ['kode' => $row['kode'], 'nama' => $row['produkAsli']];
+                    $unresolvedProductSamples[] = ['kode' => $row['kode'], 'nama' => $row['produkAsli'], 'kategori' => $row['kategori'] ?: null];
                 }
                 if ($stageUnresolved) {
                     $this->resolver->stageUnresolvedProduct(
@@ -334,6 +372,7 @@ final class PoImporter
             'mergePreview' => $mergePreview,
             'targetTotal' => $targetTotal,
             'resolvedProductRows' => array_values($resolvedProductRows),
+            'skippedProductRows' => $skippedProductRows,
         ];
     }
 }

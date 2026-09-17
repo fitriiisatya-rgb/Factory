@@ -38,7 +38,9 @@ use Amor\Api\Auth;
 use Amor\Api\Config;
 use Amor\Api\Database;
 use Amor\Api\Import\PoImporter;
+use Amor\Api\Import\PoProductCodeConflictException;
 use Amor\Api\Import\PoRepository;
+use Amor\Api\Import\PoResolver;
 use Amor\Api\Repositories\ProductRepository;
 use Amor\Api\Repositories\StoreRepository;
 
@@ -93,6 +95,13 @@ $pdo = Database::pdo(); // runtime (DML-only) connection — see file header
 $importer = new PoImporter($pdo);
 $productRepo = new ProductRepository();
 $storeRepo = new StoreRepository();
+$poResolver = new PoResolver($pdo);
+
+/** @return string[] raw product keys (PoImporter::productRawKey) the admin chose to skip for this staged file */
+function stagedSkipKeys(): array
+{
+    return array_keys($_SESSION['po_staged']['skippedProductKeys'] ?? []);
+}
 
 $action = $_SERVER['REQUEST_METHOD'] === 'POST' ? (string) ($_POST['action'] ?? '') : '';
 $postedCsrf = (string) ($_POST['csrf'] ?? '');
@@ -138,6 +147,7 @@ if ($action === 'preview_upload') {
             $_SESSION['po_staged'] = [
                 'tanggal' => $tanggal, 'uploadType' => $uploadType, 'fileName' => $fileName,
                 'hash' => $hash, 'contentBase64' => base64_encode($content),
+                'skippedProductKeys' => [], 'revisionReviewPending' => false,
             ];
             $actionResult = ['ok' => true, 'title' => 'File berhasil dibaca', 'message' => "Terbaca {$plan['parsedRowCount']} baris produk."];
         } catch (\Throwable $e) {
@@ -193,30 +203,98 @@ if ($action === 'resolve_store_alias' && isset($_SESSION['po_staged'])) {
     }
 }
 
+if ($action === 'skip_unresolved_product' && isset($_SESSION['po_staged'])) {
+    $rawCode = (string) ($_POST['rawCode'] ?? '');
+    $rawName = (string) ($_POST['rawName'] ?? '');
+    $key = PoImporter::productRawKey($rawCode, $rawName);
+    $_SESSION['po_staged']['skippedProductKeys'][$key] = ['rawCode' => $rawCode, 'rawName' => $rawName];
+    $actionResult = ['ok' => true, 'title' => 'Produk dilewati', 'message' =>
+        "'{$rawName}' (kode '{$rawCode}') dikecualikan dari impor ini — baris lain tidak terpengaruh. Preview akan diperbarui."];
+}
+
+if ($action === 'unskip_product' && isset($_SESSION['po_staged'])) {
+    $key = (string) ($_POST['key'] ?? '');
+    unset($_SESSION['po_staged']['skippedProductKeys'][$key]);
+    $actionResult = ['ok' => true, 'title' => 'Lewati dibatalkan', 'message' => 'Produk ini akan direview lagi seperti biasa.'];
+}
+
+// New Product Review — "TAMBAH KE MASTER & LANJUTKAN PO". A controlled,
+// self-contained transaction (product + product_legacy_code +
+// product_alias + audit_log) — see PoResolver::createProductFromUnresolved()
+// for exactly what it validates and writes. Never fuzzy, never silent.
+if ($action === 'create_new_product_from_import' && isset($_SESSION['po_staged'])) {
+    $rawCode = (string) ($_POST['rawCode'] ?? '');
+    $rawName = (string) ($_POST['rawName'] ?? '');
+    $finalName = trim((string) ($_POST['finalName'] ?? ''));
+    $kategori = trim((string) ($_POST['kategori'] ?? '')) ?: null;
+    $divisionIdRaw = trim((string) ($_POST['divisionId'] ?? ''));
+    $divisionId = $divisionIdRaw !== '' ? (int) $divisionIdRaw : null;
+    $harga = (float) ($_POST['harga'] ?? 0);
+    try {
+        $staged = $_SESSION['po_staged'];
+        $result = $poResolver->createProductFromUnresolved(
+            $rawCode, $rawName, $finalName, $kategori, $divisionId, $harga,
+            $userId, $staged['fileName'], $staged['hash']
+        );
+        $actionResult = ['ok' => true, 'title' => $result['created'] ? 'Produk baru dibuat' : 'Produk sudah ada (tidak dibuat ulang)', 'message' =>
+            "'{$finalName}' sekarang produk_id={$result['productId']}. HPP belum tersedia dan disimpan sementara sebagai 0. Preview akan diperbarui."];
+    } catch (PoProductCodeConflictException $e) {
+        $actionResult = ['ok' => false, 'title' => 'PRODUCT_CODE_CONFLICT', 'message' => $e->getMessage()];
+    } catch (\Throwable $e) {
+        $actionResult = ['ok' => false, 'title' => 'Gagal membuat produk baru', 'message' => $e->getMessage()];
+    }
+}
+
+// Small UX patch (does not touch parser/resolver/merge/schema/API contract):
+// PO Tambahan/Revisi files can still carry PO Awal columns from the source
+// sheet, so committing a revision gets one extra, explicit confirmation step
+// — server-rendered (no JS dependency), so it works identically on iPad/
+// Safari and is fully driveable over plain HTTP for tests. PO Awal imports
+// are entirely unaffected — they still go straight to confirm_import.
+if ($action === 'review_revision' && isset($_SESSION['po_staged']) && $_SESSION['po_staged']['uploadType'] === 'revision') {
+    $_SESSION['po_staged']['revisionReviewPending'] = true;
+}
+
+if ($action === 'cancel_revision_review' && isset($_SESSION['po_staged'])) {
+    $_SESSION['po_staged']['revisionReviewPending'] = false;
+    $actionResult = ['ok' => true, 'title' => 'Dibatalkan', 'message' => 'Import PO Revisi dibatalkan — tidak ada yang diimpor. File masih tersimpan, silakan periksa lagi sebelum melanjutkan.'];
+}
+
 if ($action === 'confirm_import' && isset($_SESSION['po_staged'])) {
     $staged = $_SESSION['po_staged'];
-    try {
-        $content = base64_decode($staged['contentBase64'], true);
-        $tmpPath = tempnam(sys_get_temp_dir(), 'po_wizard_');
-        file_put_contents($tmpPath, $content);
-        $rows = $importer->readRows($tmpPath, $staged['fileName']);
-        @unlink($tmpPath);
+    // Defense in depth: a revision import must have gone through the
+    // review_revision confirmation step first — never weakens CSRF (still
+    // checked above like every other action here), just adds a second,
+    // independent gate specifically for the revision-carries-PO-Awal risk.
+    if ($staged['uploadType'] === 'revision' && empty($staged['revisionReviewPending'])) {
+        $actionResult = ['ok' => false, 'title' => 'Konfirmasi diperlukan', 'message' =>
+            'Klik "Konfirmasi & Impor PO" lagi untuk menampilkan konfirmasi PO Revisi terlebih dahulu.'];
+    } else {
+        try {
+            $content = base64_decode($staged['contentBase64'], true);
+            $tmpPath = tempnam(sys_get_temp_dir(), 'po_wizard_');
+            file_put_contents($tmpPath, $content);
+            $rows = $importer->readRows($tmpPath, $staged['fileName']);
+            @unlink($tmpPath);
+            $skipKeys = array_keys($staged['skippedProductKeys'] ?? []);
 
-        $result = Database::transaction(function ($txPdo) use ($rows, $staged, $userId) {
-            $txImporter = new PoImporter($txPdo);
-            return $txImporter->import($rows, $staged['tanggal'], $staged['uploadType'], $staged['hash'], $staged['fileName'], $userId);
-        });
+            $result = Database::transaction(function ($txPdo) use ($rows, $staged, $userId, $skipKeys) {
+                $txImporter = new PoImporter($txPdo);
+                return $txImporter->import($rows, $staged['tanggal'], $staged['uploadType'], $staged['hash'], $staged['fileName'], $userId, $skipKeys);
+            });
 
-        if ($result['ok']) {
-            unset($_SESSION['po_staged']);
-            $d = $result['data'];
-            $actionResult = ['ok' => true, 'title' => 'PO berhasil diimpor', 'message' =>
-                "Batch #{$d['poBatchId']} ({$d['tanggal']}, {$d['factory']}) — {$d['linesWritten']} baris ditulis, target total " . fmtNum($d['targetTotal']) . '.'];
-        } else {
-            $actionResult = ['ok' => false, 'title' => 'Impor ditolak', 'message' => $result['message']];
+            if ($result['ok']) {
+                unset($_SESSION['po_staged']);
+                $d = $result['data'];
+                $skippedNote = !empty($d['skippedProductRows']) ? ' (' . count($d['skippedProductRows']) . ' produk dilewati, tidak diimpor).' : '';
+                $actionResult = ['ok' => true, 'title' => 'PO berhasil diimpor', 'message' =>
+                    "Batch #{$d['poBatchId']} ({$d['tanggal']}, {$d['factory']}) — {$d['linesWritten']} baris ditulis, target total " . fmtNum($d['targetTotal']) . '.' . $skippedNote];
+            } else {
+                $actionResult = ['ok' => false, 'title' => 'Impor ditolak', 'message' => $result['message']];
+            }
+        } catch (\Throwable $e) {
+            $actionResult = ['ok' => false, 'title' => 'Impor gagal', 'message' => $e->getMessage()];
         }
-    } catch (\Throwable $e) {
-        $actionResult = ['ok' => false, 'title' => 'Impor gagal', 'message' => $e->getMessage()];
     }
 }
 
@@ -246,7 +324,7 @@ if (isset($_SESSION['po_staged'])) {
         file_put_contents($tmpPath, $content);
         $rows = $importer->readRows($tmpPath, $staged['fileName']);
         @unlink($tmpPath);
-        $plan = $importer->preview($rows, $staged['tanggal'], $staged['uploadType'], $staged['hash'], $staged['fileName']);
+        $plan = $importer->preview($rows, $staged['tanggal'], $staged['uploadType'], $staged['hash'], $staged['fileName'], stagedSkipKeys());
     } catch (\Throwable $e) {
         $planError = $e->getMessage();
         unset($_SESSION['po_staged']);
@@ -255,6 +333,8 @@ if (isset($_SESSION['po_staged'])) {
 
 $repo = new PoRepository();
 $recentBatches = $repo->findAllBatches($pdo, null, null);
+$divisions = $pdo->query('SELECT division_id, name FROM division ORDER BY name')->fetchAll();
+$revisionReviewPending = $plan !== null && $plan['uploadType'] === 'revision' && !empty($_SESSION['po_staged']['revisionReviewPending']);
 
 header('Content-Type: text/html; charset=utf-8');
 ?><!DOCTYPE html>
@@ -280,6 +360,11 @@ td,th{text-align:left;padding:.3rem .6rem;border-bottom:1px solid #eee;font-size
 .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:.8em;font-weight:bold;color:#fff;}
 .b-ok{background:#080;} .b-bad{background:#b00;} .b-info{background:#06c;}
 form.inline{display:inline;}
+.modal-box{border:3px solid #06c;background:#eef6ff;border-radius:10px;padding:1.2rem;margin:1rem 0;}
+.newprod-box{border:1px solid #e0c060;background:#fffdf3;border-radius:8px;padding:.8rem;margin:.6rem 0;}
+.newprod-box h4{margin:0 0 .3rem;}
+fieldset{border:1px solid #ddd;border-radius:6px;padding:.6rem;margin:.5rem 0;}
+fieldset legend{padding:0 .4rem;font-size:.85em;color:#555;}
 label{display:block;margin:.5rem 0;}
 </style>
 </head>
@@ -298,6 +383,30 @@ Tidak ada data Produksi/FG/Packing/DO/Pengiriman/Stok/Invoice yang disentuh — 
 <?php endif; ?>
 <?php if ($planError !== null): ?>
 <div class="result-error"><strong>Gagal membaca ulang file tersimpan</strong><p><?= esc($planError) ?></p></div>
+<?php endif; ?>
+
+<?php if ($revisionReviewPending): ?>
+<div class="modal-box">
+  <h2 style="margin-top:0;">Konfirmasi PO Revisi</h2>
+  <p>File ini masih dapat mengandung nilai PO Awal.</p>
+  <p><strong>Sistem TIDAK akan mengubah atau menambahkan ulang PO Awal yang sudah tersimpan.</strong></p>
+  <p>Yang akan diperbarui hanya PO Tambahan / Revisi berdasarkan snapshot terbaru pada file ini.</p>
+  <p style="background:#f4f4f4;padding:.75rem;border-radius:6px;">Contoh: PO Awal 100 + Revisi lama 20, lalu file
+  terbaru Revisi 35 &rarr; target menjadi <strong>135</strong>, bukan 155.</p>
+  <p>Target hasil aktual untuk file ini sekarang: <strong><?= fmtNum($plan['targetTotal']) ?></strong>
+  (lihat rincian per baris di bawah).</p>
+  <p><strong>Lanjutkan proses PO Revisi?</strong></p>
+  <div style="display:flex;gap:.6rem;flex-wrap:wrap;">
+    <form method="post"><input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
+      <input type="hidden" name="action" value="cancel_revision_review">
+      <button type="submit" class="secondary">Batal</button>
+    </form>
+    <form method="post"><input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
+      <input type="hidden" name="action" value="confirm_import">
+      <button type="submit">Ya, Proses PO Revisi</button>
+    </form>
+  </div>
+</div>
 <?php endif; ?>
 
 <?php if ($plan === null): ?>
@@ -363,23 +472,90 @@ Tidak ada data Produksi/FG/Packing/DO/Pengiriman/Stok/Invoice yang disentuh — 
   <?php endif; ?>
 
   <?php if ($plan['productResolution']['unresolved'] > 0): ?>
-  <h3>Produk belum terpetakan</h3>
-  <table><tr><th>Kode</th><th>Nama di File</th><th>Petakan ke Produk</th></tr>
-  <?php foreach ($plan['productResolution']['samples'] as $u): ?>
-  <tr>
-    <td><?= esc($u['kode']) ?></td>
-    <td><?= esc($u['nama']) ?></td>
-    <td>
-      <form class="inline" method="post" style="display:flex;gap:.3rem;">
+  <h3>Produk Baru Terdeteksi</h3>
+  <p style="color:#666;">Baris-baris ini tidak cocok dengan produk manapun di Master Produk. Pilih salah satu aksi per
+  produk — TIDAK ada yang dibuat otomatis tanpa konfirmasi Anda, dan tidak ada penggabungan otomatis walau namanya mirip.</p>
+  <?php foreach ($plan['productResolution']['samples'] as $u):
+    $candidates = $poResolver->similarProductCandidates($u['nama']);
+    $reason = $poResolver->unresolvedProductReason($u['kode'], $u['nama']);
+  ?>
+  <div class="newprod-box">
+    <h4><?= esc($u['nama']) ?> <span style="font-weight:normal;color:#666;">(kode: <?= $u['kode'] !== '' ? esc($u['kode']) : '—' ?>)</span></h4>
+    <p style="margin:.2rem 0;">Kategori terdeteksi: <?= $u['kategori'] ? esc($u['kategori']) : '—' ?> &middot;
+    Divisi terdeteksi: — &middot; Harga jual terdeteksi: — <span style="color:#666;">(file PO tidak membawa data ini)</span></p>
+    <p style="margin:.2rem 0;color:#666;">Alasan belum terpetakan: <?= esc($reason) ?></p>
+    <?php if ($candidates): ?>
+    <div class="warn"><p style="margin:0;"><strong>Mungkin mirip dengan produk yang sudah ada</strong> (bukan otomatis,
+    hanya info — pilih "Petakan ke Produk Sudah Ada" di bawah kalau memang ini yang dimaksud):</p>
+    <ul style="margin:.3rem 0;"><?php foreach ($candidates as $c): ?><li><?= esc($c['name']) ?> (kemiripan <?= $c['similarity'] ?>%)</li><?php endforeach; ?></ul></div>
+    <?php endif; ?>
+
+    <fieldset>
+      <legend>1. Petakan ke Produk yang Sudah Ada</legend>
+      <form class="inline" method="post" style="display:flex;gap:.3rem;flex-wrap:wrap;">
         <input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
         <input type="hidden" name="action" value="resolve_product_alias">
         <input type="hidden" name="rawName" value="<?= esc($u['nama']) ?>">
-        <input type="text" name="targetProductName" placeholder="Nama produk yang sudah ada" size="28">
-        <button type="submit">Buat Alias</button>
+        <input type="text" name="targetProductName" placeholder="Nama produk yang sudah ada (persis)" size="28">
+        <button type="submit">Petakan ke Produk Sudah Ada</button>
       </form>
-    </td>
+    </fieldset>
+
+    <fieldset>
+      <legend>2. Tambah ke Master &amp; Lanjutkan PO</legend>
+      <form class="inline" method="post" style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;">
+        <input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
+        <input type="hidden" name="action" value="create_new_product_from_import">
+        <input type="hidden" name="rawCode" value="<?= esc($u['kode']) ?>">
+        <input type="hidden" name="rawName" value="<?= esc($u['nama']) ?>">
+        <label style="margin:0;">Nama <input type="text" name="finalName" value="<?= esc($u['nama']) ?>" size="24"></label>
+        <label style="margin:0;">Kategori <input type="text" name="kategori" value="<?= esc((string) $u['kategori']) ?>" size="12"></label>
+        <label style="margin:0;">Divisi
+          <select name="divisionId"><option value="">(belum diketahui)</option>
+            <?php foreach ($divisions as $d): ?><option value="<?= (int) $d['division_id'] ?>"><?= esc($d['name']) ?></option><?php endforeach; ?>
+          </select>
+        </label>
+        <label style="margin:0;">Harga Jual <input type="text" name="harga" placeholder="0" size="8"></label>
+        <button type="submit">Tambah ke Master &amp; Lanjutkan</button>
+      </form>
+      <p style="margin:.3rem 0 0;color:#a60;font-size:.85em;"><strong>HPP belum tersedia dan disimpan sementara sebagai 0.</strong>
+      Angka 0 ini BUKAN data biaya asli.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>3. Lewati</legend>
+      <form class="inline" method="post">
+        <input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
+        <input type="hidden" name="action" value="skip_unresolved_product">
+        <input type="hidden" name="rawCode" value="<?= esc($u['kode']) ?>">
+        <input type="hidden" name="rawName" value="<?= esc($u['nama']) ?>">
+        <button type="submit" class="secondary">Lewati Produk Ini</button>
+      </form>
+      <p style="margin:.3rem 0 0;color:#666;font-size:.85em;">Hanya baris produk ini yang dikecualikan — baris lain
+      di file yang sama tetap diimpor seperti biasa.</p>
+    </fieldset>
+  </div>
+  <?php endforeach; ?>
+  <?php endif; ?>
+
+  <?php if (!empty($plan['skippedProductRows'])): ?>
+  <h3>Produk Dilewati</h3>
+  <table><tr><th>Kode</th><th>Nama</th><th></th></tr>
+  <?php foreach ($plan['skippedProductRows'] as $sp):
+    $key = PoImporter::productRawKey($sp['kode'], $sp['nama']); ?>
+  <tr>
+    <td><?= esc($sp['kode']) ?></td>
+    <td><?= esc($sp['nama']) ?></td>
+    <td><form class="inline" method="post">
+      <input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
+      <input type="hidden" name="action" value="unskip_product">
+      <input type="hidden" name="key" value="<?= esc($key) ?>">
+      <button type="submit" class="secondary">Batalkan Lewati</button>
+    </form></td>
   </tr>
   <?php endforeach; ?></table>
+  <p style="color:#666;font-size:.9em;">Baris-baris ini TIDAK akan ikut diimpor — dicatat di riwayat upload sebagai
+  dilewati oleh admin.</p>
   <?php endif; ?>
 
   <?php if ($plan['storeResolution']['unresolved'] > 0): ?>
@@ -401,7 +577,15 @@ Tidak ada data Produksi/FG/Packing/DO/Pengiriman/Stok/Invoice yang disentuh — 
   <?php endforeach; ?></table>
   <?php endif; ?>
 
-  <?php if ($plan['canImport']): ?>
+  <?php if ($plan['canImport'] && $revisionReviewPending): ?>
+  <p style="color:#06c;"><strong>Lihat kotak "Konfirmasi PO Revisi" di atas halaman ini untuk melanjutkan.</strong></p>
+  <?php elseif ($plan['canImport'] && $plan['uploadType'] === 'revision'): ?>
+  <form method="post" style="margin-top:1rem;">
+    <input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
+    <input type="hidden" name="action" value="review_revision">
+    <button type="submit">Konfirmasi &amp; Impor PO</button>
+  </form>
+  <?php elseif ($plan['canImport']): ?>
   <form method="post" style="margin-top:1rem;" onsubmit="return confirm('Impor PO ini sekarang?');">
     <input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
     <input type="hidden" name="action" value="confirm_import">

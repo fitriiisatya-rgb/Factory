@@ -144,4 +144,18 @@ TEST_RUNTIME_PASS="$RUNTIME_USER_PASS" \
 php "$API_ROOT/tests/Phase2POTest.php"
 RESULT=$?
 
-exit $RESULT
+echo "--- bonus: running Phase2NewProductTest.php (P2-NP01..P2-NP12 + PO Revisi confirmation) on the same server/DB ---"
+TEST_BASE_URL="http://127.0.0.1:$PHP_PORT" \
+TEST_ADMIN_USER="p2_staging_admin" \
+TEST_ADMIN_PASS="$TEST_ADMIN_PASS" \
+TEST_DB_SOCKET="$SOCK" \
+TEST_DB_NAME="$DB_NAME" \
+TEST_RUNTIME_USER="p2_runtime_user" \
+TEST_RUNTIME_PASS="$RUNTIME_USER_PASS" \
+php "$API_ROOT/tests/Phase2NewProductTest.php"
+RESULT2=$?
+
+if [ $RESULT -ne 0 ] || [ $RESULT2 -ne 0 ]; then
+  exit 1
+fi
+exit 0

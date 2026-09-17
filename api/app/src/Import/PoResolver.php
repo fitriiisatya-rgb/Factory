@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Amor\Api\Import;
 
+use Amor\Api\Audit;
 use PDO;
 
 /**
@@ -183,5 +184,152 @@ final class PoResolver
                 notes = IF(status = ?, notes, VALUES(notes))"
         );
         $stmt->execute([$rawName, 'po_import', 'unresolved', $reason, 'mapped']);
+    }
+
+    /**
+     * A plain human-readable explanation of why resolveProduct() returned
+     * 'unresolved' for this exact raw pair — display only, computed by
+     * literally re-checking each tier so it can never drift from the real
+     * resolution logic above.
+     */
+    public function unresolvedProductReason(string $rawCode, string $rawName): string
+    {
+        $rawCode = trim($rawCode);
+        $rawName = trim($rawName);
+        $parts = [];
+        if ($rawCode !== '') {
+            $stmt = $this->pdo->prepare('SELECT COUNT(DISTINCT product_id) FROM product_legacy_code WHERE legacy_code = ?');
+            $stmt->execute([$rawCode]);
+            $n = (int) $stmt->fetchColumn();
+            $parts[] = $n > 1
+                ? "kode '{$rawCode}' dipakai oleh {$n} produk berbeda (ambigu, tidak ditebak)"
+                : "kode '{$rawCode}' tidak ditemukan di master produk";
+        } else {
+            $parts[] = 'file ini tidak menyertakan kode produk';
+        }
+        $parts[] = "tidak ada alias atau nama produk yang persis sama dengan '{$rawName}'";
+        return ucfirst(implode('; ', $parts)) . '.';
+    }
+
+    /**
+     * Products whose normalized name is a CLOSE (not exact — exact would
+     * already have resolved) match to $rawName — display-only hints so an
+     * admin can notice "maybe this is a typo of an existing product"
+     * before choosing to create a brand-new one. Never auto-applied; never
+     * used by resolveProduct() itself.
+     * @return array<int,array{productId:int,name:string,similarity:float}>
+     */
+    public function similarProductCandidates(string $rawName, float $minSimilarity = 70.0, int $limit = 5): array
+    {
+        $rawName = trim($rawName);
+        if ($rawName === '') {
+            return [];
+        }
+        $stmt = $this->pdo->query('SELECT product_id, name FROM product');
+        $candidates = [];
+        foreach ($stmt->fetchAll() as $row) {
+            similar_text(PoFileParser::up($rawName), PoFileParser::up($row['name']), $pct);
+            if ($pct >= $minSimilarity) {
+                $candidates[] = ['productId' => (int) $row['product_id'], 'name' => $row['name'], 'similarity' => round($pct, 1)];
+            }
+        }
+        usort($candidates, static fn ($a, $b) => $b['similarity'] <=> $a['similarity']);
+        return array_slice($candidates, 0, $limit);
+    }
+
+    /**
+     * Controlled creation of a brand-new product directly from an
+     * unresolved PO row, per the New Product Review flow (never a fuzzy
+     * auto-merge — the admin explicitly confirms $finalName). Runs its own
+     * short transaction (product + product_legacy_code + product_alias +
+     * audit_log together), separate from the PO commit itself — the
+     * product becomes real master data immediately regardless of whether
+     * the admin goes on to actually commit the PO, exactly like
+     * api/_import-master/'s existing "Tambah Toko Manual" always has for
+     * stores. Marked traceable/reconcilable via product_alias.source and
+     * audit_log.action rather than folded into one giant transaction with
+     * the PO write, since the two are reviewed as separate admin steps by
+     * design (New Product Review happens before the PO is even ready to
+     * commit).
+     *
+     * Idempotent: if $finalName already matches an existing product (e.g.
+     * a double-submit, or this exact row was already created earlier),
+     * returns that product's id instead of erroring or duplicating —
+     * needed so re-running the same file never creates a second product.
+     *
+     * @throws \InvalidArgumentException if $finalName is blank
+     * @throws PoProductCodeConflictException if $rawCode already belongs
+     *         to a different, already-existing product
+     */
+    public function createProductFromUnresolved(
+        string $rawCode,
+        string $rawName,
+        string $finalName,
+        ?string $kategori,
+        ?int $divisionId,
+        float $harga,
+        int $userId,
+        ?string $sourceFilename,
+        string $sourceHash
+    ): array {
+        $rawCode = trim($rawCode);
+        $rawName = trim($rawName);
+        $finalName = trim($finalName);
+        if ($finalName === '') {
+            throw new \InvalidArgumentException('Nama produk tujuan wajib diisi.');
+        }
+
+        $stmt = $this->pdo->prepare('SELECT product_id FROM product WHERE UPPER(name) = UPPER(?)');
+        $stmt->execute([$finalName]);
+        $existingId = $stmt->fetchColumn();
+        if ($existingId !== false) {
+            return ['productId' => (int) $existingId, 'created' => false];
+        }
+
+        if ($rawCode !== '') {
+            $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM product_legacy_code WHERE legacy_code = ?');
+            $stmt->execute([$rawCode]);
+            if ((int) $stmt->fetchColumn() > 0) {
+                throw new PoProductCodeConflictException(
+                    "Kode legacy '{$rawCode}' sudah dipakai oleh produk lain — tidak bisa dipakai untuk membuat produk baru ini."
+                );
+            }
+        }
+
+        $this->pdo->beginTransaction();
+        try {
+            $stmt = $this->pdo->prepare(
+                // hpp is deliberately 0 — a PO upload never carries an authoritative
+                // cost figure, matching the same discipline Phase1Importer's katalog
+                // import already applies (see its own createProductFromRow()).
+                'INSERT INTO product (name, kategori, division_id, hpp, harga, aktif, version, created_at)
+                 VALUES (?, ?, ?, 0, ?, 1, 1, UTC_TIMESTAMP())'
+            );
+            $stmt->execute([$finalName, $kategori !== '' ? $kategori : null, $divisionId, $harga]);
+            $productId = (int) $this->pdo->lastInsertId();
+
+            if ($rawCode !== '') {
+                $this->pdo->prepare(
+                    'INSERT INTO product_legacy_code (product_id, legacy_code, created_at) VALUES (?, ?, UTC_TIMESTAMP())'
+                )->execute([$productId, $rawCode]);
+            }
+            if ($rawName !== '' && strcasecmp($rawName, $finalName) !== 0) {
+                $this->pdo->prepare(
+                    'INSERT INTO product_alias (product_id, raw_name, source, created_at) VALUES (?, ?, ?, UTC_TIMESTAMP())'
+                )->execute([$productId, $rawName, 'po_import_new_product']);
+            }
+
+            Audit::write($this->pdo, null, $userId, 'po.product.create_from_import', 'product', (string) $productId, 'ok', null, 1, [
+                'rawCode' => $rawCode, 'rawName' => $rawName, 'finalName' => $finalName,
+                'sourceFilename' => $sourceFilename, 'sourceHash' => $sourceHash,
+            ]);
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
+
+        return ['productId' => $productId, 'created' => true];
     }
 }
