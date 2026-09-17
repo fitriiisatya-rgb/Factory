@@ -7,6 +7,19 @@ finalizing Phase 4 (FG/Packing), with an explicit instruction: *"Do NOT
 suddenly implement full DO/Shipment inside Phase 4... document it"* and
 *"Phase 5 design must be reserved now."* This file is that reservation.
 
+**Correction applied (second pass):** an earlier version of this document
+recommended "one DO per (date, store, shipment_group)" as the identity
+Phase 5 should follow, reasoning that the existing `open_key` unique
+constraint already implied it. **That recommendation was wrong and has
+been reversed.** The FINAL Amor business rule, stated explicitly by the
+user: **one store PO normally produces exactly ONE Delivery Order holding
+the store's complete planned demand across every product**, and that same
+DO is fulfilled by zero, one, or many `shipment` rows of possibly
+different `shipment_group` values (MAIN, PASTRY, OTHER, ...), all sharing
+the same `delivery_order_id`. §3 and §8.2 below now audit the exact
+constraint responsible for the earlier wrong recommendation and design the
+additive fix Phase 5 will need to apply.
+
 As of this document, **Phase 4 (FG/Packing) has not yet been started** in
 this codebase — the most recent completed phase is Phase 3 (Production/SPK
 actual, `api/app/src/Production/`). There is therefore no existing Phase 4
@@ -28,12 +41,13 @@ unused, in every environment right now — exactly the same situation
 `production_run`/`production_item` were in before Phase 3 built logic on
 top of them.
 
-This means: **no additive migration is anticipated to be required for the
-baseline DO/Shipment design** described in the user's spec. Phase 5's job
-is almost entirely a service/API/UI layer on top of tables that already
-exist, not a schema-design exercise. Section 8 below lists the few open
-questions worth an explicit decision before that build starts — none of
-them require a schema change to keep open.
+This means: **no additive migration is required for the baseline
+DO/Shipment design** described in the user's spec — with one exception,
+identified and resolved in §8.2: the DO-level *open-document uniqueness*
+constraint is scoped by `shipment_group` today, which does not match the
+final "one DO per store, many shipment groups" business rule. §8.2 designs
+the additive fix. Section 8 also lists two remaining open questions that
+do **not** require a schema change.
 
 Everything below cites exact table/column names from
 `database/schema-v1.sql` (lines noted) and their rationale from
@@ -81,12 +95,17 @@ open_key GENERATED ALWAYS AS (
 ```
 
 This is the exact lifecycle the user asked for (rule B), already present.
-The `open_key` generated column enforces "exactly one **open** DO per
-(tanggal, store, shipment_group)" (docs §11) without blocking a *second*
-DO for the same store/date once the first is `shipped` or `cancelled` —
-i.e. it does **not** limit a store to one shipment/DO per day (rule M's
-third non-assumption), it only prevents two simultaneously-open drafts for
-the same (date, store, group) colliding.
+
+**Correction (see §8.2 for the full audit):** the `open_key` generated
+column, and the `shipment_group` column it's built from, encode a
+"one open DO per **group**" identity that does **not** match the FINAL
+business rule (one DO per store holding all groups' demand). This is not
+a hard technical block — nothing stops multiple `shipment` rows of
+different groups from referencing the same `delivery_order_id` — but the
+DO header's own `shipment_group` column, and the uniqueness scoped by it,
+are the wrong shape for "one DO, many groups." §8.2 designs the additive
+fix: a second, group-agnostic uniqueness key scoped to `(tanggal,
+store_id)` only, which Phase 5 will rely on instead of the existing one.
 
 ### `delivery_order_item` (schema-v1.sql:372-382) — planned vs actual, per product
 
@@ -200,14 +219,14 @@ new numbering mechanism needed.
 ```
 PO Bakery Pangleseran: Roti A = 20, Pastry B = 10   (po_item/po_store_item, Phase 2)
 
-delivery_order  #1  tanggal=D  store_id=Pangleseran  shipment_group=MAIN  status=draft
+delivery_order  #1  tanggal=D  store_id=Pangleseran  status=draft
+  -- ONE DO for the whole store's planned demand — shipment_group is NOT
+  -- part of the DO's identity (see §8.2's corrected migration); the DO
+  -- header's legacy shipment_group column, if still present, is ignored
+  -- for identity purposes and never used to decide whether a second DO
+  -- is needed.
 delivery_order_item  (do#1, Roti A)  planned_qty=20
 delivery_order_item  (do#1, Pastry B) planned_qty=10
-  -- a SECOND delivery_order (#2, same store/date, shipment_group=PASTRY) may
-  -- also exist if the business genuinely splits DOs by group — the schema
-  -- supports either "one DO, two shipments" or "two DOs, one shipment each";
-  -- rule F's "MAIN/PASTRY are shipment_group values" does not by itself force
-  -- two DOs. See §8.2.
 
 -- FG at 10:00: Roti A=20, Pastry B=0. Shipment 1 ships what's ready:
 shipment  #1  delivery_order_id=do#1  shipment_group=MAIN  status=active
@@ -232,25 +251,27 @@ by two `shipment` headers.
 
 ---
 
-## 5. Non-assumptions this reservation holds (rule M, restated as design invariants)
+## 5. Confirmed invariants (restated exactly as asked, with the schema evidence for each)
 
-- **DO ≠ shipment.** A DO can exist, be printed, and sit for hours/days
-  with zero shipments against it. Fulfillment is `SUM(shipment_item.qty)`
-  over its shipments, never a 1:1 assumption.
-- **FG completeness is not a precondition for DO existence.** No FK from
-  `delivery_order`/`delivery_order_item` to any FG table enforces this,
-  and rule A forbids adding one.
-- **A store is not limited to one shipment per day.** Nothing in the
-  schema caps `shipment` rows per `(store_id, tanggal)` — only `delivery_order`
-  has an *open-DO* uniqueness constraint (§3), and even that is scoped to
-  "not yet shipped/cancelled," not "per day."
-- **Draft/preprinted DO and any pre-ship staging never write to
-  `stock_ledger`.** The only code path that can insert a `stock_ledger`
-  row with `event_type='shipment_out'` is the transaction that creates a
-  real `shipment` + its `shipment_item` rows (§3/§4).
-- **`shipment_group` is not a two-value boolean.** It is an `ENUM` today
-  (`MAIN`/`PASTRY`/`OTHER`), not a hardcoded pair — see §8.3 for whether
-  that remains sufficient.
+| Invariant | Confirmed? | Evidence |
+|---|---|---|
+| DO may exist while FG = 0 | **Yes** | No FK from `delivery_order`/`delivery_order_item` to any FG table (§2). |
+| DO planned_qty comes from store PO | **Yes** | `delivery_order_item.planned_qty` is populated from Phase 2's `po_item`/`po_store_item` at DO-creation time (§3), never hand-typed as the default workflow. |
+| DO draft/preprinted does not consume stock | **Yes** | Only a real `shipment` insert can write `stock_ledger` (§3 `stock_ledger` / §4). No code path writes a ledger row from `delivery_order.status` alone. |
+| One DO may have many shipment rows | **Yes** | `shipment.delivery_order_id` is a nullable FK with no uniqueness constraint against it — any number of `shipment` rows may share one `delivery_order_id` (§2, §4). |
+| Each shipment has its own shipment_group | **Yes** | `shipment.shipment_group` is a column on `shipment` itself (§3), independent of whatever the DO header's own (now-deprecated-for-identity) `shipment_group` says. |
+| MAIN and PASTRY can reference the same DO | **Yes** | Same evidence as above — nothing matches `shipment.shipment_group` against `delivery_order.shipment_group`; they were never constrained to agree. §8.2 removes the one place (DO-level uniqueness) that implicitly assumed otherwise. |
+| Partial shipment does not modify PO | **Yes** | No shipment/DO code path writes to `po_batch`/`po_item`/`po_store_item` — Phase 2's PO tables have no FK from or to `shipment`/`delivery_order` at all. |
+| Cumulative shipment actual determines DO fulfillment | **Yes** | `remaining_to_ship = max(0, planned_qty - SUM(active shipment_item.qty))` per product (§3); a Phase 5 service rule transitions `delivery_order.status` to `shipped` once every item reaches 0 remaining. |
+| Shipment stock deduction happens only on actual SHIPPED commit | **Yes** | A `shipment` row is only ever created (as `active`) at ship-commit time, in the same transaction as its `stock_ledger` rows (§3 `shipment` / §3 `stock_ledger`). |
+| Later PASTRY shipment consumes only its own shipped quantities | **Yes** | Each `shipment_item.qty` writes exactly one `stock_ledger` row for that item alone (§3 `stock_ledger`); an earlier MAIN shipment's ledger rows are untouched by a later PASTRY shipment. |
+| No assumption of one shipment per store per day | **Yes** | Nothing in the schema caps `shipment` rows per `(store_id, tanggal)` (§3 `delivery_order`'s uniqueness only constrains **open DOs**, and after §8.2's fix that constraint is scoped per store+day, not per shipment — it still says nothing about how many `shipment` rows that one DO can accumulate). |
+
+All eleven hold today, by inspection of the existing schema, with **one
+caveat**: "one DO may have many shipment rows of different groups" is true
+at the FK level right now, but the DO-level *uniqueness* constraint still
+encodes a group-scoped identity that contradicts the "one DO per store"
+half of the final rule. §8.2 is the fix for that one remaining mismatch.
 
 ---
 
@@ -303,10 +324,12 @@ Phase 5's `DeliveryOrderService`/`ShipmentService` exist.
 
 ---
 
-## 8. Open questions for explicit sign-off before Phase 5 build
+## 8. Design questions, sign-off, and corrections
 
-These are the only points this reservation could not resolve by reading
-the existing design alone — flagged rather than decided unilaterally.
+§8.2 was flagged as open in the first pass of this document and is now
+**resolved** below, following an explicit architecture correction from the
+user. §8.1 and §8.3 remain open — flagged rather than decided
+unilaterally.
 
 ### 8.1 Does "draft shipment" (DO-12's wording) need its own persisted row?
 
@@ -324,18 +347,112 @@ the one scenario that might justify a real `status='draft'` row later —
 an additive `ALTER ... MODIFY status ENUM(...)` if so, still not a
 redesign).
 
-### 8.2 Does MAIN/PASTRY imply exactly one DO per group, or one DO covering both?
+### 8.2 RESOLVED — one DO per store (not per group). Full audit of the constraint that implied otherwise.
 
-§4's worked example shows both are structurally possible: one DO with two
-shipments (one MAIN, one PASTRY), or two separate DOs (one per group) each
-fulfilled by its own shipment. The existing uniqueness constraint
-(`open_key` on `(tanggal, store_id, shipment_group)`) actually reads as
-designed for the **two-DO** interpretation (a DO is already scoped to one
-`shipment_group`). **Recommendation:** Phase 5 follows the schema's own
-implication — one DO per `(date, store, shipment_group)` — since that's
-what the existing unique key already enforces; a print/UI layer can still
-show "this store's DOs for today" grouped together for the operator's
-convenience without it being one DB row.
+**This was previously the open question recommending "one DO per
+(date, store, shipment_group)." That recommendation is withdrawn.** The
+FINAL business rule is explicit: one store PO produces one DO holding the
+store's complete planned demand; MAIN, PASTRY, and any other
+`shipment_group` are properties of the **shipments** fulfilling that one
+DO, never a reason to split the DO itself.
+
+**Audit, answering each point exactly as asked:**
+
+1. **Exact table:** `delivery_order` (`database/schema-v1.sql:339-370`).
+
+2. **Exact columns in the unique key:** the unique key is
+   `uq_delivery_order_open`, defined on one generated `STORED` column,
+   `open_key`. `open_key` is *not* a plain column — it's computed as
+   `CASE WHEN status NOT IN ('shipped','cancelled') THEN
+   CONCAT(tanggal, '|', store_id, '|', shipment_group) ELSE NULL END`.
+   So the **effective** unique-key columns, once you unpack the generated
+   expression, are `(tanggal, store_id, shipment_group)` — three columns,
+   materialized through one derived column because MariaDB's partial-
+   unique-index technique (only "open" rows are constrained — docs §11)
+   needs a single nullable column to hang a `UNIQUE KEY` on.
+
+3. **Does it actually prevent one DO having MAIN + PASTRY shipments? NO.**
+   Nothing in `uq_delivery_order_open`, or any other constraint on
+   `delivery_order`, `shipment`, or `shipment_item`, stops two `shipment`
+   rows with different `shipment_group` values from both carrying the same
+   `delivery_order_id`. The FK (`fk_shipment_do`) only requires that
+   `delivery_order_id`, if set, point at *some* existing `delivery_order`
+   row — it never checks that row's `shipment_group` against the
+   shipment's own. The worked example in §4 (one `delivery_order_id`,
+   a MAIN `shipment` and a later PASTRY `shipment` both referencing it) is
+   already valid under the schema exactly as it stands today, with **zero
+   schema change** — this part of the final rule already works.
+
+4. **Does it instead only prevent duplicate DO generation? YES, but
+   scoped by the wrong key.** `uq_delivery_order_open` prevents two
+   simultaneously-**open** `delivery_order` rows from sharing the same
+   `(tanggal, store_id, shipment_group)` triple. Combined with
+   `delivery_order` carrying its own single-valued `shipment_group`
+   column, the constraint's real effect is "at most one open DO per
+   **(date, store, group)**" — which is the "one DO per group" shape the
+   earlier (withdrawn) recommendation described, and which **does not
+   match** the final rule of "one DO per (date, store), full stop,
+   regardless of group." A second, unrelated DO could currently be opened
+   for the same store/date as long as its `shipment_group` differed
+   (e.g. one `draft` DO with `shipment_group='MAIN'` and a second `draft`
+   DO with `shipment_group='PASTRY'` for the same store/day — both legal
+   today, and exactly the two-DO outcome the final rule forbids).
+
+5. **Will any schema change be required in Phase 5? YES — the migration
+   below.** Point 3 (multi-group shipments against one DO) needs nothing.
+   Point 4 (DO-level uniqueness scoped by group) needs an additive fix so
+   the enforced identity becomes "(date, store)" instead of "(date, store,
+   group)".
+
+**Additive/non-destructive migration strategy for Phase 5** (not applied
+now; not required by Phase 4 — see §6):
+
+```sql
+-- New, group-agnostic partial-unique-index column, added ALONGSIDE the
+-- existing open_key/uq_delivery_order_open (never dropped, never
+-- modified — same "ADD only" discipline as migrations 0002-0004).
+ALTER TABLE delivery_order
+  ADD COLUMN IF NOT EXISTS open_key_by_store VARCHAR(80) GENERATED ALWAYS AS (
+    CASE WHEN status NOT IN ('shipped','cancelled')
+         THEN CONCAT(tanggal, '|', store_id)
+         ELSE NULL END
+  ) STORED AFTER open_key;
+
+ALTER TABLE delivery_order
+  ADD UNIQUE KEY IF NOT EXISTS uq_delivery_order_open_store (open_key_by_store);
+```
+
+Effects, and why this is safe:
+
+- **Additive only** — one `ADD COLUMN` + one `ADD KEY`, same `IF NOT
+  EXISTS` idempotency discipline already used in migrations 0002-0004.
+  No table dropped, no column dropped, no existing row's data touched.
+- **The new key becomes the one Phase 5's `DeliveryOrderService` actually
+  relies on** for "reject creating a second open DO for a store that
+  already has one open today" — i.e. the group-agnostic rule the final
+  business requirement asks for.
+- **The old `open_key`/`uq_delivery_order_open` is left in place,
+  harmlessly dormant.** Since Phase 5 will stop varying
+  `delivery_order.shipment_group` per-DO (it's no longer meaningful at
+  the DO level — see below), every DO row ends up with the same constant
+  value in that column (e.g. the column's existing `DEFAULT 'MAIN'`), so
+  the old constraint is trivially satisfied by construction and never
+  rejects a legitimate insert. It is safe to leave un-dropped indefinitely,
+  and a later, separate, optional cleanup migration could drop
+  `open_key`/`uq_delivery_order_open`/the now-unused `shipment_group`
+  column from `delivery_order` entirely once Phase 5 is stable and nothing
+  is confirmed to depend on them — that cleanup is explicitly **not**
+  proposed or scheduled now.
+- **`delivery_order.shipment_group` itself is not removed by this
+  migration** (removing a column is a separate, non-additive decision,
+  deliberately deferred per the instruction to design something additive/
+  non-destructive). Phase 5's application code simply stops reading it for
+  any business decision — the authoritative group for a given unit of
+  work now always lives on `shipment.shipment_group` (per-shipment, as
+  §3/§5 already establish), never on the DO header.
+- **`delivery_order_item` needs no change at all** — it was never
+  group-scoped (§3), which is exactly right and already matches the
+  corrected rule.
 
 ### 8.3 Is the `shipment_group` ENUM sufficient, or does it need to become a lookup table?
 
@@ -354,12 +471,23 @@ is a real, not hypothetical, requirement.
 
 ## 9. Summary
 
-No code or schema was changed by this document. The DO/Shipment/Stock
-architecture the user specified is already present in
+No code or schema was changed by this document (still true after this
+correction — §8.2's migration is designed, not applied). The DO/Shipment/
+Stock architecture the user specified is already present in
 `database/schema-v1.sql` (applied by migration `0001_schema_v1.php`) and
-already reasoned through in `docs/mysql-schema-v1.md` §5.5/§5.6/§6/§7.
-Phase 4 should build FG/Packing without touching or depending on
-`delivery_order`/`shipment`/`stock_ledger`'s `shipment_out` path. Phase 5
-builds the DO/Shipment service+API+UI layer directly on the existing
-tables, resolving §8's three open questions explicitly before or during
-that build.
+already reasoned through in `docs/mysql-schema-v1.md` §5.5/§5.6/§6/§7,
+**with one identified gap**: `delivery_order`'s open-document uniqueness
+is scoped by `shipment_group`, which contradicts the final "one DO per
+store, many shipment groups" rule. §8.2 audits the exact constraint
+(`uq_delivery_order_open` on the generated `open_key` column, effectively
+`(tanggal, store_id, shipment_group)`) and designs its additive fix (a new
+`open_key_by_store`/`uq_delivery_order_open_store` pair scoped to
+`(tanggal, store_id)` only, added alongside — never replacing — the
+existing one).
+
+**Can Phase 4 (FG/Packing) proceed without any schema change?** **Yes.**
+The §8.2 fix is scoped entirely to `delivery_order`'s own uniqueness
+identity — it has no interaction with `fg_batch`/`fg_batch_source`/
+`fg_item`, and Phase 4 does not read or write `delivery_order`/`shipment`
+at all (§6). The §8.2 migration is Phase 5's to apply, when Phase 5
+begins, not Phase 4's.
