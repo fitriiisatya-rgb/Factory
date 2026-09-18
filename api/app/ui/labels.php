@@ -74,7 +74,7 @@ function ui_status_color(string $label): string
         'Sudah Disubmit', 'Sesuai Target', 'Sesuai Produksi', 'Selesai Dipacking', 'Terkirim Penuh',
         'Terverifikasi FG', 'Aktif', 'Terkirim', 'Diterima Sesuai', 'Diverifikasi Admin',
     ];
-    static $danger = ['Overproduction', 'Dibatalkan', 'Error', 'Melebihi Produksi', 'Packing Melebihi FG'];
+    static $danger = ['Overproduction', 'Dibatalkan', 'Error', 'Melebihi Produksi', 'Packing Melebihi FG', 'Nonaktif'];
 
     if (in_array($label, $danger, true)) {
         return 'danger';

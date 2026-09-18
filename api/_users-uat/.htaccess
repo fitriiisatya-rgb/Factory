@@ -1,0 +1,4 @@
+# Defense in depth only — the page itself requires a real ADMIN login
+# session plus a matching CSRF token on every mutating action. This just
+# stops directory listing from leaking filenames.
+Options -Indexes

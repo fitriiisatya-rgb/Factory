@@ -18,6 +18,7 @@ use Amor\Api\Controllers\ProductController;
 use Amor\Api\Controllers\ProductionController;
 use Amor\Api\Controllers\ReceiptController;
 use Amor\Api\Controllers\StoreController;
+use Amor\Api\Controllers\UserController;
 
 /**
  * Wires routes + cross-cutting guards. Shared by the real front controller
@@ -127,6 +128,16 @@ final class App
         // Phase 5.5 — Admin discrepancy verification (ADMIN-only, normal session/CSRF).
         $router->get('/api/admin/receipts', [ReceiptController::class, 'adminList']);
         $router->post('/api/admin/receipts/{id}/verify', [ReceiptController::class, 'adminVerify']);
+
+        // User / Driver Account Management (ADMIN-only, normal session/CSRF/Idempotency-Key —
+        // same guards as every other mutating route, nothing special-cased).
+        $router->get('/api/users', [UserController::class, 'index']);
+        $router->post('/api/users', [UserController::class, 'create']);
+        $router->put('/api/users/{id}', [UserController::class, 'update']);
+        $router->put('/api/users/{id}/roles', [UserController::class, 'updateRoles']);
+        $router->post('/api/users/{id}/reset-password', [UserController::class, 'resetPassword']);
+        $router->post('/api/users/{id}/activate', [UserController::class, 'activate']);
+        $router->post('/api/users/{id}/deactivate', [UserController::class, 'deactivate']);
 
         $routeKey = $request->method . ' ' . $request->path;
         // The public receipt-confirm route has no session, so it has no CSRF
