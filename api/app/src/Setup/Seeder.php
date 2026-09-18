@@ -42,6 +42,7 @@ final class Seeder
             ['DELIVERY', 'Delivery'],
             ['FINANCE', 'Finance'],
             ['MANAGEMENT_VIEWER', 'Management Viewer'],
+            ['DRIVER', 'Driver'],
         ];
         $stmt = $this->pdo->prepare('INSERT INTO roles (code, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name)');
         foreach ($roles as [$code, $name]) {

@@ -74,6 +74,12 @@ table.print-table tfoot td { font-weight: 700; background: #fafafa; border-top: 
 .print-notes > b { display: block; font-size: 9px; text-transform: uppercase; color: #666; letter-spacing: .03em; margin-bottom: 4px; }
 .print-notes-body { min-height: 14px; line-height: 1.5; }
 
+/* Phase 5.5 receipt QR — read-only, printed on every non-cancelled DO. */
+.print-receipt-qr { display: flex; align-items: center; gap: 10px; margin: 4px 0 18px; position: relative; z-index: 1; }
+.print-receipt-qr-code { line-height: 0; flex: none; }
+.print-receipt-qr-code svg { width: 72px; height: 72px; display: block; }
+.print-receipt-qr-label { font-size: 9px; color: #666; text-transform: uppercase; letter-spacing: .03em; line-height: 1.4; }
+
 .print-sign-grid { display: flex; justify-content: space-between; margin-top: 36px; text-align: center; position: relative; z-index: 1; }
 .print-sign-box { width: 30%; font-size: 11px; }
 .print-sign-line { margin-top: 46px; border-top: 1px solid #333; padding-top: 4px; }

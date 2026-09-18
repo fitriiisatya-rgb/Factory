@@ -7,6 +7,7 @@ namespace Amor\Api;
 use Amor\Api\Controllers\Admin\MigrationController;
 use Amor\Api\Controllers\AuthController;
 use Amor\Api\Controllers\DashboardController;
+use Amor\Api\Controllers\DispatchController;
 use Amor\Api\Controllers\DivisionController;
 use Amor\Api\Controllers\DoController;
 use Amor\Api\Controllers\FactoryController;
@@ -15,6 +16,7 @@ use Amor\Api\Controllers\HealthController;
 use Amor\Api\Controllers\PoController;
 use Amor\Api\Controllers\ProductController;
 use Amor\Api\Controllers\ProductionController;
+use Amor\Api\Controllers\ReceiptController;
 use Amor\Api\Controllers\StoreController;
 
 /**
@@ -105,8 +107,34 @@ final class App
         $router->post('/api/admin/migration/stores/{id}/resolve', [MigrationController::class, 'resolveStore']);
         $router->post('/api/admin/migration/stores/{id}/flag-conflict', [MigrationController::class, 'flagConflictStore']);
 
+        // Phase 5.5 — Driver portal (session auth + role DRIVER/ADMIN, CSRF required like every other mutating route).
+        $router->get('/api/dispatch/available', [DispatchController::class, 'available']);
+        $router->post('/api/dispatch/claim', [DispatchController::class, 'claim']);
+        $router->post('/api/dispatch/claims/{id}/release', [DispatchController::class, 'release']);
+        $router->get('/api/dispatch/mine', [DispatchController::class, 'mine']);
+        $router->get('/api/dispatch/route', [DispatchController::class, 'route']);
+        $router->post('/api/dispatch/route/reorder', [DispatchController::class, 'reorderRoute']);
+        $router->get('/api/dispatch/route/stops/{storeId}', [DispatchController::class, 'stopDetail']);
+        $router->post('/api/dispatch/departures', [DispatchController::class, 'departures']);
+        $router->get('/api/dispatch/history', [DispatchController::class, 'history']);
+
+        // Phase 5.5 — Store Receipt portal. PUBLIC (no session): the
+        // high-entropy {token} path segment IS the access control, never a
+        // raw delivery_order_id — see ReceiptController's own docblock.
+        $router->get('/api/receive/{token}', [ReceiptController::class, 'publicView']);
+        $router->post('/api/receive/{token}/shipments/{shipmentId}/confirm', [ReceiptController::class, 'confirm']);
+
+        // Phase 5.5 — Admin discrepancy verification (ADMIN-only, normal session/CSRF).
+        $router->get('/api/admin/receipts', [ReceiptController::class, 'adminList']);
+        $router->post('/api/admin/receipts/{id}/verify', [ReceiptController::class, 'adminVerify']);
+
         $routeKey = $request->method . ' ' . $request->path;
-        if ($request->method !== 'GET' && !in_array($routeKey, self::CSRF_EXEMPT, true)) {
+        // The public receipt-confirm route has no session, so it has no CSRF
+        // token to check — same "no session exists yet" reasoning as the
+        // login exemption above, scoped by prefix since {token}/{shipmentId}
+        // are dynamic segments a literal CSRF_EXEMPT string can't match.
+        $isPublicReceiptConfirm = $request->method === 'POST' && str_starts_with($request->path, '/api/receive/');
+        if ($request->method !== 'GET' && !in_array($routeKey, self::CSRF_EXEMPT, true) && !$isPublicReceiptConfirm) {
             // CSRF is checked centrally, before the handler runs, per
             // docs/php-api-contract-v1.md §1 rule 3 — no handler can forget it.
             Csrf::verify($request);

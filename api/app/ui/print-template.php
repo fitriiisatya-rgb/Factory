@@ -13,6 +13,27 @@ declare(strict_types=1);
  * rule than the service already used — no business logic lives here.
  */
 
+use Amor\Api\Dispatch\ReceiptService;
+use Amor\Api\Ui\QrEncoder;
+
+/**
+ * Phase 5.5, Part G/J — a stable receipt QR printed on Draft/Preprint (and
+ * any non-cancelled) DO, pointing at the public Store Receipt portal. The
+ * token is get-or-created lazily on first print (ReceiptService::
+ * getReceiptToken() — see its own docblock for why this one write is
+ * safe): it never touches delivery_order itself, never changes its
+ * version/status, never creates a shipment, never consumes FG. Cancelled
+ * DOs get no QR — there is nothing for a store to ever receive against.
+ */
+function ui_do_receipt_qr_svg(PDO $pdo, int $doId): string
+{
+    $token = (new ReceiptService($pdo))->getReceiptToken($doId);
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $url = "{$scheme}://{$host}/api/_receive/?token={$token}";
+    return QrEncoder::toSvg($url, 3);
+}
+
 /**
  * Distinct factory name(s) for a DO's items, joined — a DO can legitimately
  * span two factories (locked cross-factory-store design), so this is never
@@ -52,8 +73,11 @@ function ui_print_status(string $status): array
  * @param string $printedByName the current session user's display name (task section 8 — safely available, shown small, signature box stays either way)
  * @param int $pageNum 1-based page number within this print job
  * @param int $pageTotal total pages in this print job
+ * @param PDO $pdo used ONLY to get-or-create this DO's receipt QR token (Phase 5.5, Part G/J) —
+ *        no other read/write happens through it here; every other field above already came
+ *        from the caller's own DoService::getDo() DTO.
  */
-function ui_render_do_print_document(array $do, string $factoryLabel, string $printedByName, int $pageNum = 1, int $pageTotal = 1): void
+function ui_render_do_print_document(array $do, string $factoryLabel, string $printedByName, int $pageNum, int $pageTotal, PDO $pdo): void
 {
     $status = ui_print_status($do['status']);
     ?>
@@ -120,6 +144,13 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
     <b>Catatan</b>
     <div class="print-notes-body"><?= $do['catatan'] !== null && trim((string) $do['catatan']) !== '' ? nl2br(ui_esc((string) $do['catatan'])) : '&nbsp;' ?></div>
   </div>
+
+  <?php if ($do['status'] !== 'cancelled'): ?>
+  <div class="print-receipt-qr">
+    <div class="print-receipt-qr-code"><?= ui_do_receipt_qr_svg($pdo, (int) $do['doId']) ?></div>
+    <div class="print-receipt-qr-label">Scan untuk Konfirmasi<br>Penerimaan Barang</div>
+  </div>
+  <?php endif; ?>
 
   <div class="print-sign-grid">
     <div class="print-sign-box"><div class="print-sign-line">Disiapkan Oleh</div></div>

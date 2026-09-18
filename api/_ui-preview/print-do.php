@@ -59,6 +59,6 @@ header('Content-Type: text/html; charset=utf-8');
   <button type="button" class="primary" onclick="window.print()">Cetak</button>
 </div>
 
-<?php ui_render_do_print_document($do, $factoryLabel, $printedByName, 1, 1); ?>
+<?php ui_render_do_print_document($do, $factoryLabel, $printedByName, 1, 1, $ui['pdo']); ?>
 </body>
 </html>

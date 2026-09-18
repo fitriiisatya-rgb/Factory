@@ -23,6 +23,7 @@ function ui_nav_items(): array
         ['key' => 'fg-packing', 'label' => 'FG & Packing', 'icon' => 'box'],
         ['key' => 'delivery-order', 'label' => 'Delivery Order', 'icon' => 'file'],
         ['key' => 'pengiriman', 'label' => 'Pengiriman', 'icon' => 'truck'],
+        ['key' => 'konfirmasi-toko', 'label' => 'Konfirmasi Toko', 'icon' => 'user'],
     ];
 }
 

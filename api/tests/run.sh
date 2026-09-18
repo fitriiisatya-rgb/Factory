@@ -141,7 +141,7 @@ AFTER_STORES=$(mariadb --socket="$SOCK" -u root "$DB_NAME" -N -e "SELECT COUNT(*
 
 echo "tables: $BEFORE_TABLES -> $AFTER_TABLES | factories: $BEFORE_FACTORIES -> $AFTER_FACTORIES | roles: $BEFORE_ROLES -> $AFTER_ROLES | synthetic store rows: $BEFORE_STORES -> $AFTER_STORES"
 if [ "$BEFORE_TABLES" = "$AFTER_TABLES" ] && [ "$BEFORE_FACTORIES" = "$AFTER_FACTORIES" ] && [ "$AFTER_FACTORIES" = "2" ] \
-   && [ "$BEFORE_ROLES" = "$AFTER_ROLES" ] && [ "$AFTER_ROLES" = "7" ] \
+   && [ "$BEFORE_ROLES" = "$AFTER_ROLES" ] && [ "$AFTER_ROLES" = "8" ] \
    && [ "$BEFORE_STORES" = "$AFTER_STORES" ] && [ "$AFTER_STORES" = "1" ]; then
   echo "PASS  rerunning migrate.php + seed.php did not duplicate anything"
 else

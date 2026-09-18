@@ -1,0 +1,135 @@
+/*
+ * Amor Factory System — Driver portal (Phase 5.5). Mobile-first, dark,
+ * large touch targets, bottom tab bar — matches the reference mockup.
+ * Uses the SAME design tokens as the desktop app (tokens.css) so colors
+ * stay consistent app-wide, but never loads app.css's sidebar/topbar
+ * shell (this is a deliberately separate, mobile-only preview — task's
+ * own "Do NOT expose it as production main UI yet").
+ */
+
+html, body.driver-body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.driver-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.driver-topbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.driver-topbar-logo { border-radius: 50%; flex: none; }
+.driver-topbar-title { font-weight: 700; font-size: var(--text-lg); flex: 1; }
+.driver-topbar-user { font-size: var(--text-xs); color: var(--text-muted); }
+
+.driver-main { flex: 1; padding: 14px 14px 90px; }
+
+.driver-tabbar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+  max-width: 520px; margin: 0 auto;
+  display: flex; background: var(--surface); border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.driver-tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 10px 4px 8px; color: var(--text-muted); text-decoration: none; font-size: var(--text-xs);
+}
+.driver-tab.active { color: var(--primary); }
+
+.driver-filter-row { display: flex; gap: 8px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 2px; }
+.driver-chip {
+  flex: none; padding: 8px 14px; border-radius: 999px; background: var(--surface-2); color: var(--text-muted);
+  border: 1px solid var(--border); font-size: var(--text-sm); font-weight: 600; cursor: pointer;
+}
+.driver-chip.active { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+
+.driver-search {
+  width: 100%; box-sizing: border-box; padding: 10px 14px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-size: var(--text-base);
+  margin-bottom: 12px;
+}
+
+.driver-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 14px; margin-bottom: 12px; box-shadow: var(--shadow-card);
+}
+.driver-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.driver-card-title { font-weight: 700; font-size: var(--text-base); }
+.driver-card-sub { font-size: var(--text-xs); color: var(--text-muted); margin-top: 2px; }
+.driver-badge {
+  font-size: var(--text-xs); font-weight: 700; padding: 3px 10px; border-radius: 999px; flex: none;
+  background: var(--neutral-soft); color: var(--neutral);
+}
+.driver-badge.main { background: var(--primary-soft); color: var(--primary); }
+.driver-badge.pastry { background: var(--warning-soft); color: var(--warning); }
+.driver-badge.success { background: var(--success-soft); color: var(--success); }
+.driver-badge.danger { background: var(--danger-soft); color: var(--danger); }
+
+.driver-row { display: flex; justify-content: space-between; font-size: var(--text-sm); padding: 4px 0; color: var(--text-muted); }
+.driver-row b { color: var(--text); font-weight: 600; }
+
+.driver-qty-input {
+  width: 84px; padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-size: var(--text-base); text-align: right;
+}
+
+.driver-btn {
+  display: block; width: 100%; box-sizing: border-box; padding: 13px 16px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-weight: 700;
+  font-size: var(--text-base); text-align: center; cursor: pointer; text-decoration: none;
+}
+.driver-btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.driver-btn.success { background: var(--success); border-color: var(--success); color: #06210f; }
+.driver-btn.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+.driver-btn.small { padding: 8px 12px; font-size: var(--text-sm); width: auto; display: inline-block; }
+.driver-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.driver-select-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.driver-select-row input[type="checkbox"] { width: 20px; height: 20px; flex: none; }
+
+.driver-sticky-bar {
+  position: sticky; bottom: 78px; z-index: 5; background: var(--bg); padding-top: 8px;
+}
+
+.driver-empty { text-align: center; padding: 48px 16px; color: var(--text-muted); }
+.driver-empty svg { opacity: .4; margin-bottom: 10px; }
+
+.driver-notice {
+  padding: 10px 12px; border-radius: var(--radius); background: var(--warning-soft); color: var(--warning);
+  font-size: var(--text-sm); margin-bottom: 12px;
+}
+
+.driver-summary-strip {
+  display: flex; gap: 10px; margin-bottom: 14px;
+}
+.driver-summary-item {
+  flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px; text-align: center;
+}
+.driver-summary-value { font-size: var(--text-xl); font-weight: 800; }
+.driver-summary-label { font-size: var(--text-xs); color: var(--text-muted); margin-top: 2px; }
+
+.driver-route-stop {
+  display: flex; align-items: center; gap: 12px; padding: 12px; margin-bottom: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.driver-route-seq {
+  width: 28px; height: 28px; border-radius: 50%; background: var(--surface-2); color: var(--text);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: var(--text-sm); flex: none;
+}
+.driver-route-body { flex: 1; }
+.driver-route-actions { display: flex; flex-direction: column; gap: 4px; }
+.driver-route-move { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; width: 30px; height: 26px; cursor: pointer; }
+
+.driver-success-box { text-align: center; padding: 30px 16px; }
+.driver-success-icon { color: var(--success); margin-bottom: 12px; }

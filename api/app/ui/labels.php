@@ -45,6 +45,17 @@ function ui_shipment_status_label(string $status): string
     ][$status] ?? ucfirst($status);
 }
 
+/** shipment_receipt.status (or the synthetic 'belum_dikonfirmasi' when no receipt row exists yet). */
+function ui_receipt_status_label(string $status): string
+{
+    return [
+        'belum_dikonfirmasi' => 'Belum Dikonfirmasi',
+        'confirmed_ok' => 'Diterima Sesuai',
+        'confirmed_discrepancy' => 'Ada Selisih',
+        'verified' => 'Diverifikasi Admin',
+    ][$status] ?? ucfirst($status);
+}
+
 /**
  * Maps an already-Indonesian label (from any *StatusLabel field the
  * services compute, or from the maps above) to one of the 5 badge colors
@@ -53,15 +64,15 @@ function ui_shipment_status_label(string $status): string
  */
 function ui_status_color(string $label): string
 {
-    static $neutral = ['Belum Diproduksi', 'Belum Diverifikasi', 'Belum Dikirim', 'Belum Dipacking', 'Belum Dimulai'];
+    static $neutral = ['Belum Diproduksi', 'Belum Diverifikasi', 'Belum Dikirim', 'Belum Dipacking', 'Belum Dimulai', 'Belum Dikonfirmasi'];
     static $primary = ['Draft', 'Siap Diproses', 'Belum Diverifikasi FG'];
     static $warning = [
         'Dibuka Kembali', 'Sebagian Terverifikasi', 'Belum Sesuai Target', 'Sebagian Dikirim',
-        'Sudah Preprint', 'Selisih', 'Sebagian Dipacking',
+        'Sudah Preprint', 'Selisih', 'Sebagian Dipacking', 'Ada Selisih', 'Menunggu Konfirmasi',
     ];
     static $success = [
         'Sudah Disubmit', 'Sesuai Target', 'Sesuai Produksi', 'Selesai Dipacking', 'Terkirim Penuh',
-        'Terverifikasi FG', 'Aktif', 'Terkirim',
+        'Terverifikasi FG', 'Aktif', 'Terkirim', 'Diterima Sesuai', 'Diverifikasi Admin',
     ];
     static $danger = ['Overproduction', 'Dibatalkan', 'Error', 'Melebihi Produksi', 'Packing Melebihi FG'];
 

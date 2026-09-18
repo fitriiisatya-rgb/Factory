@@ -64,7 +64,7 @@ header('Content-Type: text/html; charset=utf-8');
 <?php endif; ?>
 
 <?php foreach ($docs as $i => $do): ?>
-<?php ui_render_do_print_document($do, ui_print_factory_label($do, $factoryNamesById), $printedByName, $i + 1, $pageTotal); ?>
+<?php ui_render_do_print_document($do, ui_print_factory_label($do, $factoryNamesById), $printedByName, $i + 1, $pageTotal, $ui['pdo']); ?>
 <?php endforeach; ?>
 </body>
 </html>
