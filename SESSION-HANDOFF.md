@@ -7,7 +7,43 @@ full, before doing anything else. It is written to let a fresh session with
 zero prior context resume exactly where the last one stopped, without
 re-deriving decisions that have already been made and validated.
 
-Written: 2026-09-18. Last commit at time of writing: `ac07251`.
+Written: 2026-09-18. Last commit at time of writing: `bb3a5a9` (superseded
+`ac07251` — see the addendum immediately below for what changed since).
+
+---
+
+## 0. ADDENDUM (2026-09-18, later same day) — real cPanel Apache bug found & fixed
+
+After this handoff doc was first written, the user did REAL cPanel UAT with
+the Phase 5.5 package and found a second, more severe bug that none of this
+project's own validation had caught: **every browser-facing CSS/JS/image
+asset lived under `api/app/ui/assets/`, but `api/app/.htaccess` is
+`Require all denied`** (correctly — that directory holds source code and
+config and must never be web-reachable). On real Apache this meant the
+Driver portal, Store Receipt portal, admin UI, DO print, and Invoice
+preview all rendered as unstyled HTML with a broken logo — every asset
+request was silently 403'd. **This was invisible to every test in this repo
+up to that point because `php -S` (used by every `run-*.sh` orchestrator
+and every earlier `dist/validate-*.sh`) ignores `.htaccess` entirely.**
+
+Fixed in commit `bb3a5a9`: all static assets moved to a new public
+`api/assets/` directory (sibling of `api/app/`, outside the deny-all
+boundary); every PHP template updated to reference `/api/assets/...`;
+`api/app/.htaccess` itself left untouched. **New, load-bearing lesson for
+whoever continues this project: `php -S`-based validation cannot catch
+`.htaccess`-dependent bugs.** A real Apache + PHP-FPM validation script now
+exists — `dist/validate-phase55-apache-assets.sh` — installed via
+`apt-get install apache2 php8.3-fpm php8.3-mysql` (plain Ubuntu archive,
+NOT the sury/ondrej PPA, which is blocked by this sandbox's egress proxy).
+It stands up a real vhost with `AllowOverride All` (matching real cPanel)
+against the extracted, shipped ZIP and asserts `api/app/*` is 403 while
+`api/assets/*` is 200. **Any future phase that adds a new browser-facing
+page or asset should be checked against this real-Apache script, not just
+the `php -S` orchestrators** — the latter will pass even if the page is
+completely unusable in production.
+
+Full details of the root cause, fix, and validation are in this file's own
+git history (`git show bb3a5a9`) and in that commit's message.
 
 ---
 
