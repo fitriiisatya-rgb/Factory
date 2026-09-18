@@ -8,7 +8,44 @@ re-deriving decisions that have already been made and validated. This is a
 full rewrite (not an incremental patch) — it supersedes any earlier version
 of this file you may find in git history.
 
-Written: 2026-09-18. Last commit at time of writing: `a183518`.
+Written: 2026-09-18. Last commit at time of writing: `0930baf` (see the
+addendum immediately below for what changed since `a183518`, which is what
+this file's body still describes in detail — that content is still
+accurate, just missing the one module added after it was written).
+
+---
+
+## 0. ADDENDUM (2026-09-18, later same day) — ADMIN User / Driver Account Management added
+
+A new module was added on top of everything below: `api/_users-uat/`, an
+ADMIN-only page (standalone, same side-by-side UAT convention as
+`_driver-uat/`/`_do-uat/`, NOT wired into `layout.php`'s sidebar) that lets
+an admin create/edit/deactivate/reactivate/reset-password/change-roles for
+any user — the missing piece that was blocking real Phase 5.5 UAT (it
+needs at least 2 DRIVER accounts, and there was no way to create them
+without phpMyAdmin/manual SQL).
+
+**No migration was needed** — `users.active`, the `username` UNIQUE
+constraint, `password_hash`, and the `roles`/`user_roles` M:N junction all
+already existed since migration 0001 and already fully supported this.
+New code: `api/app/src/Users/{UserRepository,UserService}.php`,
+`api/app/src/Controllers/UserController.php` (+ `/api/users/*` routes in
+`App.php`), `api/_users-uat/index.php`, `api/assets/js/users.js`. A
+"never zero active ADMIN users" safeguard blocks deactivating or
+de-roling the last active admin (409). `PhaseUserMgmtTest.php` (UM-01..16,
+including real end-to-end login checks against the actual
+`/_driver-uat/login.php` and `/_admin-login/` HTML pages, not just the
+JSON API) + full Phase 0-5.5 regression (UM-17) all pass. Also validated
+with real Apache (`dist/validate-user-management-apache.sh`), applying the
+§7.1 lesson: the new `users.js` correctly lives under `api/assets/js/`,
+never under the deny-all `api/app/`.
+
+Committed as `0930baf`, pushed. Package:
+`dist/amor-factory-api-user-management-easy.zip` (files-only, no
+migration). If the user's next ask is "create Driver A / Driver B" or
+"resume Phase 5.5 UAT," this module is how — walk them to
+`api/_users-uat/` (or use `dist/README-FIRST-CPANEL-USER-MANAGEMENT.md`'s
+own step-by-step).
 
 ---
 
