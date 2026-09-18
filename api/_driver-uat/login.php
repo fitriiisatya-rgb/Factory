@@ -47,11 +47,11 @@ function driver_login_render_form(?string $error = null): void
 <!DOCTYPE html>
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow">
 <title>Login Driver — Amor Factory</title>
-<link rel="stylesheet" href="/api/app/ui/assets/css/receipt.css">
+<link rel="stylesheet" href="/api/assets/css/receipt.css">
 </head><body class="rc-body">
 <div class="rc-shell">
   <div class="rc-header">
-    <img src="/api/app/ui/assets/img/amor-logo.png" alt="Amor" width="36" height="36">
+    <img src="/api/assets/img/amor-logo.png" alt="Amor" width="36" height="36">
     <div><div class="rc-header-title">Login Driver</div><div class="rc-header-sub">Amor Factory System</div></div>
   </div>
   <div class="rc-card">

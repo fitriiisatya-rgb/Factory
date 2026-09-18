@@ -43,7 +43,7 @@ function ui_render_invoice_print_document(array $invoice, int $pageNum = 1, int 
 <div class="print-page inv-page">
   <div class="print-header inv-header">
     <div class="print-brand">
-      <img class="print-brand-mark" src="/api/app/ui/assets/img/amor-logo.png" alt="Amor" width="44" height="44">
+      <img class="print-brand-mark" src="/api/assets/img/amor-logo.png" alt="Amor" width="44" height="44">
       <div>
         <div class="print-brand-name">Amor Cakes &amp; Bakery</div>
         <?php if (trim((string) ($invoice['companyAddress'] ?? '')) !== ''): ?>

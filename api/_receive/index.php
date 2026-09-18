@@ -59,12 +59,12 @@ header('Content-Type: text/html; charset=utf-8');
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>Konfirmasi Penerimaan Barang</title>
-<link rel="stylesheet" href="/api/app/ui/assets/css/receipt.css">
+<link rel="stylesheet" href="/api/assets/css/receipt.css">
 </head>
 <body class="rc-body">
 <div class="rc-shell">
   <div class="rc-header">
-    <img src="/api/app/ui/assets/img/amor-logo.png" alt="Amor" width="36" height="36">
+    <img src="/api/assets/img/amor-logo.png" alt="Amor" width="36" height="36">
     <div>
       <div class="rc-header-title">Konfirmasi Penerimaan Barang</div>
       <div class="rc-header-sub">Amor Cakes &amp; Bakery</div>
@@ -79,7 +79,7 @@ header('Content-Type: text/html; charset=utf-8');
     window.RECEIPT_TOKEN = <?= json_encode($token) ?>;
     window.RECEIPT_VIEW = <?= json_encode($view, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
   </script>
-  <script src="/api/app/ui/assets/js/receipt.js"></script>
+  <script src="/api/assets/js/receipt.js"></script>
   <?php endif; ?>
 </div>
 </body>

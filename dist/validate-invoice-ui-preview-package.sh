@@ -38,7 +38,7 @@ mkdir -p "$EXTRACT_DIR"
 [ -f "$EXTRACT_DIR/api/_ui-preview/invoice-preview.php" ] || { echo "REFUSING: invoice-preview.php missing from extracted package"; exit 1; }
 [ -f "$EXTRACT_DIR/api/app/ui/print-invoice-template.php" ] || { echo "REFUSING: print-invoice-template.php missing from extracted package"; exit 1; }
 [ -f "$EXTRACT_DIR/api/app/ui/fixtures/invoice-mock.php" ] || { echo "REFUSING: invoice-mock.php fixture missing from extracted package"; exit 1; }
-[ -f "$EXTRACT_DIR/api/app/ui/assets/img/amor-logo.png" ] || { echo "REFUSING: amor-logo.png missing from extracted package"; exit 1; }
+[ -f "$EXTRACT_DIR/api/assets/img/amor-logo.png" ] || { echo "REFUSING: amor-logo.png missing from extracted package"; exit 1; }
 [ -f "$EXTRACT_DIR/api/app/config/config.php" ] && { echo "REFUSING: extracted package contains a config.php — credentials leaked into the ZIP"; exit 1; }
 echo "extracted OK: $(find "$EXTRACT_DIR" -type f | wc -l) files"
 
@@ -86,11 +86,11 @@ return [
 ];
 PHPCONFIG
 
-echo "--- 5/8: router script (extracted-tree-local) so /api/app/ui/assets/*.css|png serve correctly under php -S ---"
+echo "--- 5/8: router script (extracted-tree-local) so /api/assets/*.css|png serve correctly under php -S ---"
 cat > "$WORKDIR/router.php" <<PHPROUTER
 <?php
 \$uri = urldecode((string) parse_url((string) \$_SERVER['REQUEST_URI'], PHP_URL_PATH));
-if (preg_match('#^/api/(app/ui/assets/[\w./-]+\.(css|js|png|jpg|jpeg|svg))\$#', \$uri, \$m)) {
+if (preg_match('#^/api/(assets/[\w./-]+\.(css|js|png|jpg|jpeg|svg))\$#', \$uri, \$m)) {
     \$file = '$EXTRACT_DIR/api/' . \$m[1];
     if (is_file(\$file)) {
         \$types = ['css' => 'text/css; charset=UTF-8', 'js' => 'application/javascript; charset=UTF-8', 'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'svg' => 'image/svg+xml'];

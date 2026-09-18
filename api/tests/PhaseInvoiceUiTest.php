@@ -163,7 +163,7 @@ expect($page['status'] === 200, 'setup: expected invoice preview to load 200');
 $body = $page['body'];
 
 runTest('INV-UI02 logo/header renders (Amor logo image + Amor Cakes & Bakery brand name)', function () use ($body) {
-    expect(str_contains($body, '/api/app/ui/assets/img/amor-logo.png'), 'expected the shared Amor logo image to be referenced');
+    expect(str_contains($body, '/api/assets/img/amor-logo.png'), 'expected the shared Amor logo image to be referenced');
     expect(str_contains($body, 'Amor Cakes &amp; Bakery') || str_contains($body, 'Amor Cakes & Bakery'), 'expected the Amor Cakes & Bakery brand name');
     expect(!str_contains($body, 'Amor Factory System</div>') && !preg_match('/print-brand-name">\s*Amor Factory System/', $body), 'the printed brand title must not be "Amor Factory System"');
 });
@@ -216,7 +216,7 @@ runTest('INV-UI11 quantities and prices are right-aligned with Indonesian Rp for
 });
 
 runTest('INV-UI12 print CSS hides preview toolbar/notice under @media print', function () {
-    $css = file_get_contents(__DIR__ . '/../app/ui/assets/css/print-invoice.css');
+    $css = file_get_contents(__DIR__ . '/../assets/css/print-invoice.css');
     expect($css !== false, 'expected print-invoice.css to exist');
     expect(preg_match('/@media\s+print\s*\{(.*)\}\s*$/s', $css, $m) === 1, 'expected an @media print block');
     $printBlock = $m[1];
@@ -224,7 +224,7 @@ runTest('INV-UI12 print CSS hides preview toolbar/notice under @media print', fu
 });
 
 runTest('INV-UI13 A4 print layout is declared', function () {
-    $css = file_get_contents(__DIR__ . '/../app/ui/assets/css/print-invoice.css');
+    $css = file_get_contents(__DIR__ . '/../assets/css/print-invoice.css');
     expect((bool) preg_match('/@page\s*\{\s*size:\s*A4\s+portrait/', (string) $css), 'expected @page { size: A4 portrait } in print-invoice.css');
 });
 

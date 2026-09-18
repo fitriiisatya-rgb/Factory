@@ -29,7 +29,7 @@
 #
 # What is new in THIS pass (all UI/print-template only — Phase 6 Invoice
 # transaction logic is NOT implemented):
-#   - api/app/ui/assets/img/amor-logo.png (new) — the real Amor Group logo
+#   - api/assets/img/amor-logo.png (new) — the real Amor Group logo
 #     asset, now used on BOTH the DO print header and the Invoice header.
 #   - api/app/ui/print-invoice-template.php (new) — the ONE shared render
 #     function the invoice preview page calls; takes a plain PHP array DTO
@@ -38,7 +38,7 @@
 #   - api/app/ui/fixtures/invoice-mock.php (new) — a clearly-marked MOCK
 #     fixture (see its own docblock) used ONLY by the preview page below;
 #     never touches any database table.
-#   - api/app/ui/assets/css/print-invoice.css (new) — cream/white/brown
+#   - api/assets/css/print-invoice.css (new) — cream/white/brown
 #     Amor Cakes & Bakery print theme, same dark-screen/white-print split
 #     as the DO's print.css (dark mode never produces a dark printed
 #     invoice).
@@ -96,7 +96,7 @@ cp -r "$REPO_ROOT/api/app/src" "$STAGE/api/app/src"
 cp -r "$REPO_ROOT/api/app/ui" "$STAGE/api/app/ui"
 [ -f "$STAGE/api/app/ui/print-invoice-template.php" ] || { echo "REFUSING TO BUILD: shared print-invoice-template.php missing"; exit 1; }
 [ -f "$STAGE/api/app/ui/fixtures/invoice-mock.php" ] || { echo "REFUSING TO BUILD: invoice-mock.php fixture missing"; exit 1; }
-[ -f "$STAGE/api/app/ui/assets/img/amor-logo.png" ] || { echo "REFUSING TO BUILD: amor-logo.png asset missing"; exit 1; }
+[ -f "$STAGE/api/assets/img/amor-logo.png" ] || { echo "REFUSING TO BUILD: amor-logo.png asset missing"; exit 1; }
 mkdir -p "$STAGE/api/app/config"
 cp "$REPO_ROOT/api/app/config/config.example.php" "$STAGE/api/app/config/config.example.php"
 cp -r "$REPO_ROOT/api/app/migrations" "$STAGE/api/app/migrations"

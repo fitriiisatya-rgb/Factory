@@ -30,7 +30,7 @@
 #   - api/app/ui/print-template.php (new) — the ONE shared render function
 #     both print-do.php and print-do-bulk.php now call, so single and
 #     bulk print can never drift apart.
-#   - api/app/ui/assets/css/print.css (redesigned) — dark on-screen
+#   - api/assets/css/print.css (redesigned) — dark on-screen
 #     backdrop behind a centered, shadowed white A4 "sheet" (matches the
 #     reference mockup); @media print strips the dark backdrop/shadow/
 #     toolbar so the ACTUAL printed page is always plain white — dark

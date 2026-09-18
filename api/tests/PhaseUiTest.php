@@ -385,7 +385,7 @@ runTest('UI-13 ship still rejects a qty exceeding FG available (unweakened valid
 });
 
 runTest('UI-14 responsive: no forced horizontal page scroll, tablet breakpoints present', function () use ($http) {
-    $css = $http->request('GET', '/api/app/ui/assets/css/app.css');
+    $css = $http->request('GET', '/api/assets/css/app.css');
     expect($css['status'] === 200, 'expected app.css to be servable');
     expect(str_contains($css['body'], '@media (max-width: 900px)'), 'expected a tablet-width breakpoint in app.css');
     expect(str_contains($css['body'], 'overflow-x: hidden'), 'expected the page to never force whole-page horizontal scroll');
@@ -432,7 +432,7 @@ runTest('UI-16 redesigned DO print page renders with the correct watermark', fun
 });
 
 runTest('UI-17 print stylesheet forces a white background regardless of dark mode', function () use ($http) {
-    $css = $http->request('GET', '/api/app/ui/assets/css/print.css');
+    $css = $http->request('GET', '/api/assets/css/print.css');
     expect($css['status'] === 200, 'expected print.css to be servable');
     expect(str_contains($css['body'], '@page'), 'expected an @page rule for A4 sizing');
     expect(preg_match('/background:\s*#fff/', $css['body']) === 1, 'expected the print document to force a white background');

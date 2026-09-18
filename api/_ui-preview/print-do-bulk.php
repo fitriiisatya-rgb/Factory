@@ -50,7 +50,7 @@ header('Content-Type: text/html; charset=utf-8');
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>Print Bulk DO — <?= ui_esc($tanggal) ?></title>
-<link rel="stylesheet" href="/api/app/ui/assets/css/print.css">
+<link rel="stylesheet" href="/api/assets/css/print.css">
 </head>
 <body class="print-doc">
 <div class="print-toolbar">

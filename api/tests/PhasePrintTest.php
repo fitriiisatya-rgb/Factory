@@ -360,7 +360,7 @@ runTest('PRINT-08 watermark matches DO status for every lifecycle state', functi
 });
 
 runTest('PRINT-09 print CSS hides on-screen UI controls when printing', function () use ($http) {
-    $css = $http->request('GET', '/api/app/ui/assets/css/print.css');
+    $css = $http->request('GET', '/api/assets/css/print.css');
     expect($css['status'] === 200, 'expected print.css to be servable');
     expect((bool) preg_match('/@media\s+print\s*\{(.*)\}\s*$/s', $css['body'], $m), 'expected an @media print block in print.css');
     $printBlock = $m[1] ?? '';

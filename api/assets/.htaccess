@@ -1,0 +1,5 @@
+# Public static browser assets (CSS/JS/images) ONLY. Nothing here is PHP,
+# nothing here reads config/DB — this directory is intentionally reachable
+# over HTTP, unlike api/app/ (see api/app/.htaccess's own deny-all). Only
+# directory listing is turned off.
+Options -Indexes

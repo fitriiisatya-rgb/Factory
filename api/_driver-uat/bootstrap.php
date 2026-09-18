@@ -74,13 +74,13 @@ function driver_page_head(array $ui, string $active, string $title): void
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title><?= ui_esc($title) ?> — Amor Factory Driver</title>
-<link rel="stylesheet" href="/api/app/ui/assets/css/tokens.css">
-<link rel="stylesheet" href="/api/app/ui/assets/css/driver.css">
+<link rel="stylesheet" href="/api/assets/css/tokens.css">
+<link rel="stylesheet" href="/api/assets/css/driver.css">
 </head>
 <body class="driver-body">
 <div class="driver-shell">
   <header class="driver-topbar">
-    <img class="driver-topbar-logo" src="/api/app/ui/assets/img/amor-logo.png" alt="Amor" width="28" height="28">
+    <img class="driver-topbar-logo" src="/api/assets/img/amor-logo.png" alt="Amor" width="28" height="28">
     <div class="driver-topbar-title"><?= ui_esc($title) ?></div>
     <div class="driver-topbar-user"><?= ui_esc($ui['fullName'] !== '' ? $ui['fullName'] : $ui['username']) ?></div>
   </header>
@@ -108,8 +108,8 @@ function driver_page_foot(string $active): void
   </nav>
 </div>
 <script>window.AMOR = <?= json_encode(['csrfToken' => $GLOBALS['ui']['csrfToken'] ?? '', 'userId' => $GLOBALS['ui']['userId'] ?? null, 'username' => $GLOBALS['ui']['username'] ?? ''], JSON_UNESCAPED_SLASHES) ?>;</script>
-<script src="/api/app/ui/assets/js/app.js"></script>
-<script src="/api/app/ui/assets/js/driver.js"></script>
+<script src="/api/assets/js/app.js"></script>
+<script src="/api/assets/js/driver.js"></script>
 </body>
 </html>
 <?php

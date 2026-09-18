@@ -64,8 +64,8 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title><?= ui_esc($title) ?> — Amor Factory System</title>
-<link rel="stylesheet" href="/api/app/ui/assets/css/tokens.css">
-<link rel="stylesheet" href="/api/app/ui/assets/css/app.css">
+<link rel="stylesheet" href="/api/assets/css/tokens.css">
+<link rel="stylesheet" href="/api/assets/css/app.css">
 </head>
 <body>
 <div class="app-shell">
@@ -142,7 +142,7 @@ function ui_page_foot(): void
   </div>
 </div>
 <script>window.AMOR = <?= json_encode(['csrfToken' => $GLOBALS['ui']['csrfToken'] ?? '', 'userId' => $GLOBALS['ui']['userId'] ?? null, 'username' => $GLOBALS['ui']['username'] ?? ''], JSON_UNESCAPED_SLASHES) ?>;</script>
-<script src="/api/app/ui/assets/js/app.js"></script>
+<script src="/api/assets/js/app.js"></script>
 </body>
 </html>
 <?php

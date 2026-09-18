@@ -52,8 +52,23 @@
 #   - api/app/ui/print-template.php / assets/css/print.css (updated) — a
 #     read-only receipt QR now prints on every non-cancelled DO, labeled
 #     "Scan untuk Konfirmasi Penerimaan Barang".
-#   - api/app/ui/assets/{css,js}/{driver,receipt}.css/js (new) — client
-#     code for the two new portals above.
+#   - api/assets/{css,js}/{driver,receipt}.css/js (new) — client code for
+#     the two new portals above.
+#
+# URGENT FIX in this pass (real cPanel UAT found this, php -S validation
+# did not — php -S ignores .htaccess entirely): every browser-facing
+# CSS/JS/image asset used to live under api/app/ui/assets/, but
+# api/app/.htaccess is (correctly) "Require all denied" — real Apache
+# was blocking every single one of them, so the Driver portal and every
+# other UI page rendered as plain unstyled HTML with a broken logo on
+# the real server even though every local php -S check passed. All
+# static browser assets now live under the PUBLIC api/assets/ directory
+# (a sibling of api/app/, outside the deny-all), and every PHP template
+# was updated to reference /api/assets/... instead of
+# /api/app/ui/assets/.... api/app/.htaccess itself is UNCHANGED and
+# still denies everything under api/app/ — see the new sanity checks
+# below and dist/validate-phase55-apache-assets.sh for the real-Apache
+# regression test that would have caught this.
 #
 # This ZIP contains NO Invoice/Payment/Receivable financial logic, NO
 # Phase 7 Retur/Reject physical-return lifecycle, NO GPS/route
@@ -112,12 +127,22 @@ cp -r "$REPO_ROOT/api/app/ui" "$STAGE/api/app/ui"
 [ -d "$STAGE/api/app/src/Dispatch" ] || { echo "REFUSING TO BUILD: api/app/src/Dispatch/ missing"; exit 1; }
 [ -f "$STAGE/api/app/src/Ui/QrEncoder.php" ] || { echo "REFUSING TO BUILD: QrEncoder.php missing"; exit 1; }
 [ -f "$STAGE/api/app/ui/pages/konfirmasi-toko.php" ] || { echo "REFUSING TO BUILD: konfirmasi-toko.php admin page missing"; exit 1; }
-[ -f "$STAGE/api/app/ui/assets/js/driver.js" ] || { echo "REFUSING TO BUILD: driver.js missing"; exit 1; }
-[ -f "$STAGE/api/app/ui/assets/js/receipt.js" ] || { echo "REFUSING TO BUILD: receipt.js missing"; exit 1; }
+if [ -d "$STAGE/api/app/ui/assets" ]; then
+  echo "REFUSING TO BUILD: api/app/ui/assets/ still exists — static browser assets must live under the PUBLIC api/assets/, never inside the deny-all api/app/ tree." >&2
+  exit 1
+fi
 mkdir -p "$STAGE/api/app/config"
 cp "$REPO_ROOT/api/app/config/config.example.php" "$STAGE/api/app/config/config.example.php"
 cp -r "$REPO_ROOT/api/app/migrations" "$STAGE/api/app/migrations"
 [ -f "$STAGE/api/app/migrations/0007_dispatch_receipt_phase55.php" ] || { echo "REFUSING TO BUILD: migration 0007 missing"; exit 1; }
+
+echo "--- copying PUBLIC static assets (api/assets/ — outside the deny-all api/app/ tree) ---"
+mkdir -p "$STAGE/api/assets"
+cp -r "$REPO_ROOT/api/assets/." "$STAGE/api/assets/"
+for f in css/tokens.css css/app.css css/driver.css css/receipt.css css/print.css css/print-invoice.css js/app.js js/driver.js js/receipt.js img/amor-logo.png; do
+  [ -f "$STAGE/api/assets/$f" ] || { echo "REFUSING TO BUILD: api/assets/$f missing"; exit 1; }
+done
+[ -f "$STAGE/api/assets/.htaccess" ] || { echo "REFUSING TO BUILD: api/assets/.htaccess missing"; exit 1; }
 
 echo "--- copying canonical schema DDL (0001-0007) ---"
 mkdir -p "$STAGE/api/app/database"
@@ -211,6 +236,19 @@ fi
 echo "--- sanity: confirm the public receive portal has no session/role check that would break its public-token design ---"
 if grep -q "Auth::requireAuth\|Auth::requireRole" "$STAGE/api/_receive/index.php" 2>/dev/null; then
   echo "REFUSING TO BUILD: api/_receive/index.php must stay public (token-only access) — an auth check was found." >&2
+  exit 1
+fi
+
+echo "--- sanity: confirm api/app/.htaccess is STILL deny-all (the security boundary this patch must never weaken) ---"
+if ! grep -q 'Require all denied' "$STAGE/api/app/.htaccess"; then
+  echo "REFUSING TO BUILD: api/app/.htaccess no longer denies all HTTP access — this must never be weakened." >&2
+  exit 1
+fi
+
+echo "--- sanity: confirm NO browser-facing PHP file still references the deny-all api/app/ui/assets/ path (the real bug this patch fixes) ---"
+if grep -rl 'href="/api/app/\|src="/api/app/' "$STAGE/api" --include='*.php' | grep -q .; then
+  echo "REFUSING TO BUILD: a browser-facing href/src still points inside the deny-all api/app/ tree — it will 403 on real Apache." >&2
+  grep -rln 'href="/api/app/\|src="/api/app/' "$STAGE/api" --include='*.php' >&2
   exit 1
 fi
 

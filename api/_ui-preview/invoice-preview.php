@@ -30,7 +30,7 @@ header('Content-Type: text/html; charset=utf-8');
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>Invoice <?= ui_esc((string) $invoice['invoiceNumber']) ?> (Preview)</title>
-<link rel="stylesheet" href="/api/app/ui/assets/css/print-invoice.css">
+<link rel="stylesheet" href="/api/assets/css/print-invoice.css">
 </head>
 <body class="print-doc inv-doc">
 <div class="print-toolbar">

@@ -37,7 +37,7 @@ mkdir -p "$EXTRACT_DIR"
 ( cd "$EXTRACT_DIR" && unzip -q "$ZIP_PATH" )
 [ -f "$EXTRACT_DIR/api/index.php" ] || { echo "REFUSING: api/index.php missing from extracted package"; exit 1; }
 [ -f "$EXTRACT_DIR/api/_ui-preview/index.php" ] || { echo "REFUSING: api/_ui-preview/index.php missing from extracted package"; exit 1; }
-[ -f "$EXTRACT_DIR/api/app/ui/assets/css/app.css" ] || { echo "REFUSING: api/app/ui/assets/css/app.css missing from extracted package"; exit 1; }
+[ -f "$EXTRACT_DIR/api/assets/css/app.css" ] || { echo "REFUSING: api/assets/css/app.css missing from extracted package"; exit 1; }
 for tool in _admin-login _upgrade _import-po _production-uat _fg-uat _do-uat; do
   [ -f "$EXTRACT_DIR/api/$tool/index.php" ] || { echo "REFUSING: api/$tool/index.php missing — an old tool was dropped"; exit 1; }
 done
@@ -96,11 +96,11 @@ return [
 ];
 PHPCONFIG
 
-echo "--- 6/10: writing a router script (extracted-tree-local, mirrors _ui_router.php) so /api/app/ui/assets/*.css serve correctly under php -S ---"
+echo "--- 6/10: writing a router script (extracted-tree-local, mirrors _ui_router.php) so /api/assets/*.css serve correctly under php -S ---"
 cat > "$WORKDIR/router.php" <<PHPROUTER
 <?php
 \$uri = urldecode((string) parse_url((string) \$_SERVER['REQUEST_URI'], PHP_URL_PATH));
-if (preg_match('#^/api/(app/ui/assets/[\w./-]+\.(css|js|png|jpg|jpeg|svg))\$#', \$uri, \$m)) {
+if (preg_match('#^/api/(assets/[\w./-]+\.(css|js|png|jpg|jpeg|svg))\$#', \$uri, \$m)) {
     \$file = '$EXTRACT_DIR/api/' . \$m[1];
     if (is_file(\$file)) {
         \$types = ['css' => 'text/css; charset=UTF-8', 'js' => 'application/javascript; charset=UTF-8', 'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'svg' => 'image/svg+xml'];
@@ -121,7 +121,7 @@ kill -0 "$PHP_PID" 2>/dev/null || { echo "php -S failed to start"; cat "$WORKDIR
 echo "--- 8/10: health check + static asset + old-tool reachability against the extracted package ---"
 HEALTH=$(curl -s "http://127.0.0.1:$PHP_PORT/api/health")
 echo "$HEALTH" | grep -q '"ok":true' || { echo "REFUSING: /api/health did not report ok — $HEALTH"; exit 1; }
-CSS_TYPE=$(curl -s -o /dev/null -w "%{content_type}" "http://127.0.0.1:$PHP_PORT/api/app/ui/assets/css/app.css")
+CSS_TYPE=$(curl -s -o /dev/null -w "%{content_type}" "http://127.0.0.1:$PHP_PORT/api/assets/css/app.css")
 echo "$CSS_TYPE" | grep -q "text/css" || { echo "REFUSING: app.css did not serve as text/css — got $CSS_TYPE"; exit 1; }
 for tool in _admin-login _import-po _production-uat _fg-uat _do-uat; do
   CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PHP_PORT/$tool/")
