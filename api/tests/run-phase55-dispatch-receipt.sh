@@ -114,7 +114,7 @@ return [
 ];
 PHPCONFIG
 
-echo "--- 8/9: starting php -S dev server on :$PHP_PORT (with the shared _ui_router.php) and running Phase55DispatchReceiptTest.php (P55-01..23) ---"
+echo "--- 8/9: starting php -S dev server on :$PHP_PORT (with the shared _ui_router.php) and running Phase55DispatchReceiptTest.php (P55-01..23, P55-MF01..02) ---"
 php -S "127.0.0.1:$PHP_PORT" -t "$API_ROOT" "$API_ROOT/tests/_ui_router.php" > "$WORKDIR/php-server.log" 2>&1 &
 PHP_PID=$!
 sleep 1

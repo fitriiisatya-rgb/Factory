@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 /**
  * Phase 5.5 Dispatch Pool / Driver Claim / Store Receipt integration suite
- * (P55-01..23). Run via api/tests/run-phase55-dispatch-receipt.sh, which
+ * (P55-01..23, plus P55-MF01/MF02 covering multi-factory departure claim-
+ * >shipment mapping and its rollback safety). Run via
+ * api/tests/run-phase55-dispatch-receipt.sh, which
  * stands up a disposable local MariaDB, applies migrations 0001-0007,
  * bootstraps realistic master data, then drives the real
  * /api/dispatch/*, /api/receive/*, and /api/admin/receipts/* JSON API end
@@ -282,6 +284,19 @@ $secondDivProducts = productsInDivision($pdo, $secondDivId, 5);
 expect(count($secondDivProducts) >= 1, 'expected at least one product in the second division');
 $secondDivPool = $secondDivProducts;
 function nextProductFromSecondDivision(): array { global $secondDivPool; $p = array_shift($secondDivPool); expect($p !== null, 'ran out of pooled second-division test products'); return $p; }
+
+// A genuinely different FACTORY (Cibadak, via its Bolu division) — needed
+// for the multi-factory departure regression tests below. Mirrors the same
+// cross-factory-single-DO fixture pattern already proven in
+// Phase5DoShipmentTest.php's own P5-05.
+$cibadakId = (int) $pdo->query("SELECT factory_id FROM factory WHERE name = 'Cibadak'")->fetchColumn();
+expect($cibadakId > 0, 'expected Cibadak factory seeded');
+$boluDivId = (int) $pdo->query("SELECT division_id FROM division WHERE name = 'Bolu'")->fetchColumn();
+expect($boluDivId > 0, 'expected Bolu division seeded (Cibadak factory)');
+$boluProducts = productsInDivision($pdo, $boluDivId, 5);
+expect(count($boluProducts) >= 1, 'expected at least one Cibadak/Bolu product for multi-factory tests');
+$boluPool = $boluProducts;
+function nextProductFromBolu(): array { global $boluPool; $p = array_shift($boluPool); expect($p !== null, 'ran out of pooled Bolu (Cibadak) test products'); return $p; }
 
 $driverAId = createUser($pdo, 'p55_driver_a', 'DriverAPass123', ['DRIVER']);
 $driverBId = createUser($pdo, 'p55_driver_b', 'DriverBPass123', ['DRIVER']);
@@ -840,6 +855,156 @@ runTest('P55-23 the existing (non-dispatch) Phase 5 manual ship() flow still wor
     ], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('p55-23-ship')));
     expect($ship['status'] === 200, 'plain Phase 5 ship() failed: ' . json_encode($ship['json']));
     expect($ship['json']['data']['doFullyFulfilled'] === true, 'expected the DO to be fully fulfilled');
+});
+
+// ---------------------------------------------------------------------
+// P55-MF01 / P55-MF02 — multi-factory departure claim->shipment mapping.
+//
+// Regression for a real bug found by audit: DepartureService used to
+// stamp EVERY resolved claim with whichever factory group's ship() call
+// happened to run LAST ("lastShipmentId"), instead of the shipment that
+// actually contains that claim's own product. A driver claiming from two
+// factories in one departure got two real, correctly-separated shipments
+// (that part was always right), but BOTH claims were pointing at only the
+// second one — dispatch_claim.shipment_id was simply wrong for the first
+// factory's claim. See DepartureService::confirmDeparture's per-factory
+// $shipmentIdByClaimId map, which replaced the single trailing variable.
+// ---------------------------------------------------------------------
+runTest('P55-MF01 multi-factory departure maps each claim to its OWN factory shipment (never cross-linked)', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $cibadakId, $rotiBollenDivId, $boluDivId, $storeA, $adminHttp, $adminCsrf) {
+    $tanggal = '2026-08-01';
+    $pK = nextProduct();
+    $pC = nextProductFromBolu();
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $pK['product_id'], 3.0, 3.0, 3.0);
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $cibadakId, $boluDivId, $tanggal, $storeA, $pC['product_id'], 4.0, 4.0, 4.0);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemK = doItemIdFor($pdo, $do['doId'], $pK['product_id']);
+    $itemC = doItemIdFor($pdo, $do['doId'], $pC['product_id']);
+
+    $claim = $httpA->request('POST', '/api/dispatch/claim', [
+        'lines' => [['doItemId' => $itemK, 'qty' => 3.0], ['doItemId' => $itemC, 'qty' => 4.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('p55-mf01-claim')));
+    expect($claim['status'] === 200, 'multi-factory claim failed: ' . json_encode($claim['json']));
+    $claimK = null; $claimC = null;
+    foreach ($claim['json']['data']['claims'] as $c) {
+        if ($c['productId'] === $pK['product_id']) $claimK = $c['claimId'];
+        if ($c['productId'] === $pC['product_id']) $claimC = $c['claimId'];
+    }
+    expect($claimK !== null && $claimC !== null, 'expected one claim per product');
+
+    $stop = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    expect($stop['status'] === 200, 'stop detail failed: ' . json_encode($stop['json']));
+
+    $ledgerBefore = shipmentOutRows($pdo);
+    $shipmentsBefore = (int) $pdo->query("SELECT COUNT(*) FROM shipment WHERE delivery_order_id = {$do['doId']}")->fetchColumn();
+
+    // Request order is K then C — Karangtengah's ship() call runs first,
+    // Cibadak's second, exercising the exact "last group wins" bug shape.
+    $depart = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stop['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimK, 'actualQty' => 3.0], ['claimId' => $claimC, 'actualQty' => 4.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('p55-mf01-depart')));
+    expect($depart['status'] === 200, 'multi-factory departure failed: ' . json_encode($depart['json']));
+    expect($depart['json']['data']['shipmentsCreated'] === 2, 'expected exactly 2 shipments (one per factory)');
+
+    $shipmentIdK = null; $shipmentIdC = null;
+    foreach ($depart['json']['data']['shipments'] as $sh) {
+        foreach ($sh['items'] as $it) {
+            if ($it['productId'] === $pK['product_id']) $shipmentIdK = $sh['shipmentId'];
+            if ($it['productId'] === $pC['product_id']) $shipmentIdC = $sh['shipmentId'];
+        }
+    }
+    expect($shipmentIdK !== null && $shipmentIdC !== null && $shipmentIdK !== $shipmentIdC, 'expected two DISTINCT shipments, one per product/factory');
+
+    // The core regression assertion: each claim's own shipment_id must
+    // point to the shipment that actually contains that claim's product —
+    // never to the other factory's shipment.
+    $rowK = $pdo->query("SELECT shipment_id FROM dispatch_claim WHERE dispatch_claim_id = {$claimK}")->fetch();
+    $rowC = $pdo->query("SELECT shipment_id FROM dispatch_claim WHERE dispatch_claim_id = {$claimC}")->fetch();
+    expect((int) $rowK['shipment_id'] === $shipmentIdK, "claim K must point to its own factory's shipment ({$shipmentIdK}), got " . $rowK['shipment_id']);
+    expect((int) $rowC['shipment_id'] === $shipmentIdC, "claim C must point to its own factory's shipment ({$shipmentIdC}), got " . $rowC['shipment_id']);
+    expect((int) $rowK['shipment_id'] !== (int) $rowC['shipment_id'], 'claim K and claim C must NEVER be cross-linked to the same shipment');
+
+    // Stock ledger correctness: each factory's stock_ledger row must trace
+    // back (via shipment_item) to the RIGHT shipment for the RIGHT product.
+    $ledgerRowK = $pdo->query(
+        "SELECT sl.stock_ledger_id FROM stock_ledger sl
+         INNER JOIN shipment_item si ON si.shipment_item_id = sl.source_id AND sl.source_type = 'shipment_item'
+         WHERE sl.event_type = 'shipment_out' AND si.shipment_id = {$shipmentIdK} AND si.product_id = {$pK['product_id']}"
+    )->fetch();
+    $ledgerRowC = $pdo->query(
+        "SELECT sl.stock_ledger_id FROM stock_ledger sl
+         INNER JOIN shipment_item si ON si.shipment_item_id = sl.source_id AND sl.source_type = 'shipment_item'
+         WHERE sl.event_type = 'shipment_out' AND si.shipment_id = {$shipmentIdC} AND si.product_id = {$pC['product_id']}"
+    )->fetch();
+    expect($ledgerRowK !== false, "expected a stock_ledger shipment_out row tracing to shipment K ({$shipmentIdK}) for product K");
+    expect($ledgerRowC !== false, "expected a stock_ledger shipment_out row tracing to shipment C ({$shipmentIdC}) for product C");
+
+    expect(shipmentOutRows($pdo) === $ledgerBefore + 2, 'expected exactly 2 new shipment_out ledger rows (one per factory)');
+    $shipmentsAfter = (int) $pdo->query("SELECT COUNT(*) FROM shipment WHERE delivery_order_id = {$do['doId']}")->fetchColumn();
+    expect($shipmentsAfter === $shipmentsBefore + 2, 'expected exactly 2 new shipment rows');
+});
+
+runTest('P55-MF02 multi-factory departure rolls back COMPLETELY if the second factory group fails', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $cibadakId, $rotiBollenDivId, $boluDivId, $storeA, $adminHttp, $adminCsrf) {
+    $tanggal = '2026-08-02';
+    $pK = nextProduct();
+    $pC = nextProductFromBolu();
+    // Factory A (Karangtengah) has plenty of FG — its ship() call would
+    // succeed internally. Factory B (Cibadak) is deliberately starved of
+    // FG (only 1 unit on hand vs 4 claimed/requested) so ITS ship() call
+    // throws INSUFFICIENT_FG_AVAILABLE, forcing the whole departure to
+    // fail AFTER the first factory group already wrote its shipment/
+    // shipment_item/stock_ledger rows inside the same open transaction.
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $pK['product_id'], 3.0, 3.0, 3.0);
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $cibadakId, $boluDivId, $tanggal, $storeA, $pC['product_id'], 4.0, 4.0, 1.0);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemK = doItemIdFor($pdo, $do['doId'], $pK['product_id']);
+    $itemC = doItemIdFor($pdo, $do['doId'], $pC['product_id']);
+
+    $claim = $httpA->request('POST', '/api/dispatch/claim', [
+        'lines' => [['doItemId' => $itemK, 'qty' => 3.0], ['doItemId' => $itemC, 'qty' => 4.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('p55-mf02-claim')));
+    expect($claim['status'] === 200, 'multi-factory claim failed: ' . json_encode($claim['json']));
+    $claimK = null; $claimC = null;
+    foreach ($claim['json']['data']['claims'] as $c) {
+        if ($c['productId'] === $pK['product_id']) $claimK = $c['claimId'];
+        if ($c['productId'] === $pC['product_id']) $claimC = $c['claimId'];
+    }
+    expect($claimK !== null && $claimC !== null, 'expected one claim per product');
+
+    $stop = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $doVersionBefore = $stop['json']['data']['doVersion'];
+
+    $ledgerBefore = shipmentOutRows($pdo);
+    $shipmentsBefore = (int) $pdo->query("SELECT COUNT(*) FROM shipment WHERE delivery_order_id = {$do['doId']}")->fetchColumn();
+
+    $depart = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $doVersionBefore, 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimK, 'actualQty' => 3.0], ['claimId' => $claimC, 'actualQty' => 4.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('p55-mf02-depart')));
+    expect($depart['status'] === 409, "expected 409 INSUFFICIENT_FG_AVAILABLE from the second (Cibadak) group, got {$depart['status']}: " . json_encode($depart['json']));
+    expect($depart['json']['code'] === 'INSUFFICIENT_FG_AVAILABLE', 'expected INSUFFICIENT_FG_AVAILABLE code');
+
+    // Nothing from the FIRST (successful-until-rollback) factory group may
+    // survive — the whole departure is one transaction (Idempotency::handle
+    // wraps confirmDeparture in Database::transaction; ShipmentService::ship()
+    // never begins its own nested transaction, so both ship() calls share
+    // this one).
+    expect(shipmentOutRows($pdo) === $ledgerBefore, 'a failed multi-factory departure must leave ZERO new stock_ledger rows, including from the factory that succeeded internally');
+    $shipmentsAfter = (int) $pdo->query("SELECT COUNT(*) FROM shipment WHERE delivery_order_id = {$do['doId']}")->fetchColumn();
+    expect($shipmentsAfter === $shipmentsBefore, 'a failed multi-factory departure must leave ZERO new shipment rows, including from the factory that succeeded internally');
+
+    $rowK = $pdo->query("SELECT * FROM dispatch_claim WHERE dispatch_claim_id = {$claimK}")->fetch();
+    $rowC = $pdo->query("SELECT * FROM dispatch_claim WHERE dispatch_claim_id = {$claimC}")->fetch();
+    expect($rowK['status'] === 'active' && (float) $rowK['active_qty'] === 3.0 && $rowK['shipment_id'] === null, 'claim K must remain fully active/unresolved/unlinked after the rollback');
+    expect($rowC['status'] === 'active' && (float) $rowC['active_qty'] === 4.0 && $rowC['shipment_id'] === null, 'claim C must remain fully active/unresolved/unlinked after the rollback');
+
+    $doVersionAfter = (int) $pdo->query("SELECT version FROM delivery_order WHERE delivery_order_id = {$do['doId']}")->fetchColumn();
+    expect($doVersionAfter === $doVersionBefore, 'the DO version must not have been bumped by a departure that ultimately failed');
+
+    // The claims are still fully claimable/departable again afterward —
+    // "recoverable", not stuck in a half-resolved state.
+    $stopAgain = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    expect($stopAgain['status'] === 200, 'expected the stop/claims to still be usable after a rolled-back departure');
 });
 
 $failed = array_filter($results, fn ($ok) => !$ok);

@@ -101,9 +101,15 @@ final class DepartureService
 
         // Group the positive-qty lines by factory (per product, via the
         // DO's own items — never a second source of truth for factory
-        // mapping) so each ship() call stays single-factory.
+        // mapping) so each ship() call stays single-factory. Each claim's
+        // own product has exactly one factory, so a claim always belongs to
+        // exactly one group/shipment — we keep the claimId alongside its
+        // line here so the resulting shipmentId can be attributed back to
+        // the RIGHT claim below, never to whichever ship() call happened to
+        // run last.
         $doItems = $this->doRepo->findDoItems($this->pdo, $doId);
         $byFactory = [];
+        $claimIdsByFactory = [];
         foreach ($claims as $claimId => $claim) {
             $requested = $requestedByClaimId[$claimId];
             if ($requested <= 0.0001) {
@@ -113,14 +119,23 @@ final class DepartureService
             $factoryId = $doItems[$productId]['factory_id'] ?? null;
             $factoryKey = $factoryId !== null ? (int) $factoryId : 0;
             $byFactory[$factoryKey][] = ['productId' => $productId, 'actualQty' => $requested];
+            $claimIdsByFactory[$factoryKey][] = $claimId;
         }
 
         $shipmentService = new ShipmentService($this->pdo);
         $shipments = [];
+        $shipmentIdByClaimId = [];
         $currentVersion = $expectedVersion;
-        foreach ($byFactory as $groupItems) {
+        foreach ($byFactory as $factoryKey => $groupItems) {
             $dto = $shipmentService->ship($doId, $currentVersion, $shipmentGroup, $groupItems, $driverUserId, $requestId);
             $shipments[] = $dto;
+            // Attribute THIS group's shipment only to the claims that were
+            // actually part of THIS group — never to claims from a
+            // different factory's shipment (that was the bug: stamping
+            // every claim with the LAST group's shipment id).
+            foreach ($claimIdsByFactory[$factoryKey] as $claimId) {
+                $shipmentIdByClaimId[$claimId] = (int) $dto['shipmentId'];
+            }
             $currentVersion++; // ship() always bumps version by exactly 1 on success — see its own docblock
         }
 
@@ -129,15 +144,17 @@ final class DepartureService
         // remained unshipped. This is TERMINAL for the claim (see
         // DispatchRepository::resolveClaimAsDeparted's own docblock) —
         // exactly the task's "automatically release unused claimed qty
-        // after successful departure" preference.
-        $lastShipmentId = $shipments !== [] ? (int) end($shipments)['shipmentId'] : null;
+        // after successful departure" preference. A claim that shipped
+        // nothing (fully released, $requested === 0) correctly gets a null
+        // shipment_id — it was never part of any shipment.
         foreach ($claims as $claimId => $claim) {
             $requested = $requestedByClaimId[$claimId];
             $leftover = max(0.0, (float) $claim['active_qty'] - $requested);
-            $this->dispatchRepo->resolveClaimAsDeparted($this->pdo, $claimId, $requested, $leftover, $lastShipmentId);
+            $shipmentId = $shipmentIdByClaimId[$claimId] ?? null;
+            $this->dispatchRepo->resolveClaimAsDeparted($this->pdo, $claimId, $requested, $leftover, $shipmentId);
             Audit::write(
                 $this->pdo, $requestId, $driverUserId, 'dispatch.claim_resolved', 'dispatch_claim', (string) $claimId,
-                'ok', null, null, ['departedQty' => $requested, 'releasedQty' => $leftover]
+                'ok', null, null, ['departedQty' => $requested, 'releasedQty' => $leftover, 'shipmentId' => $shipmentId]
             );
         }
 
