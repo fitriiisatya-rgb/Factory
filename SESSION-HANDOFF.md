@@ -8,44 +8,7 @@ re-deriving decisions that have already been made and validated. This is a
 full rewrite (not an incremental patch) — it supersedes any earlier version
 of this file you may find in git history.
 
-Written: 2026-09-18. Last commit at time of writing: `0930baf` (see the
-addendum immediately below for what changed since `a183518`, which is what
-this file's body still describes in detail — that content is still
-accurate, just missing the one module added after it was written).
-
----
-
-## 0. ADDENDUM (2026-09-18, later same day) — ADMIN User / Driver Account Management added
-
-A new module was added on top of everything below: `api/_users-uat/`, an
-ADMIN-only page (standalone, same side-by-side UAT convention as
-`_driver-uat/`/`_do-uat/`, NOT wired into `layout.php`'s sidebar) that lets
-an admin create/edit/deactivate/reactivate/reset-password/change-roles for
-any user — the missing piece that was blocking real Phase 5.5 UAT (it
-needs at least 2 DRIVER accounts, and there was no way to create them
-without phpMyAdmin/manual SQL).
-
-**No migration was needed** — `users.active`, the `username` UNIQUE
-constraint, `password_hash`, and the `roles`/`user_roles` M:N junction all
-already existed since migration 0001 and already fully supported this.
-New code: `api/app/src/Users/{UserRepository,UserService}.php`,
-`api/app/src/Controllers/UserController.php` (+ `/api/users/*` routes in
-`App.php`), `api/_users-uat/index.php`, `api/assets/js/users.js`. A
-"never zero active ADMIN users" safeguard blocks deactivating or
-de-roling the last active admin (409). `PhaseUserMgmtTest.php` (UM-01..16,
-including real end-to-end login checks against the actual
-`/_driver-uat/login.php` and `/_admin-login/` HTML pages, not just the
-JSON API) + full Phase 0-5.5 regression (UM-17) all pass. Also validated
-with real Apache (`dist/validate-user-management-apache.sh`), applying the
-§7.1 lesson: the new `users.js` correctly lives under `api/assets/js/`,
-never under the deny-all `api/app/`.
-
-Committed as `0930baf`, pushed. Package:
-`dist/amor-factory-api-user-management-easy.zip` (files-only, no
-migration). If the user's next ask is "create Driver A / Driver B" or
-"resume Phase 5.5 UAT," this module is how — walk them to
-`api/_users-uat/` (or use `dist/README-FIRST-CPANEL-USER-MANAGEMENT.md`'s
-own step-by-step).
+Written: 2026-09-19. Last commit at time of writing: `9b4a827`.
 
 ---
 
@@ -72,15 +35,19 @@ cPanel shared hosting, and delivered before the next phase begins.
   comments and internal docs (including this file) are in English.
 - **The user** communicates in Indonesian, works with multiple Claude Code
   accounts/sessions on this same project over time (hence this handoff
-  file's existence), and does real cPanel UAT personally — meaning bugs
-  that only manifest on a real Apache server (not `php -S`) are a real,
-  recurring risk class for this project (see §7 gotcha #1, the most
-  important one).
+  file's existence, and their habit of asking for it to be refreshed and
+  resent after a burst of work), and does real cPanel UAT personally —
+  meaning bugs that only manifest on a real Apache server (not `php -S`)
+  are a real, recurring risk class for this project (see §7 gotcha #1, the
+  most important one).
 
 ## 2. Current exact state (verify before trusting anything below)
 
 ```
-git log --oneline -8
+git log --oneline -10
+9b4a827 Update session handoff with the new User Management module
+0930baf Add ADMIN User / Driver Account Management module
+52d476f Rewrite session handoff as one coherent document
 a183518 Update session handoff with the real-Apache asset bug and fix
 bb3a5a9 Fix Phase 5.5 real-cPanel deployment bug: public assets under deny-all api/app/
 a1fce14 Add session handoff document for continuity across account switches
@@ -88,16 +55,15 @@ ac07251 Fix Phase 5.5: multi-factory departure claim->shipment mapping
 cc9d875 Add Phase 5.5: Dispatch Pool / Driver Claim / Store Receipt Confirmation
 90c33c1 Add Invoice print/preview template (UI only) and Amor logo to DO/Invoice print
 c24ca2c Redesign Print DO / Surat Jalan per mockup (read-only, no logic change)
-ddf6894 Add redesigned dark-mode admin UI (preview) on top of Phase 1-5 APIs
 ```
 
 `git status` is clean (nothing uncommitted) as of this writing. Everything
-through `a183518` is already **pushed** to
+through `9b4a827` is already **pushed** to
 `origin/claude/amor-factory-pricing-ui-final-6vv3q9`.
 
 **First thing to do in a new session**: run `git log --oneline -10` and
 `git status` yourself to confirm this is still accurate — do not assume
-nothing changed between sessions. If the log has commits beyond `a183518`,
+nothing changed between sessions. If the log has commits beyond `9b4a827`,
 someone (another session, or you in a prior turn you don't remember) has
 already continued past this document — read those commit messages before
 doing anything else.
@@ -121,17 +87,21 @@ the project's core safety net.
 | — | Redesigned admin UI shell (dark mode, shared layout/CSS/JS) sitting on top of Phase 0-5 APIs, read/write via the same JSON API, no parallel business logic | — | `api/_ui-preview/`, `api/app/ui/*` |
 | — | Print DO / Surat Jalan redesign (A4, watermark, signature grid) — presentation only | — | `api/app/ui/print-template.php` |
 | — | Invoice print/preview template — **UI/print layout ONLY, no invoice generation business logic** | — | `api/app/ui/print-invoice-template.php`, mock fixture only |
-| **5.5** | **Dispatch Pool / Driver Claim / Store Receipt Confirmation** — sits between Phase 5 (DO/Shipment) and the not-yet-built Phase 6 (Invoice). Drivers claim delivery tasks from an open pool, build a manual route, confirm departure (the ONLY point stock decreases here too — reuses `ShipmentService::ship()`, never duplicates stock logic), stores scan a QR to confirm receipt (good/reject/shortage qty). Admin verifies discrepancies. | **0007** | `DispatchService`, `DepartureService`, `ReceiptService`, `api/_driver-uat/`, `api/_receive/` |
+| 5.5 | Dispatch Pool / Driver Claim / Store Receipt Confirmation — sits between Phase 5 (DO/Shipment) and the not-yet-built Phase 6 (Invoice). Drivers claim delivery tasks from an open pool, build a manual route, confirm departure (the ONLY point stock decreases here too — reuses `ShipmentService::ship()`, never duplicates stock logic), stores scan a QR to confirm receipt (good/reject/shortage qty). Admin verifies discrepancies. Two post-delivery bug fixes since (see §5). | 0007 | `DispatchService`, `DepartureService`, `ReceiptService`, `api/_driver-uat/`, `api/_receive/` |
+| **User Mgmt** | **ADMIN User / Driver Account Management** — the missing piece for real Phase 5.5 UAT (needed a way to create DRIVER accounts without phpMyAdmin/manual SQL). Create/edit/deactivate/reactivate/reset-password/change-roles for any user, with a "never zero active ADMIN" safeguard. **Files-only, no migration** — `users.active`/`username` UNIQUE/`password_hash`/`roles`+`user_roles` M:N all already existed since 0001. | — (none) | `Users\UserService`, `Users\UserRepository`, `api/_users-uat/` |
 
-**Phase 5.5 is the most recently completed phase**, including TWO follow-up
-bug fixes after initial delivery (see §5). **Phase 6 (Invoice business
+**Phase 5.5 is the most recently completed numbered phase**, including two
+follow-up bug fixes after initial delivery (see §5.1-5.2), and the **User
+Management module** (§5.3) is the most recent work overall — built because
+real Phase 5.5 UAT was blocked without it. **Phase 6 (Invoice business
 logic/generation) has NOT been started** — only its print/preview UI
 exists, with mock data, no real transactional logic. Do not start Phase 6
 business logic without explicit user instruction — the user has previously
 and explicitly said "DO NOT start Phase 6 Invoice yet" in the context of
 sequencing Phase 5.5 first; that blocker is presumably lifted now that 5.5
-is stable, but confirm scope with the user before beginning Phase 6, since
-no one has explicitly greenlit it yet.
+is stable and driver accounts can finally be created, but confirm scope
+with the user before beginning Phase 6, since no one has explicitly
+greenlit it yet.
 
 ## 4. Architecture & conventions — READ THIS before writing any code
 
@@ -156,23 +126,30 @@ on the real server.
    `IDEMPOTENCY_KEY_REUSE_MISMATCH`. If `$work` throws, the transaction
    rolls back and nothing is recorded (a retry is free to re-evaluate).
 
-3. **Optimistic concurrency via `expectedVersion`.** Every mutable
-   aggregate (`production_run`, `fg_batch`, `delivery_order`, dispatch
-   claims) has a `version` column. Every mutation call takes
-   `expectedVersion`, checks it under a row lock, bumps it by exactly 1 on
-   success, throws 409 `VERSION_CONFLICT` otherwise. When one logical
-   operation calls multiple version-bumping sub-operations in sequence
-   inside the same transaction (e.g. `DepartureService` calling `ship()`
-   once per factory group), the next `expectedVersion` is computed locally
-   as `previous + 1` — never re-queried — because both calls share the same
-   open transaction and each successful call is guaranteed to bump by
-   exactly 1.
+3. **Optimistic concurrency via `expectedVersion` — but only where it
+   earns its keep.** Every shop-floor transactional aggregate
+   (`production_run`, `fg_batch`, `delivery_order`, dispatch claims,
+   `product`/`store` master data) has a `version` column: every mutation
+   takes `expectedVersion`, checks it under a row lock, bumps it by
+   exactly 1 on success, throws 409 `VERSION_CONFLICT` otherwise. When one
+   logical operation calls multiple version-bumping sub-operations in
+   sequence inside the same transaction (e.g. `DepartureService` calling
+   `ship()` once per factory group), the next `expectedVersion` is
+   computed locally as `previous + 1` — never re-queried — because both
+   calls share the same open transaction. **Exception, deliberately**:
+   `users` has NO `version` column — the User Management module (§5.3)
+   judged a plain `SELECT ... FOR UPDATE` row lock per mutation sufficient
+   for that low-frequency, single-actor-at-a-time admin screen, and chose
+   not to add a column purely for symmetry. Don't assume every table has
+   `version` — check first.
 
 4. **Row locking discipline.** Lock the PARENT aggregate row (`SELECT ...
    FOR UPDATE`) before reading/mutating anything under it. When one
    operation must lock multiple parent rows (e.g. claiming across several
-   DOs at once), always lock them in a **fixed, ascending ID order** across
-   every caller, to prevent lock-order deadlocks.
+   DOs at once, or the User Management safeguard locking every active-
+   admin row before allowing a demotion), always lock them in a **fixed,
+   ascending ID order** (or lock the whole relevant set, as the admin
+   safeguard does) across every caller, to prevent lock-order deadlocks.
 
 5. **CSRF via `X-CSRF-Token` header** on session-authenticated
    state-changing requests. Public unauthenticated endpoints (like the
@@ -184,17 +161,24 @@ on the real server.
 
 6. **Audit logging** on every meaningful mutation via
    `Audit::write($pdo, $requestId, $userId, $eventType, $entityType,
-   $entityId, 'ok'/'error', $fromVersion, $toVersion, $details)`.
+   $entityId, 'ok'/'error', $fromVersion, $toVersion, $details)`. Never
+   put a password (plaintext or hash) in the `$details` payload — the User
+   Management module's own audit events (`user.created`,
+   `user.password_reset`, etc.) are a precedent for what to log instead
+   (who did it, what changed structurally — never the secret itself).
 
-7. **Migrations are additive-only.** Never alter or drop an existing
-   column without a very strong reason. Migration 0001 already
-   pre-declared tables for invoice/payment/return_note/reject_note/
-   retail_sale etc. for future phases, even though they're unused today.
-   Before adding a new migration, **audit the existing schema first** and
-   document in the migration file's own docblock exactly why each new
-   table/column is needed — do not add a table "just in case." Example:
-   Phase 5.5 concluded `delivery_order_item` already IS the claimable pool
-   line, so no separate `dispatch_task` table was created.
+7. **Migrations are additive-only, and often unnecessary.** Never alter or
+   drop an existing column without a very strong reason. Migration 0001
+   already pre-declared tables for invoice/payment/return_note/
+   reject_note/retail_sale etc. for future phases, even though they're
+   unused today. Before adding a new migration, **audit the existing
+   schema first** and document exactly why each new table/column is
+   needed — do not add one "just in case." Two precedents for "the schema
+   already had it": Phase 5.5 concluded `delivery_order_item` already IS
+   the claimable pool line (no `dispatch_task` table needed), and User
+   Management shipped as a **files-only patch with zero migration** —
+   `users.active`, the `username` UNIQUE constraint, and `password_hash`
+   had existed since 0001 and needed no changes at all.
 
 8. **Business-identity keys, not surrogate assumptions.** DO identity =
    `(tanggal, storeId)` — one DO per store per date, idempotent create.
@@ -213,7 +197,7 @@ on the real server.
    Karangtengah + Cibadak) if the store's demand does — `ship()` itself
    refuses to mix factories in one call (`MIXED_FACTORY_SHIPMENT`), so any
    caller spanning factories must group inputs by factory and call `ship()`
-   once per group (see gotcha #10 below for the bug this shape caused once).
+   once per group (see rule 10 below for the bug this shape caused once).
 
 10. **Never use a "last value wins" pattern when an operation splits into
     multiple sub-calls that must each be attributed back to different
@@ -231,10 +215,23 @@ on the real server.
     templates) must never be directly web-reachable. Any CSS/JS/image a
     browser needs to load directly belongs in `api/assets/` (a sibling of
     `api/app/`, with its own `.htaccess` containing only `Options
-    -Indexes`). This was violated once (see §5.2) and is now the single
-    most important thing to get right for any new UI work — see §7.1.
+    -Indexes`). This was violated once (see §5.2), fixed, and then
+    correctly followed from day one when `users.js` was added for the User
+    Management module — see §7.1, still the single most important gotcha
+    in this project.
 
-## 5. Most recent work — two Phase 5.5 bug fixes after initial delivery
+12. **A standalone admin tool needing its own gate follows the
+    `_driver-uat/`/`_users-uat/` shape**: `require app/ui/bootstrap.php`
+    for session/CSRF/PDO (it already redirects an unauthenticated visitor
+    to `_admin-login/`, which is exactly right for an ADMIN-only tool), add
+    an explicit role check for anything narrower (DRIVER-or-ADMIN needed
+    its own separate login page since `_admin-login/` rejects non-ADMIN —
+    see §7.2), then a self-contained HTML shell referencing
+    `/api/assets/...` directly rather than pulling in `layout.php`'s full
+    sidebar (keeps it deliberately NOT wired into the main nav, per
+    "don't redesign root app" instructions repeated across tasks).
+
+## 5. Most recent work
 
 ### 5.1 Multi-factory claim→shipment mapping (commit `ac07251`)
 
@@ -264,10 +261,10 @@ PDO rolls back every earlier group's writes too, in the same request.
 
 Added `P55-MF01` (correct mapping across two factories) and `P55-MF02`
 (forced second-factory-group failure → zero new shipments/ledger rows,
-claims left recoverable) to `Phase55DispatchReceiptTest.php`. 21/21 Phase
-5.5 tests + full regression passed. **Files touched**:
-`api/app/src/Dispatch/DepartureService.php`, `Phase55DispatchReceiptTest.php`,
-`run-phase55-dispatch-receipt.sh`, rebuilt ZIP.
+claims left recoverable) to `Phase55DispatchReceiptTest.php`. **Files
+touched**: `api/app/src/Dispatch/DepartureService.php`,
+`Phase55DispatchReceiptTest.php`, `run-phase55-dispatch-receipt.sh`,
+rebuilt ZIP.
 
 ### 5.2 Public assets blocked by Apache deny-all (commit `bb3a5a9`) — THE IMPORTANT ONE
 
@@ -289,46 +286,73 @@ served those files fine locally regardless of what any `.htaccess` said.
 **Fix**: moved all 10 static assets to a new public `api/assets/`
 directory (sibling of `api/app/`, outside the deny-all boundary, with its
 own `.htaccess` containing only `Options -Indexes`). Updated every PHP
-template that emits an asset URL — `layout.php` (shared by every admin
-page), `print-template.php`, `print-invoice-template.php`, the driver
-portal's `bootstrap.php`/`login.php`, the public receive portal — to
-reference `/api/assets/...` instead of `/api/app/ui/assets/...`.
-`api/app/.htaccess` itself is byte-for-byte UNCHANGED — still denies
-everything under `api/app/`. Also fixed the shared local test-harness
-router (`_ui_router.php`) and every affected orchestrator/build/validate
-script.
+template that emits an asset URL to reference `/api/assets/...` instead of
+`/api/app/ui/assets/...`. `api/app/.htaccess` itself is byte-for-byte
+UNCHANGED — still denies everything under `api/app/`. Also fixed the
+shared local test-harness router (`_ui_router.php`) and every affected
+orchestrator/build/validate script.
 
 **Critical new capability added**: since `php -S` cannot catch
 `.htaccess`-dependent bugs, this session **installed a real Apache 2.4 +
-PHP-FPM 8.3** in the sandbox (`apt-get install apache2 php8.3-fpm
-php8.3-mysql` — plain Ubuntu archive, NOT the sury/ondrej PPA, which this
-sandbox's egress proxy blocks with a 403) and wrote
-`dist/validate-phase55-apache-assets.sh`: it extracts the shipped ZIP,
-stands up a real vhost with `AllowOverride All` (matching real cPanel
-default) against it, and asserts (28 checks, all passing):
-- `api/app/*` (config.php, any `.php` source, migrations) → HTTP 403
-- every `api/assets/*.css|js|png` → HTTP 200 with correct content-type
-- Driver login, Driver portal, public Store Receipt portal, admin
-  Konfirmasi Toko, DO print, and Invoice preview all render and reference
-  **only** `/api/assets/...` — the exact URLs printed in their HTML were
-  independently re-fetched and confirmed 200.
+PHP-FPM 8.3** in the sandbox and wrote
+`dist/validate-phase55-apache-assets.sh` — a real vhost with
+`AllowOverride All` (matching real cPanel default) against the extracted,
+shipped ZIP, asserting `api/app/*` → 403, every `api/assets/*` → 200, and
+every real page (Driver login/portal, public Store Receipt, admin
+Konfirmasi Toko, DO print, Invoice preview) renders and references
+**only** `/api/assets/...`. Two new build-time sanity gates were added to
+the Phase 5.5 build script: refuse to build if `api/app/.htaccess` isn't
+deny-all, or if any shipped PHP file still references `/api/app/` for a
+browser asset. See §7.1 for the exact reusable setup recipe.
 
-Two new build-time sanity gates were also added to
-`dist/build-cpanel-package-phase55-dispatch-receipt-easy.sh`: refuse to
-build if `api/app/.htaccess` isn't deny-all, or if any shipped PHP file
-still references `/api/app/` for a browser asset.
-
-**Files-only fix for the already-migrated real cPanel instance** (no new
-migration needed — migration 0007 stays as already applied): re-upload/
-extract the rebuilt ZIP, confirm `api/assets/` now exists with `css/`,
-`js/`, `img/` subfolders, hard-refresh the browser. Full details in commit
-`bb3a5a9`'s message and `git show bb3a5a9`.
-
-**Result**: 21/21 Phase 5.5 tests + full regression + 28/28 real-Apache
-checks all passed. Reported to the user with closing wording: "PHASE 5.5
-PUBLIC ASSET / APACHE DEPLOYMENT BUG FIXED / FILES-ONLY PATCH — NO DATABASE
+**Result**: reported to the user with closing wording "PHASE 5.5 PUBLIC
+ASSET / APACHE DEPLOYMENT BUG FIXED / FILES-ONLY PATCH — NO DATABASE
 MIGRATION REQUIRED / READY TO RESUME REAL CPANEL UAT / NOT production
 ready."
+
+### 5.3 ADMIN User / Driver Account Management (commit `0930baf`) — most recent
+
+Real Phase 5.5 UAT needs at least 2 DRIVER accounts, and there was no way
+to create them without phpMyAdmin/manual SQL. Audited first: `users`
+already had `username` (UNIQUE), `password_hash`, `full_name`, and
+**`active` (default 1)** since migration 0001 (`Auth::attemptLogin`
+already rejects inactive accounts — zero auth-code changes needed), and
+`roles`/`user_roles` was already a clean M:N with DRIVER already seeded.
+**Shipped as a files-only patch — no migration at all.**
+
+New: `api/app/src/Users/{UserRepository,UserService}.php`,
+`api/app/src/Controllers/UserController.php` (+ `/api/users/*` routes,
+ADMIN-only, same CSRF/Idempotency-Key guards as everywhere else),
+`api/_users-uat/` (standalone ADMIN-only page, list + create/edit/
+reset-password modals, NOT wired into `layout.php`'s sidebar — see rule
+12), `api/assets/js/users.js`. A **"never zero active ADMIN users"**
+safeguard blocks deactivating or removing the ADMIN role from the last
+active admin (409 `CANNOT_DEACTIVATE_LAST_ADMIN` /
+`CANNOT_REMOVE_LAST_ADMIN`), verified by locking every active-admin row
+before evaluating the count so two concurrent demotions can't both
+succeed. No `version` column added (see rule 3's exception).
+
+Tested: `PhaseUserMgmtTest.php` (UM-01..16), including real end-to-end
+login checks against the actual `/_driver-uat/login.php` and
+`/_admin-login/` HTML pages (not just the JSON API) to prove a
+UI-created DRIVER account really works and really can't use the admin
+login. Full Phase 0-5.5 regression (UM-17) passed. Manually verified with
+Playwright screenshots (list/create/edit/reset-password modals all
+correct) AND a real Apache validation
+(`dist/validate-user-management-apache.sh`) confirming `api/app/` stays
+403 and `users.js`/the page resolve correctly under `api/assets/`.
+
+**Known limitation, documented rather than faked**: this project has no
+server-side session store (native PHP file sessions) — a password reset
+rotates the hash but cannot forcibly kill a *different* already-live
+session for that user.
+
+Reported with closing wording: "ADMIN USER MANAGEMENT / DRIVER ACCOUNT
+MANAGEMENT READY FOR REAL CPANEL UAT / PHASE 5.5 BUSINESS LOGIC UNCHANGED
+/ NOT production ready." Package: `dist/amor-factory-api-user-management-
+easy.zip`. **If the user's next ask is "create Driver A/B" or "resume
+Phase 5.5 UAT," this module is the answer** — walk them to
+`api/_users-uat/` or `dist/README-FIRST-CPANEL-USER-MANAGEMENT.md`.
 
 ## 6. Directory map
 
@@ -337,6 +361,7 @@ api/
   assets/                PUBLIC static browser assets (css/js/img) — the
                           ONLY place browser-facing CSS/JS/images may live.
                           Own .htaccess: "Options -Indexes" only, no deny.
+                          js/app.js, driver.js, receipt.js, users.js
   app/                    api/app/.htaccess = "Require all denied" — NOTHING
                           in here is ever directly web-reachable. NEVER put
                           a browser-facing asset anywhere under here again.
@@ -348,21 +373,30 @@ api/
       Delivery/         Phase 5 — DoService, DoRepository, ShipmentService
       Dispatch/         Phase 5.5 — DispatchService/Repository,
                         DepartureService, ReceiptService/Repository
-      Controllers/      One controller per phase's API surface
+      Users/            User Management — UserRepository, UserService
+      Controllers/      One controller per phase's API surface, incl.
+                        UserController.php
       Ui/               QrEncoder.php (dependency-free QR)
-      Setup/            Seeder.php (roles/factories/synthetic store)
+      Setup/            Seeder.php (roles/factories/synthetic store),
+                        AdminCreator.php (CLI-only first-admin bootstrap —
+                        NOT the general user-management path, see §7.8)
       App.php           Router + CSRF exemption list
       Auth.php, Audit.php, Idempotency.php, Database.php, Config.php
     migrations/         0001_..php through 0007_..php (dual-location
-                        pointer pattern — see any existing one)
+                        pointer pattern — see any existing one). Still
+                        only 7 — User Management added none.
     ui/                 Server-side PHP templates only (no static assets
                         here anymore — see api/assets/ above)
-      bootstrap.php     Shared session/CSRF bootstrap for the admin UI
+      bootstrap.php     Shared session/CSRF bootstrap for the admin UI —
+                        redirects to _admin-login/ if not logged in
       layout.php        ui_page_head/ui_page_foot, sidebar nav items,
                         references /api/assets/... for CSS/JS
       pages/            One file per admin UI page (produksi.php,
                         pengiriman.php, konfirmasi-toko.php, etc.)
       print-template.php, print-invoice-template.php
+      labels.php        ui_badge()/ui_status_color() — the ONLY place a
+                        status badge's color is decided; new statuses get
+                        one new array entry here (e.g. "Nonaktif")
   _import-po/, _production-uat/, _fg-uat/, _do-uat/, _ui-preview/
                         Manual UAT wizards per phase — ADMIN-authenticated,
                         NEVER wired into a single production nav, kept
@@ -372,33 +406,41 @@ api/
   _receive/             Phase 5.5 PUBLIC store receipt portal — no
                         session/login, resolves identity only via the
                         secure per-DO token in the URL
+  _users-uat/           User Management — ADMIN-only, standalone (rule 12)
   _admin-login/         ADMIN-ONLY login (deliberately rejects any
                         non-ADMIN account — this is intentional, do not
                         "fix" it; drivers get their own login page instead)
   _upgrade/             Web-based migration runner (no SSH/CLI needed)
+  _setup/                RETIRED, one-shot initial-install wizard only —
+                        never reintroduced into any shipped package (a
+                        build-script sanity check enforces this)
   tests/
     Phase0Test.php, Phase2POTest.php, Phase3Test.php, Phase4FgTest.php,
     Phase5DoShipmentTest.php, PhasePrintTest.php, PhaseInvoiceUiTest.php,
-    Phase55DispatchReceiptTest.php   <- most recent, P55-01..23 + P55-MF01/02
+    Phase55DispatchReceiptTest.php, PhaseUserMgmtTest.php  <- most recent,
+                        UM-01..16
     run-phaseX.sh / run-*.sh          <- one orchestrator per suite, each
                                          cascades into the previous phase's
-                                         orchestrator for full regression.
-                                         ALL use php -S (see gotcha #1 for
-                                         what that can't catch).
+                                         orchestrator for full regression
+                                         (run-user-mgmt.sh -> run-phase55-
+                                         dispatch-receipt.sh -> ... -> Phase
+                                         0). ALL use php -S (see gotcha #1
+                                         for what that can't catch).
     _ui_router.php, _phase2_bootstrap_master.php  <- shared test harness helpers
 database/
   schema-v1.sql                      Canonical full schema (mirrors 0001)
   schema-v1-0003-... .sql through schema-v1-0007-...sql   Per-migration DDL mirrors
 dist/
-  build-cpanel-package-*.sh          One per phase's deliverable ZIP
+  build-cpanel-package-*.sh          One per module's deliverable ZIP
   validate-*-package.sh              Extracts the REAL zip, smoke-tests it
                                       via php -S (fast, but see gotcha #1)
-  validate-phase55-apache-assets.sh  NEW: extracts the REAL zip, smoke-tests
-                                      it via a REAL Apache+PHP-FPM vhost with
-                                      AllowOverride All — the only check that
-                                      actually enforces .htaccess. Run this
-                                      for ANY change touching browser-facing
-                                      pages or assets, not just php -S checks.
+  validate-phase55-apache-assets.sh,
+  validate-user-management-apache.sh  Real Apache+PHP-FPM vhost with
+                                      AllowOverride All — the only checks
+                                      that actually enforce .htaccess. Run
+                                      one of these (or extend/copy the
+                                      pattern) for ANY change touching a
+                                      browser-facing page or asset.
   README-FIRST-CPANEL-*.md           Non-technical Indonesian deployment guide
   *.zip                              The actual deliverables sent to the user
 ```
@@ -412,8 +454,9 @@ dist/
    bypass, per-directory `Options`) can pass every existing automated check
    and still be completely broken on the real server. **For any change
    that touches a browser-facing page, a new asset, or anything
-   `.htaccess`-adjacent, also run (or extend)
-   `dist/validate-phase55-apache-assets.sh`** — a real Apache 2.4 +
+   `.htaccess`-adjacent, also run (or extend/copy)
+   `dist/validate-phase55-apache-assets.sh` or
+   `dist/validate-user-management-apache.sh`** — a real Apache 2.4 +
    PHP-FPM 8.3 validation. To install the prerequisites in a fresh
    sandbox: `apt-get install apache2 php8.3-fpm php8.3-mysql` — use the
    **plain Ubuntu archive version**, not the sury/ondrej PPA (blocked by
@@ -424,12 +467,16 @@ dist/
    && /usr/sbin/php-fpm8.3 -D --fpm-config /etc/php/8.3/fpm/php-fpm.conf`
    and `apache2ctl start` (after adding a `Listen <port>` conf and a
    `<VirtualHost>` with `AllowOverride All` pointing at the extracted
-   package — see the existing script for the exact pattern). **Gotcha
+   package — see either existing script for the exact pattern). **Gotcha
    within the gotcha**: `mktemp -d` creates directories `0700 root:root` —
    Apache's `www-data` worker can't even traverse into that, causing every
    request to 403 for a totally unrelated reason (permission denied, not
    `.htaccess` denial) that looks identical from the outside. Always
-   `chmod 755` the temp workdir before pointing a vhost at it.
+   `chmod 755` the temp workdir before pointing a vhost at it. Also:
+   Apache's default mime.types maps `.js` to `text/javascript`, not
+   `application/javascript` — both are correct/equivalent, don't assert
+   the wrong one in a new check (this tripped the first draft of the User
+   Management Apache validation script).
 
 2. **`api/_admin-login/` is deliberately ADMIN-only** — it explicitly
    rejects any non-ADMIN account. This is intentional, pre-existing
@@ -445,7 +492,9 @@ dist/
    (`/api/_driver-uat/...`). Mixing these up is an easy mistake when
    writing a new curl-based validation script — always double check which
    docroot convention the script you're extending uses before copying a
-   URL path from it.
+   URL path from it (the php-S validate scripts use no prefix; the real-
+   Apache validate scripts use the `/api/` prefix, matching each one's own
+   DocumentRoot).
 
 4. **`.htaccess` real-directory bypass.** The root `api/.htaccess` uses a
    `-f [OR] -d` RewriteCond pattern so that real subdirectories (the UAT
@@ -459,11 +508,11 @@ dist/
    package, it has caught real bugs before): never test the source tree
    directly. EXTRACT the actual built `.zip` into a disposable directory,
    apply migrations via the repo's own `migrate.php` (simulating "already
-   installed, now upgrading"), write `config.php` directly into the
-   EXTRACTED tree, and run a live end-to-end smoke test against THOSE
-   files — both via `php -S` (fast iteration) AND via real Apache (see
-   gotcha #1, this is the one that actually matters for anything
-   `.htaccess`-related).
+   installed, now upgrading" — even for a files-only patch, to prove it
+   doesn't need one), write `config.php` directly into the EXTRACTED tree,
+   and run a live end-to-end smoke test against THOSE files — both via
+   `php -S` (fast iteration) AND via real Apache (see gotcha #1, this is
+   the one that actually matters for anything `.htaccess`-related).
 
 6. **Manual browser/Playwright QA still matters.** Automated API tests
    only exercise the JSON endpoints; they never render a full page in a
@@ -473,7 +522,9 @@ dist/
    test. Chromium is pre-installed at `/opt/pw-browsers/chromium-*/chrome-
    linux/chrome` (check `/opt/pw-browsers/` for the exact version) — do
    not run `playwright install`. For any new user-facing portal, do a
-   manual click-through / take screenshots before declaring it done.
+   manual click-through / take screenshots before declaring it done — this
+   was repeated for the User Management create/edit/reset-password modals
+   and is worth repeating for whatever comes next.
 
 7. **Dependency-free QR encoder** (`api/app/src/Ui/QrEncoder.php`) was
    validated by installing Python's `qrcode`, `pyzbar`+`libzbar0t64`, and
@@ -481,6 +532,14 @@ dist/
    ever needs modification, re-validate the same way — a subtly wrong QR
    encoder produces something that LOOKS like a QR code but doesn't scan,
    and that's very hard to catch by visual inspection alone.
+
+8. **`Setup/AdminCreator.php` and `api/_setup/` are NOT the general
+   user-management path.** They're narrow, one-shot "create/reset the
+   very first ADMIN" tools (CLI `bin/create_admin.php`, and a retired web
+   wizard that must never ship in any package). Don't extend them for
+   ongoing multi-role account work — that's what `Users\UserService` is
+   for. The one thing worth reusing from `AdminCreator` was its convention
+   of a 10-character minimum password, carried over for consistency.
 
 ## 8. What is explicitly NOT built yet (respect these boundaries)
 
@@ -498,6 +557,10 @@ dist/
   integration.** Explicitly out of scope per direct user instruction —
   do not build these even if it seems like a natural extension of the
   driver route feature.
+- **Email invitations, self-service forgot-password, SSO, full HR
+  employee profiles.** Explicitly excluded from the User Management
+  module's scope per direct user instruction — it is account/access
+  management only.
 
 ## 9. How to resume work in a new session
 
@@ -509,27 +572,39 @@ dist/
    `/home/user/Factory`).
 3. Run `git log --oneline -10` and `git status` to confirm this handoff
    doc (§2) is still accurate — if not, read whatever commits came after
-   `a183518` before doing anything else.
+   `9b4a827` before doing anything else.
 4. Re-run the latest regression to build confidence in the new environment
    before changing anything:
    ```
-   bash api/tests/run-phase55-dispatch-receipt.sh
+   bash api/tests/run-user-mgmt.sh
    ```
-   This cascades through the ENTIRE regression chain (Phase 0 → 5.5) and
-   should print all-green. If it doesn't, something changed — investigate
-   before proceeding with new work.
+   This cascades through the ENTIRE regression chain (User Mgmt → Phase
+   5.5 → Phase 0-5 → UI/Print/Invoice) and should print all-green. If it
+   doesn't, something changed — investigate before proceeding with new
+   work.
 5. If the user reports something broken specifically on the REAL server
    (not locally), suspect a `.htaccess`-dependent issue FIRST (gotcha #1)
-   and reach for `dist/validate-phase55-apache-assets.sh` (or extend it)
+   and reach for `dist/validate-phase55-apache-assets.sh` or
+   `dist/validate-user-management-apache.sh` (or extend/copy the pattern)
    rather than only re-running the `php -S`-based suites, which already
    passed once and will keep passing even if the real-server bug is still
    there.
-6. Wait for the user's next instruction. If they ask to continue "the next
+6. If the user wants a fresh, comprehensive version of this handoff file
+   resent (they've asked for this more than once, in Indonesian — "update
+   dan kirim lagi handoff" or similar), do a **full rewrite** (not another
+   stacked addendum section) that folds every change since the last
+   version directly into the relevant sections (phase table, architecture
+   rules, directory map, gotchas), the same way this version folded in the
+   Apache-asset fix and the User Management module. Then commit, push, and
+   send the file directly via SendUserFile as well, so it's available even
+   before the new session/account re-clones the repo.
+7. Wait for the user's next instruction. If they ask to continue "the next
    phase," it is very likely **Phase 6 (Invoice business logic)** given the
    sequencing so far, but confirm scope with them first rather than
    assuming — Phase 6 was explicitly deferred by the user earlier and no
-   message has yet greenlit starting it.
-7. Read the delivered README files under `dist/` if you need to understand
+   message has yet greenlit starting it. If they ask about driver accounts
+   or resuming Phase 5.5 UAT, point them at `api/_users-uat/` (§5.3).
+8. Read the delivered README files under `dist/` if you need to understand
    exactly what was told to the client for any given phase — they are the
    ground truth for what the client believes is deployed/working.
 
