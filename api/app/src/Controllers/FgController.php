@@ -130,6 +130,31 @@ final class FgController
         });
     }
 
+    /**
+     * POST /api/fg/{id}/refresh-source — explicit "Refresh Produksi
+     * Terbaru" action for an EXISTING draft/reopened batch. See
+     * FgService::refreshProductionSource()'s own docblock: only updates
+     * fg_batch_source.source_version and fg_item.production_actual_snapshot,
+     * writes ZERO stock_ledger rows, never touches fgVerified/packed_qty.
+     */
+    public static function refreshSource(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::EDITOR_ROLES);
+        $id = (int) $request->routeParams['id'];
+        $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
+
+        Idempotency::handle($request, 'POST /api/fg/{id}/refresh-source', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion) {
+            $service = new FgService($pdo);
+            $dto = $service->refreshProductionSource($id, $expectedVersion, $userId, $request->header('Idempotency-Key'));
+            return [
+                'status' => 200,
+                'envelope' => ['ok' => true, 'data' => $dto],
+                'recordType' => 'fg_batch',
+                'recordKey' => (string) $id,
+            ];
+        });
+    }
+
     public static function submit(Request $request): void
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);

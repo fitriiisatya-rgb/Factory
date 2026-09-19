@@ -148,6 +148,24 @@ function reopenProduction(HttpP4 $http, string $csrf, int $runId, int $expectedV
     return $r['json']['data'];
 }
 
+/**
+ * Reopens an already-SUBMITTED production_run, edits its actual for one
+ * product, and resubmits — the exact real-cPanel-UAT sequence ("Production
+ * Run ... was changed and resubmitted") that FG-R01..R11 test the FG side
+ * of. @return int the new (post-resubmit) production_run version.
+ */
+function resubmitProduction(HttpP4 $http, string $csrf, int $runId, int $expectedVersion, int $productId, float $newActual, string $reason): int
+{
+    $reopen = reopenProduction($http, $csrf, $runId, $expectedVersion, $reason);
+    $v = $reopen['version'];
+    $patch = $http->request('PATCH', "/api/production/{$runId}", ['expectedVersion' => $v, 'items' => [['productId' => $productId, 'actualQty' => $newActual]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('prod-resubmit-patch')));
+    expect($patch['status'] === 200, 'production resubmit patch failed: ' . json_encode($patch['json']));
+    $v = $patch['json']['data']['version'];
+    $submit = $http->request('POST', "/api/production/{$runId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('prod-resubmit-submit')));
+    expect($submit['status'] === 200, 'production resubmit submit failed: ' . json_encode($submit['json']));
+    return (int) $submit['json']['data']['version'];
+}
+
 function createUser(PDO $pdo, string $username, string $password, array $roleCodes): int
 {
     $pdo->prepare('INSERT INTO users (username, password_hash, full_name, active, created_at) VALUES (?, ?, ?, 1, UTC_TIMESTAMP())')
@@ -808,6 +826,253 @@ runTest('P4-32 continuing the UAT example: reopen, edit 3->4, resubmit -> availa
     $locId = locationIdForFactory($pdo, $karangtengahId);
     $rows = ledgerRows($pdo, $bigBanana['product_id'], $locId);
     expect(count($rows) === 2, 'expected exactly 2 ledger rows total for this product (initial +3, correction +1)');
+});
+
+// ---------------------------------------------------------------------
+// FG-R01..R11 — URGENT UAT PATCH: Phase 4 FG Production Source Refresh.
+// Reproduces the real cPanel UAT condition verbatim: a Production Run is
+// resubmitted (version bump / actual change) AFTER an existing FG batch
+// already exists for the same date+factory, and asserts the new
+// POST /api/fg/{id}/refresh-source action can safely resync it — updating
+// ONLY fg_batch_source.source_version and fg_item.production_actual_snapshot,
+// never fgVerified/packed_qty, and never writing stock_ledger.
+// (FG-R12 — full Phase 0-5.5 regression green — is a suite-level concern
+// run via the cascaded run-phase*.sh scripts, not a single assertion here.)
+// ---------------------------------------------------------------------
+runTest('FG-R01 existing FG batch detects source version mismatch after Production resubmit', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodA) {
+    $tanggal = '2026-05-01';
+    $run = createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodA['product_id'], 10.0, 0.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr01')));
+    expect($create['status'] === 200, 'fg create failed: ' . json_encode($create['json']));
+    $batchId = $create['json']['data']['fgBatchId'];
+    expect($create['json']['data']['sourceInconsistency'] === false, 'expected freshly-created FG to have no source inconsistency yet');
+
+    resubmitProduction($http, $csrf, $run['productionRunId'], $run['version'], $prodA['product_id'], 2.0, 'BOLLEN KOMBINASI resubmit UAT');
+
+    $show = $http->request('GET', "/api/fg/{$batchId}", null, ['X-CSRF-Token' => $csrf]);
+    expect($show['status'] === 200, 'fg show failed: ' . json_encode($show['json']));
+    expect($show['json']['data']['sourceInconsistency'] === true, 'expected sourceInconsistency=true after production resubmit');
+    // resubmitProduction does reopen (+1) -> patch (+1) -> submit (+1) = +3 versions total.
+    $detail = current(array_filter($show['json']['data']['sourceInconsistencyDetails'], fn ($d) => $d['productionRunId'] === $run['productionRunId']));
+    expect($detail !== false && $detail['storedVersion'] === $run['version'] && $detail['currentVersion'] === $run['version'] + 3, 'expected stored vs current version mismatch detail, got ' . json_encode($detail));
+});
+
+runTest('FG-R02 refresh-source updates fg_item.production_actual_snapshot', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodB) {
+    $tanggal = '2026-05-02';
+    $run = createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodB['product_id'], 10.0, 0.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr02')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $item0 = current(array_filter($create['json']['data']['items'], fn ($i) => $i['productId'] === $prodB['product_id']));
+    expect((float) $item0['productionActualSnapshot'] === 0.0, 'expected initial snapshot 0');
+
+    resubmitProduction($http, $csrf, $run['productionRunId'], $run['version'], $prodB['product_id'], 2.0, 'refresh snapshot test');
+
+    $refresh = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr02b')));
+    expect($refresh['status'] === 200, 'refresh-source failed: ' . json_encode($refresh['json']));
+    $item1 = current(array_filter($refresh['json']['data']['items'], fn ($i) => $i['productId'] === $prodB['product_id']));
+    expect((float) $item1['productionActualSnapshot'] === 2.0, 'expected snapshot refreshed to 2, got ' . json_encode($item1));
+
+    $stmt = $pdo->prepare('SELECT production_actual_snapshot FROM fg_item WHERE fg_batch_id = ? AND product_id = ?');
+    $stmt->execute([$batchId, $prodB['product_id']]);
+    expect((float) $stmt->fetchColumn() === 2.0, 'expected DB row snapshot 2');
+});
+
+runTest('FG-R03 refresh-source updates fg_batch_source.source_version', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodC) {
+    $tanggal = '2026-05-03';
+    $run = createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodC['product_id'], 10.0, 1.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr03')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+
+    $stmt = $pdo->prepare('SELECT source_version FROM fg_batch_source WHERE fg_batch_id = ? AND production_run_id = ?');
+    $stmt->execute([$batchId, $run['productionRunId']]);
+    expect((int) $stmt->fetchColumn() === $run['version'], 'expected initial source_version to match run version');
+
+    $newRunVersion = resubmitProduction($http, $csrf, $run['productionRunId'], $run['version'], $prodC['product_id'], 3.0, 'source version bump test');
+
+    $refresh = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr03b')));
+    expect($refresh['status'] === 200, 'refresh-source failed: ' . json_encode($refresh['json']));
+
+    $stmt->execute([$batchId, $run['productionRunId']]);
+    expect((int) $stmt->fetchColumn() === $newRunVersion, 'expected source_version refreshed to ' . $newRunVersion . ', got ' . $stmt->fetchColumn());
+});
+
+runTest('FG-R04 refresh-source preserves existing FG Verified', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $bigBanana) {
+    $tanggal = '2026-05-04';
+    createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $bigBanana['product_id'], 10.0, 4.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr04')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $bigBanana['product_id'], 'fgVerified' => 4, 'packed' => 0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr04b')));
+    expect($save['status'] === 200, 'save failed: ' . json_encode($save['json']));
+    $v = $save['json']['data']['version'];
+
+    $refresh = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr04c')));
+    expect($refresh['status'] === 200, 'refresh-source failed: ' . json_encode($refresh['json']));
+    $item = current(array_filter($refresh['json']['data']['items'], fn ($i) => $i['productId'] === $bigBanana['product_id']));
+    expect((float) $item['fgVerified'] === 4.0, 'expected FG Verified to remain 4 after refresh, got ' . json_encode($item));
+});
+
+runTest('FG-R05 refresh-source preserves existing Packed', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodD) {
+    $tanggal = '2026-05-05';
+    createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodD['product_id'], 10.0, 4.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr05')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodD['product_id'], 'fgVerified' => 4, 'packed' => 4]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr05b')));
+    expect($save['status'] === 200, 'save failed: ' . json_encode($save['json']));
+    $v = $save['json']['data']['version'];
+
+    $refresh = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr05c')));
+    expect($refresh['status'] === 200, 'refresh-source failed: ' . json_encode($refresh['json']));
+    $item = current(array_filter($refresh['json']['data']['items'], fn ($i) => $i['productId'] === $prodD['product_id']));
+    expect((float) $item['packed'] === 4.0, 'expected Packed to remain 4 after refresh, got ' . json_encode($item));
+});
+
+runTest('FG-R06 refresh-source writes ZERO stock_ledger rows', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodD) {
+    // prodD is never submitted anywhere else in this suite (see P4-03/P4-10) — kept
+    // deliberately ledger-clean so the "zero rows" assertion below is unambiguous
+    // (stock_ledger/availability are NOT scoped by date, only by product+location).
+    $tanggal = '2026-05-06';
+    $run = createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodD['product_id'], 10.0, 0.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr06')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    resubmitProduction($http, $csrf, $run['productionRunId'], $run['version'], $prodD['product_id'], 5.0, 'ledger safety test');
+
+    $locId = locationIdForFactory($pdo, $karangtengahId);
+    expect(ledgerRows($pdo, $prodD['product_id'], $locId) === [], 'expected zero ledger rows before refresh');
+    $refresh = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr06b')));
+    expect($refresh['status'] === 200, 'refresh-source failed: ' . json_encode($refresh['json']));
+    expect(ledgerRows($pdo, $prodD['product_id'], $locId) === [], 'expected STILL zero ledger rows after refresh — refresh must never post stock');
+});
+
+runTest("FG-R07 available stock for an already-posted product is unchanged by refreshing a different product's source", function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $basicDivId, $prodBasic, $prodVar1) {
+    // prodBasic (already-posted role) and prodVar1 (refreshed role) are both
+    // ledger-clean going into this test (see FG-R06's docblock) — required
+    // for the "available === 4.0" assertions below to be unambiguous.
+    $tanggal = '2026-05-07';
+    createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $basicDivId, $tanggal, $prodBasic['product_id'], 10.0, 4.0);
+    $runVar = createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodVar1['product_id'], 10.0, 0.0);
+
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr07')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [
+        ['productId' => $prodBasic['product_id'], 'fgVerified' => 4, 'packed' => 4],
+        ['productId' => $prodVar1['product_id'], 'fgVerified' => 0, 'packed' => 0],
+    ]], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr07b')));
+    expect($save['status'] === 200, 'save failed: ' . json_encode($save['json']));
+    $v = $save['json']['data']['version'];
+    $submit = $http->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr07c')));
+    expect($submit['status'] === 200, 'submit failed: ' . json_encode($submit['json']));
+    $v = $submit['json']['data']['version'];
+
+    $availBefore = $http->request('GET', "/api/fg/availability?factoryId={$karangtengahId}&productId={$prodBasic['product_id']}", null, ['X-CSRF-Token' => $csrf]);
+    expect((float) $availBefore['json']['data']['available'] === 4.0, 'expected available 4 before refresh');
+
+    $reopen = $http->request('POST', "/api/fg/{$batchId}/reopen", ['expectedVersion' => $v, 'reason' => 'refresh BOLLEN-like source'], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr07d')));
+    expect($reopen['status'] === 200, 'reopen failed: ' . json_encode($reopen['json']));
+    $v = $reopen['json']['data']['version'];
+    resubmitProduction($http, $csrf, $runVar['productionRunId'], $runVar['version'], $prodVar1['product_id'], 2.0, 'BOLLEN-like actual bump');
+
+    $refresh = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr07e')));
+    expect($refresh['status'] === 200, 'refresh-source failed: ' . json_encode($refresh['json']));
+
+    $availAfter = $http->request('GET', "/api/fg/availability?factoryId={$karangtengahId}&productId={$prodBasic['product_id']}", null, ['X-CSRF-Token' => $csrf]);
+    expect((float) $availAfter['json']['data']['available'] === 4.0, 'expected available STILL 4 after refreshing a different product source, got ' . json_encode($availAfter['json']));
+
+    $locId = locationIdForFactory($pdo, $karangtengahId);
+    expect(count(ledgerRows($pdo, $prodBasic['product_id'], $locId)) === 1, 'expected still exactly 1 ledger row for the untouched product');
+});
+
+runTest('FG-R08 refreshChangedSnapshots reports the exact 0 -> 2 change (BOLLEN KOMBINASI UAT shape)', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodH) {
+    $tanggal = '2026-05-08';
+    $run = createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodH['product_id'], 10.0, 0.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr08')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+
+    resubmitProduction($http, $csrf, $run['productionRunId'], $run['version'], $prodH['product_id'], 2.0, 'BOLLEN KOMBINASI 0->2 UAT');
+
+    $refresh = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr08b')));
+    expect($refresh['status'] === 200, 'refresh-source failed: ' . json_encode($refresh['json']));
+    $changed = current(array_filter($refresh['json']['data']['refreshChangedSnapshots'], fn ($c) => $c['productId'] === $prodH['product_id']));
+    expect($changed !== false, 'expected the changed product to appear in refreshChangedSnapshots');
+    expect((float) $changed['previousSnapshot'] === 0.0 && (float) $changed['newSnapshot'] === 2.0, 'expected previousSnapshot 0 -> newSnapshot 2, got ' . json_encode($changed));
+    $item = current(array_filter($refresh['json']['data']['items'], fn ($i) => $i['productId'] === $prodH['product_id']));
+    expect((float) $item['productionActualSnapshot'] === 2.0, 'expected item snapshot to read 2');
+});
+
+runTest('FG-R09 FG Verified exceeding a lowered Production Actual becomes a blocking discrepancy (never auto-reduced)', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodVar1) {
+    $tanggal = '2026-05-09';
+    $run = createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodVar1['product_id'], 10.0, 10.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr09')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodVar1['product_id'], 'fgVerified' => 8, 'packed' => 0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr09b')));
+    expect($save['status'] === 200, 'save failed: ' . json_encode($save['json']));
+    $v = $save['json']['data']['version'];
+
+    resubmitProduction($http, $csrf, $run['productionRunId'], $run['version'], $prodVar1['product_id'], 6.0, 'production actual lowered below FG Verified UAT');
+
+    $refresh = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr09c')));
+    expect($refresh['status'] === 200, 'refresh-source failed: ' . json_encode($refresh['json']));
+    $v = $refresh['json']['data']['version'];
+    $item = current(array_filter($refresh['json']['data']['items'], fn ($i) => $i['productId'] === $prodVar1['product_id']));
+    expect((float) $item['productionActualSnapshot'] === 6.0, 'expected snapshot refreshed to 6, got ' . json_encode($item));
+    expect((float) $item['fgVerified'] === 8.0, 'expected FG Verified to remain 8 (never auto-reduced), got ' . json_encode($item));
+    $blocking = current(array_filter($refresh['json']['data']['verifiedExceedsProductionBlocking'], fn ($b) => $b['productId'] === $prodVar1['product_id']));
+    expect($blocking !== false && (float) $blocking['fgVerified'] === 8.0 && (float) $blocking['newSnapshot'] === 6.0, 'expected blocking discrepancy 8 > 6, got ' . json_encode($blocking));
+
+    $submit = $http->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr09d')));
+    expect($submit['status'] === 409 && $submit['json']['code'] === 'FG_EXCEEDS_PRODUCTION', 'expected submit blocked with 409 FG_EXCEEDS_PRODUCTION, got ' . json_encode($submit));
+
+    $locId = locationIdForFactory($pdo, $karangtengahId);
+    expect(ledgerRows($pdo, $prodVar1['product_id'], $locId) === [], 'expected zero stock movement from the blocked submit attempt');
+});
+
+runTest('FG-R10 a submitted FG batch cannot refresh-source unless reopened first', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodVar2) {
+    $tanggal = '2026-05-10';
+    createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $prodVar2['product_id'], 10.0, 5.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr10')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodVar2['product_id'], 'fgVerified' => 5, 'packed' => 5]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr10b')));
+    expect($save['status'] === 200, 'save failed: ' . json_encode($save['json']));
+    $v = $save['json']['data']['version'];
+    $submit = $http->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr10c')));
+    expect($submit['status'] === 200, 'submit failed: ' . json_encode($submit['json']));
+    $v = $submit['json']['data']['version'];
+
+    $refresh = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr10d')));
+    expect($refresh['status'] === 409 && $refresh['json']['code'] === 'INVALID_STATUS', 'expected 409 INVALID_STATUS on a submitted batch, got ' . json_encode($refresh));
+});
+
+runTest('FG-R11 repeated refresh-source is idempotent (no drift, no duplicate stock/state changes)', function () use ($http, $csrf, $pdo, $karangtengahId, $basicDivId, $prodBasic2) {
+    // prodBasic2 stays ledger-clean throughout this suite (see P4-02, its
+    // only prior use, which never submits) — required for the "zero stock
+    // movement" assertion below to be unambiguous.
+    $tanggal = '2026-05-11';
+    createSubmittedProduction($http, $csrf, $pdo, $karangtengahId, $basicDivId, $tanggal, $prodBasic2['product_id'], 10.0, 3.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr11')));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+
+    $refresh1 = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr11b')));
+    expect($refresh1['status'] === 200, 'first refresh failed: ' . json_encode($refresh1['json']));
+    expect($refresh1['json']['data']['refreshChangedSnapshots'] === [], 'expected no changed snapshots on the first refresh (nothing drifted since draft creation)');
+    $v = $refresh1['json']['data']['version'];
+
+    $refresh2 = $http->request('POST', "/api/fg/{$batchId}/refresh-source", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr11c')));
+    expect($refresh2['status'] === 200, 'second refresh failed: ' . json_encode($refresh2['json']));
+    expect($refresh2['json']['data']['refreshChangedSnapshots'] === [], 'expected no changed snapshots on the second, repeated refresh');
+    $item = current(array_filter($refresh2['json']['data']['items'], fn ($i) => $i['productId'] === $prodBasic2['product_id']));
+    expect((float) $item['productionActualSnapshot'] === 3.0, 'expected snapshot to remain stably 3 after repeated refresh, got ' . json_encode($item));
+
+    $locId = locationIdForFactory($pdo, $karangtengahId);
+    expect(ledgerRows($pdo, $prodBasic2['product_id'], $locId) === [], 'expected zero stock movement across both refreshes');
 });
 
 $failed = array_filter($results, fn ($ok) => !$ok);

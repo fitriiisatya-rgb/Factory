@@ -158,6 +158,26 @@ if ($action === 'save_draft' || $action === 'submit_batch') {
     }
 }
 
+if ($action === 'refresh_source') {
+    $batchId = (int) ($_POST['batchId'] ?? 0);
+    $expectedVersion = (int) ($_POST['expectedVersion'] ?? 0);
+    try {
+        $dto = Database::transaction(function ($txPdo) use ($batchId, $expectedVersion, $userId) {
+            return (new FgService($txPdo))->refreshProductionSource($batchId, $expectedVersion, $userId, null);
+        });
+        $changed = count($dto['refreshChangedSnapshots']);
+        $blocking = count($dto['verifiedExceedsProductionBlocking']);
+        $msg = "Sumber Produksi disegarkan (versi {$dto['version']}). {$changed} produk diperbarui angkanya.";
+        if ($blocking > 0) {
+            $msg .= " PERINGATAN: {$blocking} produk sekarang punya FG Verified melebihi Production Actual terbaru — perbaiki sebelum submit.";
+        }
+        $actionResult = ['ok' => true, 'title' => 'Refresh Produksi Terbaru selesai', 'message' => $msg];
+        $redirectTo = '?batchId=' . $batchId;
+    } catch (\Throwable $e) {
+        $actionResult = ['ok' => false, 'title' => 'Gagal menyegarkan sumber', 'message' => $e->getMessage()];
+    }
+}
+
 if ($action === 'reopen_batch') {
     $batchId = (int) ($_POST['batchId'] ?? 0);
     $expectedVersion = (int) ($_POST['expectedVersion'] ?? 0);
@@ -304,8 +324,14 @@ Produksi/PO. Belum ada DO, Pengiriman, Invoice, Pembayaran, atau Retur di sini.<
         <?php endforeach; ?>
       </select>
     </label>
-    <label>Filter Divisi Sumber (opsional, hanya utk pratinjau sebelum draft dibuat)
-      <select name="divisionId">
+    <label>Filter Divisi Sumber
+      <?php if ($batchView !== null): ?>
+        (TIDAK BERLAKU — Draft FG untuk tanggal/pabrik ini sudah ada; filter ini hanya untuk pratinjau SEBELUM draft
+        dibuat. Gunakan tombol <strong>Refresh Produksi Terbaru</strong> di bawah untuk menyegarkan draft yang sudah ada.)
+      <?php else: ?>
+        (opsional, hanya utk pratinjau sebelum draft dibuat)
+      <?php endif; ?>
+      <select name="divisionId" <?= $batchView !== null ? 'disabled' : '' ?>>
         <option value="">— semua divisi pabrik ini —</option>
         <?php foreach ($divisions as $d): if ($factoryIdParam !== null && (int) $d['factory_id'] !== $factoryIdParam) continue; ?>
         <option value="<?= (int) $d['division_id'] ?>" <?= $divisionIdParam === (int) $d['division_id'] ? 'selected' : '' ?>><?= esc($d['name']) ?></option>
@@ -314,7 +340,12 @@ Produksi/PO. Belum ada DO, Pengiriman, Invoice, Pembayaran, atau Retur di sini.<
     </label>
     <button type="submit">4. Muat Produksi Submitted</button>
   </form>
-</div>
+  <?php if ($batchView !== null): ?>
+  <p style="color:#666;margin-top:.4rem;">Draft/Reopened FG untuk tanggal &amp; pabrik ini sudah ada — tombol ini
+  hanya membuka tampilannya (tidak mengubah data). Untuk menyegarkan angka Produksi ke draft yang sudah ada,
+  gunakan tombol <strong>Refresh Produksi Terbaru</strong> di bagian bawah.</p>
+  <?php endif; ?>
+  </div>
 
 <?php if ($targetView !== null): ?>
 <h2>4-5. Produksi Submitted yang Tersedia — <?= esc($targetView['tanggal']) ?> &middot; <?= esc($targetView['factoryName']) ?></h2>
@@ -361,11 +392,40 @@ Produksi/PO. Belum ada DO, Pengiriman, Invoice, Pembayaran, atau Retur di sini.<
   <?php if ($batchView['sourceInconsistency']): ?>
   <div class="warn"><strong>Ketidaksesuaian Sumber Produksi</strong> — salah satu Produksi sumber batch FG ini sudah
   berubah versi atau dibuka kembali (reopened) SETELAH FG ini dibuat/disegarkan. Data FG yang sudah diisi TIDAK
-  dihapus atau diubah otomatis. Periksa produksinya kembali sebelum melanjutkan.
+  dihapus atau diubah otomatis. Klik <strong>Refresh Produksi Terbaru</strong> di bawah untuk menyamakan angka
+  sumbernya (FG Verified/Packed yang sudah diisi TIDAK akan berubah).
   <table style="margin-top:.4rem;"><tr><th>Production Run</th><th>Versi Tercatat</th><th>Versi Sekarang</th><th>Status Sekarang</th></tr>
   <?php foreach ($batchView['sourceInconsistencyDetails'] as $s): ?>
   <tr><td>#<?= (int) $s['productionRunId'] ?></td><td><?= (int) $s['storedVersion'] ?></td><td><?= (int) $s['currentVersion'] ?></td><td><?= esc($s['currentStatus']) ?></td></tr>
   <?php endforeach; ?></table>
+  <?php if ($editable): ?>
+  <form method="post" style="margin-top:.6rem;">
+    <input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
+    <input type="hidden" name="action" value="refresh_source">
+    <input type="hidden" name="batchId" value="<?= (int) $batchView['fgBatchId'] ?>">
+    <input type="hidden" name="expectedVersion" value="<?= (int) $batchView['version'] ?>">
+    <button type="submit">Refresh Produksi Terbaru</button>
+  </form>
+  <?php else: ?>
+  <p style="margin-top:.4rem;color:#666;">Dokumen ini sudah <strong>submitted</strong> — klik "Buka Kembali (Reopen)"
+  di bawah dulu sebelum bisa Refresh Produksi Terbaru.</p>
+  <?php endif; ?>
+  </div>
+  <?php elseif ($editable): ?>
+  <form method="post" style="margin:.5rem 0;">
+    <input type="hidden" name="csrf" value="<?= esc($csrfToken) ?>">
+    <input type="hidden" name="action" value="refresh_source">
+    <input type="hidden" name="batchId" value="<?= (int) $batchView['fgBatchId'] ?>">
+    <input type="hidden" name="expectedVersion" value="<?= (int) $batchView['version'] ?>">
+    <button type="submit" class="secondary">Refresh Produksi Terbaru</button>
+  </form>
+  <?php endif; ?>
+
+  <?php if ($batchView['summary']['jumlahMelebihiProduksi'] > 0): ?>
+  <div class="warn" style="background:#ffe6e6;border-color:#e99;">
+  <strong>Diblokir untuk Submit</strong> — <?= $batchView['summary']['jumlahMelebihiProduksi'] ?> produk punya
+  FG Verified melebihi Production Actual terbaru (lihat baris berlabel "Melebihi Produksi" di tabel bawah).
+  Turunkan FG Verified produk tersebut dulu sebelum submit — sistem tidak pernah menurunkannya secara otomatis.
   </div>
   <?php endif; ?>
 

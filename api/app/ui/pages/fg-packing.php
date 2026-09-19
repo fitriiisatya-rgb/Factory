@@ -70,7 +70,28 @@ if ($batchView !== null) {
   </div>
   <?php $editable = in_array($batchView['status'], ['draft', 'reopened'], true); ?>
   <?php if ($batchView['sourceInconsistency']): ?>
-  <div class="alert alert-warning">Ketidaksesuaian Sumber Produksi — salah satu Produksi sumber sudah berubah versi/dibuka kembali sejak FG ini dibuat/disegarkan. Data FG yang sudah diisi tidak dihapus otomatis — periksa kembali sebelum melanjutkan.</div>
+  <div class="alert alert-warning">
+    <strong>Ketidaksesuaian Sumber Produksi</strong> — salah satu Produksi sumber sudah berubah versi/dibuka kembali sejak FG ini dibuat/disegarkan. Data FG yang sudah diisi (FG Terverifikasi/Packed) TIDAK dihapus atau diubah otomatis.
+    <div class="table-scroll" style="margin-top:var(--space-2);"><table class="data-table">
+      <thead><tr><th>Production Run</th><th>Versi Tercatat</th><th>Versi Sekarang</th><th>Status Sekarang</th></tr></thead>
+      <tbody>
+      <?php foreach ($batchView['sourceInconsistencyDetails'] as $s): ?>
+      <tr><td>#<?= (int) $s['productionRunId'] ?></td><td><?= (int) $s['storedVersion'] ?></td><td><?= (int) $s['currentVersion'] ?></td><td><?= ui_esc($s['currentStatus']) ?></td></tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table></div>
+    <?php if ($editable): ?>
+    <button type="button" class="btn btn-primary" style="margin-top:var(--space-2);" id="btn-refresh-fg-source">Refresh Produksi Terbaru</button>
+    <?php else: ?>
+    <p style="margin-top:var(--space-2);color:var(--text-muted);">Dokumen ini sudah <strong>submitted</strong> — klik "Buka Kembali / Reopen" dulu sebelum bisa Refresh Produksi Terbaru.</p>
+    <?php endif; ?>
+  </div>
+  <?php elseif ($editable): ?>
+  <button type="button" class="btn btn-secondary" style="margin-bottom:var(--space-3);" id="btn-refresh-fg-source">Refresh Produksi Terbaru</button>
+  <?php endif; ?>
+
+  <?php if ($batchView['summary']['jumlahMelebihiProduksi'] > 0): ?>
+  <div class="alert alert-danger"><strong>Diblokir untuk Submit</strong> — <?= $batchView['summary']['jumlahMelebihiProduksi'] ?> produk punya FG Terverifikasi melebihi Production Actual terbaru (lihat baris berlabel "Melebihi Produksi" pada kolom FG Status). Turunkan FG Terverifikasi produk tersebut dulu sebelum submit — sistem tidak pernah menurunkannya secara otomatis.</div>
   <?php endif; ?>
 
   <form id="fg-form" data-batch-id="<?= (int) $batchView['fgBatchId'] ?>" data-expected-version="<?= (int) $batchView['version'] ?>">
@@ -154,6 +175,22 @@ if ($batchView !== null) {
       Amor.toast('FG berhasil disubmit.', 'success');
       setTimeout(function () { location.reload(); }, 600);
     } catch (e) { Amor.toast(e.message, 'danger'); submitBtn.disabled = false; }
+  });
+
+  var refreshSourceBtn = document.getElementById('btn-refresh-fg-source');
+  if (refreshSourceBtn) refreshSourceBtn.addEventListener('click', async function () {
+    refreshSourceBtn.disabled = true;
+    try {
+      var data = await Amor.apiFetch('/api/fg/' + batchId + '/refresh-source', { method: 'POST', body: { expectedVersion: version } });
+      version = data.version;
+      form.setAttribute('data-expected-version', version);
+      var changed = (data.refreshChangedSnapshots || []).length;
+      var blocking = (data.verifiedExceedsProductionBlocking || []).length;
+      var msg = 'Sumber Produksi disegarkan. ' + changed + ' produk diperbarui angkanya.';
+      if (blocking > 0) msg += ' PERINGATAN: ' + blocking + ' produk sekarang punya FG Terverifikasi melebihi Production Actual terbaru.';
+      Amor.toast(msg, blocking > 0 ? 'warning' : 'success');
+      setTimeout(function () { location.reload(); }, 800);
+    } catch (e) { Amor.toast(e.message, 'danger'); refreshSourceBtn.disabled = false; }
   });
 
   var reopenBtn = document.getElementById('btn-reopen-fg');

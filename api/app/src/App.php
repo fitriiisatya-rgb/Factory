@@ -82,6 +82,7 @@ final class App
         $router->post('/api/fg', [FgController::class, 'create']);
         $router->get('/api/fg/{id}', [FgController::class, 'show']);
         $router->patch('/api/fg/{id}', [FgController::class, 'update']);
+        $router->post('/api/fg/{id}/refresh-source', [FgController::class, 'refreshSource']);
         $router->post('/api/fg/{id}/submit', [FgController::class, 'submit']);
         $router->post('/api/fg/{id}/reopen', [FgController::class, 'reopen']);
 

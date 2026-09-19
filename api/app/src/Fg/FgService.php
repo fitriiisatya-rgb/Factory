@@ -211,6 +211,20 @@ final class FgService
             throw new ApiException(400, 'EMPTY_FG_BATCH', 'This FG document has no product lines yet — nothing to submit');
         }
 
+        // Pre-flight: a Production source refresh may have lowered a
+        // product's production_actual_snapshot below an already-entered
+        // fgVerified (task's own explicit rule — never auto-reduce
+        // fgVerified, but never silently let it post stock beyond current
+        // Production either). Checked BEFORE any stock_ledger write below,
+        // so a blocked submit is guaranteed to have posted nothing at all.
+        foreach ($items as $productId => $item) {
+            $snapshot = (float) $item['production_actual_snapshot'];
+            $fgVerified = (float) $item['qty'];
+            if ($fgVerified - $snapshot > 0.0001) {
+                throw new ApiException(409, 'FG_EXCEEDS_PRODUCTION', "Produk {$item['product_name']}: FG Verified ({$fgVerified}) melebihi Production Actual terbaru ({$snapshot}) — perbaiki FG Verified sebelum submit.");
+            }
+        }
+
         $postings = [];
         foreach ($items as $productId => $item) {
             $posted = $this->repo->postedQtyForItem($this->pdo, (int) $item['fg_item_id']);
@@ -341,6 +355,25 @@ final class FgService
         return $out;
     }
 
+    /**
+     * Pulls the LATEST submitted Production state into this batch's source
+     * bookkeeping: updates fg_batch_source.source_version for every
+     * eligible run (unconditionally — this is pure attribution metadata,
+     * never a reason to withhold an update), and refreshes every existing
+     * fg_item's production_actual_snapshot to the CURRENT live actual.
+     *
+     * The snapshot refresh is ALWAYS applied, regardless of whether the
+     * operator has already entered a real fgVerified value — fgVerified/
+     * packed_qty are never read or written here at all. This was a real
+     * bug until this fix: an earlier version only refreshed the snapshot
+     * while fgVerified was still 0, which meant the snapshot silently
+     * froze forever the moment any FG work began, even though
+     * source_version kept updating — so the "Ketidaksesuaian Sumber"
+     * warning could disappear while the number underneath stayed stale.
+     * The correct safety net for "fgVerified now exceeds the refreshed
+     * snapshot" lives in submit()'s own pre-flight check, not here — this
+     * method's only job is to make the snapshot true.
+     */
     private function refreshSource(int $batchId, string $tanggal, int $factoryId): void
     {
         $runs = $this->targets->eligibleProductionRuns($this->pdo, $tanggal, $factoryId);
@@ -353,15 +386,77 @@ final class FgService
         $storeId = $this->repo->unallocatedStoreId($this->pdo);
         foreach ($actuals as $productId => $a) {
             if (isset($existingItems[$productId])) {
-                // Never touch the snapshot once the operator has started
-                // recording a real fg_verified value — see class docblock.
-                if ((float) $existingItems[$productId]['qty'] <= 0.0001) {
-                    $this->repo->updateItemSnapshot($this->pdo, (int) $existingItems[$productId]['fg_item_id'], $a['actual']);
-                }
+                $this->repo->updateItemSnapshot($this->pdo, (int) $existingItems[$productId]['fg_item_id'], $a['actual']);
             } else {
                 $this->repo->insertItem($this->pdo, $batchId, $productId, $storeId, $a['actual']);
             }
         }
+    }
+
+    /**
+     * POST /api/fg/{id}/refresh-source — the explicit, standalone "Refresh
+     * Produksi Terbaru" action for an EXISTING draft/reopened FG batch.
+     * Unlike patchDraft's own $refreshSource flag (which requires
+     * resubmitting the whole items form), this needs nothing but the
+     * batch id + expectedVersion — exactly the gap the real cPanel UAT
+     * report identified ("Muat Produksi Submitted" only re-displays an
+     * existing batch, it never refreshes it).
+     *
+     * Writes ZERO stock_ledger rows (only submit() ever posts stock) and
+     * never changes fgVerified/packed_qty — only fg_batch_source's
+     * source_version and fg_item.production_actual_snapshot. If the
+     * refresh reveals fgVerified > the new snapshot for any item, that
+     * item is reported back as a blocking discrepancy: its fgVerified is
+     * left exactly as stored (never auto-reduced), but submit() will
+     * refuse to proceed until an admin lowers it.
+     */
+    public function refreshProductionSource(int $batchId, int $expectedVersion, int $userId, ?string $requestId): array
+    {
+        $batch = $this->repo->lockBatchById($this->pdo, $batchId);
+        if ($batch === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'FG document not found');
+        }
+        $this->assertEditable($batch);
+        $factory = $this->requireFactory((int) $batch['factory_id']);
+
+        $before = $this->repo->findItems($this->pdo, $batchId);
+        $this->refreshSource($batchId, (string) $batch['tanggal'], (int) $batch['factory_id']);
+        $after = $this->repo->findItems($this->pdo, $batchId);
+
+        $changedSnapshots = [];
+        $blocking = [];
+        foreach ($after as $productId => $item) {
+            $oldSnapshot = isset($before[$productId]) ? (float) $before[$productId]['production_actual_snapshot'] : null;
+            $newSnapshot = (float) $item['production_actual_snapshot'];
+            if ($oldSnapshot === null || abs($oldSnapshot - $newSnapshot) > 0.0001) {
+                $changedSnapshots[] = [
+                    'productId' => $productId, 'productName' => $item['product_name'],
+                    'previousSnapshot' => $oldSnapshot, 'newSnapshot' => $newSnapshot,
+                ];
+            }
+            $fgVerified = (float) $item['qty'];
+            if ($fgVerified - $newSnapshot > 0.0001) {
+                $blocking[] = [
+                    'productId' => $productId, 'productName' => $item['product_name'],
+                    'fgVerified' => $fgVerified, 'newSnapshot' => $newSnapshot,
+                ];
+            }
+        }
+
+        $bumped = $this->repo->bumpVersion($this->pdo, $batchId, $expectedVersion, 'status = status', []);
+        $this->assertVersionBumpSucceeded($batchId, $expectedVersion, $bumped);
+
+        \Amor\Api\Audit::write(
+            $this->pdo, $requestId, $userId, 'fg.source_refresh', 'fg_batch', (string) $batchId,
+            'ok', $expectedVersion, $expectedVersion + 1,
+            ['changedSnapshots' => $changedSnapshots, 'blockingDiscrepancies' => $blocking]
+        );
+
+        $batch = $this->repo->findBatchById($this->pdo, $batchId);
+        $dto = $this->buildBatchDto($batch, $factory);
+        $dto['refreshChangedSnapshots'] = $changedSnapshots;
+        $dto['verifiedExceedsProductionBlocking'] = $blocking;
+        return $dto;
     }
 
     /** @return array{inconsistent:bool,runs:array} */
