@@ -13,7 +13,7 @@ final class StoreRepository
 {
     public function findAll(PDO $pdo, ?string $q, ?string $channel, ?bool $active): array
     {
-        $sql = 'SELECT store_id, canonical_name, channel, active, version, created_at, updated_at FROM store WHERE 1=1';
+        $sql = 'SELECT store_id, canonical_name, email, channel, active, version, created_at, updated_at FROM store WHERE 1=1';
         $params = [];
 
         if ($q !== null && $q !== '') {
@@ -39,7 +39,7 @@ final class StoreRepository
 
     public function findById(PDO $pdo, int $id): ?array
     {
-        $stmt = $pdo->prepare('SELECT store_id, canonical_name, channel, active, version, created_at, updated_at FROM store WHERE store_id = ?');
+        $stmt = $pdo->prepare('SELECT store_id, canonical_name, email, channel, active, version, created_at, updated_at FROM store WHERE store_id = ?');
         $stmt->execute([$id]);
         $row = $stmt->fetch();
         return $row ?: null;
@@ -47,7 +47,7 @@ final class StoreRepository
 
     public function findByCanonicalName(PDO $pdo, string $name): ?array
     {
-        $stmt = $pdo->prepare('SELECT store_id, canonical_name, channel, active, version, created_at, updated_at FROM store WHERE canonical_name = ?');
+        $stmt = $pdo->prepare('SELECT store_id, canonical_name, email, channel, active, version, created_at, updated_at FROM store WHERE canonical_name = ?');
         $stmt->execute([$name]);
         $row = $stmt->fetch();
         return $row ?: null;
@@ -78,7 +78,7 @@ final class StoreRepository
             throw new ApiException(404, 'NOT_FOUND', 'Store not found');
         }
 
-        $columns = ['canonical_name', 'channel', 'active'];
+        $columns = ['canonical_name', 'email', 'channel', 'active'];
         $set = [];
         $params = [];
         foreach ($columns as $col) {

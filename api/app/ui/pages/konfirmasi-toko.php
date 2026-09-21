@@ -45,8 +45,8 @@ $statusOptions = [
 <div class="card section">
   <div class="table-scroll"><table class="data-table">
     <thead><tr>
-      <th>Toko</th><th>No. DO</th><th>Grup</th><th class="num">Dikirim</th><th class="num">Baik</th>
-      <th class="num">Reject</th><th class="num">Kurang</th><th>Status</th><th>Dikonfirmasi</th><th>Aksi</th>
+      <th>Toko</th><th>No. DO</th><th>Driver</th><th>Grup</th><th class="num">Dikirim</th><th class="num">Baik</th>
+      <th class="num">Reject</th><th class="num">Kurang</th><th>Status Email</th><th>Status Penerimaan</th><th>Dikonfirmasi</th><th>Aksi</th>
     </tr></thead>
     <tbody>
     <?php foreach ($rows as $r): ?>
@@ -54,11 +54,13 @@ $statusOptions = [
     <tr class="row-clickable" data-row-href="<?= ui_esc($detailUrl) ?>">
       <td><?= ui_esc((string) $r['storeName']) ?></td>
       <td><?= ui_esc((string) ($r['docNo'] ?? '-')) ?></td>
+      <td><?= ui_esc((string) ($r['driverName'] ?? '-')) ?></td>
       <td><?= ui_esc((string) $r['shipmentGroup']) ?></td>
       <td class="num"><?= ui_fmt_num($r['totalShipped']) ?></td>
       <td class="num"><?= ui_fmt_num($r['totalGood']) ?></td>
       <td class="num"><?= $r['totalReject'] > 0.0001 ? '<strong style="color:var(--danger)">' . ui_fmt_num($r['totalReject']) . '</strong>' : ui_fmt_num($r['totalReject']) ?></td>
       <td class="num"><?= $r['totalShortage'] > 0.0001 ? '<strong style="color:var(--danger)">' . ui_fmt_num($r['totalShortage']) . '</strong>' : ui_fmt_num($r['totalShortage']) ?></td>
+      <td><?= ui_badge(ui_email_status_label($r['emailStatus'])) ?></td>
       <td><?= ui_badge(ui_receipt_status_label((string) $r['status'])) ?></td>
       <td><?= ui_esc((string) ($r['confirmedAt'] ?? '-')) ?><?= $r['receiverName'] ? ' &middot; ' . ui_esc((string) $r['receiverName']) : '' ?></td>
       <td>

@@ -40,6 +40,13 @@
   function renderShipmentCard(view, sh) {
     var card = document.createElement('div');
     card.className = 'rc-card';
+    if (window.RECEIPT_FOCUS_SHIPMENT_ID && sh.shipmentId === window.RECEIPT_FOCUS_SHIPMENT_ID) {
+      // Display-only focus from an email's ?shipment= hint (Part H) — the
+      // token already authorized every shipment in `view`, so this never
+      // grants access to anything; it only decides where the page scrolls.
+      card.className += ' rc-card-focus';
+      card.id = 'rc-focus-shipment';
+    }
 
     var head = document.createElement('div');
     head.innerHTML =
@@ -273,6 +280,13 @@
     view.shipments.forEach(function (sh) {
       root.appendChild(renderShipmentCard(view, sh));
     });
+
+    if (window.RECEIPT_FOCUS_SHIPMENT_ID) {
+      var focusEl = document.getElementById('rc-focus-shipment');
+      if (focusEl) {
+        focusEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
   }
 
   document.addEventListener('DOMContentLoaded', render);

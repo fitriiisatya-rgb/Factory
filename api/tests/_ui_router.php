@@ -18,6 +18,16 @@ declare(strict_types=1);
  * the API routes and every _admin-login//_do-uat/-style UAT page, which
  * rely on the built-in server's own directory-index/index.php-fallback
  * behavior) falls straight through unchanged.
+ *
+ * Same mismatch, one more case: the automatic Bakery email's Digital
+ * Surat Jalan link (Mail\ShipmentEmailService::buildMessage()) is built
+ * with the REAL production path api/_receive/... (same convention as the
+ * existing DO receipt QR — see Ui/print-template.php's
+ * ui_do_receipt_qr_svg()), correct for the real cPanel docroot. Locally
+ * that again has no nested api/api/_receive/ directory, so this strips
+ * the leading /api and hands off to the real _receive/index.php exactly
+ * as the built-in server's own index.php-fallback would if the path
+ * already matched.
  */
 
 $uri = urldecode((string) parse_url((string) $_SERVER['REQUEST_URI'], PHP_URL_PATH));
@@ -33,6 +43,11 @@ if (preg_match('#^/api/(assets/[\w./-]+\.(css|js|png|jpg|jpeg|svg))$#', $uri, $m
         readfile($file);
         return true;
     }
+}
+
+if (preg_match('#^/api/_receive/?$#', $uri)) {
+    require __DIR__ . '/../_receive/index.php';
+    return true;
 }
 
 return false; // let the built-in server's normal file/index.php-fallback handling take it from here

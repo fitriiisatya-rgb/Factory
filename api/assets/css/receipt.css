@@ -41,6 +41,9 @@ html, body.rc-body {
 .rc-card-title { font-weight: 700; font-size: 1rem; margin-bottom: 4px; }
 .rc-card-sub { font-size: .8rem; color: var(--rc-muted); }
 
+/* Email CTA landed here (Part H's ?shipment= hint) — display-only emphasis, never an access decision. */
+.rc-card-focus { border-color: var(--rc-brown-dark, #7a3b2e); box-shadow: 0 0 0 2px var(--rc-brown-dark, #7a3b2e); }
+
 .rc-badge { display: inline-block; font-size: .72rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
 .rc-badge.pending { background: var(--rc-warning-soft); color: var(--rc-warning); }
 .rc-badge.ok { background: var(--rc-success-soft); color: var(--rc-success); }

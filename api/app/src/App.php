@@ -17,6 +17,7 @@ use Amor\Api\Controllers\PoController;
 use Amor\Api\Controllers\ProductController;
 use Amor\Api\Controllers\ProductionController;
 use Amor\Api\Controllers\ReceiptController;
+use Amor\Api\Controllers\ShipmentEmailController;
 use Amor\Api\Controllers\StoreController;
 use Amor\Api\Controllers\UserController;
 
@@ -136,6 +137,10 @@ final class App
         $router->get('/api/admin/receipts', [ReceiptController::class, 'adminList']);
         $router->post('/api/admin/receipts/{id}/verify', [ReceiptController::class, 'adminVerify']);
         $router->get('/api/admin/receipts/evidence/{id}', [ReceiptController::class, 'adminEvidence']);
+
+        // Phase 5.5 finalization — automatic Bakery email / Digital Surat
+        // Jalan / Admin resend (ADMIN-only, normal session/CSRF).
+        $router->post('/api/admin/shipments/{shipmentId}/email/resend', [ShipmentEmailController::class, 'resend']);
 
         // User / Driver Account Management (ADMIN-only, normal session/CSRF/Idempotency-Key —
         // same guards as every other mutating route, nothing special-cased).

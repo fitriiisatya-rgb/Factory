@@ -10,6 +10,13 @@ declare(strict_types=1);
  * nothing than a half-built edit flow). Creating/editing master data
  * stays on the existing flows (api/_import-po/'s new-product review, and
  * direct API calls) for now.
+ *
+ * ONE deliberate exception (Phase 5.5 finalization — automatic Bakery
+ * email): the "Toko" tab gets a minimal inline edit for store.email ONLY
+ * — the automatic shipment-departure email needs Admin to be able to fill
+ * this in, and there is nowhere else in this app to do it. Uses the
+ * EXISTING PUT /api/stores/{id} endpoint (already supported updates,
+ * just had no UI), never a new/duplicated store-write path.
  */
 
 $tab = (string) ($_GET['tab'] ?? 'produk');
@@ -59,26 +66,52 @@ if (!isset($tabs[$tab])) {
   <p style="padding:0 var(--space-4) var(--space-4);color:var(--text-muted);font-size:var(--text-xs);">Menampilkan maksimal 300 baris. Gunakan pencarian untuk mempersempit.</p>
 
 <?php elseif ($tab === 'toko'):
-  $sql = 'SELECT store_id, canonical_name, channel, active FROM store WHERE 1=1';
+  $sql = 'SELECT store_id, canonical_name, email, channel, active, version FROM store WHERE 1=1';
   $params = [];
   if ($searchTerm !== '') { $sql .= ' AND canonical_name LIKE ?'; $params[] = '%' . $searchTerm . '%'; }
   $sql .= ' ORDER BY canonical_name LIMIT 300';
   $stmt = $pdo->prepare($sql); $stmt->execute($params); $rows = $stmt->fetchAll();
   ?>
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Store ID</th><th>Nama Toko</th><th>Channel</th><th>Status</th></tr></thead>
+    <thead><tr><th>Store ID</th><th>Nama Toko</th><th>Email Penerimaan</th><th>Channel</th><th>Status</th><th>Aksi</th></tr></thead>
     <tbody>
-    <?php if ($rows === []): ?><tr><td colspan="4"><?= ui_empty_state('Tidak ada toko yang cocok', '') ?></td></tr>
+    <?php if ($rows === []): ?><tr><td colspan="6"><?= ui_empty_state('Tidak ada toko yang cocok', '') ?></td></tr>
     <?php else: foreach ($rows as $r): ?>
-    <tr>
+    <tr data-store-row="<?= (int) $r['store_id'] ?>" data-version="<?= (int) $r['version'] ?>">
       <td>#<?= (int) $r['store_id'] ?></td>
       <td><?= ui_esc($r['canonical_name']) ?></td>
+      <td>
+        <input type="email" class="store-email-input" style="width:220px;" placeholder="belum diisi" value="<?= ui_esc((string) ($r['email'] ?? '')) ?>">
+      </td>
       <td><?= ui_esc((string) ($r['channel'] ?? '-')) ?></td>
       <td><?= (int) $r['active'] === 1 ? ui_badge('Aktif') : ui_badge('Nonaktif') ?></td>
+      <td><button type="button" class="btn btn-secondary btn-sm store-email-save">Simpan</button></td>
     </tr>
     <?php endforeach; endif; ?>
     </tbody>
   </table></div>
+  <script>
+  document.querySelectorAll('.store-email-save').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var tr = btn.closest('tr');
+      var storeId = tr.dataset.storeRow;
+      var version = parseInt(tr.dataset.version, 10);
+      var email = tr.querySelector('.store-email-input').value.trim();
+      btn.disabled = true;
+      btn.textContent = 'Menyimpan...';
+      try {
+        var updated = await Amor.apiFetch('/api/stores/' + storeId, { method: 'PUT', body: { version: version, email: email } });
+        tr.dataset.version = updated.version;
+        Amor.toast('Email toko disimpan', 'success');
+      } catch (e) {
+        Amor.toast(e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Simpan';
+      }
+    });
+  });
+  </script>
 
 <?php elseif ($tab === 'alias-toko'):
   $sql = 'SELECT sa.raw_name, sa.factory_hint, s.canonical_name FROM store_alias sa INNER JOIN store s ON s.store_id = sa.store_id WHERE 1=1';

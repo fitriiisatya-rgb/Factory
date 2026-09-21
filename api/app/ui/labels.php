@@ -56,6 +56,17 @@ function ui_receipt_status_label(string $status): string
     ][$status] ?? ucfirst($status);
 }
 
+/** shipment_email_delivery.status (Part I/K/L) — a shipment with no outbox row yet (should not normally happen — see Mail\ShipmentEmailService) also reads as "Belum Dikirim". */
+function ui_email_status_label(?string $status): string
+{
+    return [
+        'pending' => 'Belum Dikirim',
+        'sent' => 'Terkirim',
+        'failed' => 'Gagal',
+        'no_email' => 'Email Toko Belum Diisi',
+    ][$status ?? ''] ?? 'Belum Dikirim';
+}
+
 /**
  * Maps an already-Indonesian label (from any *StatusLabel field the
  * services compute, or from the maps above) to one of the 5 badge colors
@@ -69,12 +80,13 @@ function ui_status_color(string $label): string
     static $warning = [
         'Dibuka Kembali', 'Sebagian Terverifikasi', 'Belum Sesuai Target', 'Sebagian Dikirim',
         'Sudah Preprint', 'Selisih', 'Sebagian Dipacking', 'Ada Selisih', 'Menunggu Konfirmasi',
+        'Email Toko Belum Diisi',
     ];
     static $success = [
         'Sudah Disubmit', 'Sesuai Target', 'Sesuai Produksi', 'Selesai Dipacking', 'Terkirim Penuh',
         'Terverifikasi FG', 'Aktif', 'Terkirim', 'Diterima Sesuai', 'Diverifikasi Admin',
     ];
-    static $danger = ['Overproduction', 'Dibatalkan', 'Error', 'Melebihi Produksi', 'Packing Melebihi FG', 'Nonaktif'];
+    static $danger = ['Overproduction', 'Dibatalkan', 'Error', 'Melebihi Produksi', 'Packing Melebihi FG', 'Nonaktif', 'Gagal'];
 
     if (in_array($label, $danger, true)) {
         return 'danger';

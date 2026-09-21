@@ -111,6 +111,17 @@ return [
     'MIGRATION_DB_USER' => 'p55_migration_user',
     'MIGRATION_DB_PASS' => '$MIGRATION_USER_PASS',
     'SESSION_SECURE' => false,
+    // Automatic Bakery Email (Phase 5.5 finalization) — MAIL_TRANSPORT=fake
+    // is a TEST-ONLY key (never present in config.example.php/real cPanel
+    // config): it swaps the real SmtpMailTransport for FakeMailTransport,
+    // which appends one JSON line per "sent" message to this file instead
+    // of opening a real network connection — see MAIL-*/ADM-EMAIL-*.
+    'APP_BASE_URL' => 'http://127.0.0.1:$PHP_PORT',
+    'MAIL_ENABLED' => true,
+    'MAIL_TRANSPORT' => 'fake',
+    'MAIL_FAKE_LOG_PATH' => '$WORKDIR/mail-fake.jsonl',
+    'MAIL_FROM_ADDRESS' => 'factory@amorgroup.id',
+    'MAIL_FROM_NAME' => 'Amor Factory System',
 ];
 PHPCONFIG
 
@@ -129,6 +140,7 @@ TEST_DB_SOCKET="$SOCK" \
 TEST_DB_NAME="$DB_NAME" \
 TEST_RUNTIME_USER="p55_runtime_user" \
 TEST_RUNTIME_PASS="$RUNTIME_USER_PASS" \
+TEST_MAIL_FAKE_LOG_PATH="$WORKDIR/mail-fake.jsonl" \
 php "$API_ROOT/tests/Phase55DispatchReceiptTest.php"
 P55_RESULT=$?
 

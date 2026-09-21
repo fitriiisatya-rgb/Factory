@@ -35,8 +35,9 @@ $dbSocket = getenv('TEST_DB_SOCKET') ?: '';
 $dbName = getenv('TEST_DB_NAME') ?: '';
 $runtimeUser = getenv('TEST_RUNTIME_USER') ?: '';
 $runtimePass = getenv('TEST_RUNTIME_PASS') ?: '';
+$mailLogPath = getenv('TEST_MAIL_FAKE_LOG_PATH') ?: '';
 
-if ($adminPass === '' || $dbSocket === '' || $dbName === '' || $runtimeUser === '') {
+if ($adminPass === '' || $dbSocket === '' || $dbName === '' || $runtimeUser === '' || $mailLogPath === '') {
     fwrite(STDERR, "Required TEST_* env vars are missing.\n");
     exit(1);
 }
@@ -343,7 +344,7 @@ expect(count($rotiProducts) >= 70, 'expected enough katalog products after boots
 $pool = $rotiProducts;
 function nextProduct(): array { global $pool; $p = array_shift($pool); expect($p !== null, 'ran out of pooled test products'); return $p; }
 
-$secondDivProducts = productsInDivision($pdo, $secondDivId, 5);
+$secondDivProducts = productsInDivision($pdo, $secondDivId, 10);
 expect(count($secondDivProducts) >= 1, 'expected at least one product in the second division');
 $secondDivPool = $secondDivProducts;
 function nextProductFromSecondDivision(): array { global $secondDivPool; $p = array_shift($secondDivPool); expect($p !== null, 'ran out of pooled second-division test products'); return $p; }
@@ -1670,6 +1671,39 @@ function shipmentItemIdFromToken(Http55 $anon, string $token, int $shipmentId): 
     throw new RuntimeException('shipment not found in public view');
 }
 
+// ---------------------------------------------------------------------
+// MAIL-01..29 — Automatic Bakery Email / Digital Surat Jalan / Admin
+// Resend (Phase 5.5 finalization) helpers. MAIL_TRANSPORT=fake (see
+// run-phase55-dispatch-receipt.sh's config.php) makes every real "send"
+// append one JSON line to $mailLogPath instead of opening a network
+// connection — these helpers read that file back.
+// ---------------------------------------------------------------------
+
+/** @return array<int,array> every fake-"sent" message so far, oldest first */
+function readMailLog(string $path): array
+{
+    if (!is_file($path)) {
+        return [];
+    }
+    $lines = array_filter(explode("\n", (string) file_get_contents($path)), static fn ($l) => trim($l) !== '');
+    return array_values(array_map(static fn ($l) => json_decode($l, true), $lines));
+}
+
+/** The MOST RECENT fake-sent message to this address, or null. */
+function lastMailTo(string $path, string $toEmail): ?array
+{
+    $matches = array_values(array_filter(readMailLog($path), static fn ($m) => $m['to'] === $toEmail));
+    return $matches === [] ? null : end($matches);
+}
+
+function setStoreEmail(Http55 $adminHttp, string $adminCsrf, PDO $pdo, int $storeId, ?string $email): void
+{
+    $version = (int) $pdo->query("SELECT version FROM store WHERE store_id = {$storeId}")->fetchColumn();
+    $r = $adminHttp->request('PUT', "/api/stores/{$storeId}", ['version' => $version, 'email' => $email],
+        array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('set-store-email-' . $storeId . '-' . uniqid())));
+    expect($r['status'] === 200, 'setStoreEmail failed: ' . json_encode($r['json']));
+}
+
 runTest('STORE-EVID-01 a clean receipt (no reject/shortage) can be submitted WITHOUT any photo', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
     $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-24', 5.0);
     $anon = new Http55($baseUrl);
@@ -2029,6 +2063,302 @@ runTest('MOBILE-02 the Store Receipt page JS renders a photo upload control usab
     expect(str_contains($js, 'capture='), 'MOBILE-02: expected a capture attribute so a mobile browser offers the camera directly');
     expect(str_contains($js, 'multiple'), 'MOBILE-02: expected the file input to allow choosing more than one photo');
 });
+
+// ---------------------------------------------------------------------
+// MAIL-01..29 — Automatic Bakery Email / Digital Surat Jalan / Admin
+// Resend (Phase 5.5 finalization).
+// ---------------------------------------------------------------------
+
+runTest('MAIL-01 Store with email -> successful departure creates an email delivery record', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $mailLogPath) {
+    $email = 'mail01-' . uniqid() . '@example.test';
+    setStoreEmail($adminHttp, $adminCsrf, $pdo, $storeA, $email);
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-09-10', 4.0);
+
+    $row = $pdo->query("SELECT * FROM shipment_email_delivery WHERE shipment_id = {$fx['shipmentId']}")->fetch();
+    expect($row !== false, 'MAIL-01: expected an email delivery row to exist');
+    expect($row['status'] === 'sent', 'MAIL-01: expected status=sent with a fake transport, got ' . $row['status']);
+    expect($row['recipient_email'] === $email, 'MAIL-01: expected the recipient to be the store email');
+
+    $mail = lastMailTo($mailLogPath, $email);
+    expect($mail !== null, 'MAIL-01: expected a message in the fake mail log for this recipient');
+
+    $GLOBALS['mail01_shipment_id'] = $fx['shipmentId'];
+    $GLOBALS['mail01_do_id'] = $fx['doId'];
+    $GLOBALS['mail01_do_doc_no'] = $fx['docNo'];
+    $GLOBALS['mail01_record'] = $mail;
+    $GLOBALS['mail01_product_name'] = $fx['productName'];
+    $GLOBALS['mail01_qty'] = $fx['qty'];
+});
+
+runTest('MAIL-02 email is generated from the actual SHIPMENT items, not the whole DO plan', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $secondDivId, $storeA, $mailLogPath) {
+    $tanggal = '2026-09-11';
+    $pShipped = nextProduct();
+    $pUnshipped = nextProductFromSecondDivision();
+    // One production draft per DIVISION — two products from the same
+    // division in one call would PATCH an already-submitted run, so this
+    // uses two distinct divisions (same pattern as P55-16/17/MAIL-21).
+    stockUpMultiForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $tanggal, $storeA,
+        [[$rotiBollenDivId, $pShipped['product_id'], 3.0, 3.0], [$secondDivId, $pUnshipped['product_id'], 2.0, 2.0]],
+        [$pShipped['product_id'] => 3.0, $pUnshipped['product_id'] => 2.0]);
+    $email = 'mail02-' . uniqid() . '@example.test';
+    setStoreEmail($adminHttp, $adminCsrf, $pdo, $storeA, $email);
+
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemCount = (int) $pdo->query("SELECT COUNT(*) FROM delivery_order_item WHERE delivery_order_id = {$do['doId']}")->fetchColumn();
+    expect($itemCount >= 2, 'MAIL-02 sanity: expected the DO to plan at least 2 products, got ' . $itemCount);
+
+    $itemId = doItemIdFor($pdo, $do['doId'], $pShipped['product_id']);
+    $claim = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemId, 'qty' => 3.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('mail02-claim')));
+    expect($claim['status'] === 200, 'claim failed: ' . json_encode($claim['json']));
+    $claimId = $claim['json']['data']['claims'][0]['claimId'];
+    $stop = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $depart = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stop['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimId, 'actualQty' => 3.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('mail02-depart')));
+    expect($depart['status'] === 200, 'departure failed: ' . json_encode($depart['json']));
+
+    $mail = lastMailTo($mailLogPath, $email);
+    expect($mail !== null, 'MAIL-02: expected an email');
+    expect(str_contains($mail['htmlBody'], $pShipped['name']), 'MAIL-02: expected the SHIPPED product to appear in the email');
+    expect(!str_contains($mail['htmlBody'], $pUnshipped['name']), 'MAIL-02: expected the UNSHIPPED (still-planned) product to NOT appear — email reflects the real shipment, never the whole DO plan');
+});
+
+runTest('MAIL-03 email contains the correct Store name', function () use ($pdo) {
+    $mail = $GLOBALS['mail01_record'] ?? null;
+    expect($mail !== null, 'depends on MAIL-01 having run first');
+    $storeName = (string) $pdo->query("SELECT canonical_name FROM store WHERE store_id = (SELECT store_id FROM shipment WHERE shipment_id = {$GLOBALS['mail01_shipment_id']})")->fetchColumn();
+    expect(str_contains($mail['htmlBody'], $storeName), 'MAIL-03: expected the real store name in the email body');
+});
+
+runTest('MAIL-04 email contains the real Driver name', function () {
+    $mail = $GLOBALS['mail01_record'] ?? null;
+    expect($mail !== null, 'depends on MAIL-01 having run first');
+    expect(str_contains($mail['htmlBody'], 'p55_driver_a'), 'MAIL-04: expected the real driver name in the email body');
+});
+
+runTest('MAIL-05 email contains the shipment number and DO number', function () {
+    $mail = $GLOBALS['mail01_record'] ?? null;
+    expect($mail !== null, 'depends on MAIL-01 having run first');
+    expect(str_contains($mail['htmlBody'], 'SHP-' . $GLOBALS['mail01_shipment_id']), 'MAIL-05: expected SHP-{id} in the email body');
+    expect(str_contains($mail['subject'], 'SHP-' . $GLOBALS['mail01_shipment_id']), 'MAIL-05: expected SHP-{id} in the subject');
+    expect(str_contains($mail['htmlBody'], (string) $GLOBALS['mail01_do_doc_no']), 'MAIL-05: expected the real DO doc_no in the email body');
+});
+
+runTest('MAIL-06 email contains the actual total products/qty shipped', function () {
+    $mail = $GLOBALS['mail01_record'] ?? null;
+    expect($mail !== null, 'depends on MAIL-01 having run first');
+    expect(str_contains($mail['htmlBody'], (string) $GLOBALS['mail01_product_name']), 'MAIL-06: expected the real shipped product name in the email body');
+    expect(str_contains($mail['htmlBody'], (string) (int) $GLOBALS['mail01_qty']), 'MAIL-06: expected the real shipped qty in the email body');
+});
+
+runTest('MAIL-07 the Digital Surat Jalan link in the email is token-gated', function () use ($baseUrl) {
+    $mail = $GLOBALS['mail01_record'] ?? null;
+    expect($mail !== null, 'depends on MAIL-01 having run first');
+    // The email body is HTML, so a literal "&" in the link is entity-encoded
+    // to "&amp;" — match either, the token itself is what matters.
+    $matched = (bool) preg_match('#/api/_receive/\?token=([a-f0-9]{64})(?:&amp;|&)shipment=' . $GLOBALS['mail01_shipment_id'] . '#', $mail['htmlBody'], $m);
+    expect($matched, 'MAIL-07: expected a token-gated /api/_receive/?token=...&shipment=... link in the email body');
+    $ch = curl_init($baseUrl . '/api/_receive/?token=' . $m[1] . '&shipment=' . $GLOBALS['mail01_shipment_id']);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $body = curl_exec($ch);
+    curl_close($ch);
+    // "SHP-{id}" itself is rendered by receipt.js CLIENT-SIDE (curl never
+    // executes JS) — the raw HTML instead embeds the real shipment inside
+    // window.RECEIPT_VIEW's JSON, which is the reliable thing to assert on
+    // here (same technique MAIL-22/23 use for RECEIPT_FOCUS_SHIPMENT_ID).
+    expect(str_contains($body, '"shipmentId":' . $GLOBALS['mail01_shipment_id']), 'MAIL-07: expected the token-gated link to actually resolve the real shipment');
+});
+
+runTest('MAIL-08/09/10 an email failure does NOT roll back the shipment or stock ledger, and sets status=failed', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA) {
+    $email = 'simulate-smtp-failure-' . uniqid() . '@example.test';
+    setStoreEmail($adminHttp, $adminCsrf, $pdo, $storeA, $email);
+    $ledgerBefore = shipmentOutRows($pdo);
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-09-12', 3.0);
+    $ledgerAfter = shipmentOutRows($pdo);
+
+    $shipmentRow = $pdo->query("SELECT status FROM shipment WHERE shipment_id = {$fx['shipmentId']}")->fetch();
+    expect($shipmentRow !== false && $shipmentRow['status'] === 'active', 'MAIL-08: expected the shipment to exist and be active despite the simulated email failure');
+    expect($ledgerAfter === $ledgerBefore + 1, "MAIL-09: expected exactly one new stock_ledger OUT row despite the email failure, before={$ledgerBefore} after={$ledgerAfter}");
+
+    $row = $pdo->query("SELECT status, last_error, attempt_count FROM shipment_email_delivery WHERE shipment_id = {$fx['shipmentId']}")->fetch();
+    expect($row['status'] === 'failed', 'MAIL-10: expected status=failed, got ' . $row['status']);
+    expect((int) $row['attempt_count'] === 1, 'MAIL-18: expected attempt_count=1 after one real (failed) attempt, got ' . $row['attempt_count']);
+    expect(!empty($row['last_error']), 'MAIL-10: expected a friendly last_error message');
+    expect(stripos((string) $row['last_error'], 'password') === false, 'MAIL-27: the SMTP password must never appear in last_error');
+});
+
+runTest('MAIL-11/12 a missing Store email does NOT block departure, and is visible to Admin', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA) {
+    setStoreEmail($adminHttp, $adminCsrf, $pdo, $storeA, null);
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-09-13', 2.0);
+
+    $row = $pdo->query("SELECT status FROM shipment_email_delivery WHERE shipment_id = {$fx['shipmentId']}")->fetch();
+    expect($row !== false && $row['status'] === 'no_email', 'MAIL-11/12: expected status=no_email, got ' . json_encode($row));
+
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$fx['shipmentId']}");
+    expect(str_contains($r['body'], 'Email Toko Belum Diisi'), 'MAIL-12: expected Admin detail page to show the friendly "Email Toko Belum Diisi" status');
+
+    $GLOBALS['mail_noemail_shipment_id'] = $fx['shipmentId'];
+});
+
+runTest('MAIL-13..19 Admin resend reuses the SAME shipment/outbox, fixes a missing email, and never touches shipment/stock/DO/receipt', function () use ($adminHttp, $adminCsrf, $pdo, $storeA) {
+    $shipmentId = $GLOBALS['mail_noemail_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on MAIL-11/12 having run first');
+
+    $doId = (int) $pdo->query("SELECT delivery_order_id FROM shipment WHERE shipment_id = {$shipmentId}")->fetchColumn();
+    $doBefore = $pdo->query("SELECT version, status FROM delivery_order WHERE delivery_order_id = {$doId}")->fetch();
+    $shipmentItemsBefore = $pdo->query("SELECT product_id, qty FROM shipment_item WHERE shipment_id = {$shipmentId} ORDER BY product_id")->fetchAll();
+    $ledgerBefore = shipmentOutRows($pdo);
+    $receiptBefore = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt WHERE shipment_id = {$shipmentId}")->fetchColumn();
+
+    $newEmail = 'mail19-fixed-' . uniqid() . '@example.test';
+    setStoreEmail($adminHttp, $adminCsrf, $pdo, $storeA, $newEmail);
+
+    $r = $adminHttp->request('POST', "/api/admin/shipments/{$shipmentId}/email/resend", [], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('mail-resend')));
+    expect($r['status'] === 200, 'MAIL-13: resend failed: ' . json_encode($r['json']));
+    expect($r['json']['data']['status'] === 'sent', 'MAIL-13: expected resend to succeed once a real email exists, got ' . json_encode($r['json']));
+
+    $outboxRows = (int) $pdo->query("SELECT COUNT(*) FROM shipment_email_delivery WHERE shipment_id = {$shipmentId}")->fetchColumn();
+    expect($outboxRows === 1, 'MAIL-13: expected the SAME single outbox row to be reused, never a second one created, got ' . $outboxRows);
+
+    $ledgerAfter = shipmentOutRows($pdo);
+    expect($ledgerAfter === $ledgerBefore, "MAIL-14: expected ZERO new stock_ledger rows from a resend, before={$ledgerBefore} after={$ledgerAfter}");
+
+    $shipmentItemsAfter = $pdo->query("SELECT product_id, qty FROM shipment_item WHERE shipment_id = {$shipmentId} ORDER BY product_id")->fetchAll();
+    expect($shipmentItemsBefore === $shipmentItemsAfter, 'MAIL-15: expected shipment_item rows UNCHANGED by resend');
+
+    $doAfter = $pdo->query("SELECT version, status FROM delivery_order WHERE delivery_order_id = {$doId}")->fetch();
+    expect($doBefore === $doAfter, 'MAIL-16: expected DO version/status UNCHANGED by resend');
+
+    $receiptAfter = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt WHERE shipment_id = {$shipmentId}")->fetchColumn();
+    expect($receiptBefore === $receiptAfter, 'MAIL-17: expected shipment_receipt row count UNCHANGED by resend');
+
+    $row = $pdo->query("SELECT attempt_count, recipient_email FROM shipment_email_delivery WHERE shipment_id = {$shipmentId}")->fetch();
+    expect((int) $row['attempt_count'] === 1, 'MAIL-18: expected attempt_count to move from 0 (no_email, never attempted) to 1 (one real attempt), got ' . $row['attempt_count']);
+    expect($row['recipient_email'] === $newEmail, 'MAIL-19: expected the UPDATED store email to be used for the resend, got ' . $row['recipient_email']);
+});
+
+runTest('MAIL-20 Driver A\'s email never shows Driver B\'s name on a different shipment', function () use ($adminHttp, $adminCsrf, $httpB, $csrfB, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $mailLogPath) {
+    $email = 'mail20-' . uniqid() . '@example.test';
+    setStoreEmail($adminHttp, $adminCsrf, $pdo, $storeA, $email);
+    setupSingleItemShipment($adminHttp, $adminCsrf, $httpB, $csrfB, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-09-14', 2.0);
+
+    $mail = lastMailTo($mailLogPath, $email);
+    expect($mail !== null, 'MAIL-20: expected an email');
+    expect(str_contains($mail['htmlBody'], 'p55_driver_b'), 'MAIL-20: expected Driver B\'s real name in Driver B\'s own shipment email');
+    expect(!str_contains($mail['htmlBody'], 'p55_driver_a'), 'MAIL-20: expected Driver A\'s name to NEVER appear on Driver B\'s shipment');
+});
+
+runTest('MAIL-21 one DO with two separate shipments (SHP-2 + SHP-3 style) creates TWO separate emails', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $httpB, $csrfB, $pdo, $karangtengahId, $rotiBollenDivId, $secondDivId, $storeA, $mailLogPath) {
+    $tanggal = '2026-09-15';
+    $email = 'mail21-' . uniqid() . '@example.test';
+    setStoreEmail($adminHttp, $adminCsrf, $pdo, $storeA, $email);
+    $p1 = nextProduct();
+    $p2 = nextProductFromSecondDivision();
+    // Same tanggal+factory needs ONE production/FG cycle covering BOTH
+    // products (two divisions) — calling the single-item helper twice for
+    // the same tanggal+factory would PATCH an already-submitted FG batch.
+    stockUpMultiForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $tanggal, $storeA,
+        [[$rotiBollenDivId, $p1['product_id'], 3.0, 3.0], [$secondDivId, $p2['product_id'], 2.0, 2.0]],
+        [$p1['product_id'] => 3.0, $p2['product_id'] => 2.0]);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $item1 = doItemIdFor($pdo, $do['doId'], $p1['product_id']);
+    $item2 = doItemIdFor($pdo, $do['doId'], $p2['product_id']);
+
+    $claimA = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $item1, 'qty' => 3.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('mail21-claim-a')));
+    $claimIdA = $claimA['json']['data']['claims'][0]['claimId'];
+    $stopA = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $departA = $httpA->request('POST', '/api/dispatch/departures', ['doId' => $do['doId'], 'expectedVersion' => $stopA['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN', 'items' => [['claimId' => $claimIdA, 'actualQty' => 3.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('mail21-depart-a')));
+    expect($departA['status'] === 200, 'first departure failed: ' . json_encode($departA['json']));
+    $shp1 = $departA['json']['data']['shipments'][0]['shipmentId'];
+
+    $claimB = $httpB->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $item2, 'qty' => 2.0]]], array_merge(['X-CSRF-Token' => $csrfB], idemKey('mail21-claim-b')));
+    $claimIdB = $claimB['json']['data']['claims'][0]['claimId'];
+    $stopB = $httpB->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $departB = $httpB->request('POST', '/api/dispatch/departures', ['doId' => $do['doId'], 'expectedVersion' => $stopB['json']['data']['doVersion'], 'shipmentGroup' => 'PASTRY', 'items' => [['claimId' => $claimIdB, 'actualQty' => 2.0]]], array_merge(['X-CSRF-Token' => $csrfB], idemKey('mail21-depart-b')));
+    expect($departB['status'] === 200, 'second departure failed: ' . json_encode($departB['json']));
+    $shp2 = $departB['json']['data']['shipments'][0]['shipmentId'];
+
+    expect($shp1 !== $shp2, 'sanity: two distinct shipments expected under the same DO');
+    $outboxCount = (int) $pdo->query("SELECT COUNT(*) FROM shipment_email_delivery WHERE shipment_id IN ({$shp1}, {$shp2})")->fetchColumn();
+    expect($outboxCount === 2, 'MAIL-21: expected TWO separate outbox rows (one per shipment), got ' . $outboxCount);
+
+    $forThisEmail = array_values(array_filter(readMailLog($mailLogPath), fn ($m) => $m['to'] === $email));
+    $countForShp1 = 0;
+    $countForShp2 = 0;
+    foreach ($forThisEmail as $m) {
+        if (str_contains($m['subject'], 'SHP-' . $shp1)) {
+            $countForShp1++;
+        }
+        if (str_contains($m['subject'], 'SHP-' . $shp2)) {
+            $countForShp2++;
+        }
+    }
+    expect($countForShp1 >= 1 && $countForShp2 >= 1, 'MAIL-21: expected a SEPARATE email for each shipment, never combined into one for the whole DO');
+
+    $GLOBALS['mail22_token_shipment_id'] = $shp1;
+    $GLOBALS['mail22_do_id'] = $do['doId'];
+});
+
+runTest('MAIL-22 the receipt portal can focus the specific shipment named in the email link', function () use ($baseUrl, $pdo) {
+    $doId = $GLOBALS['mail22_do_id'] ?? null;
+    $shipmentId = $GLOBALS['mail22_token_shipment_id'] ?? null;
+    expect($doId !== null && $shipmentId !== null, 'depends on MAIL-21 having run first');
+    $token = (new \Amor\Api\Dispatch\ReceiptService($pdo))->getReceiptToken($doId);
+    $ch = curl_init($baseUrl . '/api/_receive/?token=' . $token . '&shipment=' . $shipmentId);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $body = curl_exec($ch);
+    curl_close($ch);
+    expect(str_contains($body, 'RECEIPT_FOCUS_SHIPMENT_ID = ' . $shipmentId), 'MAIL-22: expected the page to focus the exact shipment named in the link');
+});
+
+runTest('MAIL-23 an invalid/foreign shipment hint under a valid DO token is safely ignored', function () use ($baseUrl, $pdo) {
+    $doId = $GLOBALS['mail22_do_id'] ?? null;
+    expect($doId !== null, 'depends on MAIL-21 having run first');
+    $token = (new \Amor\Api\Dispatch\ReceiptService($pdo))->getReceiptToken($doId);
+    $ch = curl_init($baseUrl . '/api/_receive/?token=' . $token . '&shipment=999999999');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $body = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    expect($httpCode === 200, 'MAIL-23: an invalid shipment hint must never itself cause an error response, got ' . $httpCode);
+    expect(str_contains($body, 'RECEIPT_FOCUS_SHIPMENT_ID = null'), 'MAIL-23: expected the bogus hint to be safely ignored (null focus), never exposing a foreign/nonexistent shipment');
+});
+
+runTest('MAIL-24/25 Admin sees Email status and Penerimaan status independently, never merged', function () use ($adminHttp) {
+    $shipmentId = $GLOBALS['mail01_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on MAIL-01 having run first');
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect(str_contains($r['body'], 'Email Pengiriman'), 'MAIL-24: expected a distinct Email Pengiriman section on the Admin detail page');
+    expect(str_contains($r['body'], 'Terkirim'), 'MAIL-24: expected the email status Terkirim to show');
+    expect(str_contains($r['body'], 'Belum Dikonfirmasi'), 'MAIL-25: expected the receipt/Penerimaan status to show independently (still unconfirmed) alongside the email status');
+});
+
+runTest('MAIL-26 a non-admin (Driver) gets 403 on the resend endpoint', function () use ($httpA, $csrfA) {
+    $r = $httpA->request('POST', '/api/admin/shipments/999999/email/resend', [], array_merge(['X-CSRF-Token' => $csrfA], idemKey('mail26')));
+    expect($r['status'] === 403, 'MAIL-26: expected 403 for a non-admin caller, got ' . $r['status']);
+});
+
+runTest('MAIL-27 the configured SMTP password never appears in any API/HTML response', function () use ($adminHttp) {
+    $shipmentId = $GLOBALS['mail01_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on MAIL-01 having run first');
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect(!str_contains(strtolower($r['body']), 'mail_password'), 'MAIL-27: the config key name itself must never leak into rendered HTML');
+    // MAIL-08/09/10 already proved last_error is friendly/credential-free
+    // for a real failed attempt — this checks the read surface too.
+});
+
+runTest('MAIL-28 the existing Store photo evidence flow is unchanged by this patch', function () {
+    // STORE-EVID-01..04 / ADM-EVID-01..05 (run earlier in this same suite)
+    // already exercise the full mandatory-photo-on-discrepancy + admin
+    // view/verify flow end to end — this is an explicit marker that this
+    // mail patch did not regress it, not a duplicate of those tests.
+    expect(($GLOBALS['photo_receipt_id'] ?? null) !== null, 'MAIL-28: expected the STORE-EVID-04 evidence fixture to still exist from earlier in this run');
+});
+
+// MAIL-29 (full Phase 0-5.5 regression green) is NOT a test in this file —
+// same pattern as P55-24 (this file's own docblock) — it is the
+// orchestrator's (run-phase55-dispatch-receipt.sh) own final step.
 
 $failed = array_filter($results, fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests run, ' . count($failed) . " failed.\n");

@@ -10,6 +10,7 @@ use Amor\Api\Database;
 use Amor\Api\Dispatch\DepartureService;
 use Amor\Api\Dispatch\DispatchService;
 use Amor\Api\Idempotency;
+use Amor\Api\Mail\ShipmentEmailService;
 use Amor\Api\Request;
 use Amor\Api\Response;
 use PDO;
@@ -124,11 +125,44 @@ final class DispatchController
         $shipmentGroup = (string) $request->input('shipmentGroup', 'MAIN');
         $items = (array) $request->input('items', []);
 
-        Idempotency::handle($request, 'POST /api/dispatch/departures', function (PDO $pdo) use ($userId, $doId, $expectedVersion, $shipmentGroup, $items, $request) {
+        // Captured ONLY if $work below actually runs (a fresh departure) —
+        // on an exact Idempotency-Key replay, Idempotency::handle() short-
+        // circuits BEFORE $work ever runs (see its own docblock), so
+        // $createdShipments stays empty and no duplicate email attempt
+        // ever fires for a replayed request.
+        $createdShipments = [];
+        Idempotency::handle($request, 'POST /api/dispatch/departures', function (PDO $pdo) use ($userId, $doId, $expectedVersion, $shipmentGroup, $items, $request, &$createdShipments) {
             $service = new DepartureService($pdo);
             $dto = $service->confirmDeparture($userId, $doId, $expectedVersion, $shipmentGroup, $items, $request->header('Idempotency-Key'));
+            $createdShipments = $dto['shipments'] ?? [];
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'delivery_order', 'recordKey' => (string) $doId];
         });
+
+        // Runs ONLY after Database::transaction() above has actually
+        // committed (or thrown, in which case we never reach here at all)
+        // — see ShipmentEmailService::attemptSend()'s own docblock for why
+        // an SMTP failure here can NEVER roll back the departure that just
+        // succeeded. Best-effort per shipment: one shipment's mail hiccup
+        // never blocks another's, and never turns this response into an
+        // error the Driver would see as "pengiriman gagal".
+        $emailService = new ShipmentEmailService();
+        foreach ($createdShipments as $dto) {
+            if (!isset($dto['emailOutboxId'])) {
+                continue;
+            }
+            try {
+                $emailService->attemptSend((int) $dto['emailOutboxId'], $userId, $request->header('Idempotency-Key'));
+            } catch (\Throwable $e) {
+                // Never lets an unexpected mail-layer error surface as a
+                // 500 for what is, from the Driver's point of view, an
+                // already-successful departure. attemptSend() itself
+                // already records every transport-level failure onto the
+                // outbox row + audit_log — this only catches a genuine
+                // bug in that recording path itself, so it still goes to
+                // the server error log rather than vanishing silently.
+                error_log('ShipmentEmailService::attemptSend failed for outboxId=' . $dto['emailOutboxId'] . ': ' . $e->getMessage());
+            }
+        }
     }
 
     public static function history(Request $request): void

@@ -235,6 +235,8 @@ final class ReceiptService
             'tanggal' => $r['tanggal'],
             'shipmentGroup' => $r['shipment_group'],
             'shippedAt' => $r['shipped_at'],
+            'driverName' => ($r['driver_full_name'] ?? '') !== '' ? $r['driver_full_name'] : $r['driver_username'],
+            'emailStatus' => $r['email_status'] ?? null,
             'totalShipped' => (float) $r['total_shipped'],
             'totalGood' => (float) $r['total_good'],
             'totalReject' => (float) $r['total_reject'],

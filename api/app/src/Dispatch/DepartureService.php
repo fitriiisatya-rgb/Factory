@@ -8,6 +8,7 @@ use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Delivery\DoRepository;
 use Amor\Api\Delivery\ShipmentService;
+use Amor\Api\Mail\ShipmentEmailService;
 use PDO;
 
 /**
@@ -39,11 +40,13 @@ final class DepartureService
 {
     private DispatchRepository $dispatchRepo;
     private DoRepository $doRepo;
+    private ShipmentEmailService $emailService;
 
     public function __construct(private PDO $pdo)
     {
         $this->dispatchRepo = new DispatchRepository();
         $this->doRepo = new DoRepository();
+        $this->emailService = new ShipmentEmailService();
     }
 
     /**
@@ -156,6 +159,21 @@ final class DepartureService
                 $this->pdo, $requestId, $driverUserId, 'dispatch.claim_resolved', 'dispatch_claim', (string) $claimId,
                 'ok', null, null, ['departedQty' => $requested, 'releasedQty' => $leftover, 'shipmentId' => $shipmentId]
             );
+        }
+
+        // Real-UAT finalization ask: every REAL shipment gets its own
+        // email-delivery outbox row, created in this SAME transaction as
+        // the shipment/stock write it's paired with (a row insert can
+        // never fail the way an SMTP handshake can, so this is safe here
+        // — the actual send attempt happens later, outside this
+        // transaction; see Mail\ShipmentEmailService's own docblock and
+        // Controllers\DispatchController::departures()). Each shipment's
+        // outboxId travels back out in its own DTO entry so the
+        // controller knows exactly which row(s) to attempt sending once
+        // this transaction has actually committed.
+        foreach ($shipments as $i => $dto) {
+            $outbox = $this->emailService->createOutboxForShipment($this->pdo, (int) $dto['shipmentId'], (int) $dto['storeId']);
+            $shipments[$i]['emailOutboxId'] = $outbox['outboxId'];
         }
 
         foreach ($shipments as $dto) {

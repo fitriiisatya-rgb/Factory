@@ -115,9 +115,11 @@ final class ReceiptRepository
      */
     public function listForAdmin(PDO $pdo, ?string $tanggal, ?string $status): array
     {
-        $sql = "SELECT sh.shipment_id, sh.tanggal, sh.store_id, sh.shipment_group, sh.shipped_at, sh.delivery_order_id,
+        $sql = "SELECT sh.shipment_id, sh.tanggal, sh.store_id, sh.shipment_group, sh.shipped_at, sh.delivery_order_id, sh.shipped_by,
                        s.canonical_name AS store_name, o.doc_no,
+                       u.full_name AS driver_full_name, u.username AS driver_username,
                        r.shipment_receipt_id, r.status AS receipt_status, r.receiver_name, r.confirmed_at, r.verified_at,
+                       e.status AS email_status,
                        (SELECT COALESCE(SUM(qty), 0) FROM shipment_item WHERE shipment_id = sh.shipment_id) AS total_shipped,
                        (SELECT COALESCE(SUM(received_good_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_good,
                        (SELECT COALESCE(SUM(reject_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_reject,
@@ -125,7 +127,9 @@ final class ReceiptRepository
                 FROM shipment sh
                 INNER JOIN store s ON s.store_id = sh.store_id
                 LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
+                LEFT JOIN users u ON u.user_id = sh.shipped_by
                 LEFT JOIN shipment_receipt r ON r.shipment_id = sh.shipment_id
+                LEFT JOIN shipment_email_delivery e ON e.shipment_id = sh.shipment_id
                 WHERE sh.status = 'active'";
         $params = [];
         if ($tanggal !== null) {

@@ -51,6 +51,25 @@ if ($token === '') {
     }
 }
 
+// Automatic-email ask (Part H): the CTA link in a per-shipment email may
+// include a non-authoritative ?shipment= hint so the store lands
+// directly on THAT shipment's card. The token remains the sole access
+// authority (checked above, exactly as before) — this only decides which
+// of the ALREADY-authorized $view['shipments'] to scroll to. A hint that
+// doesn't match any real shipment under THIS token (foreign, stale, or
+// simply absent) is silently ignored, never an error, never exposes
+// anything the token didn't already grant.
+$focusShipmentId = null;
+if ($view !== null && isset($_GET['shipment'])) {
+    $candidate = (int) $_GET['shipment'];
+    foreach ($view['shipments'] as $sh) {
+        if ($sh['shipmentId'] === $candidate) {
+            $focusShipmentId = $candidate;
+            break;
+        }
+    }
+}
+
 header('Content-Type: text/html; charset=utf-8');
 ?><!DOCTYPE html>
 <html lang="id">
@@ -78,6 +97,7 @@ header('Content-Type: text/html; charset=utf-8');
   <script>
     window.RECEIPT_TOKEN = <?= json_encode($token) ?>;
     window.RECEIPT_VIEW = <?= json_encode($view, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+    window.RECEIPT_FOCUS_SHIPMENT_ID = <?= json_encode($focusShipmentId) ?>;
   </script>
   <script src="/api/assets/js/receipt.js"></script>
   <?php endif; ?>

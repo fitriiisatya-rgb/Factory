@@ -8,6 +8,7 @@ use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Delivery\DoRepository;
 use Amor\Api\Fg\FgRepository;
+use Amor\Api\Mail\ShipmentEmailRepository;
 use Amor\Api\Users\UserRepository;
 use PDO;
 
@@ -35,6 +36,7 @@ final class DispatchService
     private FgRepository $fg;
     private ReceiptRepository $receiptRepo;
     private UserRepository $userRepo;
+    private ShipmentEmailRepository $emailRepo;
 
     public function __construct(private PDO $pdo)
     {
@@ -43,6 +45,7 @@ final class DispatchService
         $this->fg = new FgRepository();
         $this->receiptRepo = new ReceiptRepository();
         $this->userRepo = new UserRepository();
+        $this->emailRepo = new ShipmentEmailRepository();
     }
 
     /**
@@ -505,6 +508,22 @@ final class DispatchService
             ];
         }
 
+        // Real-UAT finalization ask: Admin Shipment Detail must show the
+        // automatic-email status (Part K) separately from receipt status
+        // (Part L — "never merge these into one status field"). Never
+        // exposes the SMTP password or any server-internal detail — only
+        // what's needed for a friendly status + the Kirim Ulang Email action.
+        $emailRow = $this->emailRepo->findByShipmentId($this->pdo, $shipmentId);
+        $emailDto = $emailRow !== null ? [
+            'status' => $emailRow['status'],
+            'recipientEmail' => $emailRow['recipient_email'],
+            'attemptCount' => (int) $emailRow['attempt_count'],
+            'firstAttemptAt' => $emailRow['first_attempt_at'],
+            'lastAttemptAt' => $emailRow['last_attempt_at'],
+            'sentAt' => $emailRow['sent_at'],
+            'lastError' => $emailRow['last_error'],
+        ] : null;
+
         return [
             'shipmentId' => (int) $shipment['shipment_id'],
             // Real-UAT Surat Jalan print ask: the print page needs the
@@ -537,6 +556,7 @@ final class DispatchService
                 'claimedAt' => $firstClaim['created_at'],
             ] : null,
             'receipt' => $receiptDto,
+            'email' => $emailDto,
         ];
     }
 

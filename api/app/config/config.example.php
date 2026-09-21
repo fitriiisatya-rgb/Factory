@@ -79,4 +79,30 @@ return [
     'SESSION_SECURE' => true,
     'SESSION_SAMESITE' => 'Lax',
     'SESSION_LIFETIME_SECONDS' => 8 * 3600,
+
+    // Used to build the link inside the automatic Bakery shipment email
+    // (Digital Surat Jalan / Store Receipt CTA) — the real public URL of
+    // this deployment, no trailing slash.
+    'APP_BASE_URL' => 'https://factory.amorgroup.id',
+
+    // --- Automatic Bakery Email (Phase 5.5 finalization) ---
+    // MAIL_ENABLED must be explicitly set to true once the fields below
+    // are filled in for real — a fresh install with this left false (or
+    // absent) still lets every departure succeed normally; each shipment's
+    // email status just shows "Gagal" with a friendly "belum dikonfigurasi"
+    // reason until an Admin turns this on (never blocks a driver).
+    'MAIL_ENABLED' => false,
+    // Gmail example: MAIL_HOST=smtp.gmail.com, MAIL_PORT=587,
+    // MAIL_ENCRYPTION=tls, MAIL_USERNAME=your-address@gmail.com,
+    // MAIL_PASSWORD=<a 16-character Gmail App Password, NOT your normal
+    // Gmail password — Google account -> Security -> App Passwords>.
+    // A domain's own SMTP (e.g. factory@amorgroup.id) works the same way
+    // with that provider's own host/port/encryption values instead.
+    'MAIL_HOST' => '',
+    'MAIL_PORT' => 587,
+    'MAIL_USERNAME' => '',
+    'MAIL_PASSWORD' => '', // never commit the real value — see api/DEPLOY-CPANEL-PREPROD.md's own warning for DB_PASS
+    'MAIL_ENCRYPTION' => 'tls', // 'tls' (port 587, most common) | 'ssl' (port 465) | 'none'
+    'MAIL_FROM_ADDRESS' => 'factory@amorgroup.id',
+    'MAIL_FROM_NAME' => 'Amor Factory System',
 ];

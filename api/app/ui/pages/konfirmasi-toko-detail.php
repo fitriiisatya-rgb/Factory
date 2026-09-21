@@ -102,6 +102,34 @@ $verifyBlockedByEvidence = $canVerify && $hasDiscrepancy && $evidenceCount === 0
   </table></div>
 </div>
 
+<?php
+// Real-UAT finalization ask (Part K/L) — Email status is a SEPARATE
+// concern from receipt/penerimaan status and is shown independently,
+// never merged into one status field. Always rendered regardless of
+// whether a receipt exists yet (a shipment can have a Terkirim email
+// long before the store confirms anything).
+$email = $shipment['email'];
+$emailStatus = $email['status'] ?? null;
+?>
+<div class="card section">
+  <h3 class="card-title" style="margin-bottom:var(--space-3);">Email Pengiriman</h3>
+  <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));">
+    <?= ui_kpi_card(['label' => 'Status', 'value' => ui_email_status_label($emailStatus), 'icon' => 'mail', 'color' => $emailStatus === 'sent' ? 'success' : ($emailStatus === 'failed' ? 'danger' : 'warning')]) ?>
+    <?= ui_kpi_card(['label' => 'Tujuan', 'value' => (string) ($email['recipientEmail'] ?? '-'), 'icon' => 'user', 'color' => 'neutral']) ?>
+    <?= ui_kpi_card(['label' => 'Percobaan', 'value' => (string) ($email['attemptCount'] ?? 0), 'icon' => 'chart', 'color' => 'neutral']) ?>
+  </div>
+  <?php if ($emailStatus === 'sent'): ?>
+  <p style="color:var(--text-faint);font-size:.85rem;margin-top:var(--space-3);">Pertama dikirim: <?= ui_esc(ui_fmt_datetime_id($email['sentAt'] ?? null)) ?></p>
+  <?php elseif ($emailStatus === 'failed' && !empty($email['lastError'])): ?>
+  <div class="alert alert-danger" style="margin-top:var(--space-3);"><b>Error:</b> <?= ui_esc((string) $email['lastError']) ?></div>
+  <?php elseif ($emailStatus === 'no_email'): ?>
+  <div class="alert alert-info" style="margin-top:var(--space-3);">Toko ini belum memiliki email penerimaan. Isi emailnya di Master Data &rarr; Toko, lalu klik Kirim Ulang Email.</div>
+  <?php endif; ?>
+  <div style="margin-top:var(--space-3);">
+    <button type="button" class="btn btn-secondary btn-sm" id="btn-resend-email" data-shipment="<?= (int) $shipment['shipmentId'] ?>">Kirim Ulang Email</button>
+  </div>
+</div>
+
 <?php if ($receipt === null): ?>
 <div class="card section">
   <?= ui_empty_state('Belum Dikonfirmasi', 'Toko belum mengonfirmasi penerimaan pengiriman ini.') ?>
@@ -171,6 +199,29 @@ $verifyBlockedByEvidence = $canVerify && $hasDiscrepancy && $evidenceCount === 0
         window.location.reload();
       } catch (e) {
         Amor.toast(e.message, 'error');
+      }
+    });
+  }
+
+  var resendBtn = document.getElementById('btn-resend-email');
+  if (resendBtn) {
+    resendBtn.addEventListener('click', async function () {
+      resendBtn.disabled = true;
+      resendBtn.textContent = 'Mengirim...';
+      try {
+        var result = await Amor.apiFetch('/api/admin/shipments/' + resendBtn.dataset.shipment + '/email/resend', { method: 'POST', body: {} });
+        if (result.status === 'sent') {
+          Amor.toast('Email berhasil dikirim ulang', 'success');
+        } else if (result.status === 'no_email') {
+          Amor.toast('Toko belum memiliki email penerimaan', 'error');
+        } else {
+          Amor.toast('Gagal mengirim email: ' + (result.error || '-'), 'error');
+        }
+        window.location.reload();
+      } catch (e) {
+        Amor.toast(e.message, 'error');
+        resendBtn.disabled = false;
+        resendBtn.textContent = 'Kirim Ulang Email';
       }
     });
   }
