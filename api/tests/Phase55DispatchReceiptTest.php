@@ -1670,49 +1670,49 @@ function shipmentItemIdFromToken(Http55 $anon, string $token, int $shipmentId): 
     throw new RuntimeException('shipment not found in public view');
 }
 
-runTest('PHOTO-01 a clean receipt (no reject/shortage) can be submitted WITHOUT any photo', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+runTest('STORE-EVID-01 a clean receipt (no reject/shortage) can be submitted WITHOUT any photo', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
     $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-24', 5.0);
     $anon = new Http55($baseUrl);
     $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
     $r = $anon->request('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
         'receiverName' => 'Toko A', 'items' => [['shipmentItemId' => $sii, 'receivedGood' => 5.0, 'reject' => 0, 'shortage' => 0]],
     ], idemKey('photo01'));
-    expect($r['status'] === 200, 'PHOTO-01: expected a clean receipt (no discrepancy) to succeed without a photo: ' . json_encode($r['json']));
+    expect($r['status'] === 200, 'STORE-EVID-01: expected a clean receipt (no discrepancy) to succeed without a photo: ' . json_encode($r['json']));
     expect($r['json']['data']['status'] === 'confirmed_ok', 'expected confirmed_ok status');
 });
 
-runTest('PHOTO-02 Reject > 0 WITHOUT any photo is rejected', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+runTest('STORE-EVID-02 Store Reject > 0 WITHOUT any photo is rejected', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
     $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-25', 4.0);
     $anon = new Http55($baseUrl);
     $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
     $r = $anon->request('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
         'receiverName' => 'Toko A', 'items' => [['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 1.0, 'shortage' => 0]],
     ], idemKey('photo02'));
-    expect($r['status'] === 400, "PHOTO-02: expected 400 EVIDENCE_REQUIRED, got {$r['status']}: " . json_encode($r['json']));
+    expect($r['status'] === 400, "STORE-EVID-02: expected 400 EVIDENCE_REQUIRED, got {$r['status']}: " . json_encode($r['json']));
     expect($r['json']['code'] === 'EVIDENCE_REQUIRED', 'expected EVIDENCE_REQUIRED code');
     $count = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt WHERE shipment_id = {$fx['shipmentId']}")->fetchColumn();
     expect($count === 0, 'a blocked submission must not create a receipt row');
 });
 
-runTest('PHOTO-03 Shortage > 0 WITHOUT any photo is rejected', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+runTest('STORE-EVID-03 Store Kurang > 0 WITHOUT any photo is rejected', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
     $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-26', 4.0);
     $anon = new Http55($baseUrl);
     $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
     $r = $anon->request('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
         'receiverName' => 'Toko A', 'items' => [['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 0, 'shortage' => 1.0]],
     ], idemKey('photo03'));
-    expect($r['status'] === 400, "PHOTO-03: expected 400 EVIDENCE_REQUIRED, got {$r['status']}: " . json_encode($r['json']));
+    expect($r['status'] === 400, "STORE-EVID-03: expected 400 EVIDENCE_REQUIRED, got {$r['status']}: " . json_encode($r['json']));
     expect($r['json']['code'] === 'EVIDENCE_REQUIRED', 'expected EVIDENCE_REQUIRED code');
 });
 
-runTest('PHOTO-04 Reject > 0 WITH a valid photo succeeds', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+runTest('STORE-EVID-04 Store discrepancy WITH a valid photo succeeds', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
     $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-27', 4.0);
     $anon = new Http55($baseUrl);
     $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
     $r = $anon->requestMultipart('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
         'receiverName' => 'Toko A', 'items' => json_encode([['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 1.0, 'shortage' => 0]]),
     ], ['evidence[]' => fakeEvidenceImage()], idemKey('photo04'));
-    expect($r['status'] === 200, 'PHOTO-04: expected success with a valid photo: ' . json_encode($r['json']));
+    expect($r['status'] === 200, 'STORE-EVID-04: expected success with a valid photo: ' . json_encode($r['json']));
     expect($r['json']['data']['status'] === 'confirmed_discrepancy', 'expected confirmed_discrepancy');
     $GLOBALS['photo_receipt_id'] = $r['json']['data']['receiptId'];
     $GLOBALS['photo_shipment_id'] = $fx['shipmentId'];
@@ -1752,16 +1752,16 @@ runTest('PHOTO-06 an oversized file (> 5 MB) is rejected', function () use ($adm
 
 runTest('PHOTO-07 the stored evidence filename is server-generated/randomized, never the original filename', function () use ($pdo) {
     $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
-    expect($receiptId !== null, 'depends on PHOTO-04 having run first');
+    expect($receiptId !== null, 'depends on STORE-EVID-04 having run first');
     $row = $pdo->query("SELECT file_path, original_name FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId} LIMIT 1")->fetch();
-    expect($row !== false, 'expected an evidence row for the PHOTO-04 receipt');
+    expect($row !== false, 'expected an evidence row for the STORE-EVID-04 receipt');
     expect((bool) preg_match('/^[a-f0-9]{32}\.(jpg|png|webp)$/', $row['file_path']), "expected a random hex filename, got '{$row['file_path']}'");
     expect($row['file_path'] !== $row['original_name'], 'stored filename must never equal the client-supplied original filename');
 });
 
 runTest('PHOTO-08 the stored evidence file is saved with an image extension only, never .php or any executable extension', function () use ($pdo) {
     $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
-    expect($receiptId !== null, 'depends on PHOTO-04 having run first');
+    expect($receiptId !== null, 'depends on STORE-EVID-04 having run first');
     $row = $pdo->query("SELECT file_path FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId} LIMIT 1")->fetch();
     expect((bool) preg_match('/\.(jpg|png|webp)$/', $row['file_path']), 'expected an image extension only');
     expect(!preg_match('/\.(php\d?|phtml|phar|cgi|pl|sh)$/i', $row['file_path']), 'expected NO executable extension ever');
@@ -1817,19 +1817,19 @@ runTest('PHOTO-10 more than 3 evidence files is rejected', function () use ($adm
 
 // --- RCPT-ADM01..15 ---
 
-runTest('RCPT-ADM01 admin summary (GET /api/admin/receipts) shows the PHOTO-04 row', function () use ($adminHttp, $adminCsrf) {
+runTest('RCPT-ADM01 admin summary (GET /api/admin/receipts) shows the STORE-EVID-04 row', function () use ($adminHttp, $adminCsrf) {
     $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
-    expect($shipmentId !== null, 'depends on PHOTO-04 having run first');
+    expect($shipmentId !== null, 'depends on STORE-EVID-04 having run first');
     $list = $adminHttp->request('GET', '/api/admin/receipts');
     expect($list['status'] === 200, 'admin list failed');
     $found = current(array_filter($list['json']['data'], fn ($r) => $r['shipmentId'] === $shipmentId));
-    expect($found !== false, 'RCPT-ADM01: expected the PHOTO-04 shipment to appear in the admin summary');
+    expect($found !== false, 'RCPT-ADM01: expected the STORE-EVID-04 shipment to appear in the admin summary');
 });
 
 runTest('RCPT-ADM02/03/04/05/06 the Konfirmasi Toko Detail page renders the correct shipment, items, receiver/note/time, and evidence thumbnail', function () use ($adminHttp, $pdo) {
     $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
     $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
-    expect($shipmentId !== null && $receiptId !== null, 'depends on PHOTO-04 having run first');
+    expect($shipmentId !== null && $receiptId !== null, 'depends on STORE-EVID-04 having run first');
     $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
     expect($r['status'] === 200, "RCPT-ADM02: detail page failed: {$r['status']}");
     expect(str_contains($r['body'], 'SHP-' . $shipmentId), 'RCPT-ADM03: expected the real shipment id on the page');
@@ -1859,18 +1859,66 @@ runTest('RCPT-ADM07 a clean (Diterima Sesuai) receipt detail is read-only (no ed
 
 runTest('RCPT-ADM08 a discrepancy receipt detail exposes the Verifikasi Selisih action', function () use ($adminHttp) {
     $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
-    expect($shipmentId !== null, 'depends on PHOTO-04 having run first');
+    expect($shipmentId !== null, 'depends on STORE-EVID-04 having run first');
     $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
     expect(str_contains($r['body'], 'Verifikasi Selisih'), 'RCPT-ADM08: expected the Verifikasi Selisih button to appear for a discrepancy receipt');
 });
 
-runTest('RCPT-ADM09 admin verify is blocked (409) when a discrepancy receipt has no evidence', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+// --- Role correction: photo evidence is STORE evidence. Admin's role is
+// view + verify ONLY — never upload/replace. ADM-EVID-01..05. ---
+
+runTest('ADM-EVID-01 Admin detail can view Store evidence', function () use ($adminHttp, $pdo) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
+    expect($shipmentId !== null && $receiptId !== null, 'depends on STORE-EVID-04 having run first');
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect($r['status'] === 200, "ADM-EVID-01: detail page failed: {$r['status']}");
+    expect(str_contains($r['body'], 'Bukti Foto dari Toko'), 'ADM-EVID-01: expected the "Bukti Foto dari Toko" heading for a receipt WITH store evidence');
+    expect(str_contains($r['body'], 'evidence-thumb'), 'ADM-EVID-01: expected an evidence thumbnail to render');
+    $evidenceRow = $pdo->query("SELECT shipment_receipt_evidence_id FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId} LIMIT 1")->fetch();
+    expect($evidenceRow !== false && str_contains($r['body'], '/api/admin/receipts/evidence/' . $evidenceRow['shipment_receipt_evidence_id']), 'ADM-EVID-01: expected the real evidence id to be referenced via the admin-authenticated streaming route');
+});
+
+runTest('ADM-EVID-02 Admin cannot upload/replace Store evidence from the UI', function () use ($adminHttp, $adminCsrf, $baseUrl) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
+    expect($shipmentId !== null && $receiptId !== null, 'depends on STORE-EVID-04 having run first');
+
+    // The admin-upload endpoint from the earlier revision of this patch
+    // was REMOVED entirely (not just hidden) — a POST to it must 404
+    // through the front controller like any other unknown route, never
+    // silently accept a file.
+    $ch = curl_init($baseUrl . "/api/admin/receipts/{$receiptId}/evidence");
+    $jar = tempnam(sys_get_temp_dir(), 'admevgone');
+    copy($adminHttp->cookieJarPath(), $jar);
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST => 'POST', CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar,
+        CURLOPT_HTTPHEADER => ['X-CSRF-Token: ' . $adminCsrf, 'Idempotency-Key: ' . idemKey('adm-evid-02')['Idempotency-Key']],
+        CURLOPT_POSTFIELDS => ['evidence[]' => new CURLFile(fakeEvidenceImage(), 'image/png', 'sneaky.png')],
+    ]);
+    $raw = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    expect($status === 404, "ADM-EVID-02: expected the removed admin-upload endpoint to 404, got {$status}: {$raw}");
+
+    // And the UI itself must never even offer the control.
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect(!str_contains($r['body'], 'Unggah Bukti Foto'), 'ADM-EVID-02: expected NO "Unggah Bukti Foto" control anywhere on the admin detail page');
+    expect(!str_contains($r['body'], 'admin-evidence-submit'), 'ADM-EVID-02: expected NO admin-evidence-submit upload button in the page markup');
+    expect(!str_contains($r['body'], 'admin-evidence-input'), 'ADM-EVID-02: expected NO admin evidence file-chooser input in the page markup');
+});
+
+runTest('ADM-EVID-03 legacy discrepancy without Store evidence cannot be verified', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
     // A legacy-shaped receipt: confirm math directly at the repository
     // layer would bypass the evidence gate — instead this proves the
-    // real-world "old data" case (Part H) by simulating it precisely:
-    // insert a discrepancy receipt the same way confirmReceipt() would
-    // have BEFORE this patch existed (no evidence rows), then verify the
-    // admin verify gate still blocks it exactly like real legacy SHP-3.
+    // real-world "old data" case (real UAT's actual SHP-3) by simulating
+    // it precisely: insert a discrepancy receipt the same way
+    // confirmReceipt() would have BEFORE this patch existed (no evidence
+    // rows), then verify the admin verify gate still blocks it. There is
+    // NO admin-side way to attach evidence any more (see ADM-EVID-02) —
+    // this receipt stays permanently un-verifiable, by design, exactly
+    // like real legacy SHP-3 (never repaired, never fabricated).
     $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-09-04', 4.0);
     $repo = new \Amor\Api\Dispatch\ReceiptRepository();
     $receiptId = $repo->insertReceipt($pdo, $fx['shipmentId'], 'confirmed_discrepancy', 'Toko Lama', null);
@@ -1879,52 +1927,63 @@ runTest('RCPT-ADM09 admin verify is blocked (409) when a discrepancy receipt has
     $repo->insertReceiptItem($pdo, $receiptId, $sii, $view['shipments'][0]['items'][0]['productId'], 4.0, 3.0, 1.0, 0.0, null);
 
     $verify = $adminHttp->request('POST', "/api/admin/receipts/{$receiptId}/verify", [], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('rcptadm09')));
-    expect($verify['status'] === 409, "RCPT-ADM09: expected 409, got {$verify['status']}: " . json_encode($verify['json']));
+    expect($verify['status'] === 409, "ADM-EVID-03: expected 409, got {$verify['status']}: " . json_encode($verify['json']));
     expect($verify['json']['code'] === 'EVIDENCE_REQUIRED_FOR_VERIFY', 'expected EVIDENCE_REQUIRED_FOR_VERIFY, got ' . $verify['json']['code']);
+    expect($verify['json']['message'] === 'Selisih belum dapat diverifikasi karena bukti foto dari toko belum tersedia.', 'ADM-EVID-03: expected the exact required message, got: ' . $verify['json']['message']);
+
+    // Admin detail must show it as legacy, never as "clean"/repaired.
+    $detail = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$fx['shipmentId']}");
+    expect(str_contains($detail['body'], 'Tidak tersedia'), 'ADM-EVID-03: expected the detail page to show evidence as Tidak tersedia for this legacy receipt');
+    expect(str_contains($detail['body'], 'sebelum aturan bukti foto diberlakukan'), 'ADM-EVID-03: expected the legacy explanatory note on the detail page');
 
     $GLOBALS['legacy_receipt_id'] = $receiptId;
     $GLOBALS['legacy_shipment_id'] = $fx['shipmentId'];
 });
 
-runTest('RCPT-ADM10 admin can attach evidence to that legacy receipt (Part H) and verify then succeeds', function () use ($adminHttp, $adminCsrf, $pdo, $baseUrl) {
-    $receiptId = $GLOBALS['legacy_receipt_id'] ?? null;
-    expect($receiptId !== null, 'depends on RCPT-ADM09 having run first');
+runTest('ADM-EVID-04 discrepancy WITH Store evidence can be verified', function () use ($adminHttp, $adminCsrf, $pdo) {
+    // Uses the STORE-EVID-04 receipt — its evidence was uploaded by the
+    // Store through the public confirm() route, never by Admin.
+    $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
+    expect($receiptId !== null, 'depends on STORE-EVID-04 having run first');
 
-    $ch = curl_init($baseUrl . "/api/admin/receipts/{$receiptId}/evidence");
-    $jar = tempnam(sys_get_temp_dir(), 'admevjar');
-    // Reuse the admin session cookie jar the Http55 client already holds.
-    copy($adminHttp->cookieJarPath(), $jar);
-    curl_setopt_array($ch, [
-        CURLOPT_CUSTOMREQUEST => 'POST', CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar,
-        CURLOPT_HTTPHEADER => ['X-CSRF-Token: ' . $adminCsrf, 'Idempotency-Key: ' . idemKey('rcptadm10')['Idempotency-Key']],
-        CURLOPT_POSTFIELDS => ['evidence[]' => new CURLFile(fakeEvidenceImage(), 'image/png', 'legacy.png')],
-    ]);
-    $raw = curl_exec($ch);
-    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    expect($status === 200, "admin evidence upload failed: {$status}: {$raw}");
-
-    $before = (string) $pdo->query("SELECT CONCAT(received_good_qty,':',reject_qty,':',shortage_qty) FROM shipment_receipt_item WHERE shipment_receipt_id = {$receiptId}")->fetchColumn();
+    $qtyBefore = (string) $pdo->query("SELECT CONCAT(received_good_qty,':',reject_qty,':',shortage_qty) FROM shipment_receipt_item WHERE shipment_receipt_id = {$receiptId}")->fetchColumn();
+    $evidenceCountBefore = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId}")->fetchColumn();
     $ledgerBefore = shipmentOutRows($pdo);
 
-    $verifyKey = idemKey('rcptadm10-verify');
-    $GLOBALS['rcptadm10_verify_key'] = $verifyKey;
+    $verifyKey = idemKey('adm-evid-04-verify');
+    $GLOBALS['adm_evid04_verify_key'] = $verifyKey;
     $verify = $adminHttp->request('POST', "/api/admin/receipts/{$receiptId}/verify", [], array_merge(['X-CSRF-Token' => $adminCsrf], $verifyKey));
-    expect($verify['status'] === 200, "RCPT-ADM10: expected verify to succeed once evidence exists: " . json_encode($verify['json']));
-    expect($verify['json']['data']['status'] === 'verified', 'RCPT-ADM11: expected status=verified');
+    expect($verify['status'] === 200, "ADM-EVID-04: expected verify to succeed once store evidence exists: " . json_encode($verify['json']));
+    expect($verify['json']['data']['status'] === 'verified', 'ADM-EVID-04: expected status=verified');
 
-    $after = (string) $pdo->query("SELECT CONCAT(received_good_qty,':',reject_qty,':',shortage_qty) FROM shipment_receipt_item WHERE shipment_receipt_id = {$receiptId}")->fetchColumn();
-    expect($before === $after, 'RCPT-ADM12: expected receipt item quantities to be UNCHANGED by verification');
+    $GLOBALS['adm_evid04_qty_before'] = $qtyBefore;
+    $GLOBALS['adm_evid04_evidence_count_before'] = $evidenceCountBefore;
+    $GLOBALS['adm_evid04_ledger_before'] = $ledgerBefore;
+    $GLOBALS['adm_evid04_ledger_after'] = shipmentOutRows($pdo);
+});
 
-    $GLOBALS['rcptadm13_ledger_before'] = $ledgerBefore;
-    $GLOBALS['rcptadm13_ledger_after'] = shipmentOutRows($pdo);
+runTest('ADM-EVID-05 verification does not alter evidence or quantities', function () use ($adminHttp, $pdo) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
+    $qtyBefore = $GLOBALS['adm_evid04_qty_before'] ?? null;
+    $evidenceCountBefore = $GLOBALS['adm_evid04_evidence_count_before'] ?? null;
+    expect($shipmentId !== null && $receiptId !== null && $qtyBefore !== null && $evidenceCountBefore !== null, 'depends on STORE-EVID-04/ADM-EVID-04 having run first');
+
+    $qtyAfter = (string) $pdo->query("SELECT CONCAT(received_good_qty,':',reject_qty,':',shortage_qty) FROM shipment_receipt_item WHERE shipment_receipt_id = {$receiptId}")->fetchColumn();
+    expect($qtyAfter === $qtyBefore, "ADM-EVID-05: expected receipt item quantities UNCHANGED by verification (before={$qtyBefore}, after={$qtyAfter})");
+    $evidenceCount = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId}")->fetchColumn();
+    expect($evidenceCount === $evidenceCountBefore, 'ADM-EVID-05: expected the evidence row count UNCHANGED by verification (Admin never adds/replaces it)');
+    expect($evidenceCount === 1, 'ADM-EVID-05: expected the ONE store-uploaded evidence row to still be the only one after verification (Admin never adds/replaces it)');
+
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect(str_contains($r['body'], 'Diverifikasi Admin') || str_contains($r['body'], 'Diverifikasi oleh'), 'ADM-EVID-05: expected the verified status to show on the detail page');
+    expect(str_contains($r['body'], 'Bukti Foto dari Toko'), 'ADM-EVID-05: expected the store evidence to remain visible after verification');
 });
 
 runTest('RCPT-ADM13 admin verify creates ZERO stock_ledger rows', function () {
-    $before = $GLOBALS['rcptadm13_ledger_before'] ?? null;
-    $after = $GLOBALS['rcptadm13_ledger_after'] ?? null;
-    expect($before !== null && $after !== null, 'depends on RCPT-ADM10 having run first');
+    $before = $GLOBALS['adm_evid04_ledger_before'] ?? null;
+    $after = $GLOBALS['adm_evid04_ledger_after'] ?? null;
+    expect($before !== null && $after !== null, 'depends on ADM-EVID-04 having run first');
     expect($before === $after, "RCPT-ADM13: expected admin verify to create ZERO stock_ledger rows (before={$before}, after={$after})");
 });
 
@@ -1934,9 +1993,9 @@ runTest('RCPT-ADM14 a non-admin (Driver) gets 403 on the admin verify endpoint',
 });
 
 runTest('RCPT-ADM15a repeating the EXACT SAME verify request (same Idempotency-Key) replays the stored result, never re-executes', function () use ($adminHttp, $adminCsrf, $pdo) {
-    $receiptId = $GLOBALS['legacy_receipt_id'] ?? null;
-    $verifyKey = $GLOBALS['rcptadm10_verify_key'] ?? null;
-    expect($receiptId !== null && $verifyKey !== null, 'depends on RCPT-ADM09/10 having run first (already verified)');
+    $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
+    $verifyKey = $GLOBALS['adm_evid04_verify_key'] ?? null;
+    expect($receiptId !== null && $verifyKey !== null, 'depends on ADM-EVID-04 having run first (already verified)');
     $countBefore = (int) $pdo->query("SELECT COUNT(*) FROM audit_log WHERE record_type = 'shipment_receipt' AND record_key = '{$receiptId}' AND action = 'receipt.verified'")->fetchColumn();
     $replay = $adminHttp->request('POST', "/api/admin/receipts/{$receiptId}/verify", [], array_merge(['X-CSRF-Token' => $adminCsrf], $verifyKey));
     expect($replay['status'] === 200, 'RCPT-ADM15a: expected an exact-key replay to return the stored 200, not error: ' . json_encode($replay['json']));
@@ -1946,8 +2005,8 @@ runTest('RCPT-ADM15a repeating the EXACT SAME verify request (same Idempotency-K
 });
 
 runTest('RCPT-ADM15b a genuinely NEW verify attempt (different Idempotency-Key) on an already-verified receipt is rejected, never silently re-verified', function () use ($adminHttp, $adminCsrf) {
-    $receiptId = $GLOBALS['legacy_receipt_id'] ?? null;
-    expect($receiptId !== null, 'depends on RCPT-ADM09/10 having run first (already verified)');
+    $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
+    expect($receiptId !== null, 'depends on ADM-EVID-04 having run first (already verified)');
     $again = $adminHttp->request('POST', "/api/admin/receipts/{$receiptId}/verify", [], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('rcptadm15b-fresh')));
     expect($again['status'] === 409, "RCPT-ADM15b: expected 409 for a genuinely new verify attempt on an already-verified receipt, got {$again['status']}");
 });

@@ -251,10 +251,14 @@ final class ReceiptService
      * POST /api/admin/receipts/{id}/verify — Part I, admin reviews a
      * discrepancy and marks it verified. Real-UAT rule: if this receipt
      * has ANY reject/shortage qty, it can only be verified once at least
-     * one photo evidence row exists — protects OLD data too (a receipt
-     * confirmed before the photo-evidence rule existed stays blocked
-     * until evidence is attached, via adminAddEvidence(), never silently
-     * grandfathered in).
+     * one STORE-uploaded photo evidence row exists — protects OLD data
+     * too. Role correction (real cPanel UAT): evidence is STORE evidence
+     * only — there is deliberately no Admin-side way to attach it, so a
+     * legacy pre-patch discrepancy receipt with no store evidence stays
+     * PERMANENTLY blocked from verification (never silently grandfathered
+     * in, and never "fixed" by Admin fabricating evidence on the store's
+     * behalf — see the removed adminAddEvidence()/adminUploadEvidence()
+     * in this file's and ReceiptController's git history for why).
      */
     public function adminVerify(int $receiptId, int $adminUserId, ?string $requestId): array
     {
@@ -267,32 +271,10 @@ final class ReceiptService
         }
         if ($this->receiptHasDiscrepancy((int) $receipt['shipment_receipt_id'])
             && $this->repo->countEvidenceForReceipt($this->pdo, (int) $receipt['shipment_receipt_id']) === 0) {
-            throw new ApiException(409, 'EVIDENCE_REQUIRED_FOR_VERIFY', 'Selisih belum dapat diverifikasi karena bukti foto belum tersedia.');
+            throw new ApiException(409, 'EVIDENCE_REQUIRED_FOR_VERIFY', 'Selisih belum dapat diverifikasi karena bukti foto dari toko belum tersedia.');
         }
         $this->repo->markVerified($this->pdo, $receiptId, $adminUserId);
         Audit::write($this->pdo, $requestId, $adminUserId, 'receipt.verified', 'shipment_receipt', (string) $receiptId, 'ok', null, null, null);
-
-        $updated = $this->repo->findReceiptForShipment($this->pdo, (int) $receipt['shipment_id']);
-        return $this->buildReceiptDto($updated);
-    }
-
-    /**
-     * POST /api/admin/receipts/{id}/evidence — Part H, legacy-data ask:
-     * attaches evidence to an EXISTING receipt as Admin, for a receipt
-     * confirmed before this patch (no photo required at the time) that
-     * now needs at least one before it can be verified. Never touches
-     * receipt quantities/status/version — purely additive evidence rows.
-     */
-    public function adminAddEvidence(int $receiptId, array $evidenceFiles, int $adminUserId, ?string $requestId): array
-    {
-        $receipt = $this->repo->lockReceipt($this->pdo, $receiptId);
-        if ($receipt === null) {
-            throw new ApiException(404, 'NOT_FOUND', 'Konfirmasi penerimaan tidak ditemukan');
-        }
-        foreach ($evidenceFiles as $ev) {
-            $this->repo->insertEvidence($this->pdo, $receiptId, $ev['filePath'], $ev['mimeType'], $ev['fileSize'], $ev['originalName']);
-        }
-        Audit::write($this->pdo, $requestId, $adminUserId, 'receipt.evidence_added', 'shipment_receipt', (string) $receiptId, 'ok', null, null, ['count' => count($evidenceFiles)]);
 
         $updated = $this->repo->findReceiptForShipment($this->pdo, (int) $receipt['shipment_id']);
         return $this->buildReceiptDto($updated);

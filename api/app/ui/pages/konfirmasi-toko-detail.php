@@ -14,6 +14,14 @@ use Amor\Api\Dispatch\DispatchService;
  * page and the Surat Jalan print page already call (isAdmin=true here
  * bypasses its shipped_by-only check, exactly like those pages) — no
  * second query/DTO for the same data.
+ *
+ * Role correction (real cPanel UAT): photo evidence is STORE evidence —
+ * only the Store Receipt portal ever uploads it. This page is
+ * view/verify-only: it shows whatever the store uploaded (or "Tidak
+ * tersedia" when a legacy pre-patch receipt has none) and never offers
+ * an Admin-side upload control. See ReceiptController::adminEvidence()'s
+ * own docblock for why the old Admin-upload endpoint was removed rather
+ * than just hidden.
  */
 
 $shipmentId = isset($_GET['shipmentId']) ? (int) $_GET['shipmentId'] : 0;
@@ -113,8 +121,8 @@ $verifyBlockedByEvidence = $canVerify && $hasDiscrepancy && $evidenceCount === 0
   <div class="alert alert-success" style="margin-top:var(--space-3);">Diverifikasi oleh <?= ui_esc((string) ($receipt['verifiedByName'] ?? '-')) ?> &middot; <?= ui_esc(ui_fmt_datetime_id($receipt['verifiedAt'] ?? null)) ?></div>
   <?php endif; ?>
 
-  <h3 class="card-title" style="margin:var(--space-4) 0 var(--space-2);">Bukti Foto</h3>
   <?php if ($evidenceCount > 0): ?>
+  <h3 class="card-title" style="margin:var(--space-4) 0 var(--space-2);">Bukti Foto dari Toko</h3>
   <div class="evidence-thumb-grid">
     <?php foreach ($receipt['evidence'] as $ev): ?>
     <a href="/api/admin/receipts/evidence/<?= (int) $ev['evidenceId'] ?>" target="_blank" rel="noopener" class="evidence-thumb">
@@ -122,15 +130,12 @@ $verifyBlockedByEvidence = $canVerify && $hasDiscrepancy && $evidenceCount === 0
     </a>
     <?php endforeach; ?>
   </div>
+  <p style="color:var(--text-faint);font-size:.8rem;margin-top:6px;">Bukti foto diunggah oleh toko saat konfirmasi penerimaan. Admin hanya dapat melihat, tidak dapat mengunggah atau mengganti bukti foto ini.</p>
   <?php else: ?>
-  <p style="color:var(--text-faint);">Bukti Foto: Tidak tersedia<?= $hasDiscrepancy ? ' (konfirmasi ini kemungkinan dibuat sebelum aturan bukti foto diberlakukan)' : '' ?></p>
-  <?php if ($hasDiscrepancy): ?>
-  <div id="admin-evidence-upload">
-    <label style="display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:6px;">Tambahkan bukti foto untuk konfirmasi lama ini (Admin)</label>
-    <input type="file" accept="image/*" multiple id="admin-evidence-input">
-    <button type="button" class="btn btn-secondary btn-sm" id="admin-evidence-submit" style="margin-top:8px;">Unggah Bukti Foto</button>
-  </div>
-  <?php endif; ?>
+  <h3 class="card-title" style="margin:var(--space-4) 0 var(--space-2);">Bukti Foto:</h3>
+  <p style="color:var(--text-faint);">
+    Tidak tersedia<?= $hasDiscrepancy ? ' — konfirmasi dibuat sebelum aturan bukti foto diberlakukan.' : '.' ?>
+  </p>
   <?php endif; ?>
 
   <div style="margin-top:var(--space-4);display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap;">
@@ -139,7 +144,7 @@ $verifyBlockedByEvidence = $canVerify && $hasDiscrepancy && $evidenceCount === 0
     <?php elseif ($hasDiscrepancy): ?>
       <button type="button" class="btn btn-primary" id="btn-verify-receipt" data-receipt="<?= (int) $receipt['receiptId'] ?>" <?= $verifyBlockedByEvidence ? 'disabled' : '' ?>>Verifikasi Selisih</button>
       <?php if ($verifyBlockedByEvidence): ?>
-      <span style="color:var(--danger);font-size:.85rem;">Selisih belum dapat diverifikasi karena bukti foto belum tersedia.</span>
+      <span style="color:var(--danger);font-size:.85rem;">Selisih belum dapat diverifikasi karena bukti foto dari toko belum tersedia.</span>
       <?php endif; ?>
     <?php else: ?>
       <span style="color:var(--text-faint);">Penerimaan sesuai — verifikasi tidak wajib, tapi Admin boleh menandainya diverifikasi.</span>
@@ -166,35 +171,6 @@ $verifyBlockedByEvidence = $canVerify && $hasDiscrepancy && $evidenceCount === 0
         window.location.reload();
       } catch (e) {
         Amor.toast(e.message, 'error');
-      }
-    });
-  }
-
-  var adminUploadBtn = document.getElementById('admin-evidence-submit');
-  if (adminUploadBtn) {
-    adminUploadBtn.addEventListener('click', async function () {
-      var input = document.getElementById('admin-evidence-input');
-      if (!input.files || input.files.length === 0) {
-        Amor.toast('Pilih minimal satu foto', 'error'); return;
-      }
-      var form = new FormData();
-      Array.prototype.forEach.call(input.files, function (f) { form.append('evidence[]', f, f.name); });
-      adminUploadBtn.disabled = true;
-      adminUploadBtn.textContent = 'Mengunggah...';
-      try {
-        var res = await fetch('/api/admin/receipts/<?= (int) ($receipt['receiptId'] ?? 0) ?>/evidence', {
-          method: 'POST',
-          headers: { 'X-CSRF-Token': window.AMOR.csrfToken, 'Idempotency-Key': 'adm-ev-' + Date.now() + '-' + Math.random().toString(36).slice(2) },
-          body: form,
-        });
-        var json = await res.json();
-        if (!res.ok || json.ok === false) throw new Error((json && json.message) || 'Gagal mengunggah bukti foto');
-        Amor.toast('Bukti foto ditambahkan', 'success');
-        window.location.reload();
-      } catch (e) {
-        Amor.toast(e.message, 'error');
-        adminUploadBtn.disabled = false;
-        adminUploadBtn.textContent = 'Unggah Bukti Foto';
       }
     });
   }

@@ -80,6 +80,17 @@ final class ReceiptController
      * client — this is the ONLY way an uploaded evidence file is ever
      * served (api/uploads/receipt-evidence/ itself is deny-all, same as
      * api/app/).
+     *
+     * Role correction (real cPanel UAT): photo evidence is STORE evidence —
+     * only confirm() (the public token-gated route) ever writes an
+     * evidence row. An earlier revision of this patch also had a
+     * POST /api/admin/receipts/{id}/evidence Admin-upload endpoint for
+     * attaching evidence to legacy pre-patch receipts; that endpoint was
+     * REMOVED (not just hidden) because Admin fabricating/uploading
+     * "store" evidence on the store's behalf breaks the audit trail this
+     * whole feature exists to create. A legacy discrepancy receipt with
+     * no store evidence now stays permanently un-verifiable — see
+     * ReceiptService::adminVerify()'s own docblock.
      */
     public static function adminEvidence(Request $request): void
     {
@@ -99,37 +110,6 @@ final class ReceiptController
         header('Cache-Control: private, max-age=3600');
         header('X-Content-Type-Options: nosniff');
         readfile($path);
-    }
-
-    /**
-     * POST /api/admin/receipts/{id}/evidence — real-UAT ask (Part H): a
-     * receipt confirmed BEFORE this patch (legacy data) has a
-     * discrepancy but no evidence, and confirmReceipt() never allows a
-     * second confirmation for a shipment that already has a receipt — so
-     * the store itself can never retroactively attach evidence. This lets
-     * ADMIN add evidence to an EXISTING receipt, unblocking adminVerify()'s
-     * gate, WITHOUT ever touching receipt quantities/status — purely an
-     * additive evidence row, same validation as the public upload path.
-     */
-    public static function adminUploadEvidence(Request $request): void
-    {
-        $userId = Auth::requireRole('ADMIN');
-        $receiptId = (int) $request->routeParams['id'];
-        $evidenceFiles = EvidenceUploader::validateAndStore($request->fileField('evidence'));
-        if ($evidenceFiles === []) {
-            throw new ApiException(400, 'MISSING_EVIDENCE_FILE', 'Pilih minimal satu foto untuk diunggah');
-        }
-
-        try {
-            Idempotency::handle($request, 'POST /api/admin/receipts/{id}/evidence', function (PDO $pdo) use ($receiptId, $evidenceFiles, $userId, $request) {
-                $service = new ReceiptService($pdo);
-                $dto = $service->adminAddEvidence($receiptId, $evidenceFiles, $userId, $request->header('Idempotency-Key'));
-                return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'shipment_receipt', 'recordKey' => (string) $receiptId];
-            });
-        } catch (\Throwable $e) {
-            EvidenceUploader::deleteStoredFiles($evidenceFiles);
-            throw $e;
-        }
     }
 
     public static function adminList(Request $request): void
