@@ -34,6 +34,9 @@
     return '<span class="rc-badge ' + m[0] + '">' + esc(m[1]) + '</span>';
   }
 
+  var MAX_EVIDENCE_FILES = 3;
+  var MAX_EVIDENCE_SIZE = 5 * 1024 * 1024;
+
   function renderShipmentCard(view, sh) {
     var card = document.createElement('div');
     card.className = 'rc-card';
@@ -53,19 +56,23 @@
       '<thead><tr><th>Produk</th><th class="num">Dikirim</th>' +
       (editable ? '<th class="num">Diterima Baik</th><th class="num">Reject</th><th class="num">Kurang</th>' : '<th class="num">Baik</th><th class="num">Reject</th><th class="num">Kurang</th>') +
       '</tr></thead><tbody>' +
+      // Real-UAT mobile fix: data-label on every <td> — the narrow-
+      // viewport CSS (receipt.css) turns each row into a stacked card
+      // using these as row-field captions, so "Kurang" (and every other
+      // column) can never be clipped off-screen on a phone again.
       sh.items.map(function (it) {
         if (editable) {
           return '<tr data-shipment-item-id="' + it.shipmentItemId + '" data-shipped="' + it.shippedQty + '">' +
-            '<td>' + esc(it.productName) + '</td>' +
-            '<td class="num">' + fmtNum(it.shippedQty) + '</td>' +
-            '<td class="num"><input class="rc-num-input" data-field="good" type="number" min="0" step="0.01" value="' + it.shippedQty + '"></td>' +
-            '<td class="num"><input class="rc-num-input" data-field="reject" type="number" min="0" step="0.01" value="0"></td>' +
-            '<td class="num"><input class="rc-num-input" data-field="shortage" type="number" min="0" step="0.01" value="0"></td>' +
+            '<td data-label="Produk">' + esc(it.productName) + '</td>' +
+            '<td class="num" data-label="Dikirim">' + fmtNum(it.shippedQty) + '</td>' +
+            '<td class="num" data-label="Diterima Baik"><input class="rc-num-input" data-field="good" type="number" min="0" step="0.01" value="' + it.shippedQty + '"></td>' +
+            '<td class="num" data-label="Reject"><input class="rc-num-input" data-field="reject" type="number" min="0" step="0.01" value="0"></td>' +
+            '<td class="num" data-label="Kurang"><input class="rc-num-input" data-field="shortage" type="number" min="0" step="0.01" value="0"></td>' +
             '</tr>';
         }
         var g = it.receivedGoodQty, r = it.rejectQty, s = it.shortageQty;
-        return '<tr><td>' + esc(it.productName) + '</td><td class="num">' + fmtNum(it.shippedQty) + '</td>' +
-          '<td class="num">' + fmtNum(g) + '</td><td class="num">' + fmtNum(r) + '</td><td class="num">' + fmtNum(s) + '</td></tr>';
+        return '<tr><td data-label="Produk">' + esc(it.productName) + '</td><td class="num" data-label="Dikirim">' + fmtNum(it.shippedQty) + '</td>' +
+          '<td class="num" data-label="Baik">' + fmtNum(g) + '</td><td class="num" data-label="Reject">' + fmtNum(r) + '</td><td class="num" data-label="Kurang">' + fmtNum(s) + '</td></tr>';
       }).join('') +
       '</tbody>';
     card.appendChild(table);
@@ -86,11 +93,84 @@
       noteField.innerHTML = '<label>Catatan (opsional)</label><textarea id="note-' + sh.shipmentId + '" rows="2" placeholder="Contoh: ada 2 pcs rusak pada kemasan"></textarea>';
       card.appendChild(noteField);
 
+      // --- Bukti Foto (real-UAT: wajib jika ada Reject/Kurang) ---
+      var selectedFiles = [];
+      var evidenceField = document.createElement('div');
+      evidenceField.className = 'rc-field';
+      evidenceField.innerHTML =
+        '<label>Bukti Foto</label>' +
+        '<div class="rc-evidence-hint">Wajib jika ada barang reject/rusak atau kurang.</div>' +
+        '<input type="file" accept="image/*" capture="environment" multiple class="rc-evidence-input">' +
+        '<div class="rc-evidence-error" style="display:none;"></div>' +
+        '<div class="rc-evidence-previews"></div>';
+      card.appendChild(evidenceField);
+      var evidenceInput = evidenceField.querySelector('.rc-evidence-input');
+      var evidenceErrorEl = evidenceField.querySelector('.rc-evidence-error');
+      var previewsEl = evidenceField.querySelector('.rc-evidence-previews');
+
+      function showEvidenceError(msg) {
+        evidenceErrorEl.textContent = msg;
+        evidenceErrorEl.style.display = msg ? 'block' : 'none';
+      }
+
+      function renderPreviews() {
+        previewsEl.innerHTML = '';
+        selectedFiles.forEach(function (file, i) {
+          var thumb = document.createElement('div');
+          thumb.className = 'rc-evidence-thumb';
+          var img = document.createElement('img');
+          img.src = URL.createObjectURL(file);
+          thumb.appendChild(img);
+          var removeBtn = document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.className = 'rc-evidence-remove';
+          removeBtn.textContent = '×';
+          removeBtn.addEventListener('click', function () {
+            selectedFiles.splice(i, 1);
+            renderPreviews();
+          });
+          thumb.appendChild(removeBtn);
+          previewsEl.appendChild(thumb);
+        });
+      }
+
+      evidenceInput.addEventListener('change', function () {
+        showEvidenceError('');
+        var incoming = Array.prototype.slice.call(evidenceInput.files || []);
+        incoming.forEach(function (file) {
+          if (!/^image\//.test(file.type)) {
+            showEvidenceError('Hanya file gambar (JPEG/PNG/WEBP) yang diperbolehkan.');
+            return;
+          }
+          if (file.size > MAX_EVIDENCE_SIZE) {
+            showEvidenceError('Ukuran foto maksimal 5 MB.');
+            return;
+          }
+          if (selectedFiles.length >= MAX_EVIDENCE_FILES) {
+            showEvidenceError('Maksimal ' + MAX_EVIDENCE_FILES + ' foto bukti.');
+            return;
+          }
+          selectedFiles.push(file);
+        });
+        evidenceInput.value = '';
+        renderPreviews();
+      });
+
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'rc-btn primary';
       btn.textContent = 'Simpan Konfirmasi';
       card.appendChild(btn);
+
+      function hasDiscrepancy() {
+        var any = false;
+        table.querySelectorAll('tbody tr').forEach(function (tr) {
+          var reject = parseFloat(tr.querySelector('[data-field=reject]').value) || 0;
+          var shortage = parseFloat(tr.querySelector('[data-field=shortage]').value) || 0;
+          if (reject > 0.0001 || shortage > 0.0001) any = true;
+        });
+        return any;
+      }
 
       function validate() {
         var ok = true;
@@ -102,14 +182,26 @@
           if (Math.abs(good + reject + shortage - shipped) > 0.001) ok = false;
         });
         mathError.style.display = ok ? 'none' : 'block';
-        btn.disabled = !ok;
-        return ok;
+        // Client-side convenience only — the server re-validates
+        // authoritatively (task's own "Frontend-only validation is NOT
+        // enough"); this just gives the store immediate feedback instead
+        // of a round-trip.
+        var evidenceOk = !hasDiscrepancy() || selectedFiles.length > 0;
+        evidenceField.querySelector('.rc-evidence-hint').style.color = evidenceOk ? '' : 'var(--rc-danger)';
+        btn.disabled = !ok || !evidenceOk;
+        return ok && evidenceOk;
       }
       table.addEventListener('input', validate);
+      evidenceInput.addEventListener('change', validate);
       validate();
 
       btn.addEventListener('click', function () {
-        if (!validate()) return;
+        if (!validate()) {
+          if (hasDiscrepancy() && selectedFiles.length === 0) {
+            showEvidenceError('Bukti foto wajib diunggah untuk barang reject/rusak atau kurang.');
+          }
+          return;
+        }
         var items = [];
         table.querySelectorAll('tbody tr').forEach(function (tr) {
           items.push({
@@ -121,14 +213,15 @@
         });
         btn.disabled = true;
         btn.textContent = 'Menyimpan...';
+        var form = new FormData();
+        form.append('receiverName', document.getElementById('receiver-name-' + sh.shipmentId).value || '');
+        form.append('note', document.getElementById('note-' + sh.shipmentId).value || '');
+        form.append('items', JSON.stringify(items));
+        selectedFiles.forEach(function (file) { form.append('evidence[]', file, file.name); });
         fetch('/api/receive/' + encodeURIComponent(window.RECEIPT_TOKEN) + '/shipments/' + sh.shipmentId + '/confirm', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': genKey() },
-          body: JSON.stringify({
-            receiverName: document.getElementById('receiver-name-' + sh.shipmentId).value || null,
-            note: document.getElementById('note-' + sh.shipmentId).value || null,
-            items: items,
-          }),
+          headers: { 'Idempotency-Key': genKey() },
+          body: form,
         }).then(function (res) { return res.json().then(function (json) { return { res: res, json: json }; }); })
           .then(function (r) {
             if (!r.res.ok || r.json.ok === false) {

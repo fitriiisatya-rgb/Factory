@@ -50,7 +50,8 @@ $statusOptions = [
     </tr></thead>
     <tbody>
     <?php foreach ($rows as $r): ?>
-    <tr>
+    <?php $detailUrl = '?page=konfirmasi-toko-detail&shipmentId=' . (int) $r['shipmentId']; ?>
+    <tr class="row-clickable" data-row-href="<?= ui_esc($detailUrl) ?>">
       <td><?= ui_esc((string) $r['storeName']) ?></td>
       <td><?= ui_esc((string) ($r['docNo'] ?? '-')) ?></td>
       <td><?= ui_esc((string) $r['shipmentGroup']) ?></td>
@@ -61,13 +62,7 @@ $statusOptions = [
       <td><?= ui_badge(ui_receipt_status_label((string) $r['status'])) ?></td>
       <td><?= ui_esc((string) ($r['confirmedAt'] ?? '-')) ?><?= $r['receiverName'] ? ' &middot; ' . ui_esc((string) $r['receiverName']) : '' ?></td>
       <td>
-        <?php if ($r['status'] === 'confirmed_discrepancy' && $r['receiptId'] !== null): ?>
-        <button type="button" class="btn btn-secondary btn-sm" data-verify="<?= (int) $r['receiptId'] ?>">Verifikasi</button>
-        <?php elseif ($r['status'] === 'confirmed_ok' && $r['receiptId'] !== null): ?>
-        <button type="button" class="btn btn-secondary btn-sm" data-verify="<?= (int) $r['receiptId'] ?>">Verifikasi</button>
-        <?php else: ?>
-        <span style="color:var(--text-faint);">-</span>
-        <?php endif; ?>
+        <a class="btn btn-secondary btn-sm" href="<?= ui_esc($detailUrl) ?>">Lihat Detail &rsaquo;</a>
       </td>
     </tr>
     <?php endforeach; ?>
@@ -77,17 +72,14 @@ $statusOptions = [
 <?php endif; ?>
 
 <script>
-document.querySelectorAll('[data-verify]').forEach(function (btn) {
-  btn.addEventListener('click', async function () {
-    const ok = await Amor.confirmModal('Tandai konfirmasi ini sebagai sudah diverifikasi Admin?');
-    if (!ok) return;
-    try {
-      await Amor.apiFetch('/api/admin/receipts/' + btn.dataset.verify + '/verify', { method: 'POST', body: {} });
-      Amor.toast('Konfirmasi diverifikasi', 'success');
-      window.location.reload();
-    } catch (e) {
-      Amor.toast(e.message, 'error');
-    }
+// Real-UAT ask: the whole row is clickable (not just the "Lihat Detail"
+// link/status badge) — a click anywhere on the row that isn't itself a
+// link/button navigates to the same Detail page.
+document.querySelectorAll('tr.row-clickable').forEach(function (tr) {
+  tr.style.cursor = 'pointer';
+  tr.addEventListener('click', function (e) {
+    if (e.target.closest('a, button')) return;
+    window.location.href = tr.dataset.rowHref;
   });
 });
 </script>

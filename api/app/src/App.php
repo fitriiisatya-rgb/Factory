@@ -131,6 +131,8 @@ final class App
         // Phase 5.5 — Admin discrepancy verification (ADMIN-only, normal session/CSRF).
         $router->get('/api/admin/receipts', [ReceiptController::class, 'adminList']);
         $router->post('/api/admin/receipts/{id}/verify', [ReceiptController::class, 'adminVerify']);
+        $router->post('/api/admin/receipts/{id}/evidence', [ReceiptController::class, 'adminUploadEvidence']);
+        $router->get('/api/admin/receipts/evidence/{id}', [ReceiptController::class, 'adminEvidence']);
 
         // User / Driver Account Management (ADMIN-only, normal session/CSRF/Idempotency-Key —
         // same guards as every other mutating route, nothing special-cased).

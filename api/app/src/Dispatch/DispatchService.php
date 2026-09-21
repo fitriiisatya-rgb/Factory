@@ -472,7 +472,12 @@ final class DispatchService
         if ($receipt !== null) {
             $receiptItems = $this->receiptRepo->findReceiptItems($this->pdo, (int) $receipt['shipment_receipt_id']);
             $verifier = $receipt['verified_by'] !== null ? $this->userRepo->findById($this->pdo, (int) $receipt['verified_by']) : null;
+            $evidenceRows = $this->receiptRepo->findEvidenceForReceipt($this->pdo, (int) $receipt['shipment_receipt_id']);
             $receiptDto = [
+                // Real-UAT ask (Admin Konfirmasi Toko Detail page): needed
+                // to call POST /api/admin/receipts/{id}/verify — this DTO
+                // is exactly what that page renders from.
+                'receiptId' => (int) $receipt['shipment_receipt_id'],
                 'status' => $receipt['status'],
                 'receiverName' => $receipt['receiver_name'],
                 'note' => $receipt['note'],
@@ -488,6 +493,15 @@ final class DispatchService
                     'shortageQty' => (float) $ri['shortage_qty'],
                     'reason' => $ri['reason'],
                 ], $receiptItems),
+                // Never the raw filesystem path — the admin detail page
+                // builds thumbnails from evidenceId via the authenticated
+                // GET /api/admin/receipts/evidence/{evidenceId} route.
+                'evidence' => array_map(static fn ($ev) => [
+                    'evidenceId' => (int) $ev['shipment_receipt_evidence_id'],
+                    'mimeType' => $ev['mime_type'],
+                    'originalName' => $ev['original_name'],
+                    'uploadedAt' => $ev['uploaded_at'],
+                ], $evidenceRows),
             ];
         }
 

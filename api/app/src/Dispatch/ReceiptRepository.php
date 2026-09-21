@@ -162,4 +162,65 @@ final class ReceiptRepository
         );
         $stmt->execute([$adminUserId, $receiptId]);
     }
+
+    /**
+     * Display name of the admin who verified a receipt — joined
+     * separately (never denormalized onto shipment_receipt itself, which
+     * already carries verified_by/verified_at per migration 0007; this
+     * project's own convention, e.g. DispatchService::displayName(), is a
+     * plain join at read time, never a duplicated name column).
+     */
+    public function findVerifierName(PDO $pdo, ?int $verifiedBy): ?string
+    {
+        if ($verifiedBy === null) {
+            return null;
+        }
+        $stmt = $pdo->prepare('SELECT full_name, username FROM users WHERE user_id = ?');
+        $stmt->execute([$verifiedBy]);
+        $row = $stmt->fetch();
+        if ($row === false) {
+            return null;
+        }
+        return ($row['full_name'] ?? '') !== '' ? $row['full_name'] : $row['username'];
+    }
+
+    // ------------------------------------------------------------------
+    // Store Receipt photo evidence (migration 0008) — real-UAT ask: a
+    // discrepancy (Reject/Kurang > 0) requires at least one photo before
+    // Admin can verify it. One row per photo, never a comma-separated
+    // list crammed into shipment_receipt itself.
+    // ------------------------------------------------------------------
+
+    public function insertEvidence(PDO $pdo, int $receiptId, string $filePath, string $mimeType, int $fileSize, ?string $originalName): int
+    {
+        $stmt = $pdo->prepare(
+            'INSERT INTO shipment_receipt_evidence (shipment_receipt_id, file_path, mime_type, file_size, original_name, uploaded_at)
+             VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP())'
+        );
+        $stmt->execute([$receiptId, $filePath, $mimeType, $fileSize, $originalName]);
+        return (int) $pdo->lastInsertId();
+    }
+
+    /** @return array<int,array> every evidence row for one receipt, oldest first */
+    public function findEvidenceForReceipt(PDO $pdo, int $receiptId): array
+    {
+        $stmt = $pdo->prepare('SELECT * FROM shipment_receipt_evidence WHERE shipment_receipt_id = ? ORDER BY shipment_receipt_evidence_id');
+        $stmt->execute([$receiptId]);
+        return $stmt->fetchAll();
+    }
+
+    public function findEvidenceById(PDO $pdo, int $evidenceId): ?array
+    {
+        $stmt = $pdo->prepare('SELECT * FROM shipment_receipt_evidence WHERE shipment_receipt_evidence_id = ?');
+        $stmt->execute([$evidenceId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    public function countEvidenceForReceipt(PDO $pdo, int $receiptId): int
+    {
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM shipment_receipt_evidence WHERE shipment_receipt_id = ?');
+        $stmt->execute([$receiptId]);
+        return (int) $stmt->fetchColumn();
+    }
 }

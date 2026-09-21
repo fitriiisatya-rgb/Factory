@@ -85,6 +85,42 @@ final class Http55
         $json = $raw === '' ? null : json_decode($raw, true);
         return ['status' => $status, 'json' => $json, 'body' => $raw];
     }
+
+    /**
+     * multipart/form-data variant — the ONLY way this app accepts a file
+     * (Store Receipt photo evidence). $files maps form field name (e.g.
+     * "evidence[]") to a local file path; curl sends it as a real
+     * multipart upload (CURLFile), exactly like a browser's FormData.
+     * @return array{status:int,json:?array,body:string}
+     */
+    public function requestMultipart(string $method, string $path, array $fields, array $files, array $headers = []): array
+    {
+        $ch = curl_init($this->baseUrl . $path);
+        $hdrLines = [];
+        foreach ($headers as $k => $v) {
+            $hdrLines[] = "{$k}: {$v}";
+        }
+        $postFields = $fields;
+        foreach ($files as $fieldName => $filePath) {
+            $postFields[$fieldName] = new CURLFile($filePath, mime_content_type($filePath) ?: 'application/octet-stream', basename($filePath));
+        }
+        curl_setopt_array($ch, [
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_COOKIEJAR => $this->cookieJar,
+            CURLOPT_COOKIEFILE => $this->cookieJar,
+            CURLOPT_HTTPHEADER => $hdrLines,
+            CURLOPT_POSTFIELDS => $postFields,
+        ]);
+        $raw = curl_exec($ch);
+        if ($raw === false) {
+            throw new RuntimeException('curl error: ' . curl_error($ch));
+        }
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        $json = $raw === '' ? null : json_decode($raw, true);
+        return ['status' => $status, 'json' => $json, 'body' => $raw];
+    }
 }
 
 function expect(bool $cond, string $message): void
@@ -92,6 +128,30 @@ function expect(bool $cond, string $message): void
     if (!$cond) {
         throw new RuntimeException($message);
     }
+}
+
+/**
+ * Writes a minimal-but-genuinely-valid 1x1 PNG to a temp file and returns
+ * its path — real image bytes so getimagesize()/finfo pass exactly like a
+ * real photo would (PHOTO-* tests need EvidenceUploader's REAL content
+ * validation to see a real image, never a fake/renamed file).
+ */
+function fakeEvidenceImage(): string
+{
+    $png = base64_decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+    );
+    $path = tempnam(sys_get_temp_dir(), 'evidence') . '.png';
+    file_put_contents($path, $png);
+    return $path;
+}
+
+/** A file that will NEVER pass EvidenceUploader's validation — for PHOTO-05/06/08 negative tests. */
+function fakeInvalidEvidenceFile(string $extension = 'txt', int $sizeBytes = 100): string
+{
+    $path = tempnam(sys_get_temp_dir(), 'badevidence') . '.' . $extension;
+    file_put_contents($path, str_repeat('x', $sizeBytes));
+    return $path;
 }
 
 function idemKey(string $tag): array
@@ -275,8 +335,11 @@ expect($storeA > 0, 'expected P2 TEST STORE A fixture seeded');
 $storeB = (int) $pdo->query("SELECT store_id FROM store WHERE canonical_name = 'P2 TEST STORE B'")->fetchColumn();
 expect($storeB > 0, 'expected P2 TEST STORE B fixture seeded');
 
-$rotiProducts = productsInDivision($pdo, $rotiBollenDivId, 40);
-expect(count($rotiProducts) >= 40, 'expected enough katalog products after bootstrap');
+// Real-UAT patch (Store Receipt Photo Evidence + Admin Detail) added
+// several more single-product fixtures — bumped from 40 to 70 so the
+// shared pool never runs out mid-suite.
+$rotiProducts = productsInDivision($pdo, $rotiBollenDivId, 70);
+expect(count($rotiProducts) >= 70, 'expected enough katalog products after bootstrap');
 $pool = $rotiProducts;
 function nextProduct(): array { global $pool; $p = array_shift($pool); expect($p !== null, 'ran out of pooled test products'); return $p; }
 
@@ -772,10 +835,11 @@ runTest('P55-18 / P55-19 / P55-20 store receipt: valid math accepted, invalid re
     $countBefore = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt WHERE shipment_id = {$shipmentId}")->fetchColumn();
     expect($countBefore === 0, 'an invalid-math attempt must not create a receipt row');
 
-    // P55-18: valid math accepted.
-    $good = $anon->request('POST', "/api/receive/{$token}/shipments/{$shipmentId}/confirm", [
-        'receiverName' => 'Budi', 'items' => [['shipmentItemId' => $shipmentItemId, 'receivedGood' => 9, 'reject' => 1, 'shortage' => 0]],
-    ], idemKey('p55-18-good'));
+    // P55-18: valid math accepted. Has a reject qty, so real-UAT photo
+    // evidence rule applies — attach one real (valid) evidence photo.
+    $good = $anon->requestMultipart('POST', "/api/receive/{$token}/shipments/{$shipmentId}/confirm", [
+        'receiverName' => 'Budi', 'items' => json_encode([['shipmentItemId' => $shipmentItemId, 'receivedGood' => 9, 'reject' => 1, 'shortage' => 0]]),
+    ], ['evidence[]' => fakeEvidenceImage()], idemKey('p55-18-good'));
     expect($good['status'] === 200, 'valid confirm failed: ' . json_encode($good['json']));
     expect($good['json']['data']['status'] === 'confirmed_discrepancy', 'expected confirmed_discrepancy status (a reject was reported)');
 
@@ -1173,10 +1237,11 @@ runTest('DPT-15/DPT-16 receipt completed + discrepancy quantities shown correctl
     $view = $anon->request('GET', "/api/receive/{$token}");
     $shipmentItemId = $view['json']['data']['shipments'][0]['items'][0]['shipmentItemId'];
 
-    // Confirm with a discrepancy: shipped 4, good 3, reject 1.
-    $confirm = $anon->request('POST', "/api/receive/{$token}/shipments/{$shipmentId}/confirm", [
-        'receiverName' => 'Budi', 'items' => [['shipmentItemId' => $shipmentItemId, 'receivedGood' => 3, 'reject' => 1, 'shortage' => 0]],
-    ], idemKey('dpt15-confirm'));
+    // Confirm with a discrepancy: shipped 4, good 3, reject 1 — real-UAT
+    // photo evidence rule applies, so attach a real (valid) evidence photo.
+    $confirm = $anon->requestMultipart('POST', "/api/receive/{$token}/shipments/{$shipmentId}/confirm", [
+        'receiverName' => 'Budi', 'items' => json_encode([['shipmentItemId' => $shipmentItemId, 'receivedGood' => 3, 'reject' => 1, 'shortage' => 0]]),
+    ], ['evidence[]' => fakeEvidenceImage()], idemKey('dpt15-confirm'));
     expect($confirm['status'] === 200, 'confirm failed: ' . json_encode($confirm['json']));
 
     $detail = $httpA->request('GET', '/api/dispatch/shipments/' . $shipmentId);
@@ -1553,6 +1618,357 @@ runTest('SJ-02..16 Surat Jalan (actual shipment) print shows ONLY that shipment\
     $shipmentIdsInView = array_map(fn ($s) => $s['shipmentId'], $publicView['json']['data']['shipments']);
     expect(in_array($shpMain, $shipmentIdsInView, true) && in_array($shpPastry, $shipmentIdsInView, true),
         'SJ-16: expected the public Store Receipt portal to list BOTH SHP-main and SHP-pastry under this DO, never merged');
+});
+
+// ---------------------------------------------------------------------
+// PHOTO-01..10 / RCPT-ADM01..15 / MOBILE-01..02 — Store Receipt Photo
+// Evidence + Admin Konfirmasi Toko Detail + Verifikasi Selisih. Real-UAT
+// ask: a discrepancy (Reject/Kurang > 0) confirmation requires at least
+// one photo before Admin can verify it; the Admin summary list needed a
+// working Detail page + Verifikasi action; the Store Receipt table
+// clipped the "Kurang" column on a narrow phone viewport.
+// ---------------------------------------------------------------------
+
+/**
+ * One fresh DO -> claim -> depart -> single-item shipment, ready for a
+ * Store Receipt confirm attempt. Returns everything a PHOTO or RCPT-ADM
+ * test needs. $qty is both the planned/actual/shipped quantity (kept
+ * simple — these tests are about the RECEIPT/evidence layer, not
+ * multi-product shipments, already covered by SJ-02..16/DPT-19).
+ */
+function setupSingleItemShipment(Http55 $adminHttp, string $adminCsrf, Http55 $driverHttp, string $driverCsrf, PDO $pdo, int $factoryId, int $divisionId, int $storeId, string $tanggal, float $qty): array
+{
+    $p = nextProduct();
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $factoryId, $divisionId, $tanggal, $storeId, $p['product_id'], $qty, $qty, $qty);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeId);
+    $itemId = doItemIdFor($pdo, $do['doId'], $p['product_id']);
+    $claim = $driverHttp->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemId, 'qty' => $qty]]], array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('sish-claim-' . $tanggal)));
+    expect($claim['status'] === 200, 'setup claim failed: ' . json_encode($claim['json']));
+    $claimId = $claim['json']['data']['claims'][0]['claimId'];
+    $stop = $driverHttp->request('GET', "/api/dispatch/route/stops/{$storeId}?tanggal={$tanggal}");
+    $depart = $driverHttp->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stop['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimId, 'actualQty' => $qty]],
+    ], array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('sish-depart-' . $tanggal)));
+    expect($depart['status'] === 200, 'setup departure failed: ' . json_encode($depart['json']));
+    $shipmentId = $depart['json']['data']['shipments'][0]['shipmentId'];
+
+    $service = new \Amor\Api\Dispatch\ReceiptService($pdo);
+    $token = $service->getReceiptToken($do['doId']);
+    return ['doId' => $do['doId'], 'docNo' => $do['docNo'], 'shipmentId' => $shipmentId, 'token' => $token, 'qty' => $qty, 'productName' => $p['name']];
+}
+
+/** shipmentItemId (the RECEIPT-side one, from the public view) is resolved separately since it's not the same id as the DO item id. */
+function shipmentItemIdFromToken(Http55 $anon, string $token, int $shipmentId): int
+{
+    $view = $anon->request('GET', "/api/receive/{$token}");
+    foreach ($view['json']['data']['shipments'] as $sh) {
+        if ($sh['shipmentId'] === $shipmentId) {
+            return (int) $sh['items'][0]['shipmentItemId'];
+        }
+    }
+    throw new RuntimeException('shipment not found in public view');
+}
+
+runTest('PHOTO-01 a clean receipt (no reject/shortage) can be submitted WITHOUT any photo', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-24', 5.0);
+    $anon = new Http55($baseUrl);
+    $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
+    $r = $anon->request('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Toko A', 'items' => [['shipmentItemId' => $sii, 'receivedGood' => 5.0, 'reject' => 0, 'shortage' => 0]],
+    ], idemKey('photo01'));
+    expect($r['status'] === 200, 'PHOTO-01: expected a clean receipt (no discrepancy) to succeed without a photo: ' . json_encode($r['json']));
+    expect($r['json']['data']['status'] === 'confirmed_ok', 'expected confirmed_ok status');
+});
+
+runTest('PHOTO-02 Reject > 0 WITHOUT any photo is rejected', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-25', 4.0);
+    $anon = new Http55($baseUrl);
+    $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
+    $r = $anon->request('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Toko A', 'items' => [['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 1.0, 'shortage' => 0]],
+    ], idemKey('photo02'));
+    expect($r['status'] === 400, "PHOTO-02: expected 400 EVIDENCE_REQUIRED, got {$r['status']}: " . json_encode($r['json']));
+    expect($r['json']['code'] === 'EVIDENCE_REQUIRED', 'expected EVIDENCE_REQUIRED code');
+    $count = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt WHERE shipment_id = {$fx['shipmentId']}")->fetchColumn();
+    expect($count === 0, 'a blocked submission must not create a receipt row');
+});
+
+runTest('PHOTO-03 Shortage > 0 WITHOUT any photo is rejected', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-26', 4.0);
+    $anon = new Http55($baseUrl);
+    $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
+    $r = $anon->request('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Toko A', 'items' => [['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 0, 'shortage' => 1.0]],
+    ], idemKey('photo03'));
+    expect($r['status'] === 400, "PHOTO-03: expected 400 EVIDENCE_REQUIRED, got {$r['status']}: " . json_encode($r['json']));
+    expect($r['json']['code'] === 'EVIDENCE_REQUIRED', 'expected EVIDENCE_REQUIRED code');
+});
+
+runTest('PHOTO-04 Reject > 0 WITH a valid photo succeeds', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-27', 4.0);
+    $anon = new Http55($baseUrl);
+    $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
+    $r = $anon->requestMultipart('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Toko A', 'items' => json_encode([['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 1.0, 'shortage' => 0]]),
+    ], ['evidence[]' => fakeEvidenceImage()], idemKey('photo04'));
+    expect($r['status'] === 200, 'PHOTO-04: expected success with a valid photo: ' . json_encode($r['json']));
+    expect($r['json']['data']['status'] === 'confirmed_discrepancy', 'expected confirmed_discrepancy');
+    $GLOBALS['photo_receipt_id'] = $r['json']['data']['receiptId'];
+    $GLOBALS['photo_shipment_id'] = $fx['shipmentId'];
+    $GLOBALS['photo_do_id'] = $fx['doId'];
+});
+
+runTest('PHOTO-05 an invalid (non-image) file is rejected', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-28', 4.0);
+    $anon = new Http55($baseUrl);
+    $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
+    $r = $anon->requestMultipart('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Toko A', 'items' => json_encode([['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 1.0, 'shortage' => 0]]),
+    ], ['evidence[]' => fakeInvalidEvidenceFile('txt')], idemKey('photo05'));
+    expect($r['status'] === 400, "PHOTO-05: expected 400 for a non-image file, got {$r['status']}: " . json_encode($r['json']));
+    expect(in_array($r['json']['code'], ['EVIDENCE_INVALID_MIME', 'EVIDENCE_INVALID_FILE'], true), 'expected an evidence-validation error code, got ' . $r['json']['code']);
+    $count = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt WHERE shipment_id = {$fx['shipmentId']}")->fetchColumn();
+    expect($count === 0, 'a rejected upload must not create a receipt row either');
+});
+
+runTest('PHOTO-06 an oversized file (> 5 MB) is rejected', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-29', 4.0);
+    $anon = new Http55($baseUrl);
+    $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
+    $oversized = fakeInvalidEvidenceFile('jpg', 6 * 1024 * 1024);
+    $r = $anon->requestMultipart('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Toko A', 'items' => json_encode([['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 1.0, 'shortage' => 0]]),
+    ], ['evidence[]' => $oversized], idemKey('photo06'));
+    expect($r['status'] === 400, "PHOTO-06: expected 400 for an oversized file, got {$r['status']}: " . json_encode($r['json']));
+    // Two valid rejection paths depending on the server's own php.ini
+    // upload_max_filesize/post_max_size (outside this app's control,
+    // varies per host): EVIDENCE_TOO_LARGE is EvidenceUploader's own
+    // 5 MB check; EVIDENCE_UPLOAD_ERROR is PHP itself refusing the
+    // upload earlier (UPLOAD_ERR_INI_SIZE) before that check even runs.
+    // Either way the file must never be accepted.
+    expect(in_array($r['json']['code'], ['EVIDENCE_TOO_LARGE', 'EVIDENCE_UPLOAD_ERROR'], true), 'expected an oversized-file rejection code, got ' . $r['json']['code']);
+});
+
+runTest('PHOTO-07 the stored evidence filename is server-generated/randomized, never the original filename', function () use ($pdo) {
+    $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
+    expect($receiptId !== null, 'depends on PHOTO-04 having run first');
+    $row = $pdo->query("SELECT file_path, original_name FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId} LIMIT 1")->fetch();
+    expect($row !== false, 'expected an evidence row for the PHOTO-04 receipt');
+    expect((bool) preg_match('/^[a-f0-9]{32}\.(jpg|png|webp)$/', $row['file_path']), "expected a random hex filename, got '{$row['file_path']}'");
+    expect($row['file_path'] !== $row['original_name'], 'stored filename must never equal the client-supplied original filename');
+});
+
+runTest('PHOTO-08 the stored evidence file is saved with an image extension only, never .php or any executable extension', function () use ($pdo) {
+    $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
+    expect($receiptId !== null, 'depends on PHOTO-04 having run first');
+    $row = $pdo->query("SELECT file_path FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId} LIMIT 1")->fetch();
+    expect((bool) preg_match('/\.(jpg|png|webp)$/', $row['file_path']), 'expected an image extension only');
+    expect(!preg_match('/\.(php\d?|phtml|phar|cgi|pl|sh)$/i', $row['file_path']), 'expected NO executable extension ever');
+    // The real "cannot execute as a script" guarantee is the deny-all
+    // .htaccess on api/uploads/receipt-evidence/ itself — proven under a
+    // REAL Apache server by dist/validate-receipt-evidence-apache.sh
+    // (php -S, used by this test harness, ignores .htaccess entirely).
+});
+
+runTest('PHOTO-09 a double-submit (same Idempotency-Key, same files) does not duplicate the receipt or its evidence', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-30', 4.0);
+    $anon = new Http55($baseUrl);
+    $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
+    $key = idemKey('photo09-samekey');
+    $first = $anon->requestMultipart('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Toko A', 'items' => json_encode([['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 1.0, 'shortage' => 0]]),
+    ], ['evidence[]' => fakeEvidenceImage()], $key);
+    expect($first['status'] === 200, 'first submit failed: ' . json_encode($first['json']));
+    $second = $anon->requestMultipart('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Toko A', 'items' => json_encode([['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 1.0, 'shortage' => 0]]),
+    ], ['evidence[]' => fakeEvidenceImage()], $key);
+    expect($second['status'] === 200, 'idempotent replay should not error: ' . json_encode($second['json']));
+    expect($second['json']['data']['receiptId'] === $first['json']['data']['receiptId'], 'expected the exact same receipt on replay');
+    $receiptCount = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt WHERE shipment_id = {$fx['shipmentId']}")->fetchColumn();
+    expect($receiptCount === 1, 'PHOTO-09: expected exactly one receipt row after a same-key double-submit');
+    $evidenceCount = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$first['json']['data']['receiptId']}")->fetchColumn();
+    expect($evidenceCount === 1, 'PHOTO-09: expected exactly one evidence row, never duplicated by the replay');
+});
+
+runTest('PHOTO-10 more than 3 evidence files is rejected', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-08-31', 4.0);
+    $anon = new Http55($baseUrl);
+    $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
+    $ch = curl_init($baseUrl . "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm");
+    $jar = tempnam(sys_get_temp_dir(), 'p10jar');
+    $fields = ['receiverName' => 'Toko A', 'items' => json_encode([['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 1.0, 'shortage' => 0]])];
+    for ($i = 0; $i < 4; $i++) {
+        $fields['evidence[' . $i . ']'] = new CURLFile(fakeEvidenceImage(), 'image/png', "ev{$i}.png");
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST => 'POST', CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar,
+        CURLOPT_HTTPHEADER => ['Idempotency-Key: ' . idemKey('photo10')['Idempotency-Key']],
+        CURLOPT_POSTFIELDS => $fields,
+    ]);
+    $raw = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    $json = json_decode($raw, true);
+    expect($status === 400, "PHOTO-10: expected 400 for 4 evidence files, got {$status}: {$raw}");
+    expect($json['code'] === 'TOO_MANY_EVIDENCE_FILES', 'expected TOO_MANY_EVIDENCE_FILES code, got ' . ($json['code'] ?? 'null'));
+});
+
+// --- RCPT-ADM01..15 ---
+
+runTest('RCPT-ADM01 admin summary (GET /api/admin/receipts) shows the PHOTO-04 row', function () use ($adminHttp, $adminCsrf) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on PHOTO-04 having run first');
+    $list = $adminHttp->request('GET', '/api/admin/receipts');
+    expect($list['status'] === 200, 'admin list failed');
+    $found = current(array_filter($list['json']['data'], fn ($r) => $r['shipmentId'] === $shipmentId));
+    expect($found !== false, 'RCPT-ADM01: expected the PHOTO-04 shipment to appear in the admin summary');
+});
+
+runTest('RCPT-ADM02/03/04/05/06 the Konfirmasi Toko Detail page renders the correct shipment, items, receiver/note/time, and evidence thumbnail', function () use ($adminHttp, $pdo) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
+    expect($shipmentId !== null && $receiptId !== null, 'depends on PHOTO-04 having run first');
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect($r['status'] === 200, "RCPT-ADM02: detail page failed: {$r['status']}");
+    expect(str_contains($r['body'], 'SHP-' . $shipmentId), 'RCPT-ADM03: expected the real shipment id on the page');
+    expect(str_contains($r['body'], 'Toko A'), 'RCPT-ADM05: expected the receiver name Toko A');
+    expect(str_contains($r['body'], '/api/admin/receipts/evidence/'), 'RCPT-ADM06: expected an evidence thumbnail reference');
+    $evidenceRow = $pdo->query("SELECT shipment_receipt_evidence_id FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId} LIMIT 1")->fetch();
+    expect($evidenceRow !== false && str_contains($r['body'], '/api/admin/receipts/evidence/' . $evidenceRow['shipment_receipt_evidence_id']), 'RCPT-ADM06: expected the EXACT evidence id referenced on the page');
+});
+
+runTest('RCPT-ADM07 a clean (Diterima Sesuai) receipt detail is read-only (no editable qty inputs)', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-09-03', 5.0);
+    $anon = new Http55($baseUrl);
+    $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
+    $confirm = $anon->request('POST', "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Toko Bersih', 'items' => [['shipmentItemId' => $sii, 'receivedGood' => 5.0, 'reject' => 0, 'shortage' => 0]],
+    ], idemKey('rcptadm07'));
+    expect($confirm['status'] === 200, 'confirm failed');
+
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$fx['shipmentId']}");
+    expect($r['status'] === 200, 'detail page failed');
+    // The shared admin shell always has its own global-search <input> in
+    // the topbar (layout.php) — scoped instead to what would make THIS
+    // page non-read-only: an editable numeric quantity field.
+    expect(!str_contains($r['body'], 'type="number"'), 'RCPT-ADM07: expected a read-only detail page (no editable numeric qty <input>)');
+    expect(str_contains($r['body'], 'Diterima Sesuai') || str_contains($r['body'], 'ok'), 'expected the clean status to show');
+});
+
+runTest('RCPT-ADM08 a discrepancy receipt detail exposes the Verifikasi Selisih action', function () use ($adminHttp) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on PHOTO-04 having run first');
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect(str_contains($r['body'], 'Verifikasi Selisih'), 'RCPT-ADM08: expected the Verifikasi Selisih button to appear for a discrepancy receipt');
+});
+
+runTest('RCPT-ADM09 admin verify is blocked (409) when a discrepancy receipt has no evidence', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    // A legacy-shaped receipt: confirm math directly at the repository
+    // layer would bypass the evidence gate — instead this proves the
+    // real-world "old data" case (Part H) by simulating it precisely:
+    // insert a discrepancy receipt the same way confirmReceipt() would
+    // have BEFORE this patch existed (no evidence rows), then verify the
+    // admin verify gate still blocks it exactly like real legacy SHP-3.
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-09-04', 4.0);
+    $repo = new \Amor\Api\Dispatch\ReceiptRepository();
+    $receiptId = $repo->insertReceipt($pdo, $fx['shipmentId'], 'confirmed_discrepancy', 'Toko Lama', null);
+    $view = (new \Amor\Api\Dispatch\ReceiptService($pdo))->getPublicView($fx['token']);
+    $sii = $view['shipments'][0]['items'][0]['shipmentItemId'];
+    $repo->insertReceiptItem($pdo, $receiptId, $sii, $view['shipments'][0]['items'][0]['productId'], 4.0, 3.0, 1.0, 0.0, null);
+
+    $verify = $adminHttp->request('POST', "/api/admin/receipts/{$receiptId}/verify", [], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('rcptadm09')));
+    expect($verify['status'] === 409, "RCPT-ADM09: expected 409, got {$verify['status']}: " . json_encode($verify['json']));
+    expect($verify['json']['code'] === 'EVIDENCE_REQUIRED_FOR_VERIFY', 'expected EVIDENCE_REQUIRED_FOR_VERIFY, got ' . $verify['json']['code']);
+
+    $GLOBALS['legacy_receipt_id'] = $receiptId;
+    $GLOBALS['legacy_shipment_id'] = $fx['shipmentId'];
+});
+
+runTest('RCPT-ADM10 admin can attach evidence to that legacy receipt (Part H) and verify then succeeds', function () use ($adminHttp, $adminCsrf, $pdo, $baseUrl) {
+    $receiptId = $GLOBALS['legacy_receipt_id'] ?? null;
+    expect($receiptId !== null, 'depends on RCPT-ADM09 having run first');
+
+    $ch = curl_init($baseUrl . "/api/admin/receipts/{$receiptId}/evidence");
+    $jar = tempnam(sys_get_temp_dir(), 'admevjar');
+    // Reuse the admin session cookie jar the Http55 client already holds.
+    copy($adminHttp->cookieJarPath(), $jar);
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST => 'POST', CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar,
+        CURLOPT_HTTPHEADER => ['X-CSRF-Token: ' . $adminCsrf, 'Idempotency-Key: ' . idemKey('rcptadm10')['Idempotency-Key']],
+        CURLOPT_POSTFIELDS => ['evidence[]' => new CURLFile(fakeEvidenceImage(), 'image/png', 'legacy.png')],
+    ]);
+    $raw = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    expect($status === 200, "admin evidence upload failed: {$status}: {$raw}");
+
+    $before = (string) $pdo->query("SELECT CONCAT(received_good_qty,':',reject_qty,':',shortage_qty) FROM shipment_receipt_item WHERE shipment_receipt_id = {$receiptId}")->fetchColumn();
+    $ledgerBefore = shipmentOutRows($pdo);
+
+    $verifyKey = idemKey('rcptadm10-verify');
+    $GLOBALS['rcptadm10_verify_key'] = $verifyKey;
+    $verify = $adminHttp->request('POST', "/api/admin/receipts/{$receiptId}/verify", [], array_merge(['X-CSRF-Token' => $adminCsrf], $verifyKey));
+    expect($verify['status'] === 200, "RCPT-ADM10: expected verify to succeed once evidence exists: " . json_encode($verify['json']));
+    expect($verify['json']['data']['status'] === 'verified', 'RCPT-ADM11: expected status=verified');
+
+    $after = (string) $pdo->query("SELECT CONCAT(received_good_qty,':',reject_qty,':',shortage_qty) FROM shipment_receipt_item WHERE shipment_receipt_id = {$receiptId}")->fetchColumn();
+    expect($before === $after, 'RCPT-ADM12: expected receipt item quantities to be UNCHANGED by verification');
+
+    $GLOBALS['rcptadm13_ledger_before'] = $ledgerBefore;
+    $GLOBALS['rcptadm13_ledger_after'] = shipmentOutRows($pdo);
+});
+
+runTest('RCPT-ADM13 admin verify creates ZERO stock_ledger rows', function () {
+    $before = $GLOBALS['rcptadm13_ledger_before'] ?? null;
+    $after = $GLOBALS['rcptadm13_ledger_after'] ?? null;
+    expect($before !== null && $after !== null, 'depends on RCPT-ADM10 having run first');
+    expect($before === $after, "RCPT-ADM13: expected admin verify to create ZERO stock_ledger rows (before={$before}, after={$after})");
+});
+
+runTest('RCPT-ADM14 a non-admin (Driver) gets 403 on the admin verify endpoint', function () use ($httpA, $csrfA) {
+    $r = $httpA->request('POST', '/api/admin/receipts/999999/verify', [], array_merge(['X-CSRF-Token' => $csrfA], idemKey('rcptadm14')));
+    expect($r['status'] === 403, "RCPT-ADM14: expected 403 for a non-admin caller, got {$r['status']}");
+});
+
+runTest('RCPT-ADM15a repeating the EXACT SAME verify request (same Idempotency-Key) replays the stored result, never re-executes', function () use ($adminHttp, $adminCsrf, $pdo) {
+    $receiptId = $GLOBALS['legacy_receipt_id'] ?? null;
+    $verifyKey = $GLOBALS['rcptadm10_verify_key'] ?? null;
+    expect($receiptId !== null && $verifyKey !== null, 'depends on RCPT-ADM09/10 having run first (already verified)');
+    $countBefore = (int) $pdo->query("SELECT COUNT(*) FROM audit_log WHERE record_type = 'shipment_receipt' AND record_key = '{$receiptId}' AND action = 'receipt.verified'")->fetchColumn();
+    $replay = $adminHttp->request('POST', "/api/admin/receipts/{$receiptId}/verify", [], array_merge(['X-CSRF-Token' => $adminCsrf], $verifyKey));
+    expect($replay['status'] === 200, 'RCPT-ADM15a: expected an exact-key replay to return the stored 200, not error: ' . json_encode($replay['json']));
+    expect($replay['json']['data']['status'] === 'verified', 'expected the replayed response to still show verified');
+    $countAfter = (int) $pdo->query("SELECT COUNT(*) FROM audit_log WHERE record_type = 'shipment_receipt' AND record_key = '{$receiptId}' AND action = 'receipt.verified'")->fetchColumn();
+    expect($countAfter === $countBefore, 'RCPT-ADM15a: a replayed request must never write a second receipt.verified audit entry');
+});
+
+runTest('RCPT-ADM15b a genuinely NEW verify attempt (different Idempotency-Key) on an already-verified receipt is rejected, never silently re-verified', function () use ($adminHttp, $adminCsrf) {
+    $receiptId = $GLOBALS['legacy_receipt_id'] ?? null;
+    expect($receiptId !== null, 'depends on RCPT-ADM09/10 having run first (already verified)');
+    $again = $adminHttp->request('POST', "/api/admin/receipts/{$receiptId}/verify", [], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('rcptadm15b-fresh')));
+    expect($again['status'] === 409, "RCPT-ADM15b: expected 409 for a genuinely new verify attempt on an already-verified receipt, got {$again['status']}");
+});
+
+runTest('MOBILE-01 the Store Receipt page ships CSS that stacks the receipt table on a narrow viewport (Kurang is never clipped)', function () use ($baseUrl) {
+    $ch = curl_init($baseUrl . '/api/assets/css/receipt.css');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $css = curl_exec($ch);
+    curl_close($ch);
+    expect((bool) preg_match('/@media\s*\(max-width:\s*480px\)/', $css), 'MOBILE-01: expected a narrow-viewport breakpoint in receipt.css');
+    expect(str_contains($css, 'data-label'), 'MOBILE-01: expected the responsive rule to key off data-label (every column, including Kurang, gets a caption when stacked)');
+});
+
+runTest('MOBILE-02 the Store Receipt page JS renders a photo upload control usable in a mobile browser', function () use ($baseUrl) {
+    $ch = curl_init($baseUrl . '/api/assets/js/receipt.js');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $js = curl_exec($ch);
+    curl_close($ch);
+    expect(str_contains($js, 'accept="image/*"'), 'MOBILE-02: expected an image-only file input');
+    expect(str_contains($js, 'capture='), 'MOBILE-02: expected a capture attribute so a mobile browser offers the camera directly');
+    expect(str_contains($js, 'multiple'), 'MOBILE-02: expected the file input to allow choosing more than one photo');
 });
 
 $failed = array_filter($results, fn ($ok) => !$ok);

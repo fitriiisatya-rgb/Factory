@@ -73,3 +73,37 @@ html, body.rc-body {
 .rc-empty { text-align: center; padding: 40px 20px; color: var(--rc-muted); }
 
 .rc-error-math { color: var(--rc-danger); font-size: .78rem; margin-top: 4px; display: none; }
+
+/* Bukti Foto — real-UAT ask: required once Reject/Kurang > 0. */
+.rc-evidence-hint { font-size: .72rem; color: var(--rc-muted); margin: -2px 0 6px; }
+.rc-evidence-input { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px dashed var(--rc-border); font-size: .82rem; background: #fafaf8; }
+.rc-evidence-error { color: var(--rc-danger); font-size: .78rem; margin-top: 4px; }
+.rc-evidence-previews { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.rc-evidence-thumb { position: relative; width: 72px; height: 72px; border-radius: 8px; overflow: hidden; border: 1px solid var(--rc-border); }
+.rc-evidence-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rc-evidence-remove {
+  position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; border: none;
+  background: rgba(0, 0, 0, .65); color: #fff; font-size: .85rem; line-height: 1; cursor: pointer; padding: 0;
+}
+
+/*
+ * Real-UAT mobile fix: on a narrow phone viewport, a 5-column receipt
+ * table (Produk/Dikirim/Diterima Baik/Reject/Kurang) doesn't fit — the
+ * "Kurang" column was clipping off-screen behind horizontal overflow
+ * instead of scrolling into view. Below this breakpoint each row becomes
+ * a stacked card instead, using each <td>'s data-label (see receipt.js)
+ * as its field caption — every field is always visible, never clipped,
+ * never dependent on the user discovering horizontal scroll. Desktop/
+ * tablet (>480px) keeps the normal table layout unchanged.
+ */
+@media (max-width: 480px) {
+  .rc-table thead { display: none; }
+  .rc-table, .rc-table tbody, .rc-table tr, .rc-table td { display: block; width: 100%; }
+  .rc-table tr { border-bottom: 1px solid var(--rc-border); padding: 8px 0; }
+  .rc-table tr:last-child { border-bottom: none; }
+  .rc-table td { display: flex; justify-content: space-between; align-items: center; gap: 10px; border-bottom: none; padding: 4px 0; text-align: right; }
+  .rc-table td::before { content: attr(data-label); font-size: .68rem; text-transform: uppercase; color: var(--rc-muted); font-weight: 700; text-align: left; }
+  .rc-table td[data-label="Produk"] { font-weight: 700; font-size: .9rem; justify-content: flex-start; }
+  .rc-table td[data-label="Produk"]::before { content: ''; display: none; }
+  .rc-table .rc-num-input { width: 88px; }
+}

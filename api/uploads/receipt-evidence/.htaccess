@@ -1,0 +1,14 @@
+# Blocks ALL direct HTTP access to uploaded Store Receipt photo evidence.
+# These files must NEVER be reachable by a direct URL — they are always
+# served through the admin-authenticated evidence controller (GET
+# /api/admin/receipts/evidence/{id}), which streams the bytes with the
+# stored content-type. This also guarantees an uploaded file can never be
+# executed as a script, regardless of what its (server-generated) name
+# happens to end in. Mirrors api/app/.htaccess exactly.
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

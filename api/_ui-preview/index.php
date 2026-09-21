@@ -30,6 +30,7 @@ $pages = [
     'delivery-order-detail' => ['title' => 'Delivery Order', 'subtitle' => 'Detail dokumen dan pengiriman bertahap.'],
     'pengiriman' => ['title' => 'Pengiriman', 'subtitle' => 'Kelola pengiriman aktual dan pengiriman bertahap.'],
     'konfirmasi-toko' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Tinjau konfirmasi penerimaan barang dari toko dan verifikasi selisih.'],
+    'konfirmasi-toko-detail' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Detail konfirmasi penerimaan satu pengiriman.'],
     'master-data' => ['title' => 'Master Data', 'subtitle' => 'Produk, toko, divisi, dan pabrik.'],
     'laporan' => ['title' => 'Laporan', 'subtitle' => 'Ringkasan lintas tahap, dari PO sampai pengiriman.'],
     'pengaturan' => ['title' => 'Pengaturan', 'subtitle' => 'Akun, preferensi tampilan, dan sesi.'],
@@ -39,7 +40,7 @@ $page = (string) ($_GET['page'] ?? 'dashboard');
 if (!isset($pages[$page])) {
     $page = 'dashboard';
 }
-$activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order' : $page;
+$activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order' : (str_starts_with($page, 'konfirmasi-toko') ? 'konfirmasi-toko' : $page);
 
 // Shared date/factory selection every page can use as its default filter
 // state, so the topbar's date/factory chips stay meaningful app-wide.

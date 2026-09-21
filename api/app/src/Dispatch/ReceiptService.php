@@ -112,7 +112,22 @@ final class ReceiptService
      *
      * @param array<int,array{shipmentItemId:int,receivedGood:float,reject:float,shortage:float,reason?:string}> $items
      */
-    public function confirmReceipt(string $token, int $shipmentId, ?string $receiverName, ?string $note, array $items, ?string $requestId): array
+    /**
+     * $evidenceFiles is the ALREADY validated-and-moved-to-disk list from
+     * EvidenceUploader::validateAndStore() (called by the controller
+     * before this method, since that upload is a filesystem side effect
+     * that must never happen inside a DB transaction retry). Real-UAT
+     * rule: at least one photo is REQUIRED once any item has
+     * reject/shortage > 0 — server-side, never trusting the client to
+     * have enforced it. On any failure in this method AFTER files were
+     * already moved (e.g. RECEIPT_MATH_INVALID racing a concurrent
+     * request), the controller is responsible for calling
+     * EvidenceUploader::deleteStoredFiles($evidenceFiles) so a rejected
+     * submission never leaves orphan files on disk — see
+     * ReceiptController::confirm()'s own try/catch.
+     * @param array<int,array{filePath:string,mimeType:string,fileSize:int,originalName:?string}> $evidenceFiles
+     */
+    public function confirmReceipt(string $token, int $shipmentId, ?string $receiverName, ?string $note, array $items, array $evidenceFiles, ?string $requestId): array
     {
         $doId = $this->repo->findDoIdByToken($this->pdo, $token);
         if ($doId === null) {
@@ -178,10 +193,21 @@ final class ReceiptService
             ];
         }
 
+        // Real-UAT rule: Reject/Kurang > 0 on ANY item requires at least
+        // one photo before the submission is even allowed to succeed —
+        // server-side, since a client-side-only check is not enough
+        // (task's own explicit "Frontend-only validation is NOT enough").
+        if ($anyDiscrepancy && $evidenceFiles === []) {
+            throw new ApiException(400, 'EVIDENCE_REQUIRED', 'Bukti foto wajib diunggah untuk barang reject/rusak atau kurang.');
+        }
+
         $status = $anyDiscrepancy ? 'confirmed_discrepancy' : 'confirmed_ok';
         $receiptId = $this->repo->insertReceipt($this->pdo, $shipmentId, $status, $receiverName, $note);
         foreach ($rows as $r) {
             $this->repo->insertReceiptItem($this->pdo, $receiptId, $r['shipmentItemId'], $r['productId'], $r['shippedQty'], $r['good'], $r['reject'], $r['shortage'], $r['reason']);
+        }
+        foreach ($evidenceFiles as $ev) {
+            $this->repo->insertEvidence($this->pdo, $receiptId, $ev['filePath'], $ev['mimeType'], $ev['fileSize'], $ev['originalName']);
         }
 
         // user_id = null: this is a public, unauthenticated confirmation —
@@ -221,7 +247,15 @@ final class ReceiptService
         ], $rows);
     }
 
-    /** POST /api/admin/receipts/{id}/verify — Part I, admin reviews a discrepancy and marks it verified. */
+    /**
+     * POST /api/admin/receipts/{id}/verify — Part I, admin reviews a
+     * discrepancy and marks it verified. Real-UAT rule: if this receipt
+     * has ANY reject/shortage qty, it can only be verified once at least
+     * one photo evidence row exists — protects OLD data too (a receipt
+     * confirmed before the photo-evidence rule existed stays blocked
+     * until evidence is attached, via adminAddEvidence(), never silently
+     * grandfathered in).
+     */
     public function adminVerify(int $receiptId, int $adminUserId, ?string $requestId): array
     {
         $receipt = $this->repo->lockReceipt($this->pdo, $receiptId);
@@ -231,6 +265,10 @@ final class ReceiptService
         if (!in_array($receipt['status'], ['confirmed_ok', 'confirmed_discrepancy'], true)) {
             throw new ApiException(409, 'INVALID_RECEIPT_STATUS', 'Konfirmasi ini sudah diverifikasi sebelumnya');
         }
+        if ($this->receiptHasDiscrepancy((int) $receipt['shipment_receipt_id'])
+            && $this->repo->countEvidenceForReceipt($this->pdo, (int) $receipt['shipment_receipt_id']) === 0) {
+            throw new ApiException(409, 'EVIDENCE_REQUIRED_FOR_VERIFY', 'Selisih belum dapat diverifikasi karena bukti foto belum tersedia.');
+        }
         $this->repo->markVerified($this->pdo, $receiptId, $adminUserId);
         Audit::write($this->pdo, $requestId, $adminUserId, 'receipt.verified', 'shipment_receipt', (string) $receiptId, 'ok', null, null, null);
 
@@ -238,9 +276,42 @@ final class ReceiptService
         return $this->buildReceiptDto($updated);
     }
 
+    /**
+     * POST /api/admin/receipts/{id}/evidence — Part H, legacy-data ask:
+     * attaches evidence to an EXISTING receipt as Admin, for a receipt
+     * confirmed before this patch (no photo required at the time) that
+     * now needs at least one before it can be verified. Never touches
+     * receipt quantities/status/version — purely additive evidence rows.
+     */
+    public function adminAddEvidence(int $receiptId, array $evidenceFiles, int $adminUserId, ?string $requestId): array
+    {
+        $receipt = $this->repo->lockReceipt($this->pdo, $receiptId);
+        if ($receipt === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'Konfirmasi penerimaan tidak ditemukan');
+        }
+        foreach ($evidenceFiles as $ev) {
+            $this->repo->insertEvidence($this->pdo, $receiptId, $ev['filePath'], $ev['mimeType'], $ev['fileSize'], $ev['originalName']);
+        }
+        Audit::write($this->pdo, $requestId, $adminUserId, 'receipt.evidence_added', 'shipment_receipt', (string) $receiptId, 'ok', null, null, ['count' => count($evidenceFiles)]);
+
+        $updated = $this->repo->findReceiptForShipment($this->pdo, (int) $receipt['shipment_id']);
+        return $this->buildReceiptDto($updated);
+    }
+
+    private function receiptHasDiscrepancy(int $receiptId): bool
+    {
+        foreach ($this->repo->findReceiptItems($this->pdo, $receiptId) as $it) {
+            if ((float) $it['reject_qty'] > 0.0001 || (float) $it['shortage_qty'] > 0.0001) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private function buildReceiptDto(array $receipt): array
     {
         $items = $this->repo->findReceiptItems($this->pdo, (int) $receipt['shipment_receipt_id']);
+        $evidence = $this->repo->findEvidenceForReceipt($this->pdo, (int) $receipt['shipment_receipt_id']);
         return [
             'receiptId' => (int) $receipt['shipment_receipt_id'],
             'shipmentId' => (int) $receipt['shipment_id'],
@@ -249,6 +320,7 @@ final class ReceiptService
             'note' => $receipt['note'],
             'confirmedAt' => $receipt['confirmed_at'],
             'verifiedAt' => $receipt['verified_at'],
+            'verifiedByName' => $this->repo->findVerifierName($this->pdo, $receipt['verified_by'] !== null ? (int) $receipt['verified_by'] : null),
             'items' => array_map(static fn ($it) => [
                 'shipmentItemId' => (int) $it['shipment_item_id'],
                 'productId' => (int) $it['product_id'],
@@ -259,6 +331,18 @@ final class ReceiptService
                 'shortageQty' => (float) $it['shortage_qty'],
                 'reason' => $it['reason'],
             ], $items),
+            // Never the raw filesystem path — just enough for the admin
+            // detail page to build a thumbnail <img src="/api/admin/
+            // receipts/evidence/{evidenceId}"> and to know evidence
+            // exists at all (adminVerify()'s own gate reads the count
+            // straight from the repository, not from this DTO).
+            'evidence' => array_map(static fn ($ev) => [
+                'evidenceId' => (int) $ev['shipment_receipt_evidence_id'],
+                'mimeType' => $ev['mime_type'],
+                'fileSize' => (int) $ev['file_size'],
+                'originalName' => $ev['original_name'],
+                'uploadedAt' => $ev['uploaded_at'],
+            ], $evidence),
         ];
     }
 }
