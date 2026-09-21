@@ -268,10 +268,28 @@
         var statusBadge = s.departureStatus === 'sudah_berangkat'
           ? '<span class="driver-badge success">Sudah Berangkat</span>'
           : '<span class="driver-badge">Belum Berangkat</span>';
+        // Real-UAT navigation fix: a departed stop has no active claims
+        // left, so it must NEVER link to stop.php ("Konfirmasi Berangkat")
+        // — that screen correctly shows "Tidak ada klaim aktif Anda untuk
+        // toko ini." once every claim has resolved, which is not a bug in
+        // stop.php, just the wrong destination for an already-departed
+        // stop. A departed stop instead links straight to its real
+        // shipment (shipmentIds.length === 1) or to the chooser page when
+        // it split into more than one (MAIN + PASTRY — see DPT-19). Falls
+        // back to stop.php only if shipmentIds is unexpectedly empty for a
+        // "departed" stop — never worse than the pre-fix behavior.
+        var stopHref;
+        if (s.departureStatus === 'sudah_berangkat' && s.shipmentIds && s.shipmentIds.length === 1) {
+          stopHref = 'shipment.php?id=' + s.shipmentIds[0];
+        } else if (s.departureStatus === 'sudah_berangkat' && s.shipmentIds && s.shipmentIds.length > 1) {
+          stopHref = 'shipment.php?storeId=' + s.storeId + '&tanggal=' + encodeURIComponent(getTanggal());
+        } else {
+          stopHref = 'stop.php?storeId=' + s.storeId + '&tanggal=' + encodeURIComponent(getTanggal());
+        }
         return '' +
           '<div class="driver-route-stop">' +
           '<div class="driver-route-seq">' + s.sequence + '</div>' +
-          '<a class="driver-route-body" style="text-decoration:none;color:inherit;" href="stop.php?storeId=' + s.storeId + '&tanggal=' + encodeURIComponent(getTanggal()) + '">' +
+          '<a class="driver-route-body" style="text-decoration:none;color:inherit;" href="' + stopHref + '">' +
           '<div class="driver-card-title">' + esc(s.storeName) + '</div>' +
           '<div class="driver-card-sub">' + s.productCount + ' produk &middot; ' + fmtNum(s.totalQty) + ' pcs</div>' +
           '</a>' + statusBadge +
@@ -377,6 +395,42 @@
     });
   }
 
+  // Real-UAT navigation fix: shown at shipment.php?storeId=&tanggal=
+  // (no ?id=) when a departed route stop has more than one shipment (e.g.
+  // MAIN + PASTRY under the same DO — DPT-19/DR-NAV04). Never guesses
+  // which one to open — exactly one shipment opens it directly, more than
+  // one shows this chooser, matching the task's own worked example.
+  function renderShipmentChooser(root, storeId, tanggal) {
+    root.innerHTML = '<div class="driver-empty">Memuat...</div>';
+    Amor.apiFetch('/api/dispatch/route/stops/' + storeId + '/shipments?tanggal=' + encodeURIComponent(tanggal)).then(function (data) {
+      if (data.shipments.length === 0) {
+        root.innerHTML =
+          '<a href="index.php?tab=rute" class="driver-back-link">&larr; Kembali ke Rute</a>' +
+          emptyState('Belum ada pengiriman untuk toko ini pada tanggal ini.');
+        return;
+      }
+      if (data.shipments.length === 1) {
+        renderShipmentDetail(root, data.shipments[0].shipmentId);
+        return;
+      }
+      root.innerHTML =
+        '<a href="index.php?tab=rute" class="driver-back-link">&larr; Kembali ke Rute</a>' +
+        '<div class="driver-card-title" style="margin:8px 0;">Pengiriman untuk ' + esc(data.storeName) + '</div>' +
+        data.shipments.map(function (sh) {
+          return '' +
+            '<a class="driver-card driver-card-link" href="shipment.php?id=' + sh.shipmentId + '">' +
+            '<div class="driver-card-head"><div>' +
+            '<div class="driver-card-title">SHP-' + sh.shipmentId + '<span class="driver-card-chevron">&rsaquo;</span></div>' +
+            '<div class="driver-card-sub">' + fmtDateTimeId(sh.shippedAt) + '</div>' +
+            '</div><span class="driver-badge ' + groupBadgeClass(sh.shipmentGroup) + '">' + esc(sh.shipmentGroup) + '</span></div>' +
+            '<div class="driver-row"><span>' + sh.productCount + ' produk &middot; ' + fmtNum(sh.totalQty) + ' pcs</span></div>' +
+            '</a>';
+        }).join('');
+    }).catch(function (err) {
+      root.innerHTML = '<a href="index.php?tab=rute" class="driver-back-link">&larr; Kembali ke Rute</a>' + emptyState(err.message);
+    });
+  }
+
   function receiptStatusLabel(status) {
     if (status === 'confirmed_ok') return 'Diterima Sesuai';
     if (status === 'confirmed_discrepancy') return 'Ada Selisih';
@@ -450,6 +504,21 @@
     root.innerHTML = '<div class="driver-empty">Memuat...</div>';
     Amor.apiFetch('/api/dispatch/route/stops/' + storeId + '?tanggal=' + encodeURIComponent(tanggal)).then(function (data) {
       if (data.items.length === 0) {
+        // Real-UAT UX fix: reached only via a stale/bookmarked URL now
+        // that the Rute Saya card itself never links here once a stop has
+        // departed (see renderRute()'s own comment) — but if it IS
+        // reached, a contextual message + a real link beats a dead-end
+        // "no active claim" message.
+        if (data.shipments && data.shipments.length > 0) {
+          var link = data.shipments.length === 1
+            ? 'shipment.php?id=' + data.shipments[0].shipmentId
+            : 'shipment.php?storeId=' + storeId + '&tanggal=' + encodeURIComponent(tanggal);
+          root.innerHTML =
+            '<div class="driver-empty">' + Amor_icon() + '<div>Pengiriman ini sudah diberangkatkan.</div>' +
+            '<a class="driver-btn primary" style="margin-top:12px;display:inline-block;" href="' + link + '">Lihat Detail Pengiriman</a>' +
+            '</div>';
+          return;
+        }
         root.innerHTML = emptyState('Tidak ada klaim aktif Anda untuk toko ini.');
         return;
       }
@@ -579,7 +648,12 @@
     }
     var shipmentRoot = document.getElementById('driver-shipment-app');
     if (shipmentRoot) {
-      renderShipmentDetail(shipmentRoot, shipmentRoot.dataset.shipmentId);
+      var directId = parseInt(shipmentRoot.dataset.shipmentId, 10) || 0;
+      if (directId > 0) {
+        renderShipmentDetail(shipmentRoot, directId);
+      } else {
+        renderShipmentChooser(shipmentRoot, shipmentRoot.dataset.storeId, shipmentRoot.dataset.tanggal);
+      }
     }
 
     var logoutBtn = document.getElementById('btn-driver-logout');

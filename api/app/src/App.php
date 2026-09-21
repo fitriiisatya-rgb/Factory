@@ -117,6 +117,7 @@ final class App
         $router->get('/api/dispatch/route', [DispatchController::class, 'route']);
         $router->post('/api/dispatch/route/reorder', [DispatchController::class, 'reorderRoute']);
         $router->get('/api/dispatch/route/stops/{storeId}', [DispatchController::class, 'stopDetail']);
+        $router->get('/api/dispatch/route/stops/{storeId}/shipments', [DispatchController::class, 'stopShipments']);
         $router->post('/api/dispatch/departures', [DispatchController::class, 'departures']);
         $router->get('/api/dispatch/history', [DispatchController::class, 'history']);
         $router->get('/api/dispatch/shipments/{id}', [DispatchController::class, 'shipmentDetail']);

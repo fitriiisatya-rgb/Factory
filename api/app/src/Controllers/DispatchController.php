@@ -98,6 +98,24 @@ final class DispatchController
         Response::json($service->stopDetail($userId, $tanggal, $storeId));
     }
 
+    /**
+     * GET /api/dispatch/route/stops/{storeId}/shipments — real-UAT
+     * navigation fix: lists this driver's own already-departed shipment(s)
+     * for one store/date, so a departed route-stop card can open the real
+     * shipment (or a chooser when a stop split into more than one — e.g.
+     * MAIN + PASTRY, see DPT-19) instead of the "Konfirmasi Berangkat"
+     * screen, which correctly has nothing to show once every claim has
+     * resolved. See DispatchService::stopShipments()'s own docblock.
+     */
+    public static function stopShipments(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::DRIVER_ROLES);
+        $storeId = (int) $request->routeParams['storeId'];
+        $tanggal = self::requireDate($request->query('tanggal'));
+        $service = new DispatchService(Database::pdo());
+        Response::json($service->stopShipments($userId, $tanggal, $storeId));
+    }
+
     public static function departures(Request $request): void
     {
         $userId = Auth::requireRole(...self::DRIVER_ROLES);

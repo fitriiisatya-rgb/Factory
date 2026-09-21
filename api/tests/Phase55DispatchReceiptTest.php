@@ -1264,6 +1264,173 @@ runTest('DPT-19 history stays correct after multiple shipments under the same DO
         'expected the route summary to aggregate BOTH shipments (2 produk / 9 pcs), got ' . json_encode($routeStop));
 });
 
+// ---------------------------------------------------------------------
+// DR-NAV01..04 / DR-HIST01..03 / DR-LOG01..04 — Driver Route Navigation /
+// History / Logout real-UAT hotfix. Real-UAT report: a departed "Rute
+// Saya" stop opened the "Konfirmasi Berangkat" screen (which correctly
+// says "Tidak ada klaim aktif Anda untuk toko ini." once every claim has
+// resolved — see myRoute()'s docblock), Riwayat cards and the Logout
+// button appeared correct in code review but were reported inert on real
+// cPanel. Code audit found the click-navigation/logout JS already
+// correct in this repo; DR-LOG01/03/DR-CACHE01 (served-asset checks) are
+// covered by dist/validate-driver-navigation-logout-apache.sh instead,
+// since they need a real HTTP server, not this php -S API-only harness.
+// ---------------------------------------------------------------------
+
+runTest('DR-NAV01 an active (not yet departed) route stop has shipmentIds=[] and departureStatus=belum_berangkat', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $adminHttp, $adminCsrf) {
+    $tanggal = '2026-08-20';
+    $p1 = nextProduct();
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $p1['product_id'], 5.0, 5.0, 5.0);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemId = doItemIdFor($pdo, $do['doId'], $p1['product_id']);
+    $claim = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemId, 'qty' => 5.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('drnav01-claim')));
+    expect($claim['status'] === 200, 'claim failed: ' . json_encode($claim['json']));
+
+    $route = $httpA->request('GET', "/api/dispatch/route?tanggal={$tanggal}");
+    $stop = current(array_filter($route['json']['data']['stops'], fn ($s) => $s['storeId'] === $storeA));
+    expect($stop !== false, 'expected storeA on the route');
+    expect($stop['departureStatus'] === 'belum_berangkat', 'expected belum_berangkat before departure, got ' . $stop['departureStatus']);
+    expect($stop['shipmentIds'] === [], 'expected shipmentIds=[] before departure, got ' . json_encode($stop['shipmentIds']));
+});
+
+runTest('DR-NAV02 a departed route stop with exactly one shipment carries that real shipmentId', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $adminHttp, $adminCsrf) {
+    $tanggal = '2026-08-21';
+    $p1 = nextProduct();
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $p1['product_id'], 5.0, 5.0, 5.0);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemId = doItemIdFor($pdo, $do['doId'], $p1['product_id']);
+    $claim = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemId, 'qty' => 5.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('drnav02-claim')));
+    $claimId = $claim['json']['data']['claims'][0]['claimId'];
+    $stopBefore = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $depart = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stopBefore['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimId, 'actualQty' => 5.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('drnav02-depart')));
+    expect($depart['status'] === 200, 'departure failed: ' . json_encode($depart['json']));
+    $shipmentId = $depart['json']['data']['shipments'][0]['shipmentId'];
+    $GLOBALS['dr_nav_shipment_id'] = $shipmentId;
+    $GLOBALS['dr_nav_store'] = $storeA;
+    $GLOBALS['dr_nav_tanggal'] = $tanggal;
+
+    $route = $httpA->request('GET', "/api/dispatch/route?tanggal={$tanggal}");
+    $stop = current(array_filter($route['json']['data']['stops'], fn ($s) => $s['storeId'] === $storeA));
+    expect($stop['departureStatus'] === 'sudah_berangkat', 'expected sudah_berangkat after departure');
+    expect($stop['shipmentIds'] === [$shipmentId], 'expected shipmentIds=[real id], got ' . json_encode($stop['shipmentIds']));
+});
+
+runTest('DR-NAV03 a departed stop\'s Konfirmasi Berangkat data has zero active items but exposes the real shipment for the friendly fallback', function () use ($httpA, $pdo) {
+    $shipmentId = $GLOBALS['dr_nav_shipment_id'] ?? null;
+    $storeId = $GLOBALS['dr_nav_store'] ?? null;
+    $tanggal = $GLOBALS['dr_nav_tanggal'] ?? null;
+    expect($shipmentId !== null, 'depends on DR-NAV02 having run first');
+
+    $stop = $httpA->request('GET', "/api/dispatch/route/stops/{$storeId}?tanggal={$tanggal}");
+    expect($stop['status'] === 200, 'stopDetail failed: ' . json_encode($stop['json']));
+    expect($stop['json']['data']['items'] === [], 'expected zero active claim items for an already-departed stop (this is correct backend behavior, never a bug) — a normal route click must never reach this endpoint for a departed stop any more (see DR-NAV02)');
+    $shipments = $stop['json']['data']['shipments'];
+    expect(count($shipments) === 1 && $shipments[0]['shipmentId'] === $shipmentId,
+        'expected stopDetail to expose the real departed shipment for the "Pengiriman ini sudah diberangkatkan" fallback, got ' . json_encode($shipments));
+});
+
+runTest('DR-NAV04 a route stop that split into MAIN + PASTRY exposes BOTH shipmentIds (chooser case, never picks one arbitrarily)', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $secondDivId, $storeA, $adminHttp, $adminCsrf) {
+    $tanggal = '2026-08-22';
+    $p1 = nextProduct();
+    $p2 = nextProductFromSecondDivision();
+    stockUpMultiForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $tanggal, $storeA,
+        [[$rotiBollenDivId, $p1['product_id'], 3.0, 3.0], [$secondDivId, $p2['product_id'], 6.0, 6.0]],
+        [$p1['product_id'] => 3.0, $p2['product_id'] => 6.0]);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $item1 = doItemIdFor($pdo, $do['doId'], $p1['product_id']);
+    $item2 = doItemIdFor($pdo, $do['doId'], $p2['product_id']);
+
+    $claim1 = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $item1, 'qty' => 3.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('drnav04-c1')));
+    $claimId1 = $claim1['json']['data']['claims'][0]['claimId'];
+    $stop1 = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $depart1 = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stop1['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimId1, 'actualQty' => 3.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('drnav04-depart1')));
+    $shipment1 = $depart1['json']['data']['shipments'][0]['shipmentId'];
+
+    $claim2 = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $item2, 'qty' => 6.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('drnav04-c2')));
+    $claimId2 = $claim2['json']['data']['claims'][0]['claimId'];
+    $stop2 = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $depart2 = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stop2['json']['data']['doVersion'], 'shipmentGroup' => 'PASTRY',
+        'items' => [['claimId' => $claimId2, 'actualQty' => 6.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('drnav04-depart2')));
+    $shipment2 = $depart2['json']['data']['shipments'][0]['shipmentId'];
+    expect($shipment1 !== $shipment2, 'sanity: expected two distinct shipments');
+
+    $route = $httpA->request('GET', "/api/dispatch/route?tanggal={$tanggal}");
+    $stop = current(array_filter($route['json']['data']['stops'], fn ($s) => $s['storeId'] === $storeA));
+    sort($stop['shipmentIds']);
+    $expected = [$shipment1, $shipment2];
+    sort($expected);
+    expect($stop['shipmentIds'] === $expected, 'expected myRoute to expose BOTH shipment ids for the chooser, got ' . json_encode($stop['shipmentIds']));
+
+    $chooser = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}/shipments?tanggal={$tanggal}");
+    expect($chooser['status'] === 200, 'stopShipments failed: ' . json_encode($chooser['json']));
+    $chooserIds = array_map(fn ($s) => $s['shipmentId'], $chooser['json']['data']['shipments']);
+    sort($chooserIds);
+    expect($chooserIds === $expected, 'expected the chooser endpoint to list both real shipments (never arbitrarily pick one), got ' . json_encode($chooserIds));
+    $groups = array_column($chooser['json']['data']['shipments'], 'shipmentGroup');
+    sort($groups);
+    expect($groups === ['MAIN', 'PASTRY'], 'expected the chooser to distinguish MAIN vs PASTRY, got ' . json_encode($groups));
+});
+
+runTest('DR-HIST01 a Riwayat history row carries the real backend shipment_id used as the click target', function () use ($httpA) {
+    $shipmentId = $GLOBALS['dr_nav_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on DR-NAV02 having run first');
+    $history = $httpA->request('GET', '/api/dispatch/history');
+    $row = current(array_filter($history['json']['data'], fn ($r) => (int) $r['shipment_id'] === $shipmentId));
+    expect($row !== false, 'expected the DR-NAV02 shipment to appear in history with its real shipment_id');
+});
+
+runTest('DR-HIST02 clicking a history row (its real shipment_id) opens the matching shipment detail', function () use ($httpA) {
+    $shipmentId = $GLOBALS['dr_nav_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on DR-NAV02 having run first');
+    $detail = $httpA->request('GET', '/api/dispatch/shipments/' . $shipmentId);
+    expect($detail['status'] === 200, 'shipmentDetail failed: ' . json_encode($detail['json']));
+    expect($detail['json']['data']['shipmentId'] === $shipmentId, 'expected the detail to be for the exact shipment the history row pointed at');
+});
+
+runTest('DR-HIST03 Driver A cannot open Driver B\'s shipment via the history-derived link', function () use ($httpB) {
+    $shipmentId = $GLOBALS['dr_nav_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on DR-NAV02 having run first (Driver A\'s own shipment)');
+    $asB = $httpB->request('GET', '/api/dispatch/shipments/' . $shipmentId);
+    expect($asB['status'] === 403, "expected 403 when Driver B opens Driver A's shipment via the same link driver.js would use, got {$asB['status']}");
+});
+
+runTest('DR-LOG02 logging out destroys the current driver session (a subsequent authenticated call is rejected)', function () use ($pdo, $baseUrl) {
+    $driverCId = createUser($pdo, 'p55_driver_logout', 'DriverLogoutPass123', ['DRIVER']);
+    $httpC = new Http55($baseUrl);
+    $csrfC = login($httpC, 'p55_driver_logout', 'DriverLogoutPass123');
+
+    $before = $httpC->request('GET', '/api/dispatch/history');
+    expect($before['status'] === 200, 'expected the fresh driver session to work before logout');
+
+    $logout = $httpC->request('POST', '/api/auth/logout', null, ['X-CSRF-Token' => $csrfC]);
+    expect($logout['status'] === 204, 'expected 204 No Content from logout, got ' . $logout['status']);
+
+    $after = $httpC->request('GET', '/api/dispatch/history');
+    expect($after['status'] === 401, 'expected 401 UNAUTHENTICATED for the SAME session cookie after logout, got ' . $after['status']);
+});
+
+runTest('DR-LOG04 logging out does not alter any dispatch/shipment record', function () use ($pdo, $baseUrl) {
+    $shipmentsBefore = (int) $pdo->query('SELECT COUNT(*) FROM shipment')->fetchColumn();
+    $claimsBefore = (int) $pdo->query('SELECT COUNT(*) FROM dispatch_claim')->fetchColumn();
+
+    $httpD = new Http55($baseUrl);
+    $csrfD = login($httpD, 'p55_driver_logout', 'DriverLogoutPass123');
+    $httpD->request('POST', '/api/auth/logout', null, ['X-CSRF-Token' => $csrfD]);
+
+    $shipmentsAfter = (int) $pdo->query('SELECT COUNT(*) FROM shipment')->fetchColumn();
+    $claimsAfter = (int) $pdo->query('SELECT COUNT(*) FROM dispatch_claim')->fetchColumn();
+    expect($shipmentsBefore === $shipmentsAfter, 'expected logout to leave the shipment table untouched');
+    expect($claimsBefore === $claimsAfter, 'expected logout to leave the dispatch_claim table untouched');
+});
+
 $failed = array_filter($results, fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests run, ' . count($failed) . " failed.\n");
 exit($failed === [] ? 0 : 1);

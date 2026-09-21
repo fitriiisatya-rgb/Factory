@@ -57,6 +57,21 @@ if (array_intersect($driverRoles, $ui['roles']) === []) {
 }
 
 /**
+ * Cache-busting query string for the Driver Portal's own CSS/JS assets.
+ * Real-UAT hardening (Route Navigation / History / Logout hotfix): a
+ * cPanel "extract into existing folder" can silently SKIP an already-
+ * present static file instead of overwriting it, and even when it DOES
+ * overwrite, a driver's mobile browser may keep serving an old cached
+ * copy of driver.js/driver.css despite a manual hard refresh. Bumping
+ * this string on every patch that touches those two files forces a fresh
+ * fetch regardless of either failure mode — this is NOT a fix for a code
+ * bug (none was found in driver.js/app.js for the click-navigation and
+ * logout paths on code audit), it is a deployment-safety net. Bump this
+ * value again the next time driver.css/driver.js/app.js change.
+ */
+const DRIVER_ASSET_VERSION = '20260921-nav-hotfix';
+
+/**
  * Opens the mobile driver-portal HTML shell: header + <main> + bottom tab
  * bar. $active is one of tersedia/saya/rute/riwayat. Every link in this
  * file and driver.js is a RELATIVE path within api/_driver-uat/ (never an
@@ -74,8 +89,8 @@ function driver_page_head(array $ui, string $active, string $title): void
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title><?= ui_esc($title) ?> — Amor Factory Driver</title>
-<link rel="stylesheet" href="/api/assets/css/tokens.css">
-<link rel="stylesheet" href="/api/assets/css/driver.css">
+<link rel="stylesheet" href="/api/assets/css/tokens.css?v=<?= DRIVER_ASSET_VERSION ?>">
+<link rel="stylesheet" href="/api/assets/css/driver.css?v=<?= DRIVER_ASSET_VERSION ?>">
 </head>
 <body class="driver-body">
 <div class="driver-shell">
@@ -111,8 +126,8 @@ function driver_page_foot(string $active): void
   </nav>
 </div>
 <script>window.AMOR = <?= json_encode(['csrfToken' => $GLOBALS['ui']['csrfToken'] ?? '', 'userId' => $GLOBALS['ui']['userId'] ?? null, 'username' => $GLOBALS['ui']['username'] ?? ''], JSON_UNESCAPED_SLASHES) ?>;</script>
-<script src="/api/assets/js/app.js"></script>
-<script src="/api/assets/js/driver.js"></script>
+<script src="/api/assets/js/app.js?v=<?= DRIVER_ASSET_VERSION ?>"></script>
+<script src="/api/assets/js/driver.js?v=<?= DRIVER_ASSET_VERSION ?>"></script>
 </body>
 </html>
 <?php

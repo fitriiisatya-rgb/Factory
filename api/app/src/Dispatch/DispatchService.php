@@ -298,6 +298,13 @@ final class DispatchService
                 'totalQty' => $totalQty,
                 'hasActiveClaims' => $hasActive,
                 'departureStatus' => $hasActive ? 'belum_berangkat' : ($hasDeparted ? 'sudah_berangkat' : 'belum_berangkat'),
+                // Real-UAT navigation fix: which real shipment(s) a departed
+                // stop resolved into, so the route card can link straight to
+                // Detail Pengiriman (or a chooser when there's more than
+                // one) instead of "Konfirmasi Berangkat", which has nothing
+                // left to show once every claim is resolved. Always empty
+                // for a stop that hasn't (fully) departed.
+                'shipmentIds' => $hasDeparted ? ($departedTotals[$storeId]['shipmentIds'] ?? []) : [],
             ];
         }
         return ['tanggal' => $tanggal, 'stops' => $out];
@@ -365,6 +372,18 @@ final class DispatchService
             ];
         }
 
+        // Real-UAT UX fix: if this driver has no active claims left for this
+        // stop (the normal case ONCE the route card's own navigation fix —
+        // see myRoute()'s docblock — sends them here at all is only via a
+        // stale/bookmarked URL), tell the caller which real shipment(s)
+        // already exist for this store/date so the UI can offer "Lihat
+        // Detail Pengiriman" instead of a bare "no active claim" dead end.
+        // Never computed FROM $items — this is a read of shipment history,
+        // not a derivation of claim state.
+        $shipmentRows = $items === []
+            ? $this->repo->findShipmentsForDriverStoreDate($this->pdo, $driverUserId, $storeId, $tanggal)
+            : [];
+
         return [
             'doId' => $doId,
             'docNo' => $do['doc_no'],
@@ -375,6 +394,37 @@ final class DispatchService
             'doStatus' => $do['status'],
             'items' => $items,
             'summary' => ['productCount' => count($items), 'totalClaimedQty' => array_sum(array_column($items, 'claimedQty'))],
+            'shipments' => array_map(static fn ($r) => ['shipmentId' => (int) $r['shipment_id']], $shipmentRows),
+        ];
+    }
+
+    /**
+     * GET /api/dispatch/route/stops/{storeId}/shipments — real-UAT
+     * navigation fix: every shipment THIS driver made for one store/date,
+     * so a departed route-stop card can open the real Detail Pengiriman
+     * directly (exactly one shipment) or show a chooser (more than one —
+     * e.g. MAIN + PASTRY under the same DO, see DPT-19) instead of the
+     * "Konfirmasi Berangkat" screen, which correctly has nothing left once
+     * every claim has resolved (see myRoute()'s own docblock for the full
+     * background). Driver-scoped by construction — the repository query
+     * filters on shipped_by, so this can never return another driver's
+     * shipment.
+     */
+    public function stopShipments(int $driverUserId, string $tanggal, int $storeId): array
+    {
+        $store = $this->doRepo->findStore($this->pdo, $storeId);
+        $rows = $this->repo->findShipmentsForDriverStoreDate($this->pdo, $driverUserId, $storeId, $tanggal);
+        return [
+            'storeId' => $storeId,
+            'storeName' => $store['canonical_name'] ?? null,
+            'tanggal' => $tanggal,
+            'shipments' => array_map(static fn ($r) => [
+                'shipmentId' => (int) $r['shipment_id'],
+                'shipmentGroup' => $r['shipment_group'],
+                'shippedAt' => $r['shipped_at'] ?? $r['created_at'],
+                'productCount' => (int) $r['product_count'],
+                'totalQty' => (float) $r['total_qty'],
+            ], $rows),
         ];
     }
 

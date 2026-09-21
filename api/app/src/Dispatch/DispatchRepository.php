@@ -379,12 +379,19 @@ final class DispatchRepository
      * writeup: active_qty on a 'departed' claim is reset to 0, so summing
      * claims after departure always reads 0/0 regardless of what actually
      * shipped).
-     * @return array<int,array{productCount:int,totalQty:float}> keyed by store_id
+     * shipment_ids (real-UAT navigation fix, added alongside productCount/
+     * totalQty): a route card must know WHICH shipment(s) a departed stop
+     * resolved into to link directly to Detail Pengiriman instead of the
+     * "Konfirmasi Berangkat" screen — see DispatchService::myRoute()'s own
+     * docblock. GROUP_CONCAT(DISTINCT ...) never duplicates a shipment id
+     * even though the join fans out one row per shipment_item.
+     * @return array<int,array{productCount:int,totalQty:float,shipmentIds:int[]}> keyed by store_id
      */
     public function findDepartedTotalsForDriver(PDO $pdo, int $driverUserId, string $tanggal): array
     {
         $stmt = $pdo->prepare(
-            "SELECT sh.store_id, COUNT(DISTINCT si.product_id) AS product_count, COALESCE(SUM(si.qty), 0) AS total_qty
+            "SELECT sh.store_id, COUNT(DISTINCT si.product_id) AS product_count, COALESCE(SUM(si.qty), 0) AS total_qty,
+                    GROUP_CONCAT(DISTINCT sh.shipment_id ORDER BY sh.shipment_id) AS shipment_ids
              FROM shipment sh
              INNER JOIN shipment_item si ON si.shipment_id = sh.shipment_id
              WHERE sh.shipped_by = ? AND sh.tanggal = ? AND sh.status = 'active'
@@ -393,8 +400,35 @@ final class DispatchRepository
         $stmt->execute([$driverUserId, $tanggal]);
         $out = [];
         foreach ($stmt->fetchAll() as $r) {
-            $out[(int) $r['store_id']] = ['productCount' => (int) $r['product_count'], 'totalQty' => (float) $r['total_qty']];
+            $ids = $r['shipment_ids'] !== null && $r['shipment_ids'] !== ''
+                ? array_map('intval', explode(',', (string) $r['shipment_ids']))
+                : [];
+            $out[(int) $r['store_id']] = ['productCount' => (int) $r['product_count'], 'totalQty' => (float) $r['total_qty'], 'shipmentIds' => $ids];
         }
         return $out;
+    }
+
+    /**
+     * Every shipment THIS driver made for one store/date — the source for
+     * both the "exactly one shipment -> open it directly" case and the
+     * "more than one -> show a chooser" case (real-UAT: a route stop can
+     * legitimately split into MAIN + PASTRY, see DPT-19). Scoped by
+     * shipped_by in the query itself, so this can never return another
+     * driver's shipment — no separate authorization check is needed the
+     * way shipmentDetail() needs one for a caller-guessed numeric id.
+     * @return array<int,array>
+     */
+    public function findShipmentsForDriverStoreDate(PDO $pdo, int $driverUserId, int $storeId, string $tanggal): array
+    {
+        $stmt = $pdo->prepare(
+            "SELECT sh.shipment_id, sh.shipment_group, sh.shipped_at, sh.created_at,
+                    (SELECT COUNT(*) FROM shipment_item si WHERE si.shipment_id = sh.shipment_id) AS product_count,
+                    (SELECT COALESCE(SUM(si.qty), 0) FROM shipment_item si WHERE si.shipment_id = sh.shipment_id) AS total_qty
+             FROM shipment sh
+             WHERE sh.shipped_by = ? AND sh.store_id = ? AND sh.tanggal = ? AND sh.status = 'active'
+             ORDER BY sh.shipment_id"
+        );
+        $stmt->execute([$driverUserId, $storeId, $tanggal]);
+        return $stmt->fetchAll();
     }
 }
