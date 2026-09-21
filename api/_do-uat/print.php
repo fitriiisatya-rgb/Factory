@@ -81,7 +81,7 @@ header('Content-Type: text/html; charset=utf-8');
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Surat Jalan <?= esc($do['docNo']) ?></title>
+<title>Draft DO <?= esc($do['docNo']) ?></title>
 <style>
 body{font-family:Arial,sans-serif;max-width:800px;margin:1.5rem auto;padding:0 1rem;color:#111;position:relative;}
 .doc-header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #111;padding-bottom:.6rem;margin-bottom:1rem;}

@@ -1,0 +1,48 @@
+/*
+ * Amor Factory System — Surat Jalan (actual shipment) print styling.
+ * Loaded ONLY by the two Surat Jalan print pages (driver + admin),
+ * ALONGSIDE the existing print.css (never replacing it — every base
+ * class: .print-page/.print-header/.print-table/.print-receipt-qr/
+ * .print-sign-grid etc. is reused as-is). Kept in its own file so the
+ * existing Draft DO print pages are never touched by this patch — they
+ * don't load this file at all.
+ *
+ * Real Amor operation uses a dot-matrix printer on 3-ply continuous
+ * paper — an impact printer, not a laser/inkjet — so this overrides a
+ * few print.css defaults that are fine on a laser printer but risky on
+ * dot-matrix: light-gray label text becomes darker/higher-contrast, and
+ * the QR module color stays pure black/white with no styling.
+ */
+
+.print-page .print-meta-grid div b,
+.print-page .print-notes > b,
+.print-page .print-footer-note {
+  color: #333; /* was #666 in print.css — dot-matrix impact printers render light gray unreliably */
+}
+
+.print-receipt-qr-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 8px;
+  color: #333;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/*
+ * QR physical size, real-UAT comparison ask: "make QR size configurable
+ * ... 35mm / 40mm / 50mm, default 40mm". The print page picks ONE class
+ * (via ?qr=35|40|50, see print-shipment.php) — this is not three
+ * documents, just one CSS switch. Millimeters (not px) because the
+ * comparison is a physical dot-matrix print test, not a screen size.
+ */
+.print-receipt-qr-code.sj-qr-35mm svg { width: 35mm; height: 35mm; }
+.print-receipt-qr-code.sj-qr-40mm svg { width: 40mm; height: 40mm; }
+.print-receipt-qr-code.sj-qr-50mm svg { width: 50mm; height: 50mm; }
+
+@media print {
+  /* Dot-matrix / impact printers cannot render a drop shadow or benefit
+     from one — keep the sheet flat, no visual difference from print.css's
+     own @media print block, stated here for clarity of intent only. */
+  .print-page { box-shadow: none; }
+}

@@ -262,12 +262,19 @@ final class DoRepository
         return $row ?: null;
     }
 
-    /** @return array<int,array> every item on one shipment */
+    /**
+     * @return array<int,array> every item on one shipment, product_name
+     * plus division_name (real-UAT Surat Jalan print ask: the shipment
+     * item table needs a "Divisi" column — additive column, every
+     * existing caller reads specific keys off each row so this never
+     * breaks them).
+     */
     public function findShipmentItems(PDO $pdo, int $shipmentId): array
     {
         $stmt = $pdo->prepare(
-            'SELECT si.*, p.name AS product_name FROM shipment_item si
+            'SELECT si.*, p.name AS product_name, d.name AS division_name FROM shipment_item si
              INNER JOIN product p ON p.product_id = si.product_id
+             LEFT JOIN division d ON d.division_id = p.division_id
              WHERE si.shipment_id = ? ORDER BY p.name'
         );
         $stmt->execute([$shipmentId]);

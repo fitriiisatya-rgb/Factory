@@ -374,6 +374,7 @@
         '<div class="driver-row"><span>Grup</span><span class="driver-badge ' + groupBadgeClass(d.shipmentGroup) + '">' + esc(d.shipmentGroup) + '</span></div>' +
         '<div class="driver-row"><span>Factory asal</span><b>' + esc(d.factoryName || '-') + '</b></div>' +
         '<div class="driver-row"><span>Status</span><span class="driver-badge success">Sudah Berangkat</span></div>' +
+        '<a class="driver-btn primary" style="margin-top:8px;" href="print-shipment.php?id=' + d.shipmentId + '" target="_blank" rel="noopener">Cetak Surat Jalan</a>' +
         '</div>' +
         '<div class="driver-card">' +
         '<div class="driver-card-title" style="margin-bottom:6px;">Produk Dikirim</div>' +

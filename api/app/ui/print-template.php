@@ -91,7 +91,16 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
       <img class="print-brand-mark" src="/api/assets/img/amor-logo.png" alt="Amor" width="40" height="40">
       <div>
         <div class="print-brand-name">Amorcakes &amp; Bakery</div>
-        <div class="print-doc-title">Delivery Order / Surat Jalan</div>
+        <?php /* Real-UAT naming fix: this document prints every PLANNED DO
+                 item (a store's Draft DO can hold far more than any one
+                 shipment ever carries) — it is a planning/picking
+                 document, never the actual proof-of-goods a Driver
+                 carries. Calling it "Surat Jalan" was the exact ambiguity
+                 that caused a real UAT report; that document is now
+                 api/app/ui/print-shipment-template.php, sourced from
+                 shipment_item only. This title must never say "Surat
+                 Jalan" again. */ ?>
+        <div class="print-doc-title">DRAFT DELIVERY ORDER / RENCANA PENGIRIMAN</div>
       </div>
     </div>
     <div class="print-meta-right">

@@ -401,6 +401,33 @@ runTest('PRINT-12 the old Phase 5 UAT print route (api/_do-uat/print.php) still 
     expect(str_contains($r['body'], (string) $create['json']['data']['docNo']), 'expected the old print route to still render the real DO number');
 });
 
+runTest('SJ-01 Draft DO print still prints ALL planned DO items, with an unambiguous planning-level title (never says SURAT JALAN)', function () use ($http, $csrf, $pdo, $karangtengahId, $storeA) {
+    // Real-UAT ask: Draft DO print (this page) is a DIFFERENT document
+    // from Surat Jalan (api/_driver-uat/print-shipment.php,
+    // api/_ui-preview/print-shipment.php) — Draft DO keeps printing
+    // every planned item across the whole DO (it is a planning/picking
+    // document), but its title must never claim to be "Surat Jalan"
+    // (the exact ambiguity a real UAT report was filed about).
+    $tanggal = '2026-08-20';
+    $p1 = nextProduct();
+    $p2 = nextProduct();
+    seedStorePo($pdo, $tanggal, $karangtengahId, $storeA, [
+        $p1['product_id'] => ['poAwal' => 20.0],
+        $p2['product_id'] => ['poAwal' => 15.0],
+    ]);
+    $create = $http->request('POST', '/api/do', ['tanggal' => $tanggal, 'storeId' => $storeA], array_merge(['X-CSRF-Token' => $csrf], idemKey('sj01')));
+    $doId = $create['json']['data']['doId'];
+    $r = $http->request('GET', "/_ui-preview/print-do.php?doId={$doId}");
+    expect($r['status'] === 200, "expected 200, got {$r['status']}");
+    expect(str_contains($r['body'], 'DRAFT DELIVERY ORDER') || str_contains($r['body'], 'RENCANA PENGIRIMAN'),
+        'expected the unambiguous planning-level document title');
+    expect(!str_contains($r['body'], '<title>Surat Jalan'), 'expected the browser tab title to never claim to be Surat Jalan any more');
+    expect(str_contains($r['body'], (string) $p1['name']) && str_contains($r['body'], (string) $p2['name']),
+        'expected BOTH planned products to still print on the Draft DO — this document never narrows to one shipment');
+    expect((bool) preg_match('/Total<\/td>\s*<td class="num">35/', $r['body']),
+        'expected the total planned quantity (20+15=35) to still print in the summary row');
+});
+
 $failed = array_filter($results, fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests run, ' . count($failed) . " failed.\n");
 exit($failed === [] ? 0 : 1);

@@ -427,7 +427,15 @@ runTest('UI-16 redesigned DO print page renders with the correct watermark', fun
     $doId = $create['json']['data']['doId'];
     $r = $http->request('GET', "/_ui-preview/print-do.php?doId={$doId}");
     expect($r['status'] === 200, "expected 200, got {$r['status']}");
-    expect(str_contains($r['body'], 'Surat Jalan') || str_contains($r['body'], 'SURAT JALAN'), 'expected the print document title');
+    // Real-UAT naming fix (Draft DO vs Actual Shipment Surat Jalan
+    // separation patch): this page prints every PLANNED item on the
+    // whole DO, which is wrong to label "Surat Jalan" (the actual
+    // proof-of-goods document is now a SEPARATE page, sourced from
+    // shipment_item — api/_driver-uat/print-shipment.php /
+    // api/_ui-preview/print-shipment.php). This title must never say
+    // "Surat Jalan" any more; it is now unambiguously planning-level.
+    expect(str_contains($r['body'], 'DRAFT DELIVERY ORDER') || str_contains($r['body'], 'RENCANA PENGIRIMAN'), 'expected the unambiguous planning-level print document title');
+    expect(!str_contains($r['body'], '<title>Surat Jalan'), 'expected the Draft DO print tab title to never claim to be Surat Jalan any more');
     expect(str_contains($r['body'], 'DRAFT'), 'expected a DRAFT watermark for a freshly-created DO');
 });
 

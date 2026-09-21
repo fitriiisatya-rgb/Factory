@@ -40,7 +40,8 @@
 
     var head = document.createElement('div');
     head.innerHTML =
-      '<div class="rc-card-title">Pengiriman ' + esc(sh.shipmentGroup) + '</div>' +
+      '<div class="rc-card-title">SHP-' + sh.shipmentId + ' &middot; ' + esc(sh.shipmentGroup) + '</div>' +
+      '<div class="rc-card-sub">Driver: ' + esc(sh.driverName || '-') + '</div>' +
       '<div class="rc-card-sub">Berangkat: ' + esc(sh.departedAt || '-') + '</div>' +
       '<div style="margin-top:6px;">' + statusBadge(sh.receiptStatus) + '</div>';
     card.appendChild(head);

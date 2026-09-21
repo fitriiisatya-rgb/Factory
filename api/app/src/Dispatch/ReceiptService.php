@@ -7,6 +7,7 @@ namespace Amor\Api\Dispatch;
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Delivery\DoRepository;
+use Amor\Api\Users\UserRepository;
 use PDO;
 
 /**
@@ -28,11 +29,13 @@ final class ReceiptService
 {
     private ReceiptRepository $repo;
     private DoRepository $doRepo;
+    private UserRepository $userRepo;
 
     public function __construct(private PDO $pdo)
     {
         $this->repo = new ReceiptRepository();
         $this->doRepo = new DoRepository();
+        $this->userRepo = new UserRepository();
     }
 
     /** Used by the print template — get-or-create, never regenerates an existing token. */
@@ -66,9 +69,18 @@ final class ReceiptService
             $shipmentId = (int) $sh['shipment_id'];
             $items = $this->doRepo->findShipmentItems($this->pdo, $shipmentId);
             $receipt = $this->repo->findReceiptForShipment($this->pdo, $shipmentId);
+            // Real-UAT Surat Jalan print ask: the store-facing QR portal
+            // must be able to tell shipments under the same DO apart at a
+            // glance (task's own "SHP-2 — MAIN — Driver A" wireframe) —
+            // display-only enrichment, never changes what confirmReceipt()
+            // accepts/validates.
+            $driver = $sh['shipped_by'] !== null ? $this->userRepo->findById($this->pdo, (int) $sh['shipped_by']) : null;
             $out[] = [
                 'shipmentId' => $shipmentId,
                 'shipmentGroup' => $sh['shipment_group'],
+                'driverName' => $driver !== null
+                    ? (($driver['full_name'] ?? '') !== '' ? $driver['full_name'] : $driver['username'])
+                    : null,
                 'departedAt' => $sh['shipped_at'],
                 'items' => array_map(static fn ($it) => [
                     'shipmentItemId' => (int) $it['shipment_item_id'],

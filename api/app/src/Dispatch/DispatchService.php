@@ -493,6 +493,12 @@ final class DispatchService
 
         return [
             'shipmentId' => (int) $shipment['shipment_id'],
+            // Real-UAT Surat Jalan print ask: the print page needs the
+            // owning DO's real id (to reuse the EXISTING DO-level receipt
+            // QR token — "1 DO = 1 receipt token" stays unchanged, never a
+            // new per-shipment token) — additive field, doesn't affect any
+            // existing consumer of this DTO.
+            'doId' => (int) $shipment['delivery_order_id'],
             'storeId' => (int) $shipment['store_id'],
             'storeName' => $shipment['store_name'],
             'docNo' => $shipment['doc_no'],
@@ -507,6 +513,7 @@ final class DispatchService
             'items' => array_map(static fn ($i) => [
                 'productId' => (int) $i['product_id'],
                 'productName' => $i['product_name'],
+                'divisionName' => $i['division_name'] ?? null,
                 'qty' => (float) $i['qty'],
             ], $items),
             'summary' => ['productCount' => count($items), 'totalQty' => $totalQty],

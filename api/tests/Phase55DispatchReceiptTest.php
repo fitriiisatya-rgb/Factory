@@ -1431,6 +1431,130 @@ runTest('DR-LOG04 logging out does not alter any dispatch/shipment record', func
     expect($claimsBefore === $claimsAfter, 'expected logout to leave the dispatch_claim table untouched');
 });
 
+// ---------------------------------------------------------------------
+// SJ-02..16 — Draft DO vs Actual Shipment Surat Jalan separation.
+// Real-UAT report: the existing DO print showed ALL 1,034 planned pcs
+// for Bakery Abdul Gani, when the actual proof-of-goods for one Driver's
+// shipment was only 7 pcs (SHP-2, MAIN) or 4 pcs (SHP-3, PASTRY). This
+// scenario mirrors that exact shape: one DO, two products in two
+// divisions (so ONE fg_batch create/patch/submit call per SESSION-
+// HANDOFF.md §7.9), Driver A claims+departs product 1 (MAIN), Driver B
+// claims+departs product 2 (PASTRY) — two real, distinct shipments under
+// the same DO. SJ-01 (Draft DO still prints everything, unambiguous
+// title) lives in PhasePrintTest.php instead, alongside its own existing
+// Draft-DO-print fixtures. SJ-17 (full regression green) is the
+// orchestrator's own final step, not a test in this file (same
+// convention as P55-24/DPT-19 above).
+// ---------------------------------------------------------------------
+
+runTest('SJ-02..16 Surat Jalan (actual shipment) print shows ONLY that shipment\'s real items, driver, group, DO reference, and DO-level QR', function () use ($httpA, $csrfA, $httpB, $csrfB, $pdo, $karangtengahId, $rotiBollenDivId, $secondDivId, $storeA, $adminHttp, $adminCsrf, $baseUrl) {
+    $tanggal = '2026-08-23';
+    $pMain = nextProduct();
+    $pPastry = nextProductFromSecondDivision();
+    stockUpMultiForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $tanggal, $storeA,
+        [[$rotiBollenDivId, $pMain['product_id'], 5.0, 5.0], [$secondDivId, $pPastry['product_id'], 4.0, 4.0]],
+        [$pMain['product_id'] => 5.0, $pPastry['product_id'] => 4.0]);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $docNo = $do['docNo'];
+    $itemMain = doItemIdFor($pdo, $do['doId'], $pMain['product_id']);
+    $itemPastry = doItemIdFor($pdo, $do['doId'], $pPastry['product_id']);
+
+    // Driver A claims + departs the MAIN product (SHP-2 equivalent).
+    $claimA = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemMain, 'qty' => 5.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('sj-claimA')));
+    $claimIdA = $claimA['json']['data']['claims'][0]['claimId'];
+    $stopA = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $departA = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stopA['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimIdA, 'actualQty' => 5.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('sj-departA')));
+    expect($departA['status'] === 200, 'Driver A departure failed: ' . json_encode($departA['json']));
+    $shpMain = $departA['json']['data']['shipments'][0]['shipmentId'];
+
+    // Driver B claims + departs the PASTRY product (SHP-3 equivalent).
+    $claimB = $httpB->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemPastry, 'qty' => 4.0]]], array_merge(['X-CSRF-Token' => $csrfB], idemKey('sj-claimB')));
+    $claimIdB = $claimB['json']['data']['claims'][0]['claimId'];
+    $stopB = $httpB->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $departB = $httpB->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stopB['json']['data']['doVersion'], 'shipmentGroup' => 'PASTRY',
+        'items' => [['claimId' => $claimIdB, 'actualQty' => 4.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfB], idemKey('sj-departB')));
+    expect($departB['status'] === 200, 'Driver B departure failed: ' . json_encode($departB['json']));
+    $shpPastry = $departB['json']['data']['shipments'][0]['shipmentId'];
+    expect($shpMain !== $shpPastry, 'sanity: expected two distinct shipments');
+
+    $stockLedgerBefore = shipmentOutRows($pdo);
+    $doVersionBefore = (string) $pdo->query("SELECT CONCAT(version, ':', status) FROM delivery_order WHERE delivery_order_id = {$do['doId']}")->fetchColumn();
+    $shipmentMainRowBefore = $pdo->query("SELECT version FROM shipment WHERE shipment_id = {$shpMain}")->fetchColumn();
+    $shipmentPastryRowBefore = $pdo->query("SELECT version FROM shipment WHERE shipment_id = {$shpPastry}")->fetchColumn();
+
+    // --- SJ-02/03/05/06/07/08/09: Driver A prints SHP-main (their own) ---
+    $printMain = $httpA->request('GET', "/_driver-uat/print-shipment.php?id={$shpMain}");
+    expect($printMain['status'] === 200, "print SHP-main failed: {$printMain['status']}");
+    expect(str_contains($printMain['body'], 'SURAT JALAN'), 'SJ-02: expected the SURAT JALAN document title');
+    expect(str_contains($printMain['body'], (string) $pMain['name']), 'SJ-02: expected the MAIN product to print');
+    expect(!str_contains($printMain['body'], (string) $pPastry['name']), 'SJ-03: expected the PASTRY-only product to NOT print on the MAIN shipment\'s Surat Jalan');
+    $mainRowPattern = '#<td>' . preg_quote((string) $pMain['name'], '#') . '</td>\s*<td>[^<]*</td>\s*<td class="num">5</td>#';
+    expect((bool) preg_match($mainRowPattern, $printMain['body']),
+        'SJ-05: expected the printed row for the shipped product to show qty=5 (the real shipment_item qty), not a planned/claimed figure');
+    expect((bool) preg_match('/Total 1 Produk[\s\S]{0,40}<td class="num">5 Pcs<\/td>/', $printMain['body']),
+        'SJ-05: expected the summary footer to show Total 1 Produk / 5 Pcs');
+    expect(str_contains($printMain['body'], 'MAIN'), 'SJ-07: expected the real shipment group (MAIN) to print');
+    expect(str_contains($printMain['body'], $docNo), 'SJ-08: expected the printed document to reference the original DO number');
+    expect(str_contains($printMain['body'], 'print-receipt-qr-code') && str_contains($printMain['body'], '<svg'),
+        'SJ-09: expected the existing DO receipt QR to be embedded');
+
+    // --- SJ-04: Driver B prints SHP-pastry (their own), exactly its 2-side items ---
+    $printPastry = $httpB->request('GET', "/_driver-uat/print-shipment.php?id={$shpPastry}");
+    expect($printPastry['status'] === 200, "print SHP-pastry failed: {$printPastry['status']}");
+    expect(str_contains($printPastry['body'], (string) $pPastry['name']), 'SJ-04: expected the PASTRY product to print');
+    expect(!str_contains($printPastry['body'], (string) $pMain['name']), 'SJ-04: expected the MAIN-only product to NOT print on the PASTRY shipment\'s Surat Jalan');
+    expect(str_contains($printPastry['body'], 'PASTRY'), 'SJ-07: expected the real shipment group (PASTRY) to print on the other shipment');
+
+    // --- SJ-06: real driver name (not a placeholder) ---
+    $driverAFullName = (string) $pdo->query("SELECT full_name FROM users WHERE username = 'p55_driver_a'")->fetchColumn();
+    $driverBFullName = (string) $pdo->query("SELECT full_name FROM users WHERE username = 'p55_driver_b'")->fetchColumn();
+    $expectedA = $driverAFullName !== '' ? $driverAFullName : 'p55_driver_a';
+    $expectedB = $driverBFullName !== '' ? $driverBFullName : 'p55_driver_b';
+    expect(str_contains($printMain['body'], $expectedA), 'SJ-06: expected the real Driver A name on the MAIN shipment print');
+    expect(str_contains($printPastry['body'], $expectedB), 'SJ-06: expected the real Driver B name on the PASTRY shipment print');
+
+    // --- SJ-10: SHP-main and SHP-pastry print the SAME DO-level QR (same token) ---
+    preg_match('#<div class="print-receipt-qr-code[^"]*">(.*?)</div>\s*<div class="print-receipt-qr-label"#s', $printMain['body'], $mMain);
+    preg_match('#<div class="print-receipt-qr-code[^"]*">(.*?)</div>\s*<div class="print-receipt-qr-label"#s', $printPastry['body'], $mPastry);
+    expect(isset($mMain[1], $mPastry[1]) && $mMain[1] !== '', 'SJ-10: expected to find a QR SVG block on both prints');
+    expect($mMain[1] === $mPastry[1], 'SJ-10: expected the SAME DO-level QR SVG on both shipments\' Surat Jalan (1 DO = 1 receipt token, never a new one per shipment)');
+
+    // --- SJ-11/12/13: printing is a pure read ---
+    expect(shipmentOutRows($pdo) === $stockLedgerBefore, 'SJ-11: expected printing to create ZERO new stock_ledger rows');
+    $doVersionAfter = (string) $pdo->query("SELECT CONCAT(version, ':', status) FROM delivery_order WHERE delivery_order_id = {$do['doId']}")->fetchColumn();
+    expect($doVersionAfter === $doVersionBefore, 'SJ-12: expected DO version/status to be unchanged by printing');
+    expect($pdo->query("SELECT version FROM shipment WHERE shipment_id = {$shpMain}")->fetchColumn() === $shipmentMainRowBefore, 'SJ-13: expected the MAIN shipment row to be unchanged by printing');
+    expect($pdo->query("SELECT version FROM shipment WHERE shipment_id = {$shpPastry}")->fetchColumn() === $shipmentPastryRowBefore, 'SJ-13: expected the PASTRY shipment row to be unchanged by printing');
+
+    // --- SJ-14: Driver A cannot print Driver B's shipment (and vice versa) ---
+    $forbiddenA = $httpA->request('GET', "/_driver-uat/print-shipment.php?id={$shpPastry}");
+    expect($forbiddenA['status'] === 403, "SJ-14: expected 403 when Driver A prints Driver B's shipment, got {$forbiddenA['status']}");
+    $forbiddenB = $httpB->request('GET', "/_driver-uat/print-shipment.php?id={$shpMain}");
+    expect($forbiddenB['status'] === 403, "SJ-14: expected 403 when Driver B prints Driver A's shipment, got {$forbiddenB['status']}");
+
+    // --- SJ-15/16: the SAME token the printed QR encodes (get-or-created
+    // lazily by ui_do_receipt_qr_svg() on first print, exactly like the
+    // Draft DO print page already did) still resolves the correct public
+    // receipt portal, listing BOTH shipments. The QR itself is a grid of
+    // <rect> modules, not readable text, so this reads the token the
+    // print run just created the same way the app does — directly from
+    // delivery_receipt_token — rather than trying to OCR/decode the SVG.
+    $token = (string) $pdo->query("SELECT token FROM delivery_receipt_token WHERE delivery_order_id = {$do['doId']}")->fetchColumn();
+    expect(strlen($token) === 64, 'SJ-15: expected a real 64-char receipt token to have been get-or-created by printing');
+    $anon = new Http55($baseUrl);
+    $publicView = $anon->request('GET', "/api/receive/{$token}");
+    expect($publicView['status'] === 200, 'SJ-15: expected the QR token to resolve a valid public receipt view: ' . json_encode($publicView['json']));
+    expect($publicView['json']['data']['docNo'] === $docNo, 'SJ-15: expected the public view to reference the correct DO');
+    $shipmentIdsInView = array_map(fn ($s) => $s['shipmentId'], $publicView['json']['data']['shipments']);
+    expect(in_array($shpMain, $shipmentIdsInView, true) && in_array($shpPastry, $shipmentIdsInView, true),
+        'SJ-16: expected the public Store Receipt portal to list BOTH SHP-main and SHP-pastry under this DO, never merged');
+});
+
 $failed = array_filter($results, fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests run, ' . count($failed) . " failed.\n");
 exit($failed === [] ? 0 : 1);
