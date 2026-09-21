@@ -31,6 +31,10 @@ html, body.driver-body {
 .driver-topbar-logo { border-radius: 50%; flex: none; }
 .driver-topbar-title { font-weight: 700; font-size: var(--text-lg); flex: 1; }
 .driver-topbar-user { font-size: var(--text-xs); color: var(--text-muted); }
+.driver-topbar-logout {
+  flex: none; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); cursor: pointer;
+}
 
 .driver-main { flex: 1; padding: 14px 14px 90px; }
 
@@ -133,3 +137,61 @@ html, body.driver-body {
 
 .driver-success-box { text-align: center; padding: 30px 16px; }
 .driver-success-icon { color: var(--success); margin-bottom: 12px; }
+.driver-success-box .driver-btn { max-width: 320px; margin-left: auto; margin-right: auto; }
+
+.driver-card-link { display: block; text-decoration: none; color: inherit; position: relative; }
+.driver-card-chevron { color: var(--text-muted); font-size: 1.3em; float: right; line-height: 1; }
+.driver-back-link {
+  display: inline-block; margin-bottom: 10px; color: var(--text-muted); text-decoration: none; font-size: var(--text-sm);
+}
+
+.driver-timeline-step { display: flex; gap: 10px; padding: 6px 0; align-items: flex-start; }
+.driver-timeline-mark {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border);
+}
+.driver-timeline-step.done .driver-timeline-mark { background: var(--success-soft); color: var(--success); border-color: var(--success); }
+.driver-timeline-title { font-weight: 700; font-size: var(--text-sm); }
+
+/* ---------------------------------------------------------------------
+   Modal / Toast — SELF-CONTAINED copy of app.css's rules (driver.css
+   deliberately never loads app.css's admin sidebar/topbar shell, see this
+   file's own header docblock). Real-UAT bug: Amor.confirmModal() (used by
+   "KONFIRMASI BERANGKAT" and elsewhere) is shared JS defined in app.js,
+   but its .modal-backdrop/.modal/.toast classes were ONLY ever styled in
+   app.css — so on every driver-portal page the dialog rendered as plain
+   unstyled, unpositioned HTML flowing at the bottom of the page instead
+   of a centered overlay. This block is the fix.
+--------------------------------------------------------------------- */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(4, 8, 16, .6); display: none;
+  align-items: center; justify-content: center; z-index: 100; padding: var(--space-4);
+}
+.modal-backdrop.open { display: flex; }
+.modal {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal); width: 100%; max-width: 480px; padding: var(--space-5);
+}
+.modal-title { font-size: var(--text-lg); margin-bottom: var(--space-2); font-weight: 700; }
+.modal-body { color: var(--text-muted); font-size: var(--text-sm); margin-bottom: var(--space-4); }
+.modal-summary { background: var(--surface-2); border-radius: var(--radius-sm); padding: var(--space-3); margin-bottom: var(--space-4); font-size: var(--text-sm); color: var(--text); }
+.modal-summary div:first-child { font-weight: 700; margin-bottom: 2px; }
+.modal-error { color: var(--danger); font-size: var(--text-sm); margin-bottom: var(--space-3); }
+.modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.modal-actions .btn {
+  padding: 10px 16px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-weight: 700; font-size: var(--text-sm); cursor: pointer;
+}
+.modal-actions .btn-primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.modal-actions .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.modal-actions .btn:disabled { opacity: .6; cursor: not-allowed; }
+
+.toast-stack { position: fixed; top: var(--space-4); right: var(--space-4); left: var(--space-4); z-index: 200; display: flex; flex-direction: column; gap: var(--space-2); max-width: 360px; margin: 0 auto; }
+.toast {
+  background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+  border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4); box-shadow: var(--shadow-card);
+  font-size: var(--text-sm); color: var(--text);
+}
+.toast.success { border-left-color: var(--success); }
+.toast.warning { border-left-color: var(--warning); }
+.toast.danger { border-left-color: var(--danger); }

@@ -8,6 +8,7 @@ use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Delivery\DoRepository;
 use Amor\Api\Fg\FgRepository;
+use Amor\Api\Users\UserRepository;
 use PDO;
 
 /**
@@ -32,12 +33,16 @@ final class DispatchService
     private DispatchRepository $repo;
     private DoRepository $doRepo;
     private FgRepository $fg;
+    private ReceiptRepository $receiptRepo;
+    private UserRepository $userRepo;
 
     public function __construct(private PDO $pdo)
     {
         $this->repo = new DispatchRepository();
         $this->doRepo = new DoRepository();
         $this->fg = new FgRepository();
+        $this->receiptRepo = new ReceiptRepository();
+        $this->userRepo = new UserRepository();
     }
 
     /**
@@ -228,6 +233,23 @@ final class DispatchService
     }
 
     /** GET /api/dispatch/route — "Rute Saya". */
+    /**
+     * GET /api/dispatch/route — real-UAT fix: a stop's productCount/totalQty
+     * used to be computed ONLY from this driver's dispatch_claim rows. That
+     * is correct BEFORE departure (an active claim IS the reservation), but
+     * confirmDeparture() always resolves every touched claim to a TERMINAL
+     * 'departed' status with active_qty reset to 0 (DispatchRepository::
+     * resolveClaimAsDeparted — by design, so a resolved claim can never be
+     * double-counted or re-released). Once every claim for a stop reaches
+     * that terminal state, summing "active" claims for that stop reads
+     * 0 products / 0 pcs — even though the real shipment(s) just created
+     * hold the true quantities. Fix: a DEPARTED stop's summary is now
+     * sourced from the actual shipment_item rows (findDepartedTotalsForDriver),
+     * which reflects the REAL shipped qty (e.g. claimed 5, shipped 3 shows
+     * 3 — the dispatch truth after departure, never the original claim).
+     * A stop with no departure yet keeps using live active-claim totals,
+     * unchanged from before.
+     */
     public function myRoute(int $driverUserId, string $tanggal): array
     {
         $routeId = $this->repo->findRouteId($this->pdo, $driverUserId, $tanggal);
@@ -247,20 +269,35 @@ final class DispatchService
                 $departedStores[(int) $h['store_id']] = true;
             }
         }
+        $departedTotals = $this->repo->findDepartedTotalsForDriver($this->pdo, $driverUserId, $tanggal);
 
         $out = [];
         foreach ($stops as $s) {
             $storeId = (int) $s['store_id'];
-            $storeClaims = array_values(array_filter($claims, static fn ($c) => (int) $c['store_id'] === $storeId));
+            $hasActive = isset($activeByStore[$storeId]);
+            $hasDeparted = isset($departedStores[$storeId]);
+            if ($hasActive) {
+                // Not (fully) departed yet — active-claim totals are still the live truth.
+                $storeClaims = array_values(array_filter($claims, static fn ($c) => (int) $c['store_id'] === $storeId));
+                $productCount = count($storeClaims);
+                $totalQty = array_sum(array_map(static fn ($c) => (float) $c['active_qty'], $storeClaims));
+            } elseif ($hasDeparted) {
+                // Fully departed — real shipment_item totals, never the now-zeroed claims.
+                $productCount = $departedTotals[$storeId]['productCount'] ?? 0;
+                $totalQty = $departedTotals[$storeId]['totalQty'] ?? 0.0;
+            } else {
+                $productCount = 0;
+                $totalQty = 0.0;
+            }
             $out[] = [
                 'stopId' => (int) $s['driver_route_stop_id'],
                 'storeId' => $storeId,
                 'storeName' => $s['store_name'],
                 'sequence' => (int) $s['sequence'],
-                'productCount' => count($storeClaims),
-                'totalQty' => array_sum(array_map(static fn ($c) => (float) $c['active_qty'], $storeClaims)),
-                'hasActiveClaims' => isset($activeByStore[$storeId]),
-                'departureStatus' => isset($activeByStore[$storeId]) ? 'belum_berangkat' : (isset($departedStores[$storeId]) ? 'sudah_berangkat' : 'belum_berangkat'),
+                'productCount' => $productCount,
+                'totalQty' => $totalQty,
+                'hasActiveClaims' => $hasActive,
+                'departureStatus' => $hasActive ? 'belum_berangkat' : ($hasDeparted ? 'sudah_berangkat' : 'belum_berangkat'),
             ];
         }
         return ['tanggal' => $tanggal, 'stops' => $out];
@@ -339,6 +376,103 @@ final class DispatchService
             'items' => $items,
             'summary' => ['productCount' => count($items), 'totalClaimedQty' => array_sum(array_column($items, 'claimedQty'))],
         ];
+    }
+
+    /**
+     * GET /api/dispatch/shipments/{id} — read-only Driver Shipment Detail /
+     * shipment tracing (real-UAT ask: "Driver needs shipment tracing" from
+     * a clickable Riwayat card). Pure read: never writes shipment,
+     * shipment_item, dispatch_claim, or shipment_receipt.
+     *
+     * Authorization is mandatory and scoped: a non-admin caller may only
+     * open a shipment THEY shipped (shipment.shipped_by === requestingUserId).
+     * Anyone else — including a driver who simply guesses another
+     * shipment_id — gets 403 FORBIDDEN, never partial data (task's own
+     * "Do not leak store data / item quantities / receipt detail").
+     * ADMIN keeps the broader access it already has through the existing
+     * admin receipt-verification screens.
+     */
+    public function shipmentDetail(int $shipmentId, int $requestingUserId, bool $isAdmin): array
+    {
+        $shipment = $this->doRepo->findShipmentById($this->pdo, $shipmentId);
+        if ($shipment === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'Shipment tidak ditemukan');
+        }
+        $shippedBy = $shipment['shipped_by'] !== null ? (int) $shipment['shipped_by'] : null;
+        if (!$isAdmin && $shippedBy !== $requestingUserId) {
+            throw new ApiException(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke pengiriman ini');
+        }
+
+        // Product table: shipment_item's OWN qty is the dispatch truth after
+        // departure (task's own "Do NOT use original claim quantities if
+        // different") — never dispatch_claim.claimed_qty/active_qty.
+        $items = $this->doRepo->findShipmentItems($this->pdo, $shipmentId);
+        $totalQty = array_sum(array_map(static fn ($i) => (float) $i['qty'], $items));
+
+        $driver = $shippedBy !== null ? $this->userRepo->findById($this->pdo, $shippedBy) : null;
+
+        // Timeline "Driver Claim" event — earliest claim actually resolved
+        // into this shipment, if any is still traceable. Never invented
+        // when absent (task's own "Use only data that actually exists").
+        $claims = $this->repo->findClaimsForShipment($this->pdo, $shipmentId);
+        $firstClaim = $claims[0] ?? null;
+
+        $receipt = $this->receiptRepo->findReceiptForShipment($this->pdo, $shipmentId);
+        $receiptDto = null;
+        if ($receipt !== null) {
+            $receiptItems = $this->receiptRepo->findReceiptItems($this->pdo, (int) $receipt['shipment_receipt_id']);
+            $verifier = $receipt['verified_by'] !== null ? $this->userRepo->findById($this->pdo, (int) $receipt['verified_by']) : null;
+            $receiptDto = [
+                'status' => $receipt['status'],
+                'receiverName' => $receipt['receiver_name'],
+                'note' => $receipt['note'],
+                'confirmedAt' => $receipt['confirmed_at'],
+                'verifiedAt' => $receipt['verified_at'],
+                'verifiedByName' => $verifier !== null ? self::displayName($verifier) : null,
+                'items' => array_map(static fn ($ri) => [
+                    'productId' => (int) $ri['product_id'],
+                    'productName' => $ri['product_name'],
+                    'shippedQty' => (float) $ri['shipped_qty'],
+                    'receivedGoodQty' => (float) $ri['received_good_qty'],
+                    'rejectQty' => (float) $ri['reject_qty'],
+                    'shortageQty' => (float) $ri['shortage_qty'],
+                    'reason' => $ri['reason'],
+                ], $receiptItems),
+            ];
+        }
+
+        return [
+            'shipmentId' => (int) $shipment['shipment_id'],
+            'storeId' => (int) $shipment['store_id'],
+            'storeName' => $shipment['store_name'],
+            'docNo' => $shipment['doc_no'],
+            'doTanggal' => $shipment['do_tanggal'],
+            'tanggal' => $shipment['tanggal'],
+            'shipmentGroup' => $shipment['shipment_group'],
+            'factoryName' => $shipment['factory_name'],
+            'status' => $shipment['status'],
+            'shippedAt' => $shipment['shipped_at'] ?? $shipment['created_at'],
+            'driverUserId' => $shippedBy,
+            'driverName' => $driver !== null ? self::displayName($driver) : null,
+            'items' => array_map(static fn ($i) => [
+                'productId' => (int) $i['product_id'],
+                'productName' => $i['product_name'],
+                'qty' => (float) $i['qty'],
+            ], $items),
+            'summary' => ['productCount' => count($items), 'totalQty' => $totalQty],
+            'claim' => $firstClaim !== null ? [
+                'driverName' => $firstClaim['driver_full_name'] !== null && $firstClaim['driver_full_name'] !== ''
+                    ? $firstClaim['driver_full_name'] : $firstClaim['driver_username'],
+                'claimedAt' => $firstClaim['created_at'],
+            ] : null,
+            'receipt' => $receiptDto,
+        ];
+    }
+
+    private static function displayName(array $user): string
+    {
+        $fullName = (string) ($user['full_name'] ?? '');
+        return $fullName !== '' ? $fullName : (string) ($user['username'] ?? '');
     }
 
     /** Display-only heuristic — see listAvailable()'s own docblock. Never authoritative. */

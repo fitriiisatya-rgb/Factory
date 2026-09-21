@@ -1007,6 +1007,263 @@ runTest('P55-MF02 multi-factory departure rolls back COMPLETELY if the second fa
     expect($stopAgain['status'] === 200, 'expected the stop/claims to still be usable after a rolled-back departure');
 });
 
+// ---------------------------------------------------------------------
+// DPT-05, DPT-07..19 — Driver Portal UX + Shipment Tracing patch. Real-UAT
+// case: DO/KRM/004/IX/2026, Bakery Abdul Gani, Driver A, AVOCADO RING 5 +
+// BOLLEN KOMBINASI 2 (2 produk, 7 pcs). DPT-01..04/06 (confirm-modal DOM
+// behavior: single centered overlay, no stacking, Batal closes cleanly,
+// button disables while pending, success screen renders real data) are
+// pure client-side DOM/CSS behavior with no server-observable effect
+// beyond DPT-05's own idempotency — verified separately via code review
+// of app.js/driver.js/driver.css plus a manual/browser check, per this
+// task's own "Add tests / browser checks where practical" allowance; see
+// the final report's own test section for that write-up.
+// ---------------------------------------------------------------------
+runTest('DPT-05 a double-submitted departure (same Idempotency-Key) results in exactly one shipment', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $adminHttp, $adminCsrf) {
+    $tanggal = '2026-08-05';
+    $p = nextProduct();
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $p['product_id'], 10.0, 10.0, 10.0);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemId = doItemIdFor($pdo, $do['doId'], $p['product_id']);
+    $claim = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemId, 'qty' => 10.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt05-claim')));
+    $claimId = $claim['json']['data']['claims'][0]['claimId'];
+
+    $key = 'dpt05-depart-' . uniqid('', true);
+    $body = ['doId' => $do['doId'], 'expectedVersion' => $do['version'], 'shipmentGroup' => 'MAIN', 'items' => [['claimId' => $claimId, 'actualQty' => 10.0]]];
+    $first = $httpA->request('POST', '/api/dispatch/departures', $body, ['X-CSRF-Token' => $csrfA, 'Idempotency-Key' => $key]);
+    $second = $httpA->request('POST', '/api/dispatch/departures', $body, ['X-CSRF-Token' => $csrfA, 'Idempotency-Key' => $key]);
+    expect($first['status'] === 200 && $second['status'] === 200, 'expected both replayed departures to return 200');
+    expect($first['json'] === $second['json'], 'expected the replayed response to be byte-identical (frontend double-click protection is UX only — this is the real backend guarantee)');
+
+    $count = (int) $pdo->query("SELECT COUNT(*) FROM shipment WHERE delivery_order_id = {$do['doId']}")->fetchColumn();
+    expect($count === 1, 'expected exactly one shipment row despite the replayed double-submit, got ' . $count);
+});
+
+runTest('DPT-07 before departure, route shows active-claim totals', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $storeA, $adminHttp, $adminCsrf) {
+    $tanggal = '2026-08-07';
+    $p = nextProduct();
+    seedStorePo($pdo, $tanggal, $karangtengahId, $storeA, [$p['product_id'] => ['poAwal' => 10.0]]);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemId = doItemIdFor($pdo, $do['doId'], $p['product_id']);
+    $claim = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemId, 'qty' => 7.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt07-claim')));
+    expect($claim['status'] === 200, 'claim failed: ' . json_encode($claim['json']));
+
+    $route = $httpA->request('GET', "/api/dispatch/route?tanggal={$tanggal}");
+    expect($route['status'] === 200, 'route fetch failed: ' . json_encode($route['json']));
+    $stop = current(array_filter($route['json']['data']['stops'], fn ($s) => $s['storeId'] === $storeA));
+    expect($stop !== false, 'expected a route stop for storeA');
+    expect($stop['productCount'] === 1 && abs($stop['totalQty'] - 7.0) < 0.001, 'expected active-claim totals 1 produk/7 pcs before departure, got ' . json_encode($stop));
+    expect($stop['departureStatus'] === 'belum_berangkat', 'expected belum_berangkat before departure');
+});
+
+runTest('DPT-08/DPT-09 after departure, route shows REAL shipment totals — never 0 produk / 0 pcs', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $secondDivId, $storeA, $adminHttp, $adminCsrf) {
+    // The exact real-UAT shape: 2 products, 7 pcs total (AVOCADO RING 5 + BOLLEN KOMBINASI 2).
+    // Two DIFFERENT divisions, since a production_run is keyed by
+    // (tanggal,divisionId) — two products in the SAME division must share
+    // one create->patch->submit call (see stockUpMultiForDelivery's own
+    // caller convention elsewhere in this file).
+    $tanggal = '2026-08-08';
+    $p1 = nextProduct();
+    $p2 = nextProductFromSecondDivision();
+    stockUpMultiForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $tanggal, $storeA,
+        [[$rotiBollenDivId, $p1['product_id'], 5.0, 5.0], [$secondDivId, $p2['product_id'], 2.0, 2.0]],
+        [$p1['product_id'] => 5.0, $p2['product_id'] => 2.0]);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $item1 = doItemIdFor($pdo, $do['doId'], $p1['product_id']);
+    $item2 = doItemIdFor($pdo, $do['doId'], $p2['product_id']);
+
+    $claim1 = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $item1, 'qty' => 5.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt08-c1')));
+    $claim2 = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $item2, 'qty' => 2.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt08-c2')));
+    $claimId1 = $claim1['json']['data']['claims'][0]['claimId'];
+    $claimId2 = $claim2['json']['data']['claims'][0]['claimId'];
+
+    $stopBefore = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $depart = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stopBefore['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimId1, 'actualQty' => 5.0], ['claimId' => $claimId2, 'actualQty' => 2.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt08-depart')));
+    expect($depart['status'] === 200, 'departure failed: ' . json_encode($depart['json']));
+
+    $route = $httpA->request('GET', "/api/dispatch/route?tanggal={$tanggal}");
+    $stop = current(array_filter($route['json']['data']['stops'], fn ($s) => $s['storeId'] === $storeA));
+    expect($stop !== false, 'expected the stop to still be listed after departure');
+    expect($stop['departureStatus'] === 'sudah_berangkat', 'expected sudah_berangkat after departure');
+    expect($stop['productCount'] === 2 && abs($stop['totalQty'] - 7.0) < 0.001,
+        'DPT-09: expected the REAL shipment totals 2 produk / 7 pcs after departure — NOT 0/0 (the real-UAT bug), got ' . json_encode($stop));
+});
+
+runTest('DPT-10 a partial departure (claim 5, ship 3) shows the ACTUAL shipped qty on the route, not the original claim', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $adminHttp, $adminCsrf) {
+    $tanggal = '2026-08-10';
+    $p = nextProduct();
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $p['product_id'], 5.0, 5.0, 5.0);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemId = doItemIdFor($pdo, $do['doId'], $p['product_id']);
+    $claim = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemId, 'qty' => 5.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt10-claim')));
+    $claimId = $claim['json']['data']['claims'][0]['claimId'];
+
+    $stop = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $depart = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stop['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimId, 'actualQty' => 3.0]], // ships only 3 of the 5 claimed
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt10-depart')));
+    expect($depart['status'] === 200, 'departure failed: ' . json_encode($depart['json']));
+
+    $route = $httpA->request('GET', "/api/dispatch/route?tanggal={$tanggal}");
+    $routeStop = current(array_filter($route['json']['data']['stops'], fn ($s) => $s['storeId'] === $storeA));
+    expect(abs($routeStop['totalQty'] - 3.0) < 0.001, 'expected route to show the actual shipped 3, not the claimed 5, got ' . json_encode($routeStop));
+
+    $detail = $httpA->request('GET', '/api/dispatch/shipments/' . $depart['json']['data']['shipments'][0]['shipmentId']);
+    expect(abs($detail['json']['data']['summary']['totalQty'] - 3.0) < 0.001, 'expected shipment detail to also show 3, not 5, got ' . json_encode($detail['json']['data']['summary']));
+});
+
+runTest('DPT-11/DPT-12/DPT-13 history + shipment detail expose the real Shipment ID/DO/Driver/Group and product totals matching shipment_item', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $adminHttp, $adminCsrf) {
+    $tanggal = '2026-08-11';
+    $p = nextProduct();
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $p['product_id'], 4.0, 4.0, 4.0);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemId = doItemIdFor($pdo, $do['doId'], $p['product_id']);
+    $claim = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemId, 'qty' => 4.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt11-claim')));
+    $claimId = $claim['json']['data']['claims'][0]['claimId'];
+    $stop = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $depart = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stop['json']['data']['doVersion'], 'shipmentGroup' => 'PASTRY',
+        'items' => [['claimId' => $claimId, 'actualQty' => 4.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt11-depart')));
+    $shipmentId = $depart['json']['data']['shipments'][0]['shipmentId'];
+
+    // DPT-11: history row carries the shipment_id (the href a clickable
+    // card needs) plus the aggregated product_count/total_qty.
+    $history = $httpA->request('GET', '/api/dispatch/history');
+    expect($history['status'] === 200, 'history failed: ' . json_encode($history['json']));
+    $row = current(array_filter($history['json']['data'], fn ($r) => (int) $r['shipment_id'] === $shipmentId));
+    expect($row !== false, 'expected the new shipment to appear in history');
+    expect((int) $row['product_count'] === 1 && abs((float) $row['total_qty'] - 4.0) < 0.001, 'expected history row to carry product_count=1/total_qty=4, got ' . json_encode($row));
+
+    // DPT-12/13: shipment detail carries the real identity + matching item totals.
+    $detail = $httpA->request('GET', '/api/dispatch/shipments/' . $shipmentId);
+    expect($detail['status'] === 200, 'shipment detail failed: ' . json_encode($detail['json']));
+    $d = $detail['json']['data'];
+    expect($d['shipmentId'] === $shipmentId, 'expected the real shipmentId echoed back');
+    expect($d['docNo'] === $do['docNo'], 'expected the real DO doc_no');
+    expect($d['driverName'] === 'p55_driver_a', 'expected the real driver name/username, got ' . json_encode($d['driverName']));
+    expect($d['shipmentGroup'] === 'PASTRY', 'expected the real shipment group PASTRY');
+    expect(count($d['items']) === 1 && abs($d['items'][0]['qty'] - 4.0) < 0.001, 'expected item qty to match shipment_item exactly, got ' . json_encode($d['items']));
+    expect(abs($d['summary']['totalQty'] - 4.0) < 0.001 && $d['summary']['productCount'] === 1, 'expected summary totals to match');
+
+    $GLOBALS['dpt_shipment_id'] = $shipmentId;
+    $GLOBALS['dpt_do_id'] = $do['doId'];
+});
+
+runTest('DPT-14 receipt pending is shown correctly (no receipt yet)', function () use ($httpA) {
+    $shipmentId = $GLOBALS['dpt_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'DPT-14 depends on DPT-11/12/13 having run first');
+    $detail = $httpA->request('GET', '/api/dispatch/shipments/' . $shipmentId);
+    expect($detail['status'] === 200, 'detail failed: ' . json_encode($detail['json']));
+    expect($detail['json']['data']['receipt'] === null, 'expected receipt=null before any store confirmation');
+});
+
+runTest('DPT-15/DPT-16 receipt completed + discrepancy quantities shown correctly', function () use ($httpA, $pdo, $baseUrl) {
+    $shipmentId = $GLOBALS['dpt_shipment_id'] ?? null;
+    $doId = $GLOBALS['dpt_do_id'] ?? null;
+    expect($shipmentId !== null && $doId !== null, 'depends on DPT-11/12/13 having run first');
+
+    $service = new \Amor\Api\Dispatch\ReceiptService($pdo);
+    $token = $service->getReceiptToken($doId);
+    $anon = new Http55($baseUrl);
+    $view = $anon->request('GET', "/api/receive/{$token}");
+    $shipmentItemId = $view['json']['data']['shipments'][0]['items'][0]['shipmentItemId'];
+
+    // Confirm with a discrepancy: shipped 4, good 3, reject 1.
+    $confirm = $anon->request('POST', "/api/receive/{$token}/shipments/{$shipmentId}/confirm", [
+        'receiverName' => 'Budi', 'items' => [['shipmentItemId' => $shipmentItemId, 'receivedGood' => 3, 'reject' => 1, 'shortage' => 0]],
+    ], idemKey('dpt15-confirm'));
+    expect($confirm['status'] === 200, 'confirm failed: ' . json_encode($confirm['json']));
+
+    $detail = $httpA->request('GET', '/api/dispatch/shipments/' . $shipmentId);
+    $receipt = $detail['json']['data']['receipt'];
+    expect($receipt !== null, 'expected a receipt to now be present (DPT-15)');
+    expect($receipt['status'] === 'confirmed_discrepancy', 'expected confirmed_discrepancy status');
+    expect($receipt['receiverName'] === 'Budi', 'expected receiver name Budi');
+    $item = $receipt['items'][0];
+    expect(abs($item['shippedQty'] - 4.0) < 0.001 && abs($item['receivedGoodQty'] - 3.0) < 0.001 && abs($item['rejectQty'] - 1.0) < 0.001 && abs($item['shortageQty'] - 0.0) < 0.001,
+        'DPT-16: expected discrepancy quantities shipped=4/good=3/reject=1/shortage=0, got ' . json_encode($item));
+});
+
+runTest('DPT-17 Driver A cannot open Driver B\'s shipment detail', function () use ($httpB) {
+    $shipmentId = $GLOBALS['dpt_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on DPT-11/12/13 having run first (Driver A\'s own shipment)');
+    $asB = $httpB->request('GET', '/api/dispatch/shipments/' . $shipmentId);
+    expect($asB['status'] === 403, "expected 403 FORBIDDEN when Driver B opens Driver A's shipment, got {$asB['status']}: " . json_encode($asB['json']));
+    expect($asB['json']['code'] === 'FORBIDDEN', 'expected FORBIDDEN code');
+    // Must not leak store/item/receipt data in the error response either.
+    expect(!isset($asB['json']['data']), 'expected no data payload leaked in a 403 response');
+});
+
+runTest('DPT-18 Asia/Jakarta display formatting is UTC+7 with no DST, matching both the PHP and JS helpers\' algorithm', function () {
+    // Both ui_fmt_datetime_id() (api/app/ui/bootstrap.php) and driver.js's
+    // fmtDateTimeId() convert a stored UTC timestamp to Asia/Jakarta before
+    // formatting "j M Y \xC2\xB7 H:i" — this proves the underlying timezone
+    // math they both rely on (Indonesia has no daylight saving) is correct,
+    // without re-requiring the whole page-bootstrap file into this API-only
+    // test process.
+    $dt = new \DateTime('2026-09-05 03:20:00', new \DateTimeZone('UTC'));
+    $dt->setTimezone(new \DateTimeZone('Asia/Jakarta'));
+    expect($dt->format('Y-m-d H:i') === '2026-09-05 10:20', 'expected UTC 03:20 -> Asia/Jakarta 10:20 (UTC+7), got ' . $dt->format('Y-m-d H:i'));
+
+    $dtNewYear = new \DateTime('2026-01-01 20:00:00', new \DateTimeZone('UTC'));
+    $dtNewYear->setTimezone(new \DateTimeZone('Asia/Jakarta'));
+    expect($dtNewYear->format('Y-m-d H:i') === '2026-01-02 03:00', 'expected the +7 offset to hold across a date boundary too, got ' . $dtNewYear->format('Y-m-d H:i'));
+});
+
+runTest('DPT-19 history stays correct after multiple shipments under the same DO', function () use ($httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $secondDivId, $storeA, $adminHttp, $adminCsrf) {
+    $tanggal = '2026-08-19';
+    $p1 = nextProduct();
+    $p2 = nextProductFromSecondDivision();
+    // Two SEPARATE products (two DIFFERENT divisions, same reason as
+    // DPT-08/09 above) with two SEPARATE departures (MAIN then PASTRY)
+    // under the SAME delivery_order — two distinct shipment rows, one DO.
+    stockUpMultiForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $tanggal, $storeA,
+        [[$rotiBollenDivId, $p1['product_id'], 3.0, 3.0], [$secondDivId, $p2['product_id'], 6.0, 6.0]],
+        [$p1['product_id'] => 3.0, $p2['product_id'] => 6.0]);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $item1 = doItemIdFor($pdo, $do['doId'], $p1['product_id']);
+    $item2 = doItemIdFor($pdo, $do['doId'], $p2['product_id']);
+
+    $claim1 = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $item1, 'qty' => 3.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt19-c1')));
+    $claimId1 = $claim1['json']['data']['claims'][0]['claimId'];
+    $stop1 = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $depart1 = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stop1['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimId1, 'actualQty' => 3.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt19-depart1')));
+    expect($depart1['status'] === 200, 'first departure failed: ' . json_encode($depart1['json']));
+    $shipment1 = $depart1['json']['data']['shipments'][0]['shipmentId'];
+
+    $claim2 = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $item2, 'qty' => 6.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt19-c2')));
+    $claimId2 = $claim2['json']['data']['claims'][0]['claimId'];
+    $stop2 = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $depart2 = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stop2['json']['data']['doVersion'], 'shipmentGroup' => 'PASTRY',
+        'items' => [['claimId' => $claimId2, 'actualQty' => 6.0]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('dpt19-depart2')));
+    expect($depart2['status'] === 200, 'second departure failed: ' . json_encode($depart2['json']));
+    $shipment2 = $depart2['json']['data']['shipments'][0]['shipmentId'];
+    expect($shipment1 !== $shipment2, 'sanity: expected two distinct shipment rows');
+
+    $history = $httpA->request('GET', '/api/dispatch/history');
+    $row1 = current(array_filter($history['json']['data'], fn ($r) => (int) $r['shipment_id'] === $shipment1));
+    $row2 = current(array_filter($history['json']['data'], fn ($r) => (int) $r['shipment_id'] === $shipment2));
+    expect($row1 !== false && $row2 !== false, 'expected BOTH shipments to appear as separate history rows under the same DO');
+    expect(abs((float) $row1['total_qty'] - 3.0) < 0.001 && abs((float) $row2['total_qty'] - 6.0) < 0.001,
+        'expected each shipment\'s own total to stay correct/unmerged: 3 and 6, got ' . json_encode([$row1['total_qty'], $row2['total_qty']]));
+
+    // The Rute Saya summary for this store must reflect BOTH shipments combined (9 pcs, 2 produk).
+    $route = $httpA->request('GET', "/api/dispatch/route?tanggal={$tanggal}");
+    $routeStop = current(array_filter($route['json']['data']['stops'], fn ($s) => $s['storeId'] === $storeA));
+    expect($routeStop['productCount'] === 2 && abs($routeStop['totalQty'] - 9.0) < 0.001,
+        'expected the route summary to aggregate BOTH shipments (2 produk / 9 pcs), got ' . json_encode($routeStop));
+});
+
 $failed = array_filter($results, fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests run, ' . count($failed) . " failed.\n");
 exit($failed === [] ? 0 : 1);

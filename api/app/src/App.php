@@ -119,6 +119,7 @@ final class App
         $router->get('/api/dispatch/route/stops/{storeId}', [DispatchController::class, 'stopDetail']);
         $router->post('/api/dispatch/departures', [DispatchController::class, 'departures']);
         $router->get('/api/dispatch/history', [DispatchController::class, 'history']);
+        $router->get('/api/dispatch/shipments/{id}', [DispatchController::class, 'shipmentDetail']);
 
         // Phase 5.5 — Store Receipt portal. PUBLIC (no session): the
         // high-entropy {token} path segment IS the access control, never a

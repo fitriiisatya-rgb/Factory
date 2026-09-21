@@ -245,6 +245,23 @@ final class DoRepository
         return $stmt->fetchAll();
     }
 
+    /** One shipment header, joined with store/DO/factory for the driver/admin detail screens. */
+    public function findShipmentById(PDO $pdo, int $shipmentId): ?array
+    {
+        $stmt = $pdo->prepare(
+            'SELECT sh.*, s.canonical_name AS store_name, o.doc_no, o.tanggal AS do_tanggal,
+                    f.name AS factory_name
+             FROM shipment sh
+             INNER JOIN store s ON s.store_id = sh.store_id
+             LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
+             LEFT JOIN factory f ON f.factory_id = sh.factory_id
+             WHERE sh.shipment_id = ?'
+        );
+        $stmt->execute([$shipmentId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
     /** @return array<int,array> every item on one shipment */
     public function findShipmentItems(PDO $pdo, int $shipmentId): array
     {

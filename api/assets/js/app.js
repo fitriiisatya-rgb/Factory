@@ -77,9 +77,36 @@
 
   // -----------------------------------------------------------------
   // Confirmation modal — returns a Promise<boolean>.
+  //
+  // opts: { title, body, confirmLabel, danger, summaryLines: string[],
+  //         onConfirm: () => Promise, pendingLabel }
+  //
+  // Real-UAT bug fix (Driver Portal "Konfirmasi Berangkat"): a modal
+  // opened while one is ALREADY open used to append a second (third...)
+  // unstyled backdrop to <body>, stacking visibly at the bottom of the
+  // page — never a real overlay. moduleActiveBackdrop is a process-wide
+  // singleton guard: a call made while one is open is treated as a no-op
+  // cancel instead of ever creating a second DOM node.
+  //
+  // opts.onConfirm (optional): when the confirmed action itself is an
+  // async server call, pass it here instead of awaiting confirmModal()'s
+  // own resolution and calling apiFetch afterward — this keeps the modal
+  // OPEN while the request is in flight, disables both buttons, shows
+  // opts.pendingLabel ("Memproses..." by default) on the confirm button,
+  // blocks repeat clicks/backdrop-click/Escape while pending, and on
+  // failure re-enables the buttons and shows the friendly error INSIDE
+  // the dialog (never silently swallowed, never a fresh identical prompt)
+  // so the user can retry or cancel. This is a UX safeguard only — the
+  // server's own Idempotency-Key handling remains the real double-submit
+  // protection (see apiFetch's genKey()).
   // -----------------------------------------------------------------
+  let moduleActiveBackdrop = null;
+
   function confirmModal(opts) {
     opts = opts || {};
+    if (moduleActiveBackdrop) {
+      return Promise.resolve(false);
+    }
     return new Promise(function (resolve) {
       const backdrop = document.createElement('div');
       backdrop.className = 'modal-backdrop open';
@@ -87,27 +114,72 @@
         '<div class="modal" role="dialog" aria-modal="true">' +
         '<div class="modal-title"></div>' +
         '<div class="modal-body"></div>' +
+        '<div class="modal-summary"></div>' +
+        '<div class="modal-error" hidden></div>' +
         '<div class="modal-actions">' +
         '<button type="button" class="btn btn-secondary" data-act="cancel">Batal</button>' +
         '<button type="button" class="btn" data-act="confirm"></button>' +
         '</div></div>';
       backdrop.querySelector('.modal-title').textContent = opts.title || 'Konfirmasi';
-      backdrop.querySelector('.modal-body').textContent = opts.body || 'Lanjutkan?';
+      const bodyEl = backdrop.querySelector('.modal-body');
+      bodyEl.textContent = opts.body || 'Lanjutkan?';
+      bodyEl.style.whiteSpace = 'pre-line';
+
+      const summaryEl = backdrop.querySelector('.modal-summary');
+      if (opts.summaryLines && opts.summaryLines.length) {
+        opts.summaryLines.forEach(function (line) {
+          const row = document.createElement('div');
+          row.textContent = line;
+          summaryEl.appendChild(row);
+        });
+      } else {
+        summaryEl.remove();
+      }
+
+      const errorEl = backdrop.querySelector('.modal-error');
+      const cancelBtn = backdrop.querySelector('[data-act="cancel"]');
       const confirmBtn = backdrop.querySelector('[data-act="confirm"]');
-      confirmBtn.textContent = opts.confirmLabel || 'Ya, lanjutkan';
+      const confirmLabel = opts.confirmLabel || 'Ya, lanjutkan';
+      confirmBtn.textContent = confirmLabel;
       confirmBtn.className = 'btn ' + (opts.danger ? 'btn-danger' : 'btn-primary');
 
+      let pending = false;
+
+      function escHandler(e) {
+        if (e.key === 'Escape' && !pending) close(false);
+      }
       function close(result) {
+        document.removeEventListener('keydown', escHandler);
         backdrop.remove();
+        moduleActiveBackdrop = null;
         resolve(result);
       }
-      backdrop.querySelector('[data-act="cancel"]').addEventListener('click', function () { close(false); });
-      backdrop.addEventListener('click', function (e) { if (e.target === backdrop) close(false); });
-      confirmBtn.addEventListener('click', function () { close(true); });
-      document.addEventListener('keydown', function escHandler(e) {
-        if (e.key === 'Escape') { document.removeEventListener('keydown', escHandler); close(false); }
+      cancelBtn.addEventListener('click', function () { if (!pending) close(false); });
+      backdrop.addEventListener('click', function (e) { if (e.target === backdrop && !pending) close(false); });
+      document.addEventListener('keydown', escHandler);
+
+      confirmBtn.addEventListener('click', function () {
+        if (pending) return; // block repeat clicks
+        if (!opts.onConfirm) { close(true); return; }
+        pending = true;
+        errorEl.hidden = true;
+        confirmBtn.disabled = true;
+        cancelBtn.disabled = true;
+        confirmBtn.textContent = opts.pendingLabel || 'Memproses...';
+        Promise.resolve().then(opts.onConfirm).then(function () {
+          close(true);
+        }).catch(function (err) {
+          pending = false;
+          confirmBtn.disabled = false;
+          cancelBtn.disabled = false;
+          confirmBtn.textContent = confirmLabel;
+          errorEl.textContent = (err && err.message) || 'Terjadi kesalahan. Coba lagi.';
+          errorEl.hidden = false;
+        });
       });
+
       document.body.appendChild(backdrop);
+      moduleActiveBackdrop = backdrop;
       confirmBtn.focus();
     });
   }

@@ -47,6 +47,30 @@
     return g === 'PASTRY' ? 'pastry' : (g === 'MAIN' ? 'main' : '');
   }
 
+  // Display-only: a "YYYY-MM-DD HH:MM:SS" DB timestamp (always UTC, per
+  // this app's UTC_TIMESTAMP() convention) rendered Indonesian-friendly in
+  // Asia/Jakarta — "21 Sep 2026 · 10:20" instead of the raw DB string.
+  // Never changes what is stored or sent back to the server.
+  var ID_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  function fmtDateTimeId(s) {
+    if (!s) return '-';
+    var str = String(s);
+    var iso = str.indexOf('T') === -1 ? str.replace(' ', 'T') : str;
+    if (iso.indexOf('Z') === -1 && iso.indexOf('+') === -1) iso += 'Z';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return str;
+    try {
+      var parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Jakarta', day: 'numeric', month: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
+      }).formatToParts(d);
+      var map = {};
+      parts.forEach(function (p) { map[p.type] = p.value; });
+      return map.day + ' ' + ID_MONTHS[parseInt(map.month, 10) - 1] + ' ' + map.year + ' · ' + map.hour + ':' + map.minute;
+    } catch (e) {
+      return str;
+    }
+  }
+
   function emptyState(text) {
     return '<div class="driver-empty">' + Amor_icon() + '<div>' + esc(text) + '</div></div>';
   }
@@ -294,15 +318,129 @@
       }
       root.innerHTML = rows.map(function (r) {
         return '' +
-          '<div class="driver-card">' +
+          '<a class="driver-card driver-card-link" href="shipment.php?id=' + r.shipment_id + '">' +
           '<div class="driver-card-head"><div>' +
-          '<div class="driver-card-title">' + esc(r.store_name) + '</div>' +
-          '<div class="driver-card-sub">' + esc(r.doc_no || '-') + ' &middot; ' + esc(r.tanggal) + '</div>' +
+          '<div class="driver-card-title">' + esc(r.store_name) + '<span class="driver-card-chevron">&rsaquo;</span></div>' +
+          '<div class="driver-card-sub">' + esc(r.doc_no || '-') + '</div>' +
           '</div><span class="driver-badge ' + groupBadgeClass(r.shipment_group) + '">' + esc(r.shipment_group) + '</span></div>' +
-          '<div class="driver-row"><span>Berangkat</span><b>' + esc(r.shipped_at) + '</b></div>' +
-          '</div>';
+          '<div class="driver-row"><span>Berangkat</span><b>' + fmtDateTimeId(r.shipped_at || r.created_at) + '</b></div>' +
+          '<div class="driver-row"><span>' + Number(r.product_count || 0) + ' produk &middot; ' + fmtNum(r.total_qty) + ' pcs</span>' +
+          '<span class="driver-badge success">Sudah Berangkat</span></div>' +
+          '</a>';
       }).join('');
     }).catch(function (err) { root.innerHTML = emptyState(err.message); });
+  }
+
+  // -----------------------------------------------------------------
+  // Detail Pengiriman (read-only shipment tracing)
+  // -----------------------------------------------------------------
+  function renderShipmentDetail(root, shipmentId) {
+    root.innerHTML = '<div class="driver-empty">Memuat...</div>';
+    Amor.apiFetch('/api/dispatch/shipments/' + shipmentId).then(function (d) {
+      var itemsHtml = d.items.map(function (it) {
+        return '<div class="driver-row"><span>' + esc(it.productName) + '</span><b>' + fmtNum(it.qty) + '</b></div>';
+      }).join('');
+
+      var receiptHtml = renderReceiptSection(d.receipt, d.summary.totalQty);
+      var timelineHtml = renderTimeline(d);
+
+      root.innerHTML =
+        '<a href="riwayat-back" class="driver-back-link" id="btn-back-riwayat">&larr; Kembali ke Riwayat</a>' +
+        '<div class="driver-card">' +
+        '<div class="driver-card-title">' + esc(d.storeName) + '</div>' +
+        '<div class="driver-row"><span>Shipment</span><b>SHP-' + d.shipmentId + '</b></div>' +
+        '<div class="driver-row"><span>No. DO</span><b>' + esc(d.docNo || '-') + '</b></div>' +
+        '<div class="driver-row"><span>Tanggal DO</span><b>' + esc(d.doTanggal || d.tanggal || '-') + '</b></div>' +
+        '<div class="driver-row"><span>Berangkat</span><b>' + fmtDateTimeId(d.shippedAt) + '</b></div>' +
+        '<div class="driver-row"><span>Driver</span><b>' + esc(d.driverName || '-') + '</b></div>' +
+        '<div class="driver-row"><span>Grup</span><span class="driver-badge ' + groupBadgeClass(d.shipmentGroup) + '">' + esc(d.shipmentGroup) + '</span></div>' +
+        '<div class="driver-row"><span>Factory asal</span><b>' + esc(d.factoryName || '-') + '</b></div>' +
+        '<div class="driver-row"><span>Status</span><span class="driver-badge success">Sudah Berangkat</span></div>' +
+        '</div>' +
+        '<div class="driver-card">' +
+        '<div class="driver-card-title" style="margin-bottom:6px;">Produk Dikirim</div>' +
+        itemsHtml +
+        '<div class="driver-row" style="border-top:1px solid var(--border);margin-top:6px;padding-top:8px;">' +
+        '<span><b>Total</b></span><b>' + d.items.length + ' Produk &middot; ' + fmtNum(d.summary.totalQty) + ' Pcs</b></div>' +
+        '</div>' +
+        receiptHtml +
+        timelineHtml;
+
+      document.getElementById('btn-back-riwayat').addEventListener('click', function (e) {
+        e.preventDefault();
+        window.location.href = 'index.php?tab=riwayat';
+      });
+    }).catch(function (err) {
+      root.innerHTML =
+        '<a href="index.php?tab=riwayat" class="driver-back-link">&larr; Kembali ke Riwayat</a>' +
+        emptyState(err.message);
+    });
+  }
+
+  function receiptStatusLabel(status) {
+    if (status === 'confirmed_ok') return 'Diterima Sesuai';
+    if (status === 'confirmed_discrepancy') return 'Ada Selisih';
+    if (status === 'verified') return 'Diverifikasi Admin';
+    return 'Belum Dikonfirmasi';
+  }
+
+  function renderReceiptSection(receipt, totalShipped) {
+    if (!receipt) {
+      return '' +
+        '<div class="driver-card">' +
+        '<div class="driver-card-title" style="margin-bottom:6px;">Penerimaan Toko</div>' +
+        '<div class="driver-row"><span>Status</span><span class="driver-badge">Belum Dikonfirmasi</span></div>' +
+        '</div>';
+    }
+    var goodQty = 0, rejectQty = 0, shortQty = 0;
+    receipt.items.forEach(function (ri) {
+      goodQty += ri.receivedGoodQty; rejectQty += ri.rejectQty; shortQty += ri.shortageQty;
+    });
+    var badgeClass = receipt.status === 'confirmed_discrepancy' ? 'danger' : 'success';
+    var reasons = receipt.items.filter(function (ri) { return ri.reason; })
+      .map(function (ri) { return esc(ri.productName) + ': ' + esc(ri.reason); }).join('; ');
+    return '' +
+      '<div class="driver-card">' +
+      '<div class="driver-card-title" style="margin-bottom:6px;">Penerimaan Toko</div>' +
+      '<div class="driver-row"><span>Dikirim</span><b>' + fmtNum(totalShipped) + '</b></div>' +
+      '<div class="driver-row"><span>Diterima Baik</span><b>' + fmtNum(goodQty) + '</b></div>' +
+      '<div class="driver-row"><span>Reject</span><b>' + fmtNum(rejectQty) + '</b></div>' +
+      '<div class="driver-row"><span>Kurang</span><b>' + fmtNum(shortQty) + '</b></div>' +
+      '<div class="driver-row"><span>Status</span><span class="driver-badge ' + badgeClass + '">' + receiptStatusLabel(receipt.status) + '</span></div>' +
+      (receipt.receiverName ? '<div class="driver-row"><span>Dikonfirmasi oleh</span><b>' + esc(receipt.receiverName) + '</b></div>' : '') +
+      (receipt.confirmedAt ? '<div class="driver-row"><span>Waktu</span><b>' + fmtDateTimeId(receipt.confirmedAt) + '</b></div>' : '') +
+      (receipt.verifiedByName ? '<div class="driver-row"><span>Diverifikasi oleh</span><b>' + esc(receipt.verifiedByName) + '</b></div>' : '') +
+      (receipt.verifiedAt ? '<div class="driver-row"><span>Waktu Verifikasi</span><b>' + fmtDateTimeId(receipt.verifiedAt) + '</b></div>' : '') +
+      (reasons ? '<div class="driver-notice" style="margin-top:8px;margin-bottom:0;">' + reasons + '</div>' : '') +
+      '</div>';
+  }
+
+  function renderTimeline(d) {
+    var steps = [];
+    if (d.claim) {
+      steps.push({ done: true, title: 'Driver Claim', sub: esc(d.claim.driverName || '-') + ' &middot; ' + fmtDateTimeId(d.claim.claimedAt) });
+    }
+    steps.push({ done: true, title: 'Berangkat', sub: 'Shipment SHP-' + d.shipmentId + ' &middot; ' + fmtDateTimeId(d.shippedAt) });
+    if (d.receipt) {
+      steps.push({ done: true, title: 'Konfirmasi Toko', sub: esc(d.receipt.receiverName || '-') + ' &middot; ' + fmtDateTimeId(d.receipt.confirmedAt) });
+      if (d.receipt.verifiedAt) {
+        steps.push({ done: true, title: 'Diverifikasi Admin', sub: esc(d.receipt.verifiedByName || '-') + ' &middot; ' + fmtDateTimeId(d.receipt.verifiedAt) });
+      } else {
+        steps.push({ done: false, title: 'Diverifikasi Admin', sub: 'Belum diverifikasi' });
+      }
+    } else {
+      steps.push({ done: false, title: 'Konfirmasi Toko', sub: 'Belum dikonfirmasi' });
+    }
+    return '' +
+      '<div class="driver-card">' +
+      '<div class="driver-card-title" style="margin-bottom:8px;">Riwayat Proses</div>' +
+      steps.map(function (s) {
+        return '<div class="driver-timeline-step' + (s.done ? ' done' : '') + '">' +
+          '<span class="driver-timeline-mark">' + (s.done ? '&#10003;' : '&#9675;') + '</span>' +
+          '<div><div class="driver-timeline-title">' + esc(s.title) + '</div><div class="driver-card-sub">' + s.sub + '</div></div>' +
+          '</div>';
+      }).join('') +
+      '</div>';
   }
 
   // -----------------------------------------------------------------
@@ -344,22 +482,52 @@
         '<button type="button" class="driver-btn success" id="btn-berangkat">KONFIRMASI BERANGKAT</button>';
 
       document.getElementById('btn-berangkat').addEventListener('click', function () {
-        Amor.confirmModal('Konfirmasi keberangkatan? Stok FG akan berkurang setelah ini.').then(function (ok) {
-          if (!ok) return;
-          var items = [];
-          root.querySelectorAll('[data-claim-id]').forEach(function (card) {
-            var claimId = parseInt(card.dataset.claimId, 10);
-            var qtyInput = card.querySelector('[data-actual]');
-            var actualQty = parseFloat(qtyInput.value) || 0;
-            items.push({ claimId: claimId, actualQty: actualQty });
-          });
-          var shipmentGroup = document.getElementById('ship-group').value;
-          Amor.apiFetch('/api/dispatch/departures', {
-            method: 'POST',
-            body: { doId: data.doId, expectedVersion: data.doVersion, shipmentGroup: shipmentGroup, items: items },
-          }).then(function (result) {
-            renderDepartureSuccess(root, data.storeName, result);
-          }).catch(function (err) { Amor.toast(err.message, 'error'); });
+        var items = [];
+        root.querySelectorAll('[data-claim-id]').forEach(function (card) {
+          var claimId = parseInt(card.dataset.claimId, 10);
+          var qtyInput = card.querySelector('[data-actual]');
+          var actualQty = parseFloat(qtyInput.value) || 0;
+          items.push({ claimId: claimId, actualQty: actualQty });
+        });
+        var shipmentGroup = document.getElementById('ship-group').value;
+        var productCount = items.filter(function (it) { return it.actualQty > 0; }).length;
+        var totalQty = items.reduce(function (a, it) { return a + it.actualQty; }, 0);
+        var departureResult = null;
+
+        // Real-UAT fix: this used to call Amor.confirmModal() with a plain
+        // STRING argument — confirmModal only ever reads opts.title/opts.body
+        // off an OPTIONS OBJECT, so that string was silently ignored and the
+        // dialog always showed the generic fallback text, on top of the
+        // missing CSS that made it render unstyled/stacked at the bottom of
+        // the page (see driver.css's own docblock for that half of the fix).
+        // onConfirm keeps the dialog open (with a "Memproses..." pending
+        // state on its own button) for the actual API call, so a second tap
+        // on "Ya, Konfirmasi Berangkat" can never fire twice.
+        Amor.confirmModal({
+          title: 'Konfirmasi Keberangkatan',
+          body: 'Pastikan jumlah barang yang dikirim sudah sesuai.\nSetelah dikonfirmasi, stok FG akan berkurang dan shipment akan dibuat.',
+          summaryLines: [data.storeName, productCount + ' produk', fmtNum(totalQty) + ' pcs'],
+          confirmLabel: 'Ya, Konfirmasi Berangkat',
+          onConfirm: function () {
+            return Amor.apiFetch('/api/dispatch/departures', {
+              method: 'POST',
+              body: { doId: data.doId, expectedVersion: data.doVersion, shipmentGroup: shipmentGroup, items: items },
+            }).then(function (result) {
+              departureResult = result;
+              // ShipmentService's own DTO carries no timestamp (and this
+              // patch must not touch ShipmentService) — read the REAL
+              // shipped_at back from the shipment we just created, via the
+              // new read-only detail endpoint, rather than ever showing the
+              // client's own clock as if it were the server's.
+              var firstId = result.shipments && result.shipments[0] ? result.shipments[0].shipmentId : null;
+              if (!firstId) return;
+              return Amor.apiFetch('/api/dispatch/shipments/' + firstId).then(function (detail) {
+                departureResult.shippedAt = detail.shippedAt;
+              }).catch(function () { /* non-fatal — success screen just omits the exact time */ });
+            });
+          },
+        }).then(function (ok) {
+          if (ok) renderDepartureSuccess(root, data.storeName, departureResult);
         });
       });
     }).catch(function (err) { root.innerHTML = emptyState(err.message); });
@@ -368,16 +536,31 @@
   function renderDepartureSuccess(root, storeName, result) {
     var totalQty = 0;
     var productCount = 0;
+    var shipmentIds = [];
+    var shippedAt = result.shippedAt || null;
     (result.shipments || []).forEach(function (sh) {
+      shipmentIds.push(sh.shipmentId);
       (sh.items || []).forEach(function (it) { totalQty += it.actualQty; productCount++; });
     });
+    // Real created shipment identity only — never a fabricated number (task's
+    // own "Do NOT invent a shipment number if the backend response does not
+    // provide one"). shipmentId IS the real, server-assigned identity;
+    // "SHP-" is purely a display prefix, same numeric id underneath.
+    var shipmentLine = shipmentIds.length === 1
+      ? 'SHP-' + shipmentIds[0]
+      : shipmentIds.map(function (id) { return 'SHP-' + id; }).join(', ');
+    var detailHref = shipmentIds.length === 1 ? 'shipment.php?id=' + shipmentIds[0] : null;
+
     root.innerHTML =
       '<div class="driver-success-box">' +
       '<div class="driver-success-icon"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg></div>' +
       '<h2>Pengiriman Berhasil Dikonfirmasi</h2>' +
       '<div class="driver-card-title">' + esc(storeName) + '</div>' +
+      (shipmentIds.length ? '<div class="driver-card-sub">Shipment: ' + esc(shipmentLine) + '</div>' : '') +
       '<div class="driver-card-sub">' + productCount + ' produk &middot; ' + fmtNum(totalQty) + ' pcs</div>' +
-      '<a class="driver-btn primary" style="margin-top:16px;" href="index.php?tab=rute">Kembali ke Rute</a>' +
+      (shippedAt ? '<div class="driver-card-sub">Waktu Berangkat: ' + fmtDateTimeId(shippedAt) + '</div>' : '') +
+      (detailHref ? '<a class="driver-btn primary" style="margin-top:16px;" href="' + detailHref + '">Lihat Detail Pengiriman</a>' : '') +
+      '<a class="driver-btn' + (detailHref ? '' : ' primary') + '" style="margin-top:8px;" href="index.php?tab=rute">Kembali ke Rute</a>' +
       '</div>';
   }
 
@@ -393,6 +576,22 @@
     var stopRoot = document.getElementById('driver-stop-app');
     if (stopRoot) {
       renderStopDetail(stopRoot, stopRoot.dataset.storeId, stopRoot.dataset.tanggal);
+    }
+    var shipmentRoot = document.getElementById('driver-shipment-app');
+    if (shipmentRoot) {
+      renderShipmentDetail(shipmentRoot, shipmentRoot.dataset.shipmentId);
+    }
+
+    var logoutBtn = document.getElementById('btn-driver-logout');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', function () {
+        Amor.confirmModal({ title: 'Logout?', body: 'Anda akan keluar dari sesi ini.', confirmLabel: 'Ya, Logout' }).then(function (ok) {
+          if (!ok) return;
+          Amor.apiFetch('/api/auth/logout', { method: 'POST' })
+            .catch(function () { /* logout errors are non-fatal — still redirect */ })
+            .then(function () { window.location.href = 'login.php'; });
+        });
+      });
     }
   });
 })();

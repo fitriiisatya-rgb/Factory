@@ -83,6 +83,9 @@ function driver_page_head(array $ui, string $active, string $title): void
     <img class="driver-topbar-logo" src="/api/assets/img/amor-logo.png" alt="Amor" width="28" height="28">
     <div class="driver-topbar-title"><?= ui_esc($title) ?></div>
     <div class="driver-topbar-user"><?= ui_esc($ui['fullName'] !== '' ? $ui['fullName'] : $ui['username']) ?></div>
+    <button type="button" id="btn-driver-logout" class="driver-topbar-logout" title="Logout" aria-label="Logout">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+    </button>
   </header>
   <main class="driver-main">
 <?php

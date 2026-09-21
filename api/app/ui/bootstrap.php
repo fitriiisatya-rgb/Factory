@@ -62,3 +62,26 @@ function ui_fmt_pct(float $numerator, float $denominator): int
     }
     return (int) round(min(100, max(0, ($numerator / $denominator) * 100)));
 }
+
+/**
+ * Display-only formatter: a DATETIME column (always stored as UTC per
+ * this app's UTC_TIMESTAMP() convention) rendered Indonesian-friendly in
+ * Asia/Jakarta — "21 Sep 2026 · 10:20" instead of the raw
+ * "2026-09-21 03:20:00". Never changes what is stored; every caller keeps
+ * writing/reading UTC exactly as before. Returns '-' for null/empty.
+ */
+function ui_fmt_datetime_id(?string $utcDatetime): string
+{
+    if ($utcDatetime === null || $utcDatetime === '') {
+        return '-';
+    }
+    try {
+        $dt = new \DateTime($utcDatetime, new \DateTimeZone('UTC'));
+        $dt->setTimezone(new \DateTimeZone('Asia/Jakarta'));
+    } catch (\Throwable $e) {
+        return $utcDatetime;
+    }
+    static $bulan = [1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'Mei', 6 => 'Jun',
+        7 => 'Jul', 8 => 'Agu', 9 => 'Sep', 10 => 'Okt', 11 => 'Nov', 12 => 'Des'];
+    return $dt->format('j') . ' ' . $bulan[(int) $dt->format('n')] . ' ' . $dt->format('Y') . ' · ' . $dt->format('H:i');
+}

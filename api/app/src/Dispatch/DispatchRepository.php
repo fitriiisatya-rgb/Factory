@@ -211,6 +211,26 @@ final class DispatchRepository
         return $stmt->fetchAll();
     }
 
+    /**
+     * Every dispatch_claim resolved INTO this shipment (a shipment can be
+     * fed by more than one claim — e.g. two products claimed separately).
+     * Used only for the read-only driver/admin shipment-detail timeline's
+     * "Driver Claim" event (earliest created_at among these); never a
+     * mutation path.
+     * @return array<int,array>
+     */
+    public function findClaimsForShipment(PDO $pdo, int $shipmentId): array
+    {
+        $stmt = $pdo->prepare(
+            'SELECT dc.*, u.full_name AS driver_full_name, u.username AS driver_username
+             FROM dispatch_claim dc
+             INNER JOIN users u ON u.user_id = dc.driver_user_id
+             WHERE dc.shipment_id = ? ORDER BY dc.created_at ASC'
+        );
+        $stmt->execute([$shipmentId]);
+        return $stmt->fetchAll();
+    }
+
     /** Resolves a claim at departure time: some qty departed, the rest auto-released — always terminal ('departed'). */
     public function resolveClaimAsDeparted(PDO $pdo, int $claimId, float $departedQty, float $releasedQty, ?int $shipmentId): void
     {
@@ -326,11 +346,19 @@ final class DispatchRepository
     // tables, filtered by shipped_by, never a separate log.
     // ------------------------------------------------------------------
 
-    /** @return array<int,array> */
+    /**
+     * @return array<int,array> each row is a shipment header PLUS
+     * product_count/total_qty aggregated from its OWN shipment_item rows
+     * (one extra correlated-subquery pair per row, not a per-row extra
+     * round-trip — see the real-UAT "Riwayat card must show 2 produk · 7
+     * pcs, not just the store/DO/date" requirement).
+     */
     public function findShipmentHistoryForDriver(PDO $pdo, int $driverUserId, int $limit = 50): array
     {
         $stmt = $pdo->prepare(
-            "SELECT sh.*, s.canonical_name AS store_name, o.doc_no
+            "SELECT sh.*, s.canonical_name AS store_name, o.doc_no,
+                    (SELECT COUNT(*) FROM shipment_item si WHERE si.shipment_id = sh.shipment_id) AS product_count,
+                    (SELECT COALESCE(SUM(si.qty), 0) FROM shipment_item si WHERE si.shipment_id = sh.shipment_id) AS total_qty
              FROM shipment sh
              INNER JOIN store s ON s.store_id = sh.store_id
              LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
@@ -338,5 +366,35 @@ final class DispatchRepository
         );
         $stmt->execute([$driverUserId]);
         return $stmt->fetchAll();
+    }
+
+    /**
+     * Real (actual-shipped) product/qty totals per store, for THIS driver,
+     * on THIS date — aggregated across every shipment(s) that store may
+     * have (a route stop can legitimately have more than one, e.g. a
+     * MAIN + PASTRY split). This is the source of truth for a DEPARTED
+     * route stop's summary — never the driver's now-resolved dispatch_claim
+     * rows, which is the real-UAT bug this method fixes (see
+     * DispatchService::myRoute()'s own docblock for the full root-cause
+     * writeup: active_qty on a 'departed' claim is reset to 0, so summing
+     * claims after departure always reads 0/0 regardless of what actually
+     * shipped).
+     * @return array<int,array{productCount:int,totalQty:float}> keyed by store_id
+     */
+    public function findDepartedTotalsForDriver(PDO $pdo, int $driverUserId, string $tanggal): array
+    {
+        $stmt = $pdo->prepare(
+            "SELECT sh.store_id, COUNT(DISTINCT si.product_id) AS product_count, COALESCE(SUM(si.qty), 0) AS total_qty
+             FROM shipment sh
+             INNER JOIN shipment_item si ON si.shipment_id = sh.shipment_id
+             WHERE sh.shipped_by = ? AND sh.tanggal = ? AND sh.status = 'active'
+             GROUP BY sh.store_id"
+        );
+        $stmt->execute([$driverUserId, $tanggal]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $r) {
+            $out[(int) $r['store_id']] = ['productCount' => (int) $r['product_count'], 'totalQty' => (float) $r['total_qty']];
+        }
+        return $out;
     }
 }

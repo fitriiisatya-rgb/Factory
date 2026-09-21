@@ -120,6 +120,21 @@ final class DispatchController
         Response::json($repo->findShipmentHistoryForDriver(Database::pdo(), $userId));
     }
 
+    /**
+     * GET /api/dispatch/shipments/{id} — read-only shipment detail/tracing
+     * for the driver who shipped it (or ADMIN). See
+     * DispatchService::shipmentDetail()'s own docblock for the
+     * authorization rule (403 FORBIDDEN for anyone else).
+     */
+    public static function shipmentDetail(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::DRIVER_ROLES);
+        $isAdmin = in_array('ADMIN', Auth::currentRoles(), true);
+        $shipmentId = (int) $request->routeParams['id'];
+        $service = new DispatchService(Database::pdo());
+        Response::json($service->shipmentDetail($shipmentId, $userId, $isAdmin));
+    }
+
     private static function requireDate(?string $s): string
     {
         $s = (string) $s;
