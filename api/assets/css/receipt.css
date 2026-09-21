@@ -81,13 +81,38 @@ html, body.rc-body {
 .rc-evidence-hint { font-size: .72rem; color: var(--rc-muted); margin: -2px 0 6px; }
 .rc-evidence-input { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px dashed var(--rc-border); font-size: .82rem; background: #fafaf8; }
 .rc-evidence-error { color: var(--rc-danger); font-size: .78rem; margin-top: 4px; }
-.rc-evidence-previews { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.rc-evidence-thumb { position: relative; width: 72px; height: 72px; border-radius: 8px; overflow: hidden; border: 1px solid var(--rc-border); }
-.rc-evidence-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.rc-evidence-remove {
-  position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; border: none;
-  background: rgba(0, 0, 0, .65); color: #fff; font-size: .85rem; line-height: 1; cursor: pointer; padding: 0;
+
+/*
+ * Real-UAT mobile fix: the evidence preview must always render as small,
+ * bounded thumbnails — never a raw image at natural resolution taking
+ * over the page. `.rc-evidence-previews img` is a defensive ceiling for
+ * any image under this container; the more specific `.rc-evidence-thumb
+ * img` rule below is what actually sizes each thumbnail and always wins.
+ */
+.rc-evidence-previews img { max-width: 100%; height: auto; }
+.rc-evidence-previews {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 96px);
+  gap: 8px;
+  margin-top: 8px;
+  max-width: 100%;
 }
+.rc-evidence-thumb {
+  position: relative; width: 96px; height: 96px; max-width: 96px; max-height: 96px;
+  border-radius: 8px; overflow: hidden; border: 1px solid var(--rc-border); background: #f0ede6;
+}
+.rc-evidence-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: pointer; }
+.rc-evidence-remove {
+  position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; border-radius: 50%; border: none;
+  background: rgba(0, 0, 0, .65); color: #fff; font-size: .9rem; line-height: 1; cursor: pointer; padding: 0;
+}
+
+/* Tap-to-enlarge overlay (receipt.js) — bounded well under viewport size, never full natural resolution. */
+.rc-evidence-lightbox {
+  position: fixed; inset: 0; background: rgba(20, 15, 8, .82); z-index: 1000;
+  display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box;
+}
+.rc-evidence-lightbox img { max-width: 90vw; max-height: 80vh; border-radius: 10px; display: block; }
 
 /*
  * Real-UAT mobile fix: on a narrow phone viewport, a 5-column receipt

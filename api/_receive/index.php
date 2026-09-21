@@ -26,6 +26,13 @@ function rc_esc(string $s): string
     return htmlspecialchars($s, ENT_QUOTES);
 }
 
+// Cache-busting for receipt.css/receipt.js, same pattern as
+// DRIVER_ASSET_VERSION in _driver-uat/bootstrap.php — bump this string
+// whenever either asset changes so a real device serving a stale cached
+// copy always fetches the new one instead of an old giant-preview/
+// stuck-button version.
+const RECEIPT_ASSET_VERSION = '20260921-photo-submit-ux-hotfix';
+
 try {
     Config::load();
 } catch (\Throwable $e) {
@@ -78,7 +85,7 @@ header('Content-Type: text/html; charset=utf-8');
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>Konfirmasi Penerimaan Barang</title>
-<link rel="stylesheet" href="/api/assets/css/receipt.css">
+<link rel="stylesheet" href="/api/assets/css/receipt.css?v=<?= RECEIPT_ASSET_VERSION ?>">
 </head>
 <body class="rc-body">
 <div class="rc-shell">
@@ -99,7 +106,7 @@ header('Content-Type: text/html; charset=utf-8');
     window.RECEIPT_VIEW = <?= json_encode($view, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
     window.RECEIPT_FOCUS_SHIPMENT_ID = <?= json_encode($focusShipmentId) ?>;
   </script>
-  <script src="/api/assets/js/receipt.js"></script>
+  <script src="/api/assets/js/receipt.js?v=<?= RECEIPT_ASSET_VERSION ?>"></script>
   <?php endif; ?>
 </div>
 </body>

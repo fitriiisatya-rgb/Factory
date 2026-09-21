@@ -2060,7 +2060,13 @@ runTest('MOBILE-02 the Store Receipt page JS renders a photo upload control usab
     $js = curl_exec($ch);
     curl_close($ch);
     expect(str_contains($js, 'accept="image/*"'), 'MOBILE-02: expected an image-only file input');
-    expect(str_contains($js, 'capture='), 'MOBILE-02: expected a capture attribute so a mobile browser offers the camera directly');
+    // Real-UAT photo/submit hotfix: `capture` combined with `multiple` is a
+    // documented cross-browser (notably iOS Safari) quirk that can make the
+    // file input behave erratically. It is deliberately NOT present so the
+    // native OS picker (camera + gallery + multi-select) handles it, which
+    // still lets a mobile user tap "Take Photo" — just via the native
+    // action sheet instead of a forced camera launch.
+    expect(!str_contains($js, 'capture='), 'MOBILE-02: expected NO capture attribute (capture+multiple is an iOS Safari compatibility hazard — the native picker offers the camera anyway)');
     expect(str_contains($js, 'multiple'), 'MOBILE-02: expected the file input to allow choosing more than one photo');
 });
 

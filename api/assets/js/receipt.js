@@ -107,7 +107,11 @@
       evidenceField.innerHTML =
         '<label>Bukti Foto</label>' +
         '<div class="rc-evidence-hint">Wajib jika ada barang reject/rusak atau kurang.</div>' +
-        '<input type="file" accept="image/*" capture="environment" multiple class="rc-evidence-input">' +
+        // No `capture` attribute: combined with `multiple` this is a known
+        // cross-browser (notably iOS Safari) quirk that can make the file
+        // input behave erratically. Leaving it off still lets the native
+        // picker offer "Take Photo" alongside the gallery on iOS/Android.
+        '<input type="file" accept="image/*" multiple class="rc-evidence-input">' +
         '<div class="rc-evidence-error" style="display:none;"></div>' +
         '<div class="rc-evidence-previews"></div>';
       card.appendChild(evidenceField);
@@ -120,6 +124,16 @@
         evidenceErrorEl.style.display = msg ? 'block' : 'none';
       }
 
+      function openLightbox(src) {
+        var overlay = document.createElement('div');
+        overlay.className = 'rc-evidence-lightbox';
+        var img = document.createElement('img');
+        img.src = src;
+        overlay.appendChild(img);
+        overlay.addEventListener('click', function () { overlay.remove(); });
+        document.body.appendChild(overlay);
+      }
+
       function renderPreviews() {
         previewsEl.innerHTML = '';
         selectedFiles.forEach(function (file, i) {
@@ -127,10 +141,14 @@
           thumb.className = 'rc-evidence-thumb';
           var img = document.createElement('img');
           img.src = URL.createObjectURL(file);
+          img.title = 'Ketuk untuk memperbesar';
+          img.addEventListener('click', function () { openLightbox(img.src); });
           thumb.appendChild(img);
           var removeBtn = document.createElement('button');
           removeBtn.type = 'button';
           removeBtn.className = 'rc-evidence-remove';
+          removeBtn.title = 'Hapus foto';
+          removeBtn.setAttribute('aria-label', 'Hapus foto');
           removeBtn.textContent = '×';
           removeBtn.addEventListener('click', function () {
             selectedFiles.splice(i, 1);
@@ -139,6 +157,11 @@
           thumb.appendChild(removeBtn);
           previewsEl.appendChild(thumb);
         });
+        // Removing a photo can turn a valid discrepancy receipt back into
+        // an invalid one (evidence_count back to 0) — re-run validate() on
+        // every re-render so the submit button reflects it immediately,
+        // not just whenever the file input's own 'change' last fired.
+        validate();
       }
 
       evidenceInput.addEventListener('change', function () {
