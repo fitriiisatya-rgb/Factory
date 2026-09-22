@@ -152,9 +152,19 @@ final class ProductionService
             if ($actualQty < 0) {
                 throw new ApiException(400, 'INVALID_ACTUAL_QTY', 'actualQty cannot be negative');
             }
-            $notes = isset($line['notes']) ? (string) $line['notes'] : null;
             $item = $existingItems[$productId];
-            $this->repo->updateItemActual($this->pdo, (int) $item['production_item_id'], (float) $item['target'], $actualQty, $notes);
+            // rejectQty is OPTIONAL per line — if a caller doesn't send it
+            // (e.g. an older cached client), the existing stored reject
+            // value is kept as-is rather than silently reset to 0. This is
+            // deliberately different from actualQty's own "always required"
+            // handling: reject only just gained a write path with this
+            // task, so nothing may ever assume every caller already sends it.
+            $rejectQty = isset($line['rejectQty']) ? (float) $line['rejectQty'] : (float) $item['reject'];
+            if ($rejectQty < 0) {
+                throw new ApiException(400, 'INVALID_REJECT_QTY', 'rejectQty cannot be negative');
+            }
+            $notes = isset($line['notes']) ? (string) $line['notes'] : null;
+            $this->repo->updateItemActual($this->pdo, (int) $item['production_item_id'], (float) $item['target'], $actualQty, $rejectQty, $notes);
             $touched++;
         }
 
@@ -334,6 +344,7 @@ final class ProductionService
         $items = [];
         $totalTarget = 0.0;
         $totalActual = 0.0;
+        $totalReject = 0.0;
         $totalRemaining = 0.0;
         $totalOverproduction = 0.0;
         $anyTargetChanged = false;
@@ -349,6 +360,7 @@ final class ProductionService
             }
             $totalTarget += $dto['liveTarget'];
             $totalActual += $dto['actual'];
+            $totalReject += $dto['reject'];
             $totalRemaining += $dto['remaining'];
             $totalOverproduction += $dto['overproduction'];
             $displayStatusCounts[$dto['displayStatusCode']]++;
@@ -378,6 +390,7 @@ final class ProductionService
             'summary' => [
                 'targetProduksi' => $totalTarget,
                 'actualProduksi' => $totalActual,
+                'rejectProduksi' => $totalReject,
                 'sisaProduksi' => $totalRemaining,
                 'overproduction' => $totalOverproduction,
                 'productCount' => count($liveTargets),
@@ -399,6 +412,7 @@ final class ProductionService
     private function buildItemDto(array $item, float $liveTarget): array
     {
         $actual = (float) $item['aktual'];
+        $reject = (float) $item['reject'];
         $snapshot = (float) $item['target'];
         $remaining = max(0.0, $liveTarget - $actual);
         $overproduction = max(0.0, $actual - $liveTarget);
@@ -409,6 +423,7 @@ final class ProductionService
             'targetSnapshot' => $snapshot,
             'liveTarget' => $liveTarget,
             'actual' => $actual,
+            'reject' => $reject,
             'remaining' => $remaining,
             'overproduction' => $overproduction,
             // Internal DB status (production_item.status, 'sesuai'/'tidak_sesuai')

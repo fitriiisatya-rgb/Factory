@@ -239,6 +239,56 @@ final class SpecialOrderService
         return $this->getOrder($orderId);
     }
 
+    /**
+     * POST /api/special-orders/{id}/actual — records Actual Produksi
+     * (good output) + Reject Produksi per item, for Task per Divisi.
+     * Only makes sense once the order has actually reached Production
+     * (task's own item field list separates Aktual/Reject from the
+     * order's own draft/confirm/send lifecycle). Snapshot semantics —
+     * every write REPLACES the item's stored value, matching
+     * ProductionRepository::updateItemActual()'s own convention exactly,
+     * so the two production-actual write paths in this app never disagree
+     * on what "saving actual" means.
+     *
+     * @param array<int,array{itemId:int,aktualProduksi:float,rejectProduksi:float}> $items
+     */
+    public function updateItemsActual(int $orderId, int $expectedVersion, array $items, int $userId, ?string $requestId): array
+    {
+        $order = $this->repo->lockOrderById($this->pdo, $orderId);
+        if ($order === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'Special order not found');
+        }
+        if (!in_array($order['status'], self::PRODUCTION_STATUSES, true)) {
+            throw new ApiException(400, 'INVALID_STATUS', 'Actual/Reject Produksi hanya bisa diisi setelah pesanan dikirim ke Produksi');
+        }
+        if ($items === []) {
+            throw new ApiException(400, 'ITEMS_REQUIRED', 'At least one item is required');
+        }
+
+        $touched = 0;
+        foreach ($items as $i => $line) {
+            $itemId = (int) ($line['itemId'] ?? 0);
+            if ($itemId <= 0) {
+                throw new ApiException(400, 'INVALID_ITEM_ID', "Item #{$i}: itemId is required");
+            }
+            $aktual = (float) ($line['aktualProduksi'] ?? 0);
+            $reject = (float) ($line['rejectProduksi'] ?? 0);
+            if ($aktual < 0 || $reject < 0) {
+                throw new ApiException(400, 'INVALID_QTY', "Item #{$i}: aktualProduksi/rejectProduksi cannot be negative");
+            }
+            $ok = $this->repo->updateItemActualProduksi($this->pdo, $orderId, $itemId, $aktual, $reject);
+            if (!$ok) {
+                throw new ApiException(400, 'UNKNOWN_ITEM_FOR_ORDER', "Item #{$i}: itemId {$itemId} does not belong to this order");
+            }
+            $touched++;
+        }
+
+        Versioning::update($this->pdo, 'special_order', 'special_order_id', $orderId, $expectedVersion, 'status = status', []);
+        Audit::write($this->pdo, $requestId, $userId, 'special_order.actual_updated', 'special_order', (string) $orderId, 'ok', $expectedVersion, $expectedVersion + 1, ['itemsTouched' => $touched]);
+
+        return $this->getOrder($orderId);
+    }
+
     public function cancelOrder(int $orderId, int $expectedVersion, string $reason, int $userId, ?string $requestId): array
     {
         if (trim($reason) === '') {
@@ -515,6 +565,8 @@ final class SpecialOrderService
             'charge' => (float) $it['charge'],
             'subtotal' => (float) $it['subtotal'],
             'specialNote' => $it['special_note'],
+            'aktualProduksi' => (float) $it['aktual_produksi'],
+            'rejectProduksi' => (float) $it['reject_produksi'],
         ], $items);
 
         $divisionNames = array_values(array_unique(array_column($itemDtos, 'divisionName')));

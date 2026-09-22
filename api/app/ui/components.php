@@ -182,6 +182,7 @@ function ui_produksi_tabs(string $active, string $tanggal, int $factoryId): stri
     $tabs = [
         'produksi' => 'Ceklis Produksi',
         'produksi-demand' => 'Order Masuk / Demand Tambahan',
+        'produksi-task-per-divisi' => 'Task per Divisi',
     ];
     $html = '<div class="filter-bar"><div class="btn-group">';
     foreach ($tabs as $key => $label) {

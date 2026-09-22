@@ -107,6 +107,26 @@ final class SpecialOrderController
         });
     }
 
+    /**
+     * POST /api/special-orders/{id}/actual — Task per Divisi's Actual/
+     * Reject Produksi entry for special-order items. Uses
+     * STATUS_UPDATE_ROLES (includes PRODUCTION), matching updateStatus()'s
+     * own role set — this is the same production-floor action class.
+     */
+    public static function updateItemsActual(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::STATUS_UPDATE_ROLES);
+        $id = (int) $request->routeParams['id'];
+        $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
+        $items = (array) $request->input('items', []);
+
+        Idempotency::handle($request, 'POST /api/special-orders/{id}/actual', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $items) {
+            $service = new SpecialOrderService($pdo);
+            $dto = $service->updateItemsActual($id, $expectedVersion, $items, $userId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order', 'recordKey' => (string) $id];
+        });
+    }
+
     public static function cancel(Request $request): void
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);

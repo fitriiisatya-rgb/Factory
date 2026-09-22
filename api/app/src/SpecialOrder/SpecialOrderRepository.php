@@ -250,6 +250,24 @@ final class SpecialOrderRepository
     }
 
     /**
+     * Snapshot semantics, same convention as ProductionRepository::
+     * updateItemActual() — $aktual/$reject each REPLACE the stored value.
+     * The WHERE clause scopes by BOTH special_order_item_id AND
+     * special_order_id so a caller can never accidentally write another
+     * order's item by guessing an id; rowCount()>0 is the caller's signal
+     * that the item genuinely belongs to this order.
+     */
+    public function updateItemActualProduksi(PDO $pdo, int $orderId, int $itemId, float $aktual, float $reject): bool
+    {
+        $stmt = $pdo->prepare(
+            'UPDATE special_order_item SET aktual_produksi = ?, reject_produksi = ?
+             WHERE special_order_item_id = ? AND special_order_id = ?'
+        );
+        $stmt->execute([$aktual, $reject, $itemId, $orderId]);
+        return $stmt->rowCount() > 0;
+    }
+
+    /**
      * @param array{sourceType?:string,status?:string,tanggal?:string,storeId?:int,divisionId?:int,factoryId?:int} $filters
      * @return array<int,array>
      */
@@ -304,9 +322,10 @@ final class SpecialOrderRepository
     public function findProductionDemandItems(PDO $pdo, array $filters): array
     {
         $sql = "SELECT soi.special_order_item_id, soi.item_type, soi.item_name_snapshot, soi.qty, soi.charge,
+                       soi.aktual_produksi, soi.reject_produksi,
                        soi.special_note, soi.division_id, d.name AS division_name,
                        d.factory_id AS item_factory_id, f.name AS item_factory_name, soi.product_id,
-                       so.special_order_id, so.order_no, so.source_type, so.status, so.order_date,
+                       so.special_order_id, so.order_no, so.source_type, so.status, so.order_date, so.version AS order_version,
                        so.required_date, so.required_time, so.store_id, s.canonical_name AS store_name,
                        so.customer_name, so.non_store_source
                 FROM special_order_item soi

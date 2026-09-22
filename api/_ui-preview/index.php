@@ -30,6 +30,7 @@ $pages = [
     'pesanan-non-toko-detail' => ['title' => 'Pesanan Non-Toko', 'subtitle' => 'Detail satu pesanan non-toko.'],
     'produksi' => ['title' => 'Produksi', 'subtitle' => 'Kelola dan pantau realisasi produksi harian.'],
     'produksi-demand' => ['title' => 'Produksi', 'subtitle' => 'Order Masuk / Demand Tambahan dari Pesanan Khusus Toko dan Pesanan Non-Toko.'],
+    'produksi-task-per-divisi' => ['title' => 'Produksi', 'subtitle' => 'Task per Divisi — target, realisasi, dan reject produksi lintas sumber demand.'],
     'fg-packing' => ['title' => 'FG & Packing', 'subtitle' => 'Verifikasi hasil produksi dan pantau proses packing.'],
     'delivery-order' => ['title' => 'Delivery Order', 'subtitle' => 'Kelola DO toko, dokumen pengiriman, dan fulfillment.'],
     'delivery-order-detail' => ['title' => 'Delivery Order', 'subtitle' => 'Detail dokumen dan pengiriman bertahap.'],
@@ -48,7 +49,7 @@ if (!isset($pages[$page])) {
 $activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order'
     : (str_starts_with($page, 'konfirmasi-toko') ? 'konfirmasi-toko'
     : ((str_starts_with($page, 'pesanan-khusus-toko') || str_starts_with($page, 'pesanan-non-toko')) ? 'pesanan-toko'
-    : ($page === 'produksi-demand' ? 'produksi' : $page)));
+    : (str_starts_with($page, 'produksi-') ? 'produksi' : $page)));
 
 // Shared date/factory selection every page can use as its default filter
 // state, so the topbar's date/factory chips stay meaningful app-wide.

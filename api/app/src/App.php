@@ -18,6 +18,7 @@ use Amor\Api\Controllers\ProductController;
 use Amor\Api\Controllers\ProductionController;
 use Amor\Api\Controllers\ReceiptController;
 use Amor\Api\Controllers\ShipmentEmailController;
+use Amor\Api\Controllers\ProductionTaskController;
 use Amor\Api\Controllers\SpecialOrderController;
 use Amor\Api\Controllers\StoreController;
 use Amor\Api\Controllers\UserController;
@@ -155,7 +156,10 @@ final class App
         $router->post('/api/special-orders/{id}/confirm', [SpecialOrderController::class, 'confirm']);
         $router->post('/api/special-orders/{id}/send-to-production', [SpecialOrderController::class, 'sendToProduction']);
         $router->post('/api/special-orders/{id}/status', [SpecialOrderController::class, 'updateStatus']);
+        $router->post('/api/special-orders/{id}/actual', [SpecialOrderController::class, 'updateItemsActual']);
         $router->post('/api/special-orders/{id}/cancel', [SpecialOrderController::class, 'cancel']);
+        $router->get('/api/production-tasks/factory', [ProductionTaskController::class, 'forFactory']);
+        $router->get('/api/production-tasks', [ProductionTaskController::class, 'forDivision']);
 
         // User / Driver Account Management (ADMIN-only, normal session/CSRF/Idempotency-Key —
         // same guards as every other mutating route, nothing special-cased).

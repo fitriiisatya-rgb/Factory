@@ -94,7 +94,7 @@ function ui_status_color(string $label): string
     static $warning = [
         'Dibuka Kembali', 'Sebagian Terverifikasi', 'Belum Sesuai Target', 'Sebagian Dikirim',
         'Sudah Preprint', 'Selisih', 'Sebagian Dipacking', 'Ada Selisih', 'Menunggu Konfirmasi',
-        'Email Toko Belum Diisi', 'Dikirim ke Produksi', 'Sedang Diproduksi',
+        'Email Toko Belum Diisi', 'Dikirim ke Produksi', 'Sedang Diproduksi', 'Belum Selesai',
     ];
     static $success = [
         'Sudah Disubmit', 'Sesuai Target', 'Sesuai Produksi', 'Selesai Dipacking', 'Terkirim Penuh',
@@ -124,5 +124,23 @@ function ui_status_color(string $label): string
 function ui_badge(string $label): string
 {
     $color = ui_status_color($label);
+    return '<span class="badge badge-' . $color . '">' . ui_esc($label) . '</span>';
+}
+
+/**
+ * Task per Divisi's demand-SOURCE badge (distinct axis from a status
+ * badge — a task's source never changes, unlike its status) — matches
+ * the approved mockup's legend colors exactly: PO Reguler=blue,
+ * Pesanan Khusus=gold, Pesanan Non-Toko=green, Replacement Reject=red.
+ */
+function ui_task_source_badge(string $source, string $label): string
+{
+    $color = match ($source) {
+        'po_reguler' => 'primary',
+        'pesanan_khusus' => 'warning',
+        'pesanan_non_toko' => 'success',
+        'replacement_reject' => 'danger',
+        default => 'neutral',
+    };
     return '<span class="badge badge-' . $color . '">' . ui_esc($label) . '</span>';
 }

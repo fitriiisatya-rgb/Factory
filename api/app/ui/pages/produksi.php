@@ -175,7 +175,7 @@ if ($runIdParam !== null) {
 
   <form id="run-form" data-run-id="<?= (int) $runDetail['productionRunId'] ?>" data-expected-version="<?= (int) $runDetail['version'] ?>">
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Produk</th><th class="num">Target</th><th class="num">Actual</th><th>Status</th><th>Catatan</th></tr></thead>
+    <thead><tr><th>Produk</th><th class="num">Target</th><th class="num">Actual</th><th class="num">Reject Produksi</th><th>Status</th><th>Catatan</th></tr></thead>
     <tbody>
     <?php foreach ($runDetail['items'] as $it): ?>
     <tr>
@@ -185,6 +185,11 @@ if ($runIdParam !== null) {
         <?php if ($editable): ?>
         <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="actual" value="<?= ui_fmt_num($it['actual']) ?>">
         <?php else: ?><?= ui_fmt_num($it['actual']) ?><?php endif; ?>
+      </td>
+      <td class="num">
+        <?php if ($editable): ?>
+        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_fmt_num($it['reject']) ?>">
+        <?php else: ?><?= ui_fmt_num($it['reject']) ?><?php endif; ?>
       </td>
       <td><?= ui_badge($it['displayStatusLabel']) ?></td>
       <td><?php if ($editable): ?><input type="text" style="width:9rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="keterangan" value="<?= ui_esc((string) ($it['keterangan'] ?? '')) ?>"><?php else: ?><?= ui_esc((string) ($it['keterangan'] ?? '')) ?><?php endif; ?></td>
@@ -214,8 +219,14 @@ if ($runIdParam !== null) {
     var items = [];
     document.querySelectorAll('#run-form [data-field="actual"]').forEach(function (input) {
       var pid = input.getAttribute('data-product-id');
+      var rejectInput = document.querySelector('#run-form [data-field="reject"][data-product-id="' + pid + '"]');
       var notesInput = document.querySelector('#run-form [data-field="keterangan"][data-product-id="' + pid + '"]');
-      items.push({ productId: parseInt(pid, 10), actualQty: parseFloat(input.value || '0'), keterangan: notesInput ? notesInput.value : '' });
+      items.push({
+        productId: parseInt(pid, 10),
+        actualQty: parseFloat(input.value || '0'),
+        rejectQty: parseFloat(rejectInput ? (rejectInput.value || '0') : '0'),
+        keterangan: notesInput ? notesInput.value : '',
+      });
     });
     return items;
   }

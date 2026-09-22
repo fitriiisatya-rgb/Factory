@@ -169,12 +169,18 @@ final class ProductionRepository
         $stmt->execute([$targetSnapshot, $productionItemId]);
     }
 
-    /** Snapshot semantics: $aktual REPLACES the stored value, never added to it. */
-    public function updateItemActual(PDO $pdo, int $productionItemId, float $targetSnapshot, float $aktual, ?string $keterangan): void
+    /**
+     * Snapshot semantics: $aktual and $reject each REPLACE their stored
+     * value, never added to it. $reject writes to production_item.reject
+     * — a column that has existed since the original 0001 schema but had
+     * no write path anywhere until this task (see migration 0011's own
+     * docblock); confirmed by audit, not a new column.
+     */
+    public function updateItemActual(PDO $pdo, int $productionItemId, float $targetSnapshot, float $aktual, float $reject, ?string $keterangan): void
     {
         $status = $aktual >= $targetSnapshot && $targetSnapshot > 0 ? 'sesuai' : 'tidak_sesuai';
-        $stmt = $pdo->prepare('UPDATE production_item SET aktual = ?, keterangan = ?, status = ? WHERE production_item_id = ?');
-        $stmt->execute([$aktual, $keterangan, $status, $productionItemId]);
+        $stmt = $pdo->prepare('UPDATE production_item SET aktual = ?, reject = ?, keterangan = ?, status = ? WHERE production_item_id = ?');
+        $stmt->execute([$aktual, $reject, $keterangan, $status, $productionItemId]);
     }
 
     /**
