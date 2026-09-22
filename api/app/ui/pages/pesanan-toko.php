@@ -80,6 +80,7 @@ $history = $pdo->prepare('SELECT * FROM po_batch WHERE factory_id = ? ORDER BY t
 $history->execute([$uiFactoryId]);
 $historyRows = $history->fetchAll();
 ?>
+<?= ui_pesanan_tabs('pesanan-toko', $uiTanggal, $uiFactoryId) ?>
 <div class="filter-bar">
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;">
     <input type="hidden" name="page" value="pesanan-toko">

@@ -24,7 +24,12 @@ require __DIR__ . '/../app/ui/layout.php';
 $pages = [
     'dashboard' => ['title' => 'Dashboard Operasional', 'subtitle' => 'Pantau proses operasional factory hari ini.'],
     'pesanan-toko' => ['title' => 'Pesanan Toko', 'subtitle' => 'Kelola PO awal, tambahan/revisi, dan status permintaan toko.'],
+    'pesanan-khusus-toko' => ['title' => 'Pesanan Khusus Toko', 'subtitle' => 'Pesanan tambahan dari toko di luar PO reguler.'],
+    'pesanan-khusus-toko-detail' => ['title' => 'Pesanan Khusus Toko', 'subtitle' => 'Detail satu pesanan khusus toko.'],
+    'pesanan-non-toko' => ['title' => 'Pesanan Non-Toko', 'subtitle' => 'Pesanan dari konsumen langsung, CS, sales executive, atau umum.'],
+    'pesanan-non-toko-detail' => ['title' => 'Pesanan Non-Toko', 'subtitle' => 'Detail satu pesanan non-toko.'],
     'produksi' => ['title' => 'Produksi', 'subtitle' => 'Kelola dan pantau realisasi produksi harian.'],
+    'produksi-demand' => ['title' => 'Produksi', 'subtitle' => 'Order Masuk / Demand Tambahan dari Pesanan Khusus Toko dan Pesanan Non-Toko.'],
     'fg-packing' => ['title' => 'FG & Packing', 'subtitle' => 'Verifikasi hasil produksi dan pantau proses packing.'],
     'delivery-order' => ['title' => 'Delivery Order', 'subtitle' => 'Kelola DO toko, dokumen pengiriman, dan fulfillment.'],
     'delivery-order-detail' => ['title' => 'Delivery Order', 'subtitle' => 'Detail dokumen dan pengiriman bertahap.'],
@@ -40,7 +45,10 @@ $page = (string) ($_GET['page'] ?? 'dashboard');
 if (!isset($pages[$page])) {
     $page = 'dashboard';
 }
-$activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order' : (str_starts_with($page, 'konfirmasi-toko') ? 'konfirmasi-toko' : $page);
+$activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order'
+    : (str_starts_with($page, 'konfirmasi-toko') ? 'konfirmasi-toko'
+    : ((str_starts_with($page, 'pesanan-khusus-toko') || str_starts_with($page, 'pesanan-non-toko')) ? 'pesanan-toko'
+    : ($page === 'produksi-demand' ? 'produksi' : $page)));
 
 // Shared date/factory selection every page can use as its default filter
 // state, so the topbar's date/factory chips stay meaningful app-wide.

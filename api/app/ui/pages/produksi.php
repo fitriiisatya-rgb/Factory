@@ -81,6 +81,7 @@ if ($runIdParam !== null) {
     }
 }
 ?>
+<?= ui_produksi_tabs('produksi', $uiTanggal, $uiFactoryId) ?>
 <div class="filter-bar">
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;">
     <input type="hidden" name="page" value="produksi">

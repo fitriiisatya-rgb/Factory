@@ -67,6 +67,20 @@ function ui_email_status_label(?string $status): string
     ][$status ?? ''] ?? 'Belum Dikirim';
 }
 
+/** special_order.status (migration 0010 — Pesanan Khusus Toko / Pesanan Non-Toko). */
+function ui_special_order_status_label(string $status): string
+{
+    return [
+        'draft' => 'Draft',
+        'confirmed' => 'Dikonfirmasi',
+        'sent_to_production' => 'Dikirim ke Produksi',
+        'in_production' => 'Sedang Diproduksi',
+        'ready' => 'Siap',
+        'completed' => 'Selesai',
+        'cancelled' => 'Dibatalkan',
+    ][$status] ?? ucfirst($status);
+}
+
 /**
  * Maps an already-Indonesian label (from any *StatusLabel field the
  * services compute, or from the maps above) to one of the 5 badge colors
@@ -80,11 +94,11 @@ function ui_status_color(string $label): string
     static $warning = [
         'Dibuka Kembali', 'Sebagian Terverifikasi', 'Belum Sesuai Target', 'Sebagian Dikirim',
         'Sudah Preprint', 'Selisih', 'Sebagian Dipacking', 'Ada Selisih', 'Menunggu Konfirmasi',
-        'Email Toko Belum Diisi',
+        'Email Toko Belum Diisi', 'Dikirim ke Produksi', 'Sedang Diproduksi',
     ];
     static $success = [
         'Sudah Disubmit', 'Sesuai Target', 'Sesuai Produksi', 'Selesai Dipacking', 'Terkirim Penuh',
-        'Terverifikasi FG', 'Aktif', 'Terkirim', 'Diterima Sesuai', 'Diverifikasi Admin',
+        'Terverifikasi FG', 'Aktif', 'Terkirim', 'Diterima Sesuai', 'Diverifikasi Admin', 'Siap', 'Selesai',
     ];
     static $danger = ['Overproduction', 'Dibatalkan', 'Error', 'Melebihi Produksi', 'Packing Melebihi FG', 'Nonaktif', 'Gagal'];
 

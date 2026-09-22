@@ -18,6 +18,7 @@ use Amor\Api\Controllers\ProductController;
 use Amor\Api\Controllers\ProductionController;
 use Amor\Api\Controllers\ReceiptController;
 use Amor\Api\Controllers\ShipmentEmailController;
+use Amor\Api\Controllers\SpecialOrderController;
 use Amor\Api\Controllers\StoreController;
 use Amor\Api\Controllers\UserController;
 
@@ -141,6 +142,20 @@ final class App
         // Phase 5.5 finalization — automatic Bakery email / Digital Surat
         // Jalan / Admin resend (ADMIN-only, normal session/CSRF).
         $router->post('/api/admin/shipments/{shipmentId}/email/resend', [ShipmentEmailController::class, 'resend']);
+
+        // Migration 0010 — Pesanan Khusus Toko / Pesanan Non-Toko + Production
+        // routing. ADMIN/PPIC create+mutate; any authenticated role (incl.
+        // PRODUCTION) can read the list/detail/production-inbox views.
+        // Never touches po_batch/po_item/po_store_item (PO Reguler Toko).
+        $router->get('/api/special-orders/catalog', [SpecialOrderController::class, 'catalog']);
+        $router->get('/api/special-orders/production-inbox', [SpecialOrderController::class, 'productionInbox']);
+        $router->get('/api/special-orders', [SpecialOrderController::class, 'index']);
+        $router->post('/api/special-orders', [SpecialOrderController::class, 'create']);
+        $router->get('/api/special-orders/{id}', [SpecialOrderController::class, 'show']);
+        $router->post('/api/special-orders/{id}/confirm', [SpecialOrderController::class, 'confirm']);
+        $router->post('/api/special-orders/{id}/send-to-production', [SpecialOrderController::class, 'sendToProduction']);
+        $router->post('/api/special-orders/{id}/status', [SpecialOrderController::class, 'updateStatus']);
+        $router->post('/api/special-orders/{id}/cancel', [SpecialOrderController::class, 'cancel']);
 
         // User / Driver Account Management (ADMIN-only, normal session/CSRF/Idempotency-Key —
         // same guards as every other mutating route, nothing special-cased).

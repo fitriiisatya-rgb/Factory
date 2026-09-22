@@ -143,3 +143,52 @@ function ui_donut_chart(array $slices, string $centerLabel, string $centerValue)
     $html .= '</div></div>';
     return $html;
 }
+
+/**
+ * Shared tab bar for the "Pesanan" family of pages (task's own explicit
+ * fallback: "If current navigation architecture cannot support submenus
+ * cleanly, use tabs on the Pesanan page instead" — the sidebar's own
+ * ui_nav_items() list is left completely unchanged; PO Toko keeps its
+ * existing single nav entry, and Pesanan Khusus Toko / Pesanan Non-Toko
+ * are reached via this tab row instead of new sidebar entries). Exact
+ * same filter-bar/btn-group/btn-sm markup as master-data.php's own tabs.
+ */
+function ui_pesanan_tabs(string $active, string $tanggal, int $factoryId): string
+{
+    $tabs = [
+        'pesanan-toko' => 'PO Toko',
+        'pesanan-khusus-toko' => 'Pesanan Khusus Toko',
+        'pesanan-non-toko' => 'Pesanan Non-Toko',
+    ];
+    $html = '<div class="filter-bar"><div class="btn-group">';
+    foreach ($tabs as $key => $label) {
+        $cls = $active === $key ? 'btn-primary' : 'btn-secondary';
+        $html .= '<a class="btn ' . $cls . ' btn-sm" href="/api/_ui-preview/?page=' . $key
+            . '&tanggal=' . urlencode($tanggal) . '&factoryId=' . $factoryId . '">' . ui_esc($label) . '</a>';
+    }
+    $html .= '</div></div>';
+    return $html;
+}
+
+/**
+ * Same tab-bar pattern as ui_pesanan_tabs(), for Produksi's own "Order
+ * Masuk / Demand Tambahan" inbox (task's own "Add an ... section or tab
+ * using the existing dark navy Production UI" / "Do not overload the
+ * existing production actual-entry screen") — a separate page, never
+ * content appended into produksi.php's own Ceklis Produksi body.
+ */
+function ui_produksi_tabs(string $active, string $tanggal, int $factoryId): string
+{
+    $tabs = [
+        'produksi' => 'Ceklis Produksi',
+        'produksi-demand' => 'Order Masuk / Demand Tambahan',
+    ];
+    $html = '<div class="filter-bar"><div class="btn-group">';
+    foreach ($tabs as $key => $label) {
+        $cls = $active === $key ? 'btn-primary' : 'btn-secondary';
+        $html .= '<a class="btn ' . $cls . ' btn-sm" href="/api/_ui-preview/?page=' . $key
+            . '&tanggal=' . urlencode($tanggal) . '&factoryId=' . $factoryId . '">' . ui_esc($label) . '</a>';
+    }
+    $html .= '</div></div>';
+    return $html;
+}

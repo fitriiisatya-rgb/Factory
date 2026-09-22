@@ -107,11 +107,11 @@ runTest('P0-01 DB connection works', function () use ($http) {
     expect($r['json']['data']['db'] === 'connected', 'db should be connected: ' . json_encode($r['json']));
 });
 
-runTest('P0-02 all 54 tables exist (45 original + po_import from migration 0003 + 6 Phase 5.5 dispatch/receipt tables from migration 0007 + shipment_receipt_evidence from migration 0008 + shipment_email_delivery from migration 0009)', function () use ($pdo) {
+runTest('P0-02 all 57 tables exist (45 original + po_import from migration 0003 + 6 Phase 5.5 dispatch/receipt tables from migration 0007 + shipment_receipt_evidence from migration 0008 + shipment_email_delivery from migration 0009 + special_order/special_order_item/special_order_catalog from migration 0010)', function () use ($pdo) {
     $count = (int) $pdo->query(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name != 'schema_migrations'"
     )->fetchColumn();
-    expect($count === 54, "expected 54 tables, got {$count}");
+    expect($count === 57, "expected 57 tables, got {$count}");
 });
 
 $adminCsrf = null;
