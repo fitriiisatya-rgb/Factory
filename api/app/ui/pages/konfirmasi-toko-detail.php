@@ -66,11 +66,11 @@ $verifyBlockedByEvidence = $canVerify && $hasDiscrepancy && $evidenceCount === 0
     <?= ui_badge(ui_receipt_status_label($status)) ?>
   </div>
 
-  <div class="kpi-grid" style="grid-template-columns:repeat(4,minmax(0,1fr));">
-    <?= ui_kpi_card(['label' => 'No. DO', 'value' => (string) ($shipment['docNo'] ?? '-'), 'icon' => 'file', 'color' => 'neutral']) ?>
-    <?= ui_kpi_card(['label' => 'Driver', 'value' => (string) ($shipment['driverName'] ?? '-'), 'icon' => 'truck', 'color' => 'primary']) ?>
-    <?= ui_kpi_card(['label' => 'Factory Asal', 'value' => (string) ($shipment['factoryName'] ?? '-'), 'icon' => 'box', 'color' => 'neutral']) ?>
-    <?= ui_kpi_card(['label' => 'Waktu Berangkat', 'value' => ui_fmt_datetime_id($shipment['shippedAt'] ?? null), 'icon' => 'chart', 'color' => 'neutral']) ?>
+  <div class="kpi-grid kpi-grid-4">
+    <?= ui_kpi_card(['label' => 'No. DO', 'value' => (string) ($shipment['docNo'] ?? '-'), 'icon' => 'file', 'color' => 'neutral', 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => 'Driver', 'value' => (string) ($shipment['driverName'] ?? '-'), 'icon' => 'truck', 'color' => 'primary', 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => 'Factory Asal', 'value' => (string) ($shipment['factoryName'] ?? '-'), 'icon' => 'box', 'color' => 'neutral', 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => 'Waktu Berangkat', 'value' => ui_fmt_datetime_id($shipment['shippedAt'] ?? null), 'icon' => 'chart', 'color' => 'neutral', 'detail' => true]) ?>
   </div>
 
   <div class="table-scroll"><table class="data-table">
@@ -113,10 +113,10 @@ $emailStatus = $email['status'] ?? null;
 ?>
 <div class="card section">
   <h3 class="card-title" style="margin-bottom:var(--space-3);">Email Pengiriman</h3>
-  <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));">
-    <?= ui_kpi_card(['label' => 'Status', 'value' => ui_email_status_label($emailStatus), 'icon' => 'mail', 'color' => $emailStatus === 'sent' ? 'success' : ($emailStatus === 'failed' ? 'danger' : 'warning')]) ?>
-    <?= ui_kpi_card(['label' => 'Tujuan', 'value' => (string) ($email['recipientEmail'] ?? '-'), 'icon' => 'user', 'color' => 'neutral']) ?>
-    <?= ui_kpi_card(['label' => 'Percobaan', 'value' => (string) ($email['attemptCount'] ?? 0), 'icon' => 'chart', 'color' => 'neutral']) ?>
+  <div class="kpi-grid kpi-grid-3">
+    <?= ui_kpi_card(['label' => 'Status', 'value' => ui_email_status_label($emailStatus), 'icon' => 'mail', 'color' => $emailStatus === 'sent' ? 'success' : ($emailStatus === 'failed' ? 'danger' : 'warning'), 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => 'Tujuan', 'value' => (string) ($email['recipientEmail'] ?? '-'), 'icon' => 'user', 'color' => 'neutral', 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => 'Percobaan', 'value' => (string) ($email['attemptCount'] ?? 0), 'icon' => 'chart', 'color' => 'neutral', 'detail' => true]) ?>
   </div>
   <?php if ($emailStatus === 'sent'): ?>
   <p style="color:var(--text-faint);font-size:.85rem;margin-top:var(--space-3);">Pertama dikirim: <?= ui_esc(ui_fmt_datetime_id($email['sentAt'] ?? null)) ?></p>
@@ -137,10 +137,10 @@ $emailStatus = $email['status'] ?? null;
 <?php else: ?>
 <div class="card section">
   <h3 class="card-title" style="margin-bottom:var(--space-3);">Konfirmasi Toko</h3>
-  <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));">
-    <?= ui_kpi_card(['label' => 'Nama Penerima', 'value' => (string) ($receipt['receiverName'] ?? '-'), 'icon' => 'user', 'color' => 'neutral']) ?>
-    <?= ui_kpi_card(['label' => 'Waktu Konfirmasi', 'value' => ui_fmt_datetime_id($receipt['confirmedAt'] ?? null), 'icon' => 'chart', 'color' => 'neutral']) ?>
-    <?= ui_kpi_card(['label' => 'Status', 'value' => ui_receipt_status_label($status), 'icon' => 'file', 'color' => $hasDiscrepancy ? 'warning' : 'success']) ?>
+  <div class="kpi-grid kpi-grid-3">
+    <?= ui_kpi_card(['label' => 'Nama Penerima', 'value' => (string) ($receipt['receiverName'] ?? '-'), 'icon' => 'user', 'color' => 'neutral', 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => 'Waktu Konfirmasi', 'value' => ui_fmt_datetime_id($receipt['confirmedAt'] ?? null), 'icon' => 'chart', 'color' => 'neutral', 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => 'Status', 'value' => ui_receipt_status_label($status), 'icon' => 'file', 'color' => $hasDiscrepancy ? 'warning' : 'success', 'detail' => true]) ?>
   </div>
   <?php if (($receipt['note'] ?? '') !== ''): ?>
   <div class="alert alert-info" style="margin-top:var(--space-3);"><b>Catatan:</b> <?= nl2br(ui_esc((string) $receipt['note'])) ?></div>

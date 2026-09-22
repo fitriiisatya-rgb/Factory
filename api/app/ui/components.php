@@ -11,10 +11,22 @@ declare(strict_types=1);
 /**
  * @param array{label:string,value:string,icon:string,color?:string,progressPct?:int,foot?:string} $opts
  */
+/**
+ * $opts['detail'] (real-UAT typography hotfix): true for an
+ * information-detail card (a single record's Status/Tujuan/Waktu/Nama —
+ * prose, not an aggregate metric) rather than a genuine Dashboard-style
+ * KPI (a count/total/percentage meant to read as a headline number).
+ * Every OTHER ui_kpi_card() caller (Dashboard, DO list/detail, FG &
+ * Packing, Pengiriman, Pesanan Toko, Produksi) uses real aggregate
+ * numbers and is intentionally left at the full KPI size — this flag
+ * only adds the "kpi-card--detail" modifier class, so those pages are
+ * completely unaffected.
+ */
 function ui_kpi_card(array $opts): string
 {
     $color = $opts['color'] ?? 'primary';
-    $html = '<div class="kpi-card">';
+    $cardClass = 'kpi-card' . (!empty($opts['detail']) ? ' kpi-card--detail' : '');
+    $html = '<div class="' . $cardClass . '">';
     $html .= '<div class="kpi-top"><span class="kpi-icon ' . $color . '">' . ui_icon($opts['icon']) . '</span></div>';
     $html .= '<div class="kpi-label">' . ui_esc($opts['label']) . '</div>';
     $html .= '<div class="kpi-value">' . ui_esc($opts['value']) . '</div>';

@@ -2185,6 +2185,74 @@ runTest('ADM-PHOTO-09 opening the detail page / evidence viewer causes ZERO DB w
 // cascade — there is no separate no-op test for it.
 
 // ---------------------------------------------------------------------
+// ADM-TYPE-01..10 — Admin Konfirmasi Toko Detail typography hotfix
+// (real-UAT: card values render like Dashboard KPI/headline text).
+// Server-observable properties only — actual computed pixel font-size,
+// email wrapping and no-horizontal-overflow at 1280/768x1024/375x667
+// are covered by dist/validate-admin-detail-typography-hotfix-
+// apache.sh's Playwright checks.
+// ---------------------------------------------------------------------
+
+runTest('ADM-TYPE-01 the served app.css normalizes .kpi-card--detail .kpi-value away from the 2xl/800 Dashboard-KPI treatment', function () use ($baseUrl) {
+    $ch = curl_init($baseUrl . '/api/assets/css/app.css');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $css = curl_exec($ch);
+    curl_close($ch);
+    expect((bool) preg_match('/\.kpi-card--detail \.kpi-value\s*\{[^}]*font-size:\s*var\(--text-lg\)/s', $css), 'ADM-TYPE-01: expected .kpi-card--detail .kpi-value to use --text-lg (18px), not the Dashboard --text-2xl (28px) headline size');
+    expect(!(bool) preg_match('/\.kpi-card--detail \.kpi-value\s*\{[^}]*font-weight:\s*800/s', $css), 'ADM-TYPE-01: expected .kpi-card--detail .kpi-value to drop the 800 extra-bold Dashboard-KPI weight');
+    // The base .kpi-value rule (real Dashboard/DO/FG/Pengiriman/Pesanan
+    // Toko/Produksi KPI numbers) must be completely untouched.
+    expect((bool) preg_match('/\.kpi-value\s*\{\s*font-size:\s*var\(--text-2xl\);\s*font-weight:\s*800/', $css), 'ADM-TYPE-01: expected the base .kpi-value (real KPI cards) to be UNCHANGED at --text-2xl/800');
+});
+
+runTest('ADM-TYPE-02 long email values stay inside their card (overflow-wrap/word-break on the detail value)', function () use ($baseUrl) {
+    $ch = curl_init($baseUrl . '/api/assets/css/app.css');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $css = curl_exec($ch);
+    curl_close($ch);
+    expect((bool) preg_match('/\.kpi-card--detail \.kpi-value\s*\{[^}]*overflow-wrap:\s*anywhere/s', $css), 'ADM-TYPE-02: expected overflow-wrap: anywhere on the detail value so a long email never overflows its card');
+    expect((bool) preg_match('/\.kpi-card--detail \.kpi-value\s*\{[^}]*word-break:\s*break-word/s', $css), 'ADM-TYPE-02: expected word-break: break-word as a fallback');
+});
+
+runTest('ADM-TYPE-03/04/05 all 10 detail-info cards across the 3 sections (4 summary + 3 email + 3 konfirmasi) carry the detail modifier, and the old inline grid override is gone', function () use ($adminHttp) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on STORE-EVID-04 having run first');
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect($r['status'] === 200, "ADM-TYPE-03/04/05: detail page failed: {$r['status']}");
+    // Whole-page counts (not a fragile fixed-length substring slice —
+    // ui_icon()'s inline SVG paths vary a lot in byte length per icon)
+    // are exact because this page renders EXACTLY these 3 kpi-grid
+    // sections: 4 summary cards (No. DO/Driver/Factory Asal/Waktu
+    // Berangkat) + 3 Email Pengiriman cards (Status/Tujuan/Percobaan) +
+    // 3 Konfirmasi Toko cards (Nama Penerima/Waktu Konfirmasi/Status).
+    expect(substr_count($r['body'], 'kpi-card--detail') === 10, 'ADM-TYPE-03/04/05: expected exactly 10 kpi-card--detail cards (4+3+3) on this page, got ' . substr_count($r['body'], 'kpi-card--detail'));
+    expect(substr_count($r['body'], 'kpi-grid-4') === 1, 'ADM-TYPE-04: expected exactly 1 kpi-grid-4 (the shipment summary row)');
+    expect(substr_count($r['body'], 'kpi-grid-3') === 2, 'ADM-TYPE-03/05: expected exactly 2 kpi-grid-3 (Email Pengiriman + Konfirmasi Toko rows)');
+    expect(!str_contains($r['body'], 'style="grid-template-columns'), 'ADM-TYPE-03/04/05: expected the old inline grid-template-columns override to be COMPLETELY GONE (it beat the responsive .kpi-grid breakpoints by specificity, so these rows never actually collapsed to fewer columns on iPad/mobile)');
+});
+
+runTest('ADM-TYPE (regression guard) every OTHER ui_kpi_card() caller (real KPI numbers) is completely unaffected', function () use ($adminHttp) {
+    $r = $adminHttp->request('GET', '/_ui-preview/?page=dashboard');
+    expect($r['status'] === 200, 'Dashboard page failed');
+    expect(!str_contains($r['body'], 'kpi-card--detail'), 'ADM-TYPE regression guard: expected ZERO kpi-card--detail on the Dashboard — its KPI numbers must keep the full headline treatment');
+});
+
+runTest('ADM-TYPE-09 the evidence thumbnail/lightbox from the previous hotfix is unaffected by this typography change', function () use ($adminHttp) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect((bool) preg_match('#<a[^>]+class="evidence-thumb"[^>]*>\s*<img#', $r['body']), 'ADM-TYPE-09: expected the evidence photo still wrapped in the bounded .evidence-thumb container');
+    expect(str_contains($r['body'], 'data-lightbox="image"'), 'ADM-TYPE-09: expected the evidence link still wired to the lightbox');
+    expect(!str_contains($r['body'], 'target="_blank"'), 'ADM-TYPE-09: expected the evidence link to still NOT open the raw image in a new tab');
+});
+
+// ADM-TYPE-06/07/08 (no horizontal overflow at 1280px desktop / 768x1024
+// iPad / 375x667 mobile) and ADM-TYPE-10 (full Phase 0-5.5 regression
+// green) are covered by dist/validate-admin-detail-typography-hotfix-
+// apache.sh's Playwright checks and the outer run-phase55-dispatch-
+// receipt.sh orchestrator itself, respectively — no separate no-op
+// tests for either.
+
+// ---------------------------------------------------------------------
 // MAIL-01..29 — Automatic Bakery Email / Digital Surat Jalan / Admin
 // Resend (Phase 5.5 finalization).
 // ---------------------------------------------------------------------

@@ -207,6 +207,41 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .kpi-progress { height: 6px; border-radius: 4px; background: var(--surface-2); overflow: hidden; margin-top: var(--space-3); }
 .kpi-progress > span { display: block; height: 100%; background: var(--primary); border-radius: 4px; }
 .kpi-foot { display: flex; align-items: center; justify-content: space-between; margin-top: var(--space-2); font-size: var(--text-xs); color: var(--text-muted); }
+
+/*
+ * Real-UAT typography hotfix: Admin Konfirmasi Toko Detail reuses
+ * ui_kpi_card() for plain record fields (Status/Tujuan/Percobaan, Nama
+ * Penerima/Waktu Konfirmasi) — .kpi-value's 1.75rem/800 headline
+ * treatment (correct for a real Dashboard/list KPI number) read as
+ * oversized, inconsistent typography for prose values on an info-detail
+ * page. This modifier (ui_kpi_card($opts) with 'detail'=>true) scales
+ * ONLY those cards down to the same size class already used elsewhere
+ * for prominent-but-not-headline text (.modal-title uses --text-lg the
+ * same way) — every genuine KPI card (Dashboard, DO, FG & Packing,
+ * Pengiriman, Pesanan Toko, Produksi) is untouched, since none of them
+ * pass this flag. --text-lg (18px) sits at the low end of the
+ * requested 18-22px desktop/tablet range and inside the 17-20px mobile
+ * range, so no extra breakpoint/clamp is needed for the value itself.
+ */
+.kpi-card--detail .kpi-label { font-size: var(--text-base); }
+.kpi-card--detail .kpi-value {
+  font-size: var(--text-lg); font-weight: 700;
+  overflow-wrap: anywhere; word-break: break-word;
+}
+
+/*
+ * Konfirmasi Toko Detail's shipment-summary/Email/Konfirmasi card rows
+ * used to set their column count via an INLINE style="grid-template-
+ * columns:..." — inline styles beat the .kpi-grid responsive breakpoints
+ * below by specificity, so these rows never actually collapsed to fewer
+ * columns on iPad/mobile (a 4-column row of prose values at 375px is a
+ * real overflow/cramping risk). These classes carry only the base
+ * (widest-viewport) column count; being plain classes (not inline),
+ * they lose to .kpi-grid's own @media overrides below at the same
+ * breakpoints it already uses everywhere else.
+ */
+.kpi-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.kpi-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .kpi-delta { font-weight: 700; }
 .kpi-delta.up { color: var(--success); }
 .kpi-delta.down { color: var(--danger); }
