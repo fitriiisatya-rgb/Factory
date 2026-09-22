@@ -153,7 +153,7 @@ $emailStatus = $email['status'] ?? null;
   <h3 class="card-title" style="margin:var(--space-4) 0 var(--space-2);">Bukti Foto dari Toko</h3>
   <div class="evidence-thumb-grid">
     <?php foreach ($receipt['evidence'] as $ev): ?>
-    <a href="/api/admin/receipts/evidence/<?= (int) $ev['evidenceId'] ?>" target="_blank" rel="noopener" class="evidence-thumb">
+    <a href="/api/admin/receipts/evidence/<?= (int) $ev['evidenceId'] ?>" rel="noopener" class="evidence-thumb" data-lightbox="image">
       <img src="/api/admin/receipts/evidence/<?= (int) $ev['evidenceId'] ?>" alt="Bukti foto" loading="lazy">
     </a>
     <?php endforeach; ?>

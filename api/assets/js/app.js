@@ -185,6 +185,44 @@
   }
 
   // -----------------------------------------------------------------
+  // imageLightbox — bounded full-size preview for a thumbnail (e.g. Admin
+  // Konfirmasi Toko Detail's "Bukti Foto dari Toko"). Reuses the same
+  // singleton-backdrop-guard / Escape-to-close / click-outside-to-close
+  // pattern as confirmModal() above, but with its own guard variable (a
+  // lightbox and a confirm dialog are never open at the same time in this
+  // UI, but sharing one guard would be an accidental coupling). The image
+  // itself is always bounded (max-width:90vw / max-height:80vh, object-
+  // fit:contain via CSS) — this NEVER renders the original photo at its
+  // natural resolution, which is the actual bug this exists to fix.
+  // -----------------------------------------------------------------
+  let activeLightbox = null;
+
+  function imageLightbox(src) {
+    if (activeLightbox) return;
+    const backdrop = document.createElement('div');
+    backdrop.className = 'image-lightbox-backdrop open';
+    backdrop.innerHTML =
+      '<div class="image-lightbox">' +
+      '<button type="button" class="image-lightbox-close" aria-label="Tutup">&times;</button>' +
+      '<img alt="Bukti foto (perbesar)">' +
+      '</div>';
+    backdrop.querySelector('img').src = src;
+
+    function escHandler(e) { if (e.key === 'Escape') close(); }
+    function close() {
+      document.removeEventListener('keydown', escHandler);
+      backdrop.remove();
+      activeLightbox = null;
+    }
+    backdrop.addEventListener('click', function (e) { if (e.target === backdrop) close(); });
+    backdrop.querySelector('.image-lightbox-close').addEventListener('click', close);
+    document.addEventListener('keydown', escHandler);
+
+    document.body.appendChild(backdrop);
+    activeLightbox = backdrop;
+  }
+
+  // -----------------------------------------------------------------
   // Friendly error mapping — technical detail stays in console/logs,
   // never the default user-facing message.
   // -----------------------------------------------------------------
@@ -247,6 +285,7 @@
   window.Amor = {
     toast: toast,
     confirmModal: confirmModal,
+    imageLightbox: imageLightbox,
     apiFetch: apiFetch,
     friendlyError: friendlyError,
     toggleSidebar: toggleSidebar,
@@ -259,6 +298,19 @@
     if (toggleBtn) toggleBtn.addEventListener('click', toggleSidebar);
     const themeBtn = document.querySelector('[data-action="toggle-theme"]');
     if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
+
+    // Generic image thumbnail -> bounded lightbox (e.g. Admin Konfirmasi
+    // Toko Detail's evidence thumbnails): <a class="evidence-thumb"
+    // href="/api/.../evidence/{id}" data-lightbox="image"><img ...></a>.
+    // The href stays as a plain, same-tab fallback if JS fails to load —
+    // but the default UX (JS present) is always the bounded in-page
+    // preview below, never a raw full-resolution image navigation.
+    document.addEventListener('click', function (e) {
+      const link = e.target.closest('[data-lightbox="image"]');
+      if (!link) return;
+      e.preventDefault();
+      imageLightbox(link.getAttribute('href'));
+    });
 
     // Generic confirm-then-apiFetch action buttons:
     // <button data-confirm-action data-method data-url data-confirm-title

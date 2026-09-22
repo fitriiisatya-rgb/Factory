@@ -2071,6 +2071,120 @@ runTest('MOBILE-02 the Store Receipt page JS renders a photo upload control usab
 });
 
 // ---------------------------------------------------------------------
+// ADM-PHOTO-01..10 — Admin Konfirmasi Toko Detail evidence thumbnail
+// hotfix (real-UAT: "Bukti Foto dari Toko" rendered the raw photo at
+// full/natural size). Server-observable properties only — the actual
+// bounded pixel dimensions, grid layout and lightbox open/close under a
+// real browser are covered by dist/validate-admin-receipt-evidence-
+// thumbnail-hotfix-apache.sh's Playwright checks (desktop/tablet/mobile).
+// ---------------------------------------------------------------------
+
+runTest('ADM-PHOTO-01 single evidence photo renders as a bounded thumbnail (not a raw <img> with no wrapper)', function () use ($adminHttp) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on STORE-EVID-04 having run first');
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect($r['status'] === 200, "ADM-PHOTO-01: detail page failed: {$r['status']}");
+    expect((bool) preg_match('#<a[^>]+class="evidence-thumb"[^>]*>\s*<img#', $r['body']), 'ADM-PHOTO-01: expected the evidence photo wrapped in the bounded .evidence-thumb container, never a bare <img>');
+    expect(!str_contains($r['body'], 'target="_blank"'), 'ADM-PHOTO-01: expected NO target="_blank" on the evidence link (raw-image-in-new-tab is no longer the default UX)');
+    expect(str_contains($r['body'], 'data-lightbox="image"'), 'ADM-PHOTO-01: expected the evidence link wired to the bounded lightbox');
+});
+
+runTest('ADM-PHOTO-02 the served app.css bounds .evidence-thumb to a small, fixed size', function () use ($baseUrl) {
+    $ch = curl_init($baseUrl . '/api/assets/css/app.css');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $css = curl_exec($ch);
+    curl_close($ch);
+    expect((bool) preg_match('/\.evidence-thumb\s*\{[^}]*width:\s*96px[^}]*height:\s*96px/s', $css), 'ADM-PHOTO-02: expected .evidence-thumb fixed at 96x96px');
+    expect(str_contains($css, 'object-fit: cover'), 'ADM-PHOTO-02: expected object-fit: cover on the thumbnail image');
+    expect((bool) preg_match('/\.evidence-thumb\s*\{[^}]*max-width:\s*120px[^}]*max-height:\s*120px/s', $css), 'ADM-PHOTO-02: expected a defensive max-width/max-height cap within the 96-120px recommended range');
+});
+
+runTest('ADM-PHOTO-03 multiple evidence photos render in a responsive thumbnail grid', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $fx = setupSingleItemShipment($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, '2026-09-01', 4.0);
+    $anon = new Http55($baseUrl);
+    $sii = shipmentItemIdFromToken($anon, $fx['token'], $fx['shipmentId']);
+    $ch = curl_init($baseUrl . "/api/receive/{$fx['token']}/shipments/{$fx['shipmentId']}/confirm");
+    $jar = tempnam(sys_get_temp_dir(), 'admphoto03jar');
+    $fields = ['receiverName' => 'Toko A', 'items' => json_encode([['shipmentItemId' => $sii, 'receivedGood' => 3.0, 'reject' => 1.0, 'shortage' => 0]])];
+    for ($i = 0; $i < 3; $i++) {
+        $fields['evidence[' . $i . ']'] = new CURLFile(fakeEvidenceImage(), 'image/png', "ev{$i}.png");
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST => 'POST', CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_COOKIEJAR => $jar, CURLOPT_COOKIEFILE => $jar,
+        CURLOPT_HTTPHEADER => ['Idempotency-Key: ' . idemKey('admphoto03')['Idempotency-Key']],
+        CURLOPT_POSTFIELDS => $fields,
+    ]);
+    $raw = curl_exec($ch);
+    curl_close($ch);
+    $json = json_decode($raw, true);
+    expect(($json['data']['receiptId'] ?? null) !== null, 'ADM-PHOTO-03: expected the 3-photo confirm to succeed: ' . $raw);
+    $GLOBALS['admphoto_multi_shipment_id'] = $fx['shipmentId'];
+
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$fx['shipmentId']}");
+    expect(str_contains($r['body'], 'evidence-thumb-grid'), 'ADM-PHOTO-03: expected the responsive grid container');
+    expect(substr_count($r['body'], 'class="evidence-thumb"') === 3, 'ADM-PHOTO-03: expected exactly 3 thumbnails for a 3-photo receipt');
+});
+
+runTest('ADM-PHOTO-04/05 the served app.js wires an image-thumbnail click to a bounded, closable lightbox', function () use ($baseUrl) {
+    $ch = curl_init($baseUrl . '/api/assets/js/app.js');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $js = curl_exec($ch);
+    curl_close($ch);
+    expect(str_contains($js, "data-lightbox=\"image\""), 'ADM-PHOTO-04: expected app.js to delegate clicks on [data-lightbox="image"]');
+    expect(str_contains($js, 'function imageLightbox'), 'ADM-PHOTO-04: expected the imageLightbox() function');
+    expect(str_contains($js, 'e.preventDefault()'), 'ADM-PHOTO-04: expected the default raw-image navigation to be prevented in favor of the lightbox');
+    expect(str_contains($js, 'image-lightbox-close'), 'ADM-PHOTO-05: expected a close button in the lightbox markup');
+    expect(str_contains($js, "e.key === 'Escape'") && str_contains($js, 'imageLightbox'), 'ADM-PHOTO-05: expected Escape-to-close support');
+    expect(str_contains($js, 'if (e.target === backdrop) close();'), 'ADM-PHOTO-05: expected click-outside-to-close support');
+});
+
+runTest('ADM-PHOTO-06 the served app.css bounds the lightbox to 90vw/80vh with object-fit: contain (no horizontal overflow on any viewport)', function () use ($baseUrl) {
+    $ch = curl_init($baseUrl . '/api/assets/css/app.css');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $css = curl_exec($ch);
+    curl_close($ch);
+    expect((bool) preg_match('/\.image-lightbox\s*\{[^}]*max-width:\s*90vw[^}]*max-height:\s*80vh/s', $css), 'ADM-PHOTO-06: expected the lightbox container bounded to 90vw/80vh');
+    expect((bool) preg_match('/\.image-lightbox img\s*\{[^}]*object-fit:\s*contain/s', $css), 'ADM-PHOTO-06: expected object-fit: contain on the lightbox image');
+    expect(str_contains($css, '.evidence-thumb-grid { display: flex; flex-wrap: wrap;'), 'ADM-PHOTO-06: expected the thumbnail grid to wrap (flex-wrap) instead of overflowing horizontally');
+});
+
+runTest('ADM-PHOTO-07 admin receipt quantities/status are unchanged by this hotfix', function () use ($adminHttp) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    expect($shipmentId !== null, 'depends on STORE-EVID-04 having run first');
+    $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    expect(str_contains($r['body'], 'Ada Selisih') || str_contains($r['body'], 'Diverifikasi Admin'), 'ADM-PHOTO-07: expected the receipt discrepancy/verified status to render unchanged');
+    expect((bool) preg_match('/<td class="num">3<\/td>/', $r['body']) || str_contains($r['body'], '>3<'), 'ADM-PHOTO-07: expected the receivedGood quantity (3) to still render unchanged');
+});
+
+runTest('ADM-PHOTO-08 evidence viewer authorization is unchanged (non-admin Driver still refused)', function () use ($httpA) {
+    $r = $httpA->request('GET', '/api/admin/receipts/evidence/1');
+    expect($r['status'] === 403, "ADM-PHOTO-08: expected 403 for a non-admin (Driver) caller, got {$r['status']}");
+});
+
+runTest('ADM-PHOTO-09 opening the detail page / evidence viewer causes ZERO DB writes', function () use ($adminHttp, $pdo) {
+    $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
+    $receiptId = $GLOBALS['photo_receipt_id'] ?? null;
+    expect($shipmentId !== null && $receiptId !== null, 'depends on STORE-EVID-04 having run first');
+    $evidenceRow = $pdo->query("SELECT shipment_receipt_evidence_id, file_path FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId} LIMIT 1")->fetch();
+    $before = json_encode($pdo->query("SELECT * FROM shipment_receipt_item WHERE shipment_receipt_id = {$receiptId}")->fetchAll());
+    $evidenceCountBefore = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId}")->fetchColumn();
+
+    $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
+    $adminHttp->request('GET', '/api/admin/receipts/evidence/' . $evidenceRow['shipment_receipt_evidence_id']);
+
+    $after = json_encode($pdo->query("SELECT * FROM shipment_receipt_item WHERE shipment_receipt_id = {$receiptId}")->fetchAll());
+    $evidenceCountAfter = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt_evidence WHERE shipment_receipt_id = {$receiptId}")->fetchColumn();
+    expect($before === $after, 'ADM-PHOTO-09: expected ZERO change to shipment_receipt_item from viewing the detail page/evidence image');
+    expect($evidenceCountBefore === $evidenceCountAfter, 'ADM-PHOTO-09: expected ZERO change to the evidence row count from viewing it');
+});
+
+// ADM-PHOTO-10 (full Phase 0-5.5 regression green) is the outer
+// run-phase55-dispatch-receipt.sh orchestrator itself, which runs every
+// test in this file plus P55-24's full Phase 0-5 + UI + Print + Invoice
+// cascade — there is no separate no-op test for it.
+
+// ---------------------------------------------------------------------
 // MAIL-01..29 — Automatic Bakery Email / Digital Surat Jalan / Admin
 // Resend (Phase 5.5 finalization).
 // ---------------------------------------------------------------------

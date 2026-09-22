@@ -161,10 +161,40 @@ textarea:focus-visible, [tabindex]:focus-visible {
 
 .kpi-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-4); margin-bottom: var(--space-5); }
 
-/* Admin Konfirmasi Toko Detail — Bukti Foto thumbnails (real-UAT ask). */
+/*
+ * Admin Konfirmasi Toko Detail — Bukti Foto thumbnails (real-UAT ask).
+ * Real-UAT hotfix: this grid/thumb sizing was already correct in the
+ * source CSS, but app.css/app.js/tokens.css had NO cache-busting query
+ * string anywhere in the Admin layout (unlike receipt.css/js and
+ * driver.css/js, both already fixed in earlier patches) — a stale
+ * cached copy on a real device could easily be serving a version from
+ * before this rule ever existed. See layout.php's ADMIN_ASSET_VERSION.
+ * The explicit max-width/max-height here is a second, defensive cap on
+ * top of the fixed width/height, and .evidence-thumb-grid img is a
+ * blanket safety net for any image under this container — belt and
+ * braces against ever rendering a raw photo at natural resolution again.
+ */
+.evidence-thumb-grid img { max-width: 100%; }
 .evidence-thumb-grid { display: flex; flex-wrap: wrap; gap: var(--space-3); }
-.evidence-thumb { display: block; width: 96px; height: 96px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); }
+.evidence-thumb {
+  display: block; width: 96px; height: 96px; max-width: 120px; max-height: 120px;
+  border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); cursor: pointer;
+}
 .evidence-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Bounded full-size preview opened by clicking a thumbnail (app.js imageLightbox()). */
+.image-lightbox-backdrop {
+  position: fixed; inset: 0; background: rgba(4, 8, 16, .82); display: none;
+  align-items: center; justify-content: center; z-index: 150; padding: var(--space-4);
+}
+.image-lightbox-backdrop.open { display: flex; }
+.image-lightbox { position: relative; max-width: 90vw; max-height: 80vh; }
+.image-lightbox img { display: block; max-width: 90vw; max-height: 80vh; object-fit: contain; border-radius: var(--radius); }
+.image-lightbox-close {
+  position: absolute; top: -14px; right: -14px; width: 32px; height: 32px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 1.1rem;
+  line-height: 1; cursor: pointer; box-shadow: var(--shadow-card);
+}
 .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4); box-shadow: var(--shadow-card); }
 .kpi-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-2); }
 .kpi-icon { width: 38px; height: 38px; border-radius: var(--radius); display: flex; align-items: center; justify-content: center; flex: none; }

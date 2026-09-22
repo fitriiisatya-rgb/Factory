@@ -5,6 +5,15 @@ declare(strict_types=1);
 require_once __DIR__ . '/components.php';
 require_once __DIR__ . '/labels.php';
 
+// Cache-busting for tokens.css/app.css/app.js, same pattern as
+// RECEIPT_ASSET_VERSION (api/_receive/index.php) and DRIVER_ASSET_VERSION
+// (api/_driver-uat/bootstrap.php) — real-UAT hotfix: the Admin layout had
+// NO cache-busting anywhere, so a stale cached app.css on a real device
+// could keep serving an old version indefinitely, e.g. masking the
+// evidence-thumbnail sizing fix. Bump this string whenever any of the
+// three assets change.
+const ADMIN_ASSET_VERSION = '20260922-evidence-thumbnail-hotfix';
+
 /**
  * Nav item list — the single source of truth for the sidebar. Every item
  * links to /api/_ui-preview/?page=<key>. Role visibility is left
@@ -64,8 +73,8 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title><?= ui_esc($title) ?> — Amor Factory System</title>
-<link rel="stylesheet" href="/api/assets/css/tokens.css">
-<link rel="stylesheet" href="/api/assets/css/app.css">
+<link rel="stylesheet" href="/api/assets/css/tokens.css?v=<?= ADMIN_ASSET_VERSION ?>">
+<link rel="stylesheet" href="/api/assets/css/app.css?v=<?= ADMIN_ASSET_VERSION ?>">
 </head>
 <body>
 <div class="app-shell">
@@ -142,7 +151,7 @@ function ui_page_foot(): void
   </div>
 </div>
 <script>window.AMOR = <?= json_encode(['csrfToken' => $GLOBALS['ui']['csrfToken'] ?? '', 'userId' => $GLOBALS['ui']['userId'] ?? null, 'username' => $GLOBALS['ui']['username'] ?? ''], JSON_UNESCAPED_SLASHES) ?>;</script>
-<script src="/api/assets/js/app.js"></script>
+<script src="/api/assets/js/app.js?v=<?= ADMIN_ASSET_VERSION ?>"></script>
 </body>
 </html>
 <?php
