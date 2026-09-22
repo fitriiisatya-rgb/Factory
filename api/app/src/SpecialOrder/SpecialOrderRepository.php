@@ -94,14 +94,19 @@ final class SpecialOrderRepository
         }
     }
 
-    /** @return array<int,array> */
+    /**
+     * @return array<int,array> each row also carries factory_id/factory_name
+     *         (auto-routing preview — the create form shows Factory the
+     *         instant a catalog item is picked, no extra round trip).
+     */
     public function findActiveCatalog(PDO $pdo): array
     {
         return $pdo->query(
             'SELECT soc.special_order_catalog_id, soc.code, soc.name, soc.division_id, d.name AS division_name,
-                    soc.default_price, soc.default_charge, soc.notes
+                    d.factory_id, f.name AS factory_name, soc.default_price, soc.default_charge, soc.notes
              FROM special_order_catalog soc
              INNER JOIN division d ON d.division_id = soc.division_id
+             INNER JOIN factory f ON f.factory_id = d.factory_id
              WHERE soc.active = 1
              ORDER BY soc.name'
         )->fetchAll();
@@ -110,13 +115,28 @@ final class SpecialOrderRepository
     public function findCatalogItem(PDO $pdo, int $catalogId): ?array
     {
         $stmt = $pdo->prepare(
-            'SELECT soc.*, d.name AS division_name FROM special_order_catalog soc
+            'SELECT soc.*, d.name AS division_name, d.factory_id, f.name AS factory_name
+             FROM special_order_catalog soc
              INNER JOIN division d ON d.division_id = soc.division_id
+             INNER JOIN factory f ON f.factory_id = d.factory_id
              WHERE soc.special_order_catalog_id = ?'
         );
         $stmt->execute([$catalogId]);
         $row = $stmt->fetch();
         return $row ?: null;
+    }
+
+    /** @return array<int,array> also carries division.factory_id/factory name for the product-search datalist's own Factory preview. */
+    public function findProductsWithDivision(PDO $pdo): array
+    {
+        return $pdo->query(
+            "SELECT p.product_id, p.name, p.harga, p.division_id, d.name AS division_name, d.factory_id, f.name AS factory_name
+             FROM product p
+             LEFT JOIN division d ON d.division_id = p.division_id
+             LEFT JOIN factory f ON f.factory_id = d.factory_id
+             WHERE p.aktif = 1
+             ORDER BY p.name"
+        )->fetchAll();
     }
 
     public function findProductWithDivision(PDO $pdo, int $productId): ?array
@@ -209,13 +229,19 @@ final class SpecialOrderRepository
         return $row ?: null;
     }
 
-    /** @return array<int,array> */
+    /**
+     * @return array<int,array> each row also carries factory_id/factory_name
+     *         — derived PER ITEM from division.factory_id, never from the
+     *         order header (task's own "routing must happen PER ITEM" —
+     *         a multi-division order can legitimately span factories).
+     */
     public function findItemsForOrder(PDO $pdo, int $orderId): array
     {
         $stmt = $pdo->prepare(
-            'SELECT soi.*, d.name AS division_name
+            'SELECT soi.*, d.name AS division_name, d.factory_id AS item_factory_id, f.name AS item_factory_name
              FROM special_order_item soi
              INNER JOIN division d ON d.division_id = soi.division_id
+             INNER JOIN factory f ON f.factory_id = d.factory_id
              WHERE soi.special_order_id = ?
              ORDER BY soi.special_order_item_id'
         );
@@ -230,7 +256,10 @@ final class SpecialOrderRepository
     public function findOrders(PDO $pdo, array $filters): array
     {
         $sql = "SELECT so.*, s.canonical_name AS store_name, f.name AS factory_name,
-                       (SELECT COUNT(DISTINCT soi.division_id) FROM special_order_item soi WHERE soi.special_order_id = so.special_order_id) AS division_count
+                       (SELECT COUNT(DISTINCT soi.division_id) FROM special_order_item soi WHERE soi.special_order_id = so.special_order_id) AS division_count,
+                       (SELECT COUNT(DISTINCT d2.factory_id) FROM special_order_item soi2
+                          INNER JOIN division d2 ON d2.division_id = soi2.division_id
+                        WHERE soi2.special_order_id = so.special_order_id) AS factory_count
                 FROM special_order so
                 LEFT JOIN store s ON s.store_id = so.store_id
                 LEFT JOIN factory f ON f.factory_id = so.factory_id
@@ -264,21 +293,27 @@ final class SpecialOrderRepository
      * ready/completed), joined back to its own order header for
      * traceability (task's own "Maintain traceability back to the same
      * source order" / "Production demand source remains traceable").
+     *
+     * Factory is resolved PER ITEM from division.factory_id, never from
+     * the order header's so.factory_id — a multi-division order can span
+     * factories, so using the header value here would show (and, worse,
+     * check FG stock against) the WRONG factory for some of its items.
      * @param array{factoryId?:int,divisionId?:int,tanggal?:string,status?:string,sourceType?:string} $filters
      * @return array<int,array>
      */
     public function findProductionDemandItems(PDO $pdo, array $filters): array
     {
         $sql = "SELECT soi.special_order_item_id, soi.item_type, soi.item_name_snapshot, soi.qty, soi.charge,
-                       soi.special_note, soi.division_id, d.name AS division_name, soi.product_id,
+                       soi.special_note, soi.division_id, d.name AS division_name,
+                       d.factory_id AS item_factory_id, f.name AS item_factory_name, soi.product_id,
                        so.special_order_id, so.order_no, so.source_type, so.status, so.order_date,
                        so.required_date, so.required_time, so.store_id, s.canonical_name AS store_name,
-                       so.customer_name, so.non_store_source, so.factory_id, f.name AS factory_name
+                       so.customer_name, so.non_store_source
                 FROM special_order_item soi
                 INNER JOIN special_order so ON so.special_order_id = soi.special_order_id
                 INNER JOIN division d ON d.division_id = soi.division_id
+                INNER JOIN factory f ON f.factory_id = d.factory_id
                 LEFT JOIN store s ON s.store_id = so.store_id
-                LEFT JOIN factory f ON f.factory_id = so.factory_id
                 WHERE so.status IN ('sent_to_production','in_production','ready','completed')";
         $params = [];
         if (isset($filters['divisionId'])) {

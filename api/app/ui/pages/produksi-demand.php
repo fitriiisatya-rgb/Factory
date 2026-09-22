@@ -90,15 +90,19 @@ $inbox = $service->productionInbox(array_filter([
 <div class="table-card section">
   <div class="card-head" style="padding:var(--space-4) var(--space-4) 0;">
     <h2 class="card-title"><?= ui_esc($div['divisionName']) ?></h2>
-    <span class="badge badge-neutral"><?= count($div['items']) ?> item</span>
+    <div style="display:flex;gap:var(--space-2);align-items:center;">
+      <span class="badge badge-neutral"><?= ui_esc($div['factoryName']) ?></span>
+      <span class="badge badge-primary"><?= count($div['items']) ?> item</span>
+    </div>
   </div>
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>No. Pesanan</th><th>Sumber</th><th>Item</th><th class="num">Qty</th><th class="num">FG Tersedia</th><th class="num">Kebutuhan Produksi</th><th>Tanggal Dibutuhkan</th><th>Catatan Khusus</th><th>Status</th></tr></thead>
+    <thead><tr><th>No. Pesanan</th><th>Sumber</th><th>Toko/Customer</th><th>Item</th><th class="num">Qty</th><th class="num">FG Tersedia</th><th class="num">Kebutuhan Produksi</th><th>Tanggal Dibutuhkan</th><th>Catatan Khusus</th><th>Status</th></tr></thead>
     <tbody>
     <?php foreach ($div['items'] as $it): ?>
     <tr>
       <td><?= ui_esc($it['orderNo']) ?></td>
-      <td><?= ui_esc($it['sourceLabel']) ?></td>
+      <td><?= $it['sourceType'] === 'toko_khusus' ? '<span class="badge badge-neutral">Pesanan Khusus Toko</span>' : '<span class="badge badge-neutral">Pesanan Non-Toko</span>' ?></td>
+      <td><?= ui_esc($it['storeOrCustomerName']) ?></td>
       <td><?= ui_esc($it['itemName']) ?><?= $it['charge'] > 0.0001 ? ' <span style="color:var(--text-muted);font-size:var(--text-xs);">(+charge ' . ui_fmt_num($it['charge']) . ')</span>' : '' ?></td>
       <td class="num"><?= ui_fmt_num($it['qty']) ?></td>
       <td class="num"><?= $it['fgAvailable'] !== null ? ui_fmt_num($it['fgAvailable']) : '-' ?></td>

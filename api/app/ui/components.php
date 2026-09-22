@@ -192,3 +192,80 @@ function ui_produksi_tabs(string $active, string $tanggal, int $factoryId): stri
     $html .= '</div></div>';
     return $html;
 }
+
+/**
+ * Compact status timeline for a Pesanan Khusus Toko / Pesanan Non-Toko
+ * detail page (task's own "Order Status / Timeline" requirement — "do not
+ * create complex workflow logic just for the visual timeline. Timeline
+ * must reflect existing actual status state."). Reuses the exact
+ * .pipeline/.pipeline-step/.pipeline-dot markup dashboard.php already
+ * uses for its own PO->Produksi->FG->DO->Pengiriman pipeline — no new
+ * CSS. A cancelled order shows a plain notice instead of the forward
+ * timeline (cancellation is a reversal, not a forward step).
+ */
+function ui_special_order_timeline(string $status): string
+{
+    if ($status === 'cancelled') {
+        return '<div class="alert alert-danger" style="margin-bottom:var(--space-4);">Pesanan ini telah dibatalkan — lihat alasan di bawah.</div>';
+    }
+    $steps = [
+        'draft' => 'Draft',
+        'confirmed' => 'Dikonfirmasi',
+        'sent_to_production' => 'Dikirim ke Produksi',
+        'in_production' => 'Sedang Diproduksi',
+        'ready' => 'Siap',
+        'completed' => 'Selesai',
+    ];
+    $keys = array_keys($steps);
+    $currentIndex = array_search($status, $keys, true);
+    if ($currentIndex === false) {
+        $currentIndex = 0;
+    }
+    $html = '<div class="pipeline section">';
+    $i = 0;
+    $total = count($steps);
+    foreach ($steps as $label) {
+        $done = $i < $currentIndex;
+        $active = $i === $currentIndex;
+        $dotClass = $done ? 'done' : ($active ? 'active' : '');
+        $html .= '<div class="pipeline-step">'
+            . '<div class="pipeline-dot ' . $dotClass . '">' . ($done ? '&check;' : (string) ($i + 1)) . '</div>'
+            . '<div class="pipeline-meta"><div class="pipeline-label">' . ui_esc($label) . '</div></div>'
+            . '</div>';
+        if ($i < $total - 1) {
+            $html .= '<span class="pipeline-arrow">&#8594;</span>';
+        }
+        $i++;
+    }
+    $html .= '</div>';
+    return $html;
+}
+
+/**
+ * "Informasi Produksi" panel body — divisions grouped under the factory
+ * they automatically route to (task's own worked example: "Pesanan ini
+ * akan dikirim ke: Karangtengah -> Cake & Custom, Roti & Bollen /
+ * Cibadak -> Bolu"). $routing is SpecialOrderService::buildOrderDto()'s
+ * own productionRouting array — built from the order's actual items,
+ * never re-derived here.
+ * @param array<int,array{factoryId:int,factoryName:string,divisionNames:array<int,string>}> $routing
+ */
+function ui_special_order_routing_info(array $routing): string
+{
+    if ($routing === []) {
+        return '<p style="color:var(--text-muted);font-size:var(--text-sm);">Belum ada item pesanan.</p>';
+    }
+    $divisionCount = 0;
+    foreach ($routing as $r) {
+        $divisionCount += count($r['divisionNames']);
+    }
+    $html = '<p class="routing-info-intro">Pesanan ini akan dikirim ke ' . $divisionCount . ' divisi produksi'
+        . (count($routing) > 1 ? ' di ' . count($routing) . ' factory berbeda' : '') . ':</p>';
+    foreach ($routing as $r) {
+        $html .= '<div class="routing-factory-group"><div class="routing-factory-name">' . ui_esc($r['factoryName']) . '</div>'
+            . '<div class="routing-division-badges">'
+            . implode('', array_map(fn ($d) => '<span class="badge badge-primary">' . ui_esc($d) . '</span>', $r['divisionNames']))
+            . '</div></div>';
+    }
+    return $html;
+}

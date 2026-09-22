@@ -7,6 +7,13 @@
  * "structurally ready for light mode" requirement.
  */
 :root {
+  /* Tells the browser's OWN native UI (date/time picker popups, dropdown
+     arrows, scrollbars) to paint itself dark — without this, any native
+     control not fully re-skinned by the rules below renders with the OS
+     light-mode chrome, which is what caused the white date-picker boxes
+     seen in real UAT. */
+  color-scheme: dark;
+
   /* Surfaces */
   --bg: #0b1220;
   --bg-sidebar: #0a0f1c;
@@ -69,6 +76,8 @@
    component CSS directly; components always read the variable, so this
    block is the entire light-mode implementation. */
 :root[data-theme="light"] {
+  color-scheme: light;
+
   --bg: #f3f5f9;
   --bg-sidebar: #101828;
   --surface: #ffffff;

@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 /**
  * Migration 0010 — Pesanan Khusus Toko / Pesanan Non-Toko + Production
- * routing integration suite (ORDER-01..17). Run via
+ * routing integration suite (ORDER-01..17 + ROUTE-01..10, the automatic
+ * factory-routing rework's own tests). Run via
  * api/tests/run-special-order.sh, which stands up a disposable local
  * MariaDB, applies migrations 0001-0010, bootstraps realistic master
  * data, then drives the real /api/special-orders/* JSON API end to end
@@ -140,6 +141,31 @@ expect($rotiBollenProductId > 0, 'expected at least one active Roti & Bollen pro
 $pdo->exec("INSERT INTO product (name, division_id, hpp, harga, aktif, version, created_at) VALUES ('ORDER-TEST-NO-DIVISION-PRODUCT', NULL, 0, 10000, 1, 1, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE division_id = NULL");
 $noDivisionProductId = (int) $pdo->query("SELECT product_id FROM product WHERE name = 'ORDER-TEST-NO-DIVISION-PRODUCT'")->fetchColumn();
 expect($noDivisionProductId > 0, 'expected the no-division test product to be inserted');
+
+// --- Automatic factory routing fixtures (ROUTE-01..10) ---------------------
+// One real, seeded active product per real production division, plus the
+// two real factories — confirms migration 0002's own division.factory_id
+// mapping (Bolu -> Cibadak, every other real division -> Karangtengah)
+// end to end through the actual /api/special-orders create flow, never a
+// hardcoded assumption of what the mapping "should" be.
+function productForDivision(PDO $pdo, string $divisionName): array
+{
+    $divId = (int) $pdo->query("SELECT division_id FROM division WHERE name = " . $pdo->quote($divisionName))->fetchColumn();
+    expect($divId > 0, "expected division '{$divisionName}' to be seeded");
+    $productId = (int) $pdo->query("SELECT product_id FROM product WHERE division_id = {$divId} AND aktif = 1 LIMIT 1")->fetchColumn();
+    expect($productId > 0, "expected at least one active product in division '{$divisionName}'");
+    return ['divisionId' => $divId, 'productId' => $productId];
+}
+
+$bolu = productForDivision($pdo, 'Bolu');
+$pastry = productForDivision($pdo, 'Pastry');
+$donatMochiAkb = productForDivision($pdo, 'Donat/Mochi/AKB');
+$basic = productForDivision($pdo, 'Basic');
+$cookies = productForDivision($pdo, 'Cookies');
+
+$karangtengahFactoryId = (int) $pdo->query("SELECT factory_id FROM factory WHERE name = 'Karangtengah'")->fetchColumn();
+$cibadakFactoryId = (int) $pdo->query("SELECT factory_id FROM factory WHERE name = 'Cibadak'")->fetchColumn();
+expect($karangtengahFactoryId > 0 && $cibadakFactoryId > 0, 'expected both Karangtengah and Cibadak factories seeded');
 
 $results = [];
 function runTest(string $id, callable $fn): void
@@ -421,6 +447,104 @@ runTest('ORDER-16 a mutation without a valid CSRF token is rejected', function (
     $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     expect($status === 403, "ORDER-16: expected 403 for a mutation with no X-CSRF-Token, got {$status}");
+});
+
+// --- ROUTE-01..10 (automatic factory routing) -------------------------------
+
+runTest('ROUTE-01 Bolu routes to Cibadak', function () use ($adminHttp, $adminCsrf, $storeAId, $bolu, $cibadakFactoryId) {
+    $r = $adminHttp->request('POST', '/api/special-orders', [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId, 'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25',
+        'items' => [['itemType' => 'existing_product', 'productId' => $bolu['productId'], 'qty' => 1]],
+    ], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('route01')));
+    expect($r['status'] === 200, 'ROUTE-01: expected 200: ' . json_encode($r['json']));
+    $item = $r['json']['data']['items'][0];
+    expect($item['factoryId'] === $cibadakFactoryId, "ROUTE-01: expected factoryId={$cibadakFactoryId} (Cibadak), got {$item['factoryId']}");
+    expect($item['factoryName'] === 'Cibadak', 'ROUTE-01: expected factoryName=Cibadak');
+    expect($r['json']['data']['factoryNames'] === ['Cibadak'], 'ROUTE-01: expected the order header factoryNames=[Cibadak] (single-factory order)');
+});
+
+runTest('ROUTE-02 Cake & Custom (special catalog) routes to Karangtengah', function () use ($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId) {
+    $r = $adminHttp->request('POST', '/api/special-orders', [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId, 'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25',
+        'items' => [['itemType' => 'special_catalog', 'specialCatalogId' => 1, 'qty' => 1]],
+    ], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('route02')));
+    expect($r['status'] === 200, 'ROUTE-02: expected 200: ' . json_encode($r['json']));
+    $item = $r['json']['data']['items'][0];
+    expect($item['factoryId'] === $karangtengahFactoryId, "ROUTE-02: expected factoryId={$karangtengahFactoryId} (Karangtengah), got {$item['factoryId']}");
+    expect($item['divisionName'] === 'Cake & Custom', 'ROUTE-02: expected divisionName=Cake & Custom');
+});
+
+function assertDivisionRoutesToKarangtengah(HttpOrder $http, string $csrf, int $storeId, int $karangtengahFactoryId, array $fixture, string $tag, string $divisionLabel): void
+{
+    $r = $http->request('POST', '/api/special-orders', [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeId, 'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25',
+        'items' => [['itemType' => 'existing_product', 'productId' => $fixture['productId'], 'qty' => 1]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey($tag)));
+    expect($r['status'] === 200, "{$tag}: expected 200: " . json_encode($r['json']));
+    $item = $r['json']['data']['items'][0];
+    expect($item['factoryId'] === $karangtengahFactoryId, "{$tag}: expected {$divisionLabel} -> factoryId={$karangtengahFactoryId} (Karangtengah), got {$item['factoryId']}");
+    expect($item['factoryName'] === 'Karangtengah', "{$tag}: expected {$divisionLabel} -> factoryName=Karangtengah");
+}
+
+runTest('ROUTE-03 Pastry routes to Karangtengah', function () use ($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, $pastry) {
+    assertDivisionRoutesToKarangtengah($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, $pastry, 'route03', 'Pastry');
+});
+runTest('ROUTE-04 Roti & Bollen routes to Karangtengah', function () use ($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, $rotiBollenProductId, $rotiBollenDivId) {
+    assertDivisionRoutesToKarangtengah($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, ['productId' => $rotiBollenProductId, 'divisionId' => $rotiBollenDivId], 'route04', 'Roti & Bollen');
+});
+runTest('ROUTE-05 Donat/Mochi/AKB routes to Karangtengah', function () use ($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, $donatMochiAkb) {
+    assertDivisionRoutesToKarangtengah($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, $donatMochiAkb, 'route05', 'Donat/Mochi/AKB');
+});
+runTest('ROUTE-06 Basic routes to Karangtengah', function () use ($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, $basic) {
+    assertDivisionRoutesToKarangtengah($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, $basic, 'route06', 'Basic');
+});
+runTest('ROUTE-07 Cookies routes to Karangtengah', function () use ($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, $cookies) {
+    assertDivisionRoutesToKarangtengah($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, $cookies, 'route07', 'Cookies');
+});
+
+runTest('ROUTE-08 a multi-division order may route to multi-factory correctly', function () use ($adminHttp, $adminCsrf, $storeAId, $bolu, $rotiBollenProductId) {
+    $r = $adminHttp->request('POST', '/api/special-orders', [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId, 'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25',
+        'items' => [
+            ['itemType' => 'existing_product', 'productId' => $bolu['productId'], 'qty' => 2],
+            ['itemType' => 'existing_product', 'productId' => $rotiBollenProductId, 'qty' => 3],
+        ],
+    ], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('route08')));
+    expect($r['status'] === 200, 'ROUTE-08: expected 200: ' . json_encode($r['json']));
+    $data = $r['json']['data'];
+    expect($data['isMultiDivision'] === true, 'ROUTE-08: expected isMultiDivision=true (Bolu + Roti & Bollen)');
+    expect($data['isMultiFactory'] === true, 'ROUTE-08: expected isMultiFactory=true (Cibadak + Karangtengah)');
+    sort($data['factoryNames']);
+    expect($data['factoryNames'] === ['Cibadak', 'Karangtengah'], 'ROUTE-08: expected factoryNames=[Cibadak, Karangtengah], got ' . json_encode($data['factoryNames']));
+    expect($data['factoryId'] === null, 'ROUTE-08: expected the header factoryId to be NULL for a genuine multi-factory order (per-item stays the source of truth)');
+    expect(count($data['productionRouting']) === 2, 'ROUTE-08: expected productionRouting to list exactly 2 factory groups');
+});
+
+runTest('ROUTE-09 an unresolvable division blocks routing (defense-in-depth safety net)', function () use ($pdo) {
+    try {
+        \Amor\Api\Production\ProductionRoutingService::resolveFactoryForDivision($pdo, 999999999);
+        throw new RuntimeException('ROUTE-09: expected resolveFactoryForDivision() to throw for a non-existent division_id');
+    } catch (\Amor\Api\ApiException $e) {
+        expect($e->status === 422, "ROUTE-09: expected HTTP 422, got {$e->status}");
+        expect($e->errorCode === 'FACTORY_ROUTING_UNRESOLVED', "ROUTE-09: expected errorCode=FACTORY_ROUTING_UNRESOLVED, got {$e->errorCode}");
+        expect(str_contains($e->getMessage(), 'Factory tujuan tidak dapat ditentukan'), 'ROUTE-09: expected the Indonesian safety-net error message');
+    }
+});
+
+runTest('ROUTE-10 a client-supplied factoryId is silently ignored — the server always computes its own', function () use ($adminHttp, $adminCsrf, $storeAId, $rotiBollenProductId, $karangtengahFactoryId, $cibadakFactoryId) {
+    // Roti & Bollen genuinely routes to Karangtengah — the client here
+    // tries to override it to Cibadak's factory id. The server must
+    // ignore this entirely (validateHeader() never reads factoryId from
+    // input at all) and still resolve the real routing from the item.
+    $r = $adminHttp->request('POST', '/api/special-orders', [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId, 'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25',
+        'factoryId' => $cibadakFactoryId,
+        'items' => [['itemType' => 'existing_product', 'productId' => $rotiBollenProductId, 'qty' => 1, 'factoryId' => $cibadakFactoryId]],
+    ], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('route10')));
+    expect($r['status'] === 200, 'ROUTE-10: expected 200: ' . json_encode($r['json']));
+    $data = $r['json']['data'];
+    expect($data['factoryId'] === $karangtengahFactoryId, "ROUTE-10: expected the real, server-computed factoryId={$karangtengahFactoryId} (Karangtengah), got " . json_encode($data['factoryId']));
+    expect($data['items'][0]['factoryId'] === $karangtengahFactoryId, 'ROUTE-10: expected the item factoryId to also be the real Karangtengah id, not the client-supplied Cibadak override');
 });
 
 // ORDER-18 (full Phase 0-5.5 regression green) is NOT a test in this file

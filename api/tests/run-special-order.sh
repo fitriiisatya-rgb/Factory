@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Migration 0010 — Pesanan Khusus Toko / Pesanan Non-Toko + Production
-# routing integration test orchestrator (ORDER-01..17), followed by the
+# routing integration test orchestrator (ORDER-01..17 + ROUTE-01..10), followed by the
 # FULL existing Phase 0-5.5 regression suite (ORDER-18) — this feature
 # must never regress any prior phase's own test suite, and in particular
 # must never touch PO Reguler Toko (po_batch/po_item/po_store_item).
@@ -109,7 +109,7 @@ return [
 ];
 PHPCONFIG
 
-echo "--- 8/9: starting php -S dev server on :$PHP_PORT (with the shared _ui_router.php) and running SpecialOrderTest.php (ORDER-01..17) ---"
+echo "--- 8/9: starting php -S dev server on :$PHP_PORT (with the shared _ui_router.php) and running SpecialOrderTest.php (ORDER-01..17 + ROUTE-01..10) ---"
 php -S "127.0.0.1:$PHP_PORT" -t "$API_ROOT" "$API_ROOT/tests/_ui_router.php" > "$WORKDIR/php-server.log" 2>&1 &
 PHP_PID=$!
 sleep 1
@@ -147,7 +147,7 @@ else
 fi
 
 echo ""
-if [ $ORDER_RESULT -eq 0 ]; then echo "ORDER-01..17: PASSED"; else echo "ORDER-01..17: FAILED"; fi
+if [ $ORDER_RESULT -eq 0 ]; then echo "ORDER-01..17 + ROUTE-01..10: PASSED"; else echo "ORDER-01..17 + ROUTE-01..10: FAILED"; fi
 if [ $REGRESSION_RESULT -eq 0 ]; then echo "ORDER-18 (full Phase 0-5.5 regression): PASSED"; else echo "ORDER-18 (full Phase 0-5.5 regression): FAILED"; fi
 
 if [ $ORDER_RESULT -eq 0 ] && [ $REGRESSION_RESULT -eq 0 ]; then

@@ -22,6 +22,33 @@ a:hover { text-decoration: underline; }
 h1, h2, h3, h4 { margin: 0; font-weight: 700; color: var(--text); }
 button { font-family: inherit; }
 
+/* Dark baseline for EVERY input/select/textarea, not just ones wrapped in
+   .field — previously only `.field input, .field select` was styled, so
+   any bare control (e.g. inside a table cell) fell back to the browser's
+   native (light) rendering. This is the actual root cause of the "native
+   white control" / "small clipped control" UAT bugs: it was never a
+   one-off styling miss on a specific page, it was every unwrapped control
+   everywhere. `.field input, .field select` below still wins on shared
+   properties (declared later in this file) and adds its own min-width. */
+input:not([type=checkbox]):not([type=radio]):not([type=file]),
+select,
+textarea {
+  font-family: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+input:not([type=checkbox]):not([type=radio]):not([type=file]),
+select {
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+}
+textarea { padding: var(--space-3); min-height: 72px; line-height: 1.5; resize: vertical; }
+input::placeholder, textarea::placeholder { color: var(--text-faint); }
+select { cursor: pointer; }
+
 /* Visible keyboard focus everywhere — never suppressed. */
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
 textarea:focus-visible, [tabindex]:focus-visible {
@@ -281,6 +308,49 @@ textarea:focus-visible, [tabindex]:focus-visible {
   background: var(--surface-2); color: var(--text); padding: 0 var(--space-3); font-size: var(--text-sm); min-width: 150px;
 }
 .field input[type=text] { min-width: 200px; }
+.field textarea { min-width: 200px; }
+.field-static {
+  display: flex; align-items: center; height: var(--control-height); padding: 0 var(--space-3);
+  border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-muted); font-size: var(--text-sm);
+}
+
+/* ---------------------------------------------------------------------
+   Order item cards (Pesanan Khusus Toko / Pesanan Non-Toko item entry) —
+   replaces a cramped <table> of bare inputs with one readable card per
+   item, each field labeled and using the same dark controls as the rest
+   of the app. Division/Factory are always read-only badges (task rule:
+   routing is derived, never freely chosen by the user).
+--------------------------------------------------------------------- */
+.order-item-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.order-item-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-4); }
+.order-item-card-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
+.order-item-index {
+  width: 26px; height: 26px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: var(--text-xs); flex: none;
+}
+.order-item-card-head .order-item-remove { margin-left: auto; }
+.order-item-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
+.order-item-grid .field { min-width: 0; }
+.order-item-grid .field input, .order-item-grid .field select, .order-item-grid .field-static { min-width: 0; width: 100%; }
+.order-item-note-field { grid-column: 1 / -1; }
+.order-item-note-field textarea { width: 100%; min-width: 0; }
+.badge-slot { display: flex; align-items: center; min-height: var(--control-height); }
+
+.subpanel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-4); }
+.subpanel-title { font-size: var(--text-sm); font-weight: 700; margin-bottom: var(--space-3); }
+.routing-info-intro { font-size: var(--text-sm); color: var(--text-muted); margin-bottom: var(--space-3); }
+.routing-factory-group { margin-bottom: var(--space-3); }
+.routing-factory-group:last-child { margin-bottom: 0; }
+.routing-factory-name { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: var(--text-sm); margin-bottom: 6px; }
+.routing-division-badges { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 22px; }
+
+@media (max-width: 1200px) {
+  .order-item-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .order-item-grid { grid-template-columns: 1fr; }
+}
 
 /* ---------------------------------------------------------------------
    Buttons

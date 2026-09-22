@@ -25,14 +25,16 @@ try {
   <div class="card-head">
     <div>
       <h2 class="card-title"><?= ui_esc($order['orderNo']) ?></h2>
-      <div class="page-subtitle" style="margin-top:4px;"><?= ui_esc((string) $order['storeName']) ?><?= $order['isMultiDivision'] ? ' &middot; Multi Divisi' : '' ?></div>
+      <div class="page-subtitle" style="margin-top:4px;"><?= ui_esc((string) $order['storeName']) ?><?= $order['isMultiDivision'] ? ' &middot; Multi Divisi' : '' ?><?= $order['isMultiFactory'] ? ' &middot; Multi Factory' : '' ?></div>
     </div>
     <?= ui_badge(ui_special_order_status_label($order['status'])) ?>
   </div>
 
+  <?= ui_special_order_timeline($order['status']) ?>
+
   <div class="kpi-grid kpi-grid-4">
     <?= ui_kpi_card(['label' => 'Tanggal Dibutuhkan', 'value' => $order['requiredDate'] . ($order['requiredTime'] ? ' · ' . substr((string) $order['requiredTime'], 0, 5) : ''), 'icon' => 'chart', 'color' => 'neutral', 'detail' => true]) ?>
-    <?= ui_kpi_card(['label' => 'Factory Tujuan', 'value' => (string) ($order['factoryName'] ?? '-'), 'icon' => 'box', 'color' => 'neutral', 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => 'Factory Tujuan', 'value' => $order['isMultiFactory'] ? 'Multi Factory (' . count($order['factoryNames']) . ')' : (string) ($order['factoryNames'][0] ?? '-'), 'icon' => 'box', 'color' => 'neutral', 'detail' => true]) ?>
     <?= ui_kpi_card(['label' => 'PIC Internal', 'value' => (string) ($order['picName'] ?? '-'), 'icon' => 'user', 'color' => 'neutral', 'detail' => true]) ?>
     <?= ui_kpi_card(['label' => 'Dibuat Oleh', 'value' => (string) ($order['createdByName'] ?? '-'), 'icon' => 'user', 'color' => 'neutral', 'detail' => true]) ?>
   </div>
@@ -45,12 +47,14 @@ try {
 
   <h3 class="card-title" style="margin:var(--space-4) 0 var(--space-2);">Item Pesanan</h3>
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Item</th><th>Divisi Produksi</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Charge</th><th class="num">Subtotal</th><th>Catatan Khusus</th></tr></thead>
+    <thead><tr><th>Item</th><th>Tipe</th><th>Divisi Produksi</th><th>Factory</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Charge</th><th class="num">Subtotal</th><th>Catatan Khusus</th></tr></thead>
     <tbody>
     <?php foreach ($order['items'] as $it): ?>
     <tr>
-      <td><?= ui_esc($it['itemName']) ?> <span style="color:var(--text-muted);font-size:var(--text-xs);">(<?= $it['itemType'] === 'existing_product' ? 'Produk Existing' : 'Item Khusus' ?>)</span></td>
-      <td><?= ui_esc($it['divisionName']) ?></td>
+      <td><?= ui_esc($it['itemName']) ?></td>
+      <td><?= $it['itemType'] === 'existing_product' ? '<span class="badge badge-success">Produk Existing</span>' : '<span class="badge badge-warning">Item Khusus</span>' ?></td>
+      <td><span class="badge badge-primary"><?= ui_esc($it['divisionName']) ?></span></td>
+      <td><span class="badge badge-neutral"><?= ui_esc($it['factoryName']) ?></span></td>
       <td class="num"><?= ui_fmt_num($it['qty']) ?></td>
       <td class="num"><?= ui_fmt_num($it['unitPrice']) ?></td>
       <td class="num"><?= ui_fmt_num($it['charge']) ?></td>
@@ -60,6 +64,11 @@ try {
     <?php endforeach; ?>
     </tbody>
   </table></div>
+
+  <div class="subpanel section" style="margin-top:var(--space-4);">
+    <div class="subpanel-title">Informasi Produksi</div>
+    <?= ui_special_order_routing_info($order['productionRouting']) ?>
+  </div>
 
   <div style="margin-top:var(--space-4);display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap;">
     <?php if ($order['status'] === 'draft'): ?>

@@ -6,6 +6,7 @@ namespace Amor\Api\SpecialOrder;
 
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
+use Amor\Api\Production\ProductionRoutingService;
 use Amor\Api\Services\DocumentSequenceService;
 use Amor\Api\Versioning;
 use PDO;
@@ -57,9 +58,31 @@ final class SpecialOrderService
             'name' => $r['name'],
             'divisionId' => (int) $r['division_id'],
             'divisionName' => $r['division_name'],
+            'factoryId' => (int) $r['factory_id'],
+            'factoryName' => $r['factory_name'],
             'defaultPrice' => $r['default_price'] !== null ? (float) $r['default_price'] : null,
             'defaultCharge' => $r['default_charge'] !== null ? (float) $r['default_charge'] : null,
         ], $this->repo->findActiveCatalog($this->pdo));
+    }
+
+    /**
+     * GET-adjacent helper for the create form's "existing product" search
+     * — same product list the form already fetched inline before this
+     * routing rework, now behind the service so every caller (this
+     * service, its own tests) shares one query instead of ad-hoc SQL
+     * duplicated across pages.
+     */
+    public function listProductsForOrderEntry(): array
+    {
+        return array_map(fn ($p) => [
+            'productId' => (int) $p['product_id'],
+            'name' => $p['name'],
+            'harga' => (float) $p['harga'],
+            'divisionId' => $p['division_id'] !== null ? (int) $p['division_id'] : null,
+            'divisionName' => $p['division_name'],
+            'factoryId' => $p['factory_id'] !== null ? (int) $p['factory_id'] : null,
+            'factoryName' => $p['factory_name'],
+        ], $this->repo->findProductsWithDivision($this->pdo));
     }
 
     /**
@@ -85,19 +108,37 @@ final class SpecialOrderService
         $cakeCustomDivisionId = $this->repo->findOrCreateCakeCustomDivision($this->pdo);
         $this->repo->ensureCatalogSeeded($this->pdo, $cakeCustomDivisionId);
 
-        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-        $orderNo = sprintf('NPR-%s-%03d', $now->format('Ymd'), DocumentSequenceService::allocate($this->pdo, 'NPR', (int) $now->format('Y'), (int) $now->format('n')));
-
-        $orderId = $this->repo->insertOrder($this->pdo, $orderNo, $header, $userId);
-
+        // Every item is resolved (and its factory routing validated —
+        // resolveItem() throws FACTORY_ROUTING_UNRESOLVED via
+        // ProductionRoutingService if it can't be) BEFORE the order header
+        // is written, so the header's own factory_id — a display-only
+        // convenience snapshot, never user-supplied (task: "Do not require
+        // a manual factory selector" / "User cannot manually override
+        // factory inconsistently") — can be set correctly in one insert:
+        // the single resolved factory when every item routes to the same
+        // one, or NULL for a genuine multi-factory order (per-item factory
+        // stays the source of truth either way — see findItemsForOrder()).
+        $resolvedItems = [];
         $divisionIds = [];
+        $factoryIds = [];
         foreach ($itemsInput as $i => $rawItem) {
             if (!is_array($rawItem)) {
                 throw new ApiException(400, 'INVALID_ITEM', "Item #{$i} is not a valid object");
             }
             $item = $this->resolveItem($rawItem, $i);
-            $this->repo->insertItem($this->pdo, $orderId, $item);
+            $resolvedItems[] = $item;
             $divisionIds[$item['divisionId']] = true;
+            $factoryIds[$item['factoryId']] = true;
+        }
+        $header['factoryId'] = count($factoryIds) === 1 ? array_key_first($factoryIds) : null;
+
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $orderNo = sprintf('NPR-%s-%03d', $now->format('Ymd'), DocumentSequenceService::allocate($this->pdo, 'NPR', (int) $now->format('Y'), (int) $now->format('n')));
+
+        $orderId = $this->repo->insertOrder($this->pdo, $orderNo, $header, $userId);
+
+        foreach ($resolvedItems as $item) {
+            $this->repo->insertItem($this->pdo, $orderId, $item);
         }
 
         Audit::write(
@@ -110,7 +151,14 @@ final class SpecialOrderService
             'ok',
             null,
             1,
-            ['orderNo' => $orderNo, 'sourceType' => $header['sourceType'], 'itemCount' => count($itemsInput), 'divisionCount' => count($divisionIds)]
+            [
+                'orderNo' => $orderNo,
+                'sourceType' => $header['sourceType'],
+                'itemCount' => count($itemsInput),
+                'divisionCount' => count($divisionIds),
+                'factoryCount' => count($factoryIds),
+                'factoryIds' => array_keys($factoryIds),
+            ]
         );
 
         return $this->getOrder($orderId);
@@ -229,10 +277,18 @@ final class SpecialOrderService
             if (!isset($byDivision[$divId])) {
                 $byDivision[$divId] = ['divisionId' => $divId, 'divisionName' => $r['division_name'], 'items' => []];
             }
+            if (!isset($byDivision[$divId]['factoryName'])) {
+                $byDivision[$divId]['factoryId'] = (int) $r['item_factory_id'];
+                $byDivision[$divId]['factoryName'] = $r['item_factory_name'];
+            }
             $fgAvailable = null;
             $productionNeed = null;
-            if ($r['item_type'] === 'existing_product' && $r['product_id'] !== null && $r['factory_id'] !== null) {
-                $stock = $this->repo->findStockOnHand($this->pdo, (int) $r['product_id'], (int) $r['factory_id']);
+            // Stock is checked at the ITEM's own routed factory
+            // (item_factory_id, derived from division.factory_id) —
+            // never the order header's factory_id, which is null (or
+            // simply irrelevant) for a multi-factory order.
+            if ($r['item_type'] === 'existing_product' && $r['product_id'] !== null) {
+                $stock = $this->repo->findStockOnHand($this->pdo, (int) $r['product_id'], (int) $r['item_factory_id']);
                 $fgAvailable = $stock;
                 $productionNeed = max(0.0, (float) $r['qty'] - $stock);
             }
@@ -240,10 +296,13 @@ final class SpecialOrderService
                 'orderNo' => $r['order_no'],
                 'sourceType' => $r['source_type'],
                 'sourceLabel' => $this->sourceLabel($r),
+                'storeOrCustomerName' => $r['source_type'] === 'toko_khusus' ? ($r['store_name'] ?? '-') : ($r['customer_name'] ?? '-'),
                 'itemType' => $r['item_type'],
                 'itemName' => $r['item_name_snapshot'],
                 'qty' => (float) $r['qty'],
                 'charge' => (float) $r['charge'],
+                'factoryId' => (int) $r['item_factory_id'],
+                'factoryName' => $r['item_factory_name'],
                 'requiredDate' => $r['required_date'],
                 'requiredTime' => $r['required_time'],
                 'specialNote' => $r['special_note'],
@@ -322,17 +381,14 @@ final class SpecialOrderService
             $deliveryAddress = $this->nullableString($input['deliveryAddress'] ?? null);
         }
 
-        $factoryId = isset($input['factoryId']) && $input['factoryId'] !== '' && $input['factoryId'] !== null ? (int) $input['factoryId'] : null;
-        if ($factoryId !== null) {
-            $stmt = $this->pdo->prepare('SELECT factory_id FROM factory WHERE factory_id = ?');
-            $stmt->execute([$factoryId]);
-            if ($stmt->fetchColumn() === false) {
-                throw new ApiException(404, 'FACTORY_NOT_FOUND', 'Factory not found');
-            }
-        }
-
         $picUserId = isset($input['picUserId']) && $input['picUserId'] !== '' && $input['picUserId'] !== null ? (int) $input['picUserId'] : null;
 
+        // factoryId is deliberately NOT read from $input here (task: "Do
+        // not require a manual factory selector" / ROUTE-10 "user cannot
+        // manually override factory inconsistently") — any factoryId a
+        // client sends is silently ignored; createOrder() computes the
+        // real value itself from each item's own resolved routing once
+        // every item has been validated.
         return [
             'sourceType' => $sourceType,
             'orderDate' => $orderDate,
@@ -342,7 +398,6 @@ final class SpecialOrderService
             'customerContact' => $customerContact,
             'fulfillmentType' => $fulfillmentType,
             'deliveryAddress' => $deliveryAddress,
-            'factoryId' => $factoryId,
             'requiredDate' => $requiredDate,
             'requiredTime' => $requiredTime,
             'picUserId' => $picUserId,
@@ -378,13 +433,18 @@ final class SpecialOrderService
             if ($product['division_id'] === null) {
                 throw new ApiException(422, 'PRODUCT_DIVISION_MISSING', "Item #{$index}: product '{$product['name']}' has no production division set in Master Data — division is mandatory for every order item");
             }
+            $divisionId = (int) $product['division_id'];
+            $routing = ProductionRoutingService::resolveFactoryForDivision($this->pdo, $divisionId);
             $unitPrice = isset($raw['unitPrice']) && $raw['unitPrice'] !== '' ? (float) $raw['unitPrice'] : (float) $product['harga'];
             $subtotal = round($qty * $unitPrice + $charge, 2);
             return [
                 'itemType' => 'existing_product',
                 'productId' => $productId,
                 'specialCatalogId' => null,
-                'divisionId' => (int) $product['division_id'],
+                'divisionId' => $divisionId,
+                'divisionName' => $routing['divisionName'],
+                'factoryId' => $routing['factoryId'],
+                'factoryName' => $routing['factoryName'],
                 'itemNameSnapshot' => $product['name'],
                 'qty' => $qty,
                 'unitPrice' => $unitPrice,
@@ -402,6 +462,8 @@ final class SpecialOrderService
         if ($catalog === null || (int) $catalog['active'] !== 1) {
             throw new ApiException(404, 'CATALOG_ITEM_NOT_FOUND', "Item #{$index}: special catalog item not found or inactive");
         }
+        $divisionId = (int) $catalog['division_id'];
+        $routing = ProductionRoutingService::resolveFactoryForDivision($this->pdo, $divisionId);
         $unitPrice = isset($raw['unitPrice']) && $raw['unitPrice'] !== ''
             ? (float) $raw['unitPrice']
             : ($catalog['default_price'] !== null ? (float) $catalog['default_price'] : 0.0);
@@ -413,7 +475,10 @@ final class SpecialOrderService
             'itemType' => 'special_catalog',
             'productId' => null,
             'specialCatalogId' => $catalogId,
-            'divisionId' => (int) $catalog['division_id'],
+            'divisionId' => $divisionId,
+            'divisionName' => $routing['divisionName'],
+            'factoryId' => $routing['factoryId'],
+            'factoryName' => $routing['factoryName'],
             'itemNameSnapshot' => $catalog['name'],
             'qty' => $qty,
             'unitPrice' => $unitPrice,
@@ -442,6 +507,8 @@ final class SpecialOrderService
             'specialCatalogId' => $it['special_catalog_id'] !== null ? (int) $it['special_catalog_id'] : null,
             'divisionId' => (int) $it['division_id'],
             'divisionName' => $it['division_name'],
+            'factoryId' => (int) $it['item_factory_id'],
+            'factoryName' => $it['item_factory_name'],
             'itemName' => $it['item_name_snapshot'],
             'qty' => (float) $it['qty'],
             'unitPrice' => (float) $it['unit_price'],
@@ -451,6 +518,22 @@ final class SpecialOrderService
         ], $items);
 
         $divisionNames = array_values(array_unique(array_column($itemDtos, 'divisionName')));
+        $factoryNames = array_values(array_unique(array_column($itemDtos, 'factoryName')));
+
+        // "Informasi Produksi" — divisions grouped under the factory they
+        // route to, for the detail page's routing summary panel. Built
+        // from the items themselves (never re-derived from the header),
+        // so it is correct even for a multi-factory order.
+        $routingByFactory = [];
+        foreach ($itemDtos as $it) {
+            $fName = $it['factoryName'];
+            if (!isset($routingByFactory[$fName])) {
+                $routingByFactory[$fName] = ['factoryId' => $it['factoryId'], 'factoryName' => $fName, 'divisionNames' => []];
+            }
+            if (!in_array($it['divisionName'], $routingByFactory[$fName]['divisionNames'], true)) {
+                $routingByFactory[$fName]['divisionNames'][] = $it['divisionName'];
+            }
+        }
 
         return [
             'orderId' => (int) $order['special_order_id'],
@@ -475,6 +558,9 @@ final class SpecialOrderService
             'version' => (int) $order['version'],
             'isMultiDivision' => count($divisionNames) > 1,
             'divisionNames' => $divisionNames,
+            'isMultiFactory' => count($factoryNames) > 1,
+            'factoryNames' => $factoryNames,
+            'productionRouting' => array_values($routingByFactory),
             'createdByName' => $order['created_by_name'],
             'createdAt' => $order['created_at'],
             'cancelReason' => $order['cancel_reason'],
@@ -497,6 +583,7 @@ final class SpecialOrderService
             'status' => $r['status'],
             'version' => (int) $r['version'],
             'isMultiDivision' => (int) $r['division_count'] > 1,
+            'isMultiFactory' => (int) $r['factory_count'] > 1,
         ];
     }
 
