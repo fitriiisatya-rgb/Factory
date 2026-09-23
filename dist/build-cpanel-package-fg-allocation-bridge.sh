@@ -99,6 +99,10 @@ grep -qE "special_order_fg_allocation.*FOR UPDATE|FOR UPDATE" "$STAGE/api/app/sr
 grep -q "INSUFFICIENT_PHYSICAL_FG" "$STAGE/api/app/src/SpecialOrder/SpecialOrderFgAllocationService.php" || { echo "REFUSING TO BUILD: consumeForDispatch() no longer re-validates physical stock_balance under lock before writing the ledger deduction."; exit 1; }
 grep -q "shippedFromSpecial" "$STAGE/api/app/src/SpecialOrder/SpecialOrderService.php" || { echo "REFUSING TO BUILD: verifyItemFg()'s floor no longer uses shippedFromSpecial — it would wrongly require fgVerifiedQty to cover General-FG-fulfilled qty too."; exit 1; }
 
+echo "--- sanity: confirm a downward Regular FG correction cannot invalidate an active special-order reservation ---"
+grep -q "FG_CORRECTION_BELOW_RESERVED" "$STAGE/api/app/src/Fg/FgService.php" || { echo "REFUSING TO BUILD: FgService::submit() no longer guards a negative-delta FG correction against active special-order reservations."; exit 1; }
+grep -q "reservedSpecial" "$STAGE/api/app/src/Fg/FgService.php" || { echo "REFUSING TO BUILD: FgService::submit() no longer computes reservedSpecial for its negative-delta preflight."; exit 1; }
+
 echo "--- sanity: confirm the routes + UI action for 'Alokasikan dari FG' are wired ---"
 grep -q "allocate-fg" "$STAGE/api/app/src/App.php" || { echo "REFUSING TO BUILD: the allocate-fg route is missing from App.php."; exit 1; }
 grep -q "allocateFg" "$STAGE/api/app/src/Controllers/SpecialOrderController.php" || { echo "REFUSING TO BUILD: SpecialOrderController::allocateFg is missing."; exit 1; }
@@ -124,9 +128,10 @@ echo "--- sanity: confirm NO business rule / server-side validation file OUTSIDE
 # so this loop only guards against a FUTURE edit to this build script
 # accidentally staging a file from somewhere else — it documents intent,
 # it is not a git-history diff. Files this pass legitimately touches
-# (ShipmentService.php/DoService.php/DispatchService.php/
-# SpecialOrderFgAllocationRepository.php — the cross-flow reservation
-# fix — plus SpecialOrderRepository.php/SpecialOrderService.php/
+# (ShipmentService.php/DoService.php/DispatchService.php/Fg/FgService.php
+# — the cross-flow reservation fix, including the downward-FG-correction
+# safety guard — SpecialOrderFgAllocationRepository.php — plus
+# SpecialOrderRepository.php/SpecialOrderService.php/
 # SpecialOrderController.php/SpecialOrderDoService.php/
 # SpecialOrderDoRepository.php/ProductionTaskService.php/App.php/
 # labels.php/produksi-demand.php/fg-khusus-non-toko.php) are deliberately
@@ -138,7 +143,7 @@ for f in api/app/src/Dispatch/EvidenceUploader.php api/app/src/Controllers/Dispa
          api/app/src/Production/ProductionRoutingService.php api/app/src/Production/ProductionService.php \
          api/app/src/Production/ProductionRepository.php api/app/src/Controllers/ProductionController.php \
          api/app/src/Controllers/ProductionTaskController.php \
-         api/app/src/Users/UserService.php api/app/src/Fg/FgService.php api/app/src/Fg/FgRepository.php \
+         api/app/src/Users/UserService.php api/app/src/Fg/FgRepository.php \
          api/app/src/Mail/ShipmentEmailRepository.php api/app/src/Mail/ShipmentEmailService.php \
          api/app/src/Dispatch/ShipmentLineResolver.php api/app/src/Dispatch/ReceiptService.php \
          api/app/src/Dispatch/DispatchRepository.php \
@@ -197,6 +202,16 @@ order allocation:
   then reject).
 - Dispatch\DispatchService's driver-facing "Konfirmasi Berangkat" actual-
   qty screen (same consistency, for the same reason).
+- Fg\FgService::submit() — a downward Regular FG batch correction
+  (reopen -> lower Packed -> resubmit, a real production count fix) is
+  ALSO a General-FG-decreasing write, the same class the rules above
+  already govern. It is now preflighted for EVERY negative-delta line,
+  in deterministic product_id order, BEFORE any ledger row is written —
+  a correction that would drop physical below an active reservation is
+  rejected (409 FG_CORRECTION_BELOW_RESERVED) with the WHOLE FG batch
+  submit refused atomically (a valid line never posts while an invalid
+  sibling line in the same batch blocks it). Positive/zero deltas are
+  exempt (they only ever grow physical stock).
 Every one of these locks the stock_balance row FIRST (the SAME
 lockBalance() Regular PO's own ShipmentService::ship() always used), for
 the WHOLE read-decide-write sequence — this is what makes a concurrent

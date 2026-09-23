@@ -258,6 +258,49 @@ function seedStorePo(PDO $pdo, string $tanggal, int $factoryId, int $storeId, in
     return $batchId;
 }
 
+/** Drives the REAL Production API end to end: create draft -> patch actual -> submit (same pattern as Phase5DoShipmentTest.php's own helper). */
+function createSubmittedProduction(HttpAlloc $http, string $csrf, PDO $pdo, int $factoryId, int $divisionId, string $tanggal, int $storeId, int $productId, float $poTarget, float $actual): void
+{
+    seedStorePo($pdo, $tanggal, $factoryId, $storeId, $productId, $poTarget);
+    $create = $http->request('POST', '/api/production', ['tanggal' => $tanggal, 'divisionId' => $divisionId], array_merge(['X-CSRF-Token' => $csrf], idemKey('prod-create')));
+    expect($create['status'] === 200, 'production create failed: ' . json_encode($create['json']));
+    $runId = $create['json']['data']['productionRunId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/production/{$runId}", ['expectedVersion' => $v, 'items' => [['productId' => $productId, 'actualQty' => $actual]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('prod-patch')));
+    expect($save['status'] === 200, 'production patch failed: ' . json_encode($save['json']));
+    $v = $save['json']['data']['version'];
+    $submit = $http->request('POST', "/api/production/{$runId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('prod-submit')));
+    expect($submit['status'] === 200, 'production submit failed: ' . json_encode($submit['json']));
+}
+
+/** Full chain: submitted Production -> a submitted FG batch with packed=$qty for $productId, leaving physical stock_balance = $qty. Returns the fgBatchId. */
+function createSubmittedFgBatch(HttpAlloc $http, string $csrf, PDO $pdo, int $factoryId, int $divisionId, string $tanggal, int $storeId, int $productId, float $qty): int
+{
+    createSubmittedProduction($http, $csrf, $pdo, $factoryId, $divisionId, $tanggal, $storeId, $productId, $qty, $qty);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $factoryId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fg-create')));
+    expect($create['status'] === 200, 'fg create failed: ' . json_encode($create['json']));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $save = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $productId, 'fgVerified' => $qty, 'packed' => $qty]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('fg-save')));
+    expect($save['status'] === 200, 'fg save failed: ' . json_encode($save['json']));
+    $v = $save['json']['data']['version'];
+    $submit = $http->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('fg-submit')));
+    expect($submit['status'] === 200, 'fg submit failed: ' . json_encode($submit['json']));
+    return (int) $batchId;
+}
+
+/** Reopens a submitted FG batch, patches ONE product's packed qty (snapshot semantics), and returns the batch's fresh version — does NOT submit. */
+function reopenAndCorrectFg(HttpAlloc $http, string $csrf, int $batchId, int $productId, float $fgVerified, float $newPacked, string $tag): int
+{
+    $get = $http->request('GET', "/api/fg/{$batchId}", null, ['X-CSRF-Token' => $csrf]);
+    expect($get['status'] === 200, "{$tag}: fg get failed: " . json_encode($get['json']));
+    $reopen = $http->request('POST', "/api/fg/{$batchId}/reopen", ['expectedVersion' => $get['json']['data']['version'], 'reason' => 'ALLOC-GLOBAL test correction'], array_merge(['X-CSRF-Token' => $csrf], idemKey($tag . 'reopen')));
+    expect($reopen['status'] === 200, "{$tag}: fg reopen failed: " . json_encode($reopen['json']));
+    $patch = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $reopen['json']['data']['version'], 'items' => [['productId' => $productId, 'fgVerified' => $fgVerified, 'packed' => $newPacked]]], array_merge(['X-CSRF-Token' => $csrf], idemKey($tag . 'patch')));
+    expect($patch['status'] === 200, "{$tag}: fg patch failed: " . json_encode($patch['json']));
+    return (int) $patch['json']['data']['version'];
+}
+
 /** Creates a Regular PO Draft DO for tanggal/storeId via the real API (derives its items from po_store_item — seedStorePo() must run first). */
 function createRegularDoDraft(HttpAlloc $http, string $csrf, string $tanggal, int $storeId): array
 {
@@ -870,6 +913,237 @@ runTest('ALLOC-GLOBAL-11 reducing fgVerifiedQty to EXACTLY shippedFromSpecial (5
 runTest('ALLOC-GLOBAL-12 stock_balance never goes negative for any product this suite touched', function () use ($pdo) {
     $negative = (int) $pdo->query('SELECT COUNT(*) FROM stock_balance WHERE qty_on_hand < 0')->fetchColumn();
     expect($negative === 0, "ALLOC-GLOBAL-12: expected ZERO stock_balance rows with negative qty_on_hand, found {$negative}");
+});
+
+// ============================================================================
+// ALLOC-GLOBAL-13..20 — "FINAL FG RESERVATION SAFETY BLOCKER": a downward
+// Regular FG batch resubmission (FgService::submit() with delta<0) must
+// never drop physical stock below what an active special-order
+// allocation reserves.
+// ============================================================================
+
+runTest('ALLOC-GLOBAL-13 a downward FG correction that stays AT/ABOVE the active reservation succeeds (10 -> 8, reserved 8)', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $storeAId) {
+    $product = productForDivisionAt($pdo, 'Roti & Bollen', 2);
+    $batchId = createSubmittedFgBatch($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $product['divisionId'], '2026-09-30', $storeAId, $product['productId'], 10);
+    $locationId = (int) $pdo->query("SELECT location_id FROM location WHERE factory_id = {$karangtengahFactoryId}")->fetchColumn();
+    expect(abs(stockOnHand($pdo, $product['productId'], $locationId) - 10.0) < 0.01, 'ALLOC-GLOBAL-13: expected physical=10 after initial FG submit');
+
+    [, $itemId] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-30',
+        'items' => [['itemType' => 'existing_product', 'productId' => $product['productId'], 'qty' => 8]],
+    ], 'allocglobal13');
+    $alloc = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/allocate-fg", ['qty' => 8], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal13alloc')));
+    expect($alloc['status'] === 200, 'ALLOC-GLOBAL-13: allocate-fg 8 failed: ' . json_encode($alloc['json']));
+
+    $version = reopenAndCorrectFg($adminHttp, $adminCsrf, $batchId, $product['productId'], 10, 8, 'allocglobal13');
+    $submit = $adminHttp->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $version], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal13submit')));
+    expect($submit['status'] === 200, 'ALLOC-GLOBAL-13: expected the -2 correction (10->8, exactly at the 8-unit reservation) to succeed: ' . json_encode($submit['json']));
+    expect(abs(stockOnHand($pdo, $product['productId'], $locationId) - 8.0) < 0.01, 'ALLOC-GLOBAL-13: expected physical=8 after the correction');
+});
+
+runTest('ALLOC-GLOBAL-14 a downward FG correction that would drop BELOW the active reservation is rejected (10 -> 7, reserved 8)', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $storeAId) {
+    $product = productForDivisionAt($pdo, 'Pastry', 2);
+    $batchId = createSubmittedFgBatch($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $product['divisionId'], '2026-09-29', $storeAId, $product['productId'], 10);
+    $locationId = (int) $pdo->query("SELECT location_id FROM location WHERE factory_id = {$karangtengahFactoryId}")->fetchColumn();
+
+    [, $itemId] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-29',
+        'items' => [['itemType' => 'existing_product', 'productId' => $product['productId'], 'qty' => 8]],
+    ], 'allocglobal14');
+    $alloc = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/allocate-fg", ['qty' => 8], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal14alloc')));
+    expect($alloc['status'] === 200, 'ALLOC-GLOBAL-14: allocate-fg 8 failed: ' . json_encode($alloc['json']));
+
+    $version = reopenAndCorrectFg($adminHttp, $adminCsrf, $batchId, $product['productId'], 10, 7, 'allocglobal14');
+    $submit = $adminHttp->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $version], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal14submit')));
+    expect($submit['status'] === 409 && $submit['json']['code'] === 'FG_CORRECTION_BELOW_RESERVED', 'ALLOC-GLOBAL-14: expected 409 FG_CORRECTION_BELOW_RESERVED for a -3 correction (10->7) against an 8-unit reservation, got ' . json_encode($submit['json']));
+    expect(abs(stockOnHand($pdo, $product['productId'], $locationId) - 10.0) < 0.01, 'ALLOC-GLOBAL-14: expected physical to remain UNCHANGED at 10 (no partial write on a blocked submit)');
+});
+
+runTest('ALLOC-GLOBAL-15 a multi-item FG batch with ONE invalid negative correction fails ENTIRELY — no partial write', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $storeAId) {
+    $productA = productForDivisionAt($pdo, 'Donat/Mochi/AKB', 2);
+    $productB = productForDivisionAt($pdo, 'Basic', 2);
+    $tanggal = '2026-10-01';
+    createSubmittedProduction($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $productA['divisionId'], $tanggal, $storeAId, $productA['productId'], 10, 10);
+    createSubmittedProduction($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $productB['divisionId'], $tanggal, $storeAId, $productB['productId'], 10, 10);
+    $create = $adminHttp->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahFactoryId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal15create')));
+    expect($create['status'] === 200, 'ALLOC-GLOBAL-15: fg create failed: ' . json_encode($create['json']));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $v = $create['json']['data']['version'];
+    $save = $adminHttp->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [
+        ['productId' => $productA['productId'], 'fgVerified' => 10, 'packed' => 10],
+        ['productId' => $productB['productId'], 'fgVerified' => 10, 'packed' => 10],
+    ]], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal15save')));
+    expect($save['status'] === 200, 'ALLOC-GLOBAL-15: fg save failed: ' . json_encode($save['json']));
+    $v = $save['json']['data']['version'];
+    $submit = $adminHttp->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal15submit')));
+    expect($submit['status'] === 200, 'ALLOC-GLOBAL-15: initial fg submit failed: ' . json_encode($submit['json']));
+
+    // Reserve 8 of Product B only -- Product A has no reservation at all.
+    [, $itemBId] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => $tanggal,
+        'items' => [['itemType' => 'existing_product', 'productId' => $productB['productId'], 'qty' => 8]],
+    ], 'allocglobal15b');
+    $allocB = $adminHttp->request('POST', "/api/special-orders/items/{$itemBId}/allocate-fg", ['qty' => 8], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal15allocb')));
+    expect($allocB['status'] === 200, 'ALLOC-GLOBAL-15: allocate-fg on B failed: ' . json_encode($allocB['json']));
+
+    // Reopen the SAME batch, correct A down by 1 (valid, no reservation) and B down by 5 (INVALID -- would drop B to 5 < reserved 8).
+    $get = $adminHttp->request('GET', "/api/fg/{$batchId}", null, ['X-CSRF-Token' => $adminCsrf]);
+    $reopen = $adminHttp->request('POST', "/api/fg/{$batchId}/reopen", ['expectedVersion' => $get['json']['data']['version'], 'reason' => 'ALLOC-GLOBAL-15 test'], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal15reopen')));
+    expect($reopen['status'] === 200, 'ALLOC-GLOBAL-15: reopen failed: ' . json_encode($reopen['json']));
+    $patch = $adminHttp->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $reopen['json']['data']['version'], 'items' => [
+        ['productId' => $productA['productId'], 'fgVerified' => 9, 'packed' => 9],
+        ['productId' => $productB['productId'], 'fgVerified' => 5, 'packed' => 5],
+    ]], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal15patch')));
+    expect($patch['status'] === 200, 'ALLOC-GLOBAL-15: patch failed: ' . json_encode($patch['json']));
+
+    $locationId = (int) $pdo->query("SELECT location_id FROM location WHERE factory_id = {$karangtengahFactoryId}")->fetchColumn();
+    $ledgerCountABefore = (int) $pdo->query("SELECT COUNT(*) FROM stock_ledger WHERE product_id = {$productA['productId']} AND location_id = {$locationId}")->fetchColumn();
+    $ledgerCountBBefore = (int) $pdo->query("SELECT COUNT(*) FROM stock_ledger WHERE product_id = {$productB['productId']} AND location_id = {$locationId}")->fetchColumn();
+
+    $finalSubmit = $adminHttp->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $patch['json']['data']['version']], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal15finalsubmit')));
+    expect($finalSubmit['status'] === 409 && $finalSubmit['json']['code'] === 'FG_CORRECTION_BELOW_RESERVED', 'ALLOC-GLOBAL-15: expected the WHOLE batch submit to fail because of Product B alone, got ' . json_encode($finalSubmit['json']));
+
+    $ledgerCountAAfter = (int) $pdo->query("SELECT COUNT(*) FROM stock_ledger WHERE product_id = {$productA['productId']} AND location_id = {$locationId}")->fetchColumn();
+    $ledgerCountBAfter = (int) $pdo->query("SELECT COUNT(*) FROM stock_ledger WHERE product_id = {$productB['productId']} AND location_id = {$locationId}")->fetchColumn();
+    expect($ledgerCountAAfter === $ledgerCountABefore, 'ALLOC-GLOBAL-15: expected ZERO new ledger rows for Product A (the VALID line) -- the whole batch must fail atomically, never partially');
+    expect($ledgerCountBAfter === $ledgerCountBBefore, 'ALLOC-GLOBAL-15: expected ZERO new ledger rows for Product B (the INVALID line) either');
+    expect(abs(stockOnHand($pdo, $productA['productId'], $locationId) - 10.0) < 0.01, 'ALLOC-GLOBAL-15: expected Product A physical to remain 10 (unposted)');
+    expect(abs(stockOnHand($pdo, $productB['productId'], $locationId) - 10.0) < 0.01, 'ALLOC-GLOBAL-15: expected Product B physical to remain 10 (unposted)');
+});
+
+runTest('ALLOC-GLOBAL-16 a POSITIVE FG correction works normally even with an active reservation (10 -> 15, reserved 8)', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $storeAId) {
+    $product = productForDivisionAt($pdo, 'Cookies', 2);
+    $tanggal = '2026-10-02';
+    // Production actual is 15 (headroom for the later +5 correction) but only 10 is initially packed/submitted -- FG verified/packed can never exceed the production snapshot.
+    createSubmittedProduction($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $product['divisionId'], $tanggal, $storeAId, $product['productId'], 15, 15);
+    $create = $adminHttp->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahFactoryId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal16create')));
+    expect($create['status'] === 200, 'ALLOC-GLOBAL-16: fg create failed: ' . json_encode($create['json']));
+    $batchId = $create['json']['data']['fgBatchId'];
+    $save = $adminHttp->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $create['json']['data']['version'], 'items' => [['productId' => $product['productId'], 'fgVerified' => 10, 'packed' => 10]]], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal16save')));
+    expect($save['status'] === 200, 'ALLOC-GLOBAL-16: fg save failed: ' . json_encode($save['json']));
+    $initialSubmit = $adminHttp->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $save['json']['data']['version']], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal16initsubmit')));
+    expect($initialSubmit['status'] === 200, 'ALLOC-GLOBAL-16: initial fg submit failed: ' . json_encode($initialSubmit['json']));
+    $locationId = (int) $pdo->query("SELECT location_id FROM location WHERE factory_id = {$karangtengahFactoryId}")->fetchColumn();
+
+    [, $itemId] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-10-02',
+        'items' => [['itemType' => 'existing_product', 'productId' => $product['productId'], 'qty' => 8]],
+    ], 'allocglobal16');
+    $alloc = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/allocate-fg", ['qty' => 8], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal16alloc')));
+    expect($alloc['status'] === 200, 'ALLOC-GLOBAL-16: allocate-fg 8 failed: ' . json_encode($alloc['json']));
+
+    $version = reopenAndCorrectFg($adminHttp, $adminCsrf, $batchId, $product['productId'], 15, 15, 'allocglobal16');
+    $submit = $adminHttp->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $version], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal16submit')));
+    expect($submit['status'] === 200, 'ALLOC-GLOBAL-16: expected a +5 correction (10->15) to succeed regardless of the reservation: ' . json_encode($submit['json']));
+    expect(abs(stockOnHand($pdo, $product['productId'], $locationId) - 15.0) < 0.01, 'ALLOC-GLOBAL-16: expected physical=15');
+});
+
+runTest('ALLOC-GLOBAL-17 a zero-delta FG resubmit posts nothing and leaves physical unchanged', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $storeAId) {
+    $product = productForDivisionAt($pdo, 'Bolu', 1);
+    $factoryId = (int) $pdo->query("SELECT factory_id FROM factory WHERE name = 'Cibadak'")->fetchColumn();
+    $batchId = createSubmittedFgBatch($adminHttp, $adminCsrf, $pdo, $factoryId, $product['divisionId'], '2026-10-03', $storeAId, $product['productId'], 10);
+    $locationId = (int) $pdo->query("SELECT location_id FROM location WHERE factory_id = {$factoryId}")->fetchColumn();
+    $ledgerCountBefore = (int) $pdo->query("SELECT COUNT(*) FROM stock_ledger WHERE product_id = {$product['productId']} AND location_id = {$locationId}")->fetchColumn();
+
+    $version = reopenAndCorrectFg($adminHttp, $adminCsrf, $batchId, $product['productId'], 10, 10, 'allocglobal17');
+    $submit = $adminHttp->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $version], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal17submit')));
+    expect($submit['status'] === 200, 'ALLOC-GLOBAL-17: expected a same-value resubmit to succeed: ' . json_encode($submit['json']));
+    expect($submit['json']['data']['submitPostings'] === [], 'ALLOC-GLOBAL-17: expected ZERO postings for a zero delta, got ' . json_encode($submit['json']['data']['submitPostings']));
+
+    $ledgerCountAfter = (int) $pdo->query("SELECT COUNT(*) FROM stock_ledger WHERE product_id = {$product['productId']} AND location_id = {$locationId}")->fetchColumn();
+    expect($ledgerCountAfter === $ledgerCountBefore, 'ALLOC-GLOBAL-17: expected NO new ledger row for a zero-delta resubmit');
+    expect(abs(stockOnHand($pdo, $product['productId'], $locationId) - 10.0) < 0.01, 'ALLOC-GLOBAL-17: expected physical to remain 10');
+});
+
+// --- ALLOC-GLOBAL-18 -- REAL concurrency race: FG downward correction (-6) vs special allocate(8) against physical=10 ---
+
+runTest('ALLOC-GLOBAL-18 real-process race: FG correction -6 vs special allocate(8) against physical=10 never both commit (physical never falls below active reservation)', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $storeAId, $adminUserId) {
+    $product = productForDivisionAt($pdo, 'Roti & Bollen', 3);
+    $batchId = createSubmittedFgBatch($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $product['divisionId'], '2026-10-04', $storeAId, $product['productId'], 10);
+    $locationId = (int) $pdo->query("SELECT location_id FROM location WHERE factory_id = {$karangtengahFactoryId}")->fetchColumn();
+
+    [, $itemId] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-10-04',
+        'items' => [['itemType' => 'existing_product', 'productId' => $product['productId'], 'qty' => 8]],
+    ], 'allocglobal18');
+
+    // Reopen + patch the correction (packed 10 -> 4, pending delta -6) but do NOT submit yet -- the submit itself is what races against the allocation.
+    $version = reopenAndCorrectFg($adminHttp, $adminCsrf, $batchId, $product['productId'], 4, 4, 'allocglobal18');
+
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $procFg = proc_open(['php', __DIR__ . '/_fg_correction_race_child.php', (string) $batchId, (string) $version, (string) $adminUserId], $descriptors, $pipesFg);
+    $procAlloc = proc_open(['php', __DIR__ . '/_fg_allocate_race_child.php', (string) $itemId, '8', (string) $adminUserId], $descriptors, $pipesAlloc);
+
+    $outFg = stream_get_contents($pipesFg[1]); $errFg = stream_get_contents($pipesFg[2]);
+    fclose($pipesFg[1]); fclose($pipesFg[2]); $codeFg = proc_close($procFg);
+    $outAlloc = stream_get_contents($pipesAlloc[1]); $errAlloc = stream_get_contents($pipesAlloc[2]);
+    fclose($pipesAlloc[1]); fclose($pipesAlloc[2]); $codeAlloc = proc_close($procAlloc);
+
+    expect($codeFg === 0, "ALLOC-GLOBAL-18: fg-correction child exited {$codeFg}: {$errFg}");
+    expect($codeAlloc === 0, "ALLOC-GLOBAL-18: allocate child exited {$codeAlloc}: {$errAlloc}");
+    $resFg = json_decode($outFg, true);
+    $resAlloc = json_decode($outAlloc, true);
+    expect($resFg !== null && $resAlloc !== null, 'ALLOC-GLOBAL-18: expected valid JSON from both children, got fg=' . $outFg . ' alloc=' . $outAlloc);
+
+    $successCount = ($resFg['ok'] ? 1 : 0) + ($resAlloc['ok'] ? 1 : 0);
+    expect($successCount === 1, 'ALLOC-GLOBAL-18: expected EXACTLY ONE of {FG correction -6, special allocate 8} to succeed against physical=10, got fg.ok=' . json_encode($resFg['ok']) . ' alloc.ok=' . json_encode($resAlloc['ok']));
+
+    $physical = stockOnHand($pdo, $product['productId'], $locationId);
+    $activeReserved = (float) $pdo->query("SELECT COALESCE(SUM(allocated_qty - consumed_qty - released_qty),0) FROM special_order_fg_allocation WHERE product_id = {$product['productId']} AND status IN ('active','partially_consumed')")->fetchColumn();
+    expect($physical >= -0.0001, "ALLOC-GLOBAL-18: physical must never go negative, got {$physical}");
+    expect($physical - $activeReserved >= -0.01, "ALLOC-GLOBAL-18: physical ({$physical}) must never fall below active reservation ({$activeReserved})");
+});
+
+// --- ALLOC-GLOBAL-19 -- REAL 3-way concurrency race: FG correction, special allocation, and a Regular shipment all racing the same physical stock ---
+
+runTest('ALLOC-GLOBAL-19 real 3-way race (FG correction -6, special allocate 8, Regular ship 8) never lets physical fall below active reservation or below zero', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $storeAId, $adminUserId) {
+    $product = productForDivisionAt($pdo, 'Pastry', 3);
+    $batchId = createSubmittedFgBatch($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $product['divisionId'], '2026-10-05', $storeAId, $product['productId'], 10);
+    $locationId = (int) $pdo->query("SELECT location_id FROM location WHERE factory_id = {$karangtengahFactoryId}")->fetchColumn();
+
+    [, $itemId] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-10-05',
+        'items' => [['itemType' => 'existing_product', 'productId' => $product['productId'], 'qty' => 8]],
+    ], 'allocglobal19');
+    $version = reopenAndCorrectFg($adminHttp, $adminCsrf, $batchId, $product['productId'], 4, 4, 'allocglobal19');
+
+    seedStorePo($pdo, '2026-10-05', $karangtengahFactoryId, $storeAId, $product['productId'], 8);
+    $do = createRegularDoDraft($adminHttp, $adminCsrf, '2026-10-05', $storeAId);
+
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $procFg = proc_open(['php', __DIR__ . '/_fg_correction_race_child.php', (string) $batchId, (string) $version, (string) $adminUserId], $descriptors, $pipesFg);
+    $procAlloc = proc_open(['php', __DIR__ . '/_fg_allocate_race_child.php', (string) $itemId, '8', (string) $adminUserId], $descriptors, $pipesAlloc);
+    $procShip = proc_open(['php', __DIR__ . '/_regular_ship_race_child.php', (string) $do['doId'], (string) $do['version'], (string) $product['productId'], '8', (string) $adminUserId, 'MAIN'], $descriptors, $pipesShip);
+
+    $outFg = stream_get_contents($pipesFg[1]); fclose($pipesFg[1]); fclose($pipesFg[2]); $codeFg = proc_close($procFg);
+    $outAlloc = stream_get_contents($pipesAlloc[1]); fclose($pipesAlloc[1]); fclose($pipesAlloc[2]); $codeAlloc = proc_close($procAlloc);
+    $outShip = stream_get_contents($pipesShip[1]); fclose($pipesShip[1]); fclose($pipesShip[2]); $codeShip = proc_close($procShip);
+    expect($codeFg === 0 && $codeAlloc === 0 && $codeShip === 0, "ALLOC-GLOBAL-19: a child process failed (codes fg={$codeFg} alloc={$codeAlloc} ship={$codeShip})");
+
+    $resFg = json_decode($outFg, true); $resAlloc = json_decode($outAlloc, true); $resShip = json_decode($outShip, true);
+    $physical = stockOnHand($pdo, $product['productId'], $locationId);
+    $activeReserved = (float) $pdo->query("SELECT COALESCE(SUM(allocated_qty - consumed_qty - released_qty),0) FROM special_order_fg_allocation WHERE product_id = {$product['productId']} AND status IN ('active','partially_consumed')")->fetchColumn();
+    expect($physical >= -0.0001, "ALLOC-GLOBAL-19: physical must never go negative, got {$physical} -- results fg=" . json_encode($resFg) . " alloc=" . json_encode($resAlloc) . " ship=" . json_encode($resShip));
+    expect($physical - $activeReserved >= -0.01, "ALLOC-GLOBAL-19: physical ({$physical}) must never fall below active reservation ({$activeReserved}) -- results fg=" . json_encode($resFg) . " alloc=" . json_encode($resAlloc) . " ship=" . json_encode($resShip));
+});
+
+// --- ALLOC-GLOBAL-20 -- Regular FG Phase 4 behavior (positive posting, zero-delta idempotency) remains unaffected when no reservation exists ---
+
+runTest('ALLOC-GLOBAL-20 Regular FG submit with no active reservation anywhere behaves exactly as before (unaffected by this safety guard)', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $storeAId) {
+    $product = productForDivisionAt($pdo, 'Basic', 3);
+    $batchId = createSubmittedFgBatch($adminHttp, $adminCsrf, $pdo, $karangtengahFactoryId, $product['divisionId'], '2026-10-06', $storeAId, $product['productId'], 10);
+    $locationId = (int) $pdo->query("SELECT location_id FROM location WHERE factory_id = {$karangtengahFactoryId}")->fetchColumn();
+
+    $version = reopenAndCorrectFg($adminHttp, $adminCsrf, $batchId, $product['productId'], 3, 3, 'allocglobal20');
+    $submit = $adminHttp->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $version], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal20submit')));
+    expect($submit['status'] === 200, 'ALLOC-GLOBAL-20: expected a downward correction with NO reservation to succeed exactly as before this safety guard existed: ' . json_encode($submit['json']));
+    expect(abs(stockOnHand($pdo, $product['productId'], $locationId) - 3.0) < 0.01, 'ALLOC-GLOBAL-20: expected physical=3');
 });
 
 $failed = array_filter($results, fn ($ok) => !$ok);

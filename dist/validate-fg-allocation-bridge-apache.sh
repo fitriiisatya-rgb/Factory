@@ -14,6 +14,11 @@
 #     special production already verified at 6 -> real Driver departure
 #     ships all 10 -> exactly one general-FG ledger deduction of 4, no
 #     double deduction, special fulfillment accounted for at 6.
+#   Scenario D: physical General FG = 5, allocate 4 to a CS order via the
+#     REAL browser, reopen the contributing FG batch (fg-packing.php),
+#     attempt a Packed correction that would reduce physical to 3 (below
+#     the 4-unit reservation) -> must be BLOCKED with a reservation-safe
+#     error shown in the real UI, then correct to exactly 4 -> succeeds.
 #
 # Requires apache2 + php8.3-fpm + node/playwright. Run as root.
 set -uo pipefail
@@ -159,7 +164,7 @@ check() {
   if [ "$got" = "$want" ]; then echo "PASS: $desc (got $got)"; else echo "FAIL: $desc (want $want, got $got)"; FAIL=1; fi
 }
 
-echo "--- 6/9: seeding fixtures for Scenarios A/B/C (orders via real PHP service calls, physical FG via direct stock_balance seed — same convention as FgAllocationTest.php) ---"
+echo "--- 6/9: seeding fixtures for Scenarios A/B/C/D (orders via real PHP service calls, physical FG via direct stock_balance seed — same convention as FgAllocationTest.php) ---"
 STOREA_ID=$(mariadb --socket="$SOCK" -u root -N -e "SELECT store_id FROM $DB_NAME.store WHERE canonical_name='P2 TEST STORE A'")
 KARANGTENGAH_ID=$(mariadb --socket="$SOCK" -u root -N -e "SELECT factory_id FROM $DB_NAME.factory WHERE name='Karangtengah'")
 
@@ -252,10 +257,32 @@ $scenC = seedOrder($pdo, $svc, $adminId, [
 $svc->updateItemsActual($scenC["orderId"], $scenC["version"], [["itemId" => $scenC["itemId"], "aktualProduksi" => 6, "rejectProduksi" => 0]], $adminId, "seed-" . uniqid());
 $svc->verifyItemFg($scenC["itemId"], 6, $adminId, "seed-" . uniqid());
 
+// --- Scenario D: physical General FG = 5 via the REAL Production+FG chain (so the real fg-packing.php reopen/correct/resubmit UI has a genuine document to work with), a CS order qty 4 sent to production but NOT yet allocated (allocation itself happens through the real browser). ---
+use Amor\Api\Production\ProductionService;
+use Amor\Api\Fg\FgService;
+$prodD = productFor($pdo, "Cookies", 4);
+$prodDDivId = (int) $pdo->query("SELECT division_id FROM product WHERE product_id = {$prodD}")->fetchColumn();
+$tanggalD = "2026-09-28";
+seedStorePoRow($pdo, $tanggalD, $karangtengahId, $storeAId, $prodD, 5);
+$prodSvc = new ProductionService($pdo);
+$run = $prodSvc->createDraft($tanggalD, $prodDDivId, $adminId);
+$run = $prodSvc->patchDraft((int) $run["productionRunId"], (int) $run["version"], [["productId" => $prodD, "actualQty" => 5]], false, $adminId, "seed-" . uniqid());
+$run = $prodSvc->submit((int) $run["productionRunId"], (int) $run["version"], $adminId, "seed-" . uniqid());
+$fgSvc = new FgService($pdo);
+$fgBatch = $fgSvc->createDraft($tanggalD, $karangtengahId, $adminId);
+$fgBatch = $fgSvc->patchDraft((int) $fgBatch["fgBatchId"], (int) $fgBatch["version"], [["productId" => $prodD, "fgVerified" => 5, "packed" => 5]], false, $adminId, "seed-" . uniqid());
+$fgBatch = $fgSvc->submit((int) $fgBatch["fgBatchId"], (int) $fgBatch["version"], $adminId, "seed-" . uniqid());
+$scenD = seedOrder($pdo, $svc, $adminId, [
+    "sourceType" => "non_toko", "nonStoreSource" => "cs", "customerName" => "Scenario D CS",
+    "orderDate" => "2026-09-22", "requiredDate" => $tanggalD,
+    "items" => [["itemType" => "existing_product", "productId" => $prodD, "qty" => 4]],
+]);
+
 echo json_encode([
     "scenA" => $scenA + ["productId" => $prodA, "locationId" => $locA],
     "scenB" => $scenB + ["productId" => $prodB, "locationId" => $locB, "doId" => $regDo["doId"], "doVersion" => $regDo["version"]],
     "scenC" => $scenC + ["productId" => $prodC, "locationId" => $locC],
+    "scenD" => $scenD + ["productId" => $prodD, "fgBatchId" => (int) $fgBatch["fgBatchId"], "tanggal" => $tanggalD],
 ]);
 ')
 echo "SEED_JSON=$SEED_JSON"
@@ -272,7 +299,12 @@ C_ITEM=$(php -r '$d=json_decode($argv[1],true); echo $d["scenC"]["itemId"];' "$S
 C_ORDER=$(php -r '$d=json_decode($argv[1],true); echo $d["scenC"]["orderId"];' "$SEED_JSON")
 C_PRODUCT=$(php -r '$d=json_decode($argv[1],true); echo $d["scenC"]["productId"];' "$SEED_JSON")
 C_LOCATION=$(php -r '$d=json_decode($argv[1],true); echo $d["scenC"]["locationId"];' "$SEED_JSON")
-[ -n "$A_ITEM" ] && [ -n "$B_DO" ] && [ -n "$B_PRODUCT" ] && [ -n "$C_ITEM" ] || { echo "REFUSING: seed fixtures failed"; exit 1; }
+D_ITEM=$(php -r '$d=json_decode($argv[1],true); echo $d["scenD"]["itemId"];' "$SEED_JSON")
+D_ORDER=$(php -r '$d=json_decode($argv[1],true); echo $d["scenD"]["orderId"];' "$SEED_JSON")
+D_PRODUCT=$(php -r '$d=json_decode($argv[1],true); echo $d["scenD"]["productId"];' "$SEED_JSON")
+D_FGBATCH=$(php -r '$d=json_decode($argv[1],true); echo $d["scenD"]["fgBatchId"];' "$SEED_JSON")
+D_TANGGAL=$(php -r '$d=json_decode($argv[1],true); echo $d["scenD"]["tanggal"];' "$SEED_JSON")
+[ -n "$A_ITEM" ] && [ -n "$B_DO" ] && [ -n "$B_PRODUCT" ] && [ -n "$C_ITEM" ] && [ -n "$D_ITEM" ] && [ -n "$D_FGBATCH" ] || { echo "REFUSING: seed fixtures failed"; exit 1; }
 
 echo "--- 7/9: REAL headless-Chromium driving the three scenarios ---"
 cat > "$WORKDIR/alloc.js" <<'NODEEOF'
@@ -292,6 +324,8 @@ const cItemId = process.argv[13];
 const cOrderId = process.argv[14];
 const shotPrefix = process.argv[15];
 const bProductId = process.argv[16];
+const dItemId = process.argv[17];
+const dTanggal = process.argv[18];
 
 let FAIL = 0;
 function check(desc, cond) { if (cond) { console.log('PASS: ' + desc); } else { console.log('FAIL: ' + desc); FAIL = 1; } }
@@ -481,6 +515,63 @@ async function allocateViaUi(page, base, factoryId, itemId, qty) {
   await dpage2.screenshot({ path: process.argv[15] + '-scenario-c-departed.png', fullPage: true });
   await driverCtx2.close();
 
+  // ==================================================================
+  // SCENARIO D: physical General FG = 5, allocate 4 to a CS order via
+  // the REAL browser, reopen the contributing FG batch, attempt a
+  // Packed correction that would reduce physical to 3 (below the 4-unit
+  // reservation) -> must be BLOCKED with a reservation-safe error, then
+  // correct to exactly 4 -> must succeed.
+  // ==================================================================
+  const allocD = await allocateViaUi(page, base, karangtengahId, dItemId, 4);
+  check('SCENARIO D: the real "Alokasikan dari FG" button was found and clicked (allocating 4 of 5 physical)', allocD.clicked);
+  await page.screenshot({ path: process.argv[15] + '-scenario-d-allocated.png', fullPage: true });
+
+  await page.goto(base + '/api/_ui-preview/?page=fg-packing&tanggal=' + dTanggal + '&factoryId=' + karangtengahId);
+  await page.waitForLoadState('networkidle');
+  page.once('dialog', async (dialog) => { await dialog.accept('Scenario D test correction'); });
+  const reopenBtn = page.locator('#btn-reopen-fg');
+  check('SCENARIO D: the real "Buka Kembali / Reopen" button is present on the submitted FG document', (await reopenBtn.count()) === 1);
+  if (await reopenBtn.count() === 1) {
+    await reopenBtn.click();
+    await page.waitForTimeout(1000);
+  }
+  await page.waitForLoadState('networkidle');
+
+  // Attempt a correction that would drop physical to 3 (below the 4-unit reservation) -- must be blocked.
+  const packedInputBlocked = page.locator('#fg-form [data-field="packed"]').first();
+  check('SCENARIO D: the Packed input is editable after reopening', (await packedInputBlocked.count()) === 1);
+  await packedInputBlocked.fill('3');
+  await page.click('#btn-submit-fg');
+  await page.waitForTimeout(300);
+  const confirmSubmitBtn1 = page.locator('.modal-backdrop.open [data-act="confirm"]');
+  if (await confirmSubmitBtn1.count() === 1) { await confirmSubmitBtn1.click(); }
+  await page.waitForTimeout(1000);
+  const dangerToast = await page.locator('.toast.danger').first().textContent().catch(() => null);
+  check('SCENARIO D: the blocked correction (5->3, below the 4-unit reservation) shows a reservation-safe error in the REAL UI', !!dangerToast && /alokasikan|dialokasikan|reserv/i.test(dangerToast));
+  await page.screenshot({ path: process.argv[15] + '-scenario-d-blocked.png', fullPage: true });
+
+  // Reload first -- the blocked attempt's own PATCH (packed=3) already
+  // committed successfully before its OWN submit was rejected, bumping
+  // the document's real version; fg-packing.php's own submit handler
+  // never refreshes its in-page "expectedVersion" closure after a failed
+  // submit, so reusing the page as-is would send a stale version on the
+  // next PATCH and fail with a VERSION_CONFLICT that has nothing to do
+  // with the reservation guard under test here.
+  await page.reload({ waitUntil: 'networkidle' });
+
+  // Now correct to exactly 4 (physical 5 -> 4, at the reservation) -- must succeed.
+  const packedInputOk = page.locator('#fg-form [data-field="packed"]').first();
+  await packedInputOk.fill('4');
+  await page.click('#btn-submit-fg');
+  await page.waitForTimeout(300);
+  const confirmSubmitBtn2 = page.locator('.modal-backdrop.open [data-act="confirm"]');
+  if (await confirmSubmitBtn2.count() === 1) { await confirmSubmitBtn2.click(); }
+  await page.waitForTimeout(1200);
+  await page.waitForLoadState('networkidle');
+  const afterOkSubmitBody = await page.content();
+  check('SCENARIO D: correcting to exactly 4 (at the reservation) succeeds through the REAL UI', afterOkSubmitBody.includes('Sudah Disubmit'));
+  await page.screenshot({ path: process.argv[15] + '-scenario-d-corrected.png', fullPage: true });
+
   await browser.close();
   process.exit(FAIL);
 })().catch((err) => { console.error('CRASHED:', err.stack); process.exit(1); });
@@ -488,10 +579,10 @@ NODEEOF
 NODE_PATH=/opt/node22/lib/node_modules node "$WORKDIR/alloc.js" \
   "$BASE" "allocval_admin" "$ADMIN_PASS" "allocval_driver" "$DRIVER_PASS" \
   "$KARANGTENGAH_ID" "P2 TEST STORE A" "$A_ITEM" "$A_ORDER" "$B_ITEM" "$B_DO" "$C_ITEM" "$C_ORDER" \
-  "$WORKDIR/alloc" "$B_PRODUCT"
+  "$WORKDIR/alloc" "$B_PRODUCT" "$D_ITEM" "$D_TANGGAL"
 PW_EXIT=$?
 if [ "$PW_EXIT" != "0" ]; then FAIL=1; fi
-for shot in scenario-a-allocated scenario-a-departed scenario-b-allocated scenario-b-ship-form scenario-b-shipped scenario-c-allocated scenario-c-departed; do
+for shot in scenario-a-allocated scenario-a-departed scenario-b-allocated scenario-b-ship-form scenario-b-shipped scenario-c-allocated scenario-c-departed scenario-d-allocated scenario-d-blocked scenario-d-corrected; do
   cp "$WORKDIR/alloc-$shot.png" "$DIST_DIR/alloc-ui-$shot-screenshot.png" 2>/dev/null || true
 done
 
@@ -513,16 +604,26 @@ check "SCENARIO C: that ledger row deducts exactly 4 (the general-FG share, neve
 C_TOTAL_SHIPPED=$(mariadb --socket="$SOCK" -u root -N -e "SELECT SUM(sodsi.qty) FROM $DB_NAME.special_order_do_shipment_item sodsi INNER JOIN $DB_NAME.special_order_do_item sodi ON sodi.special_order_do_item_id = sodsi.special_order_do_item_id WHERE sodi.special_order_item_id = $C_ITEM")
 check "SCENARIO C: total real shipped qty = 10 (4 general + 6 special, matching the order in full)" "$C_TOTAL_SHIPPED" "10.00"
 
+D_LOCATION=$(mariadb --socket="$SOCK" -u root -N -e "SELECT location_id FROM $DB_NAME.location WHERE factory_id=$KARANGTENGAH_ID")
+D_PHYSICAL_AFTER=$(mariadb --socket="$SOCK" -u root -N -e "SELECT qty_on_hand FROM $DB_NAME.stock_balance WHERE product_id=$D_PRODUCT AND location_id=$D_LOCATION")
+check "SCENARIO D: physical stock ends at exactly 4 (5 -> 4, the reservation-safe correction) — never 3 (the blocked one)" "$D_PHYSICAL_AFTER" "4.00"
+
+D_ALLOC_ACTIVE=$(mariadb --socket="$SOCK" -u root -N -e "SELECT COALESCE(SUM(allocated_qty-consumed_qty-released_qty),0) FROM $DB_NAME.special_order_fg_allocation WHERE product_id=$D_PRODUCT AND status IN ('active','partially_consumed')")
+check "SCENARIO D: the 4-unit reservation remains fully intact and unconsumed after the correction" "$D_ALLOC_ACTIVE" "4.00"
+
+D_FG_LEDGER_COUNT=$(mariadb --socket="$SOCK" -u root -N -e "SELECT COUNT(*) FROM $DB_NAME.stock_ledger WHERE product_id=$D_PRODUCT AND location_id=$D_LOCATION AND source_type='fg_item'")
+check "SCENARIO D: exactly TWO fg_item-sourced ledger rows (the initial +5, then the accepted -1 correction) — the blocked -2 attempt wrote NOTHING" "$D_FG_LEDGER_COUNT" "2"
+
 echo "--- 9/9: Regular PO / negative-stock sanity ---"
 NEGATIVE_COUNT=$(mariadb --socket="$SOCK" -u root -N -e "SELECT COUNT(*) FROM $DB_NAME.stock_balance WHERE qty_on_hand < 0")
-check "no stock_balance row is ever negative across all three scenarios" "$NEGATIVE_COUNT" "0"
+check "no stock_balance row is ever negative across all four scenarios" "$NEGATIVE_COUNT" "0"
 
 echo "--- debug: last 30 lines of apache error log ---"
 tail -30 "$WORKDIR/apache-error.log" 2>/dev/null || true
 
 echo ""
 if [ "$FAIL" = "0" ]; then
-  echo "=== REAL APACHE + PHP-FPM + BROWSER VALIDATION PASSED (Scenarios A/B/C) ==="
+  echo "=== REAL APACHE + PHP-FPM + BROWSER VALIDATION PASSED (Scenarios A/B/C/D) ==="
   echo "ZIP: $ZIP_PATH"
   echo "Screenshots saved to: $DIST_DIR/alloc-ui-*.png"
 else

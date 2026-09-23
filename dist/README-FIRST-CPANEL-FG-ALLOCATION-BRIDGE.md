@@ -24,8 +24,17 @@ REGULER.** Artinya: FG yang sudah "dikunci" untuk satu Pesanan Khusus
 masih bisa ikut terkirim lewat PO Reguler seolah-olah belum dialokasikan
 sama sekali — jaminan alokasinya jadi tidak berlaku secara menyeluruh.
 
-**Paket ini (revisi) memperbaikinya total.** Jika Anda sudah mengunduh
-paket sebelumnya, **JANGAN dipasang** — gunakan paket ini sebagai
+**Paket ini (revisi kedua) memperbaikinya lebih jauh lagi.** Selain
+perbaikan pengiriman PO Reguler di atas, ditemukan SATU celah terakhir:
+**koreksi FG Reguler yang MENGURANGI Packed** (buka kembali dokumen FG
+lama, lalu kurangi angka Packed, lalu submit ulang) **juga bisa
+mengurangi stok fisik sampai di bawah jumlah yang sudah dialokasikan
+untuk Pesanan Khusus** — persis seperti masalah pengiriman PO Reguler di
+atas, tapi lewat jalur yang berbeda (koreksi produksi, bukan pengiriman).
+Paket ini menutup celah tersebut juga (lihat poin 8 di bawah).
+
+Jika Anda sudah mengunduh paket sebelumnya (baik versi pertama maupun
+revisi pertama), **JANGAN dipasang** — gunakan paket ini sebagai
 penggantinya. Migrasi 0012 di paket ini adalah versi yang SAMA (masih
 migrasi 0012, bukan migrasi baru) — aman menimpa, karena migrasi 0012
 dipastikan belum pernah benar-benar dipasang di server manapun (lihat
@@ -130,6 +139,39 @@ biasa — sekarang TIDAK LAGI:
 **Contoh:** stok fisik 10 pcs, Pesanan CS sudah mengalokasikan 8 pcs → PO
 Reguler hanya melihat dan bisa mengirim maksimal 2 pcs — bukan 10 pcs.
 
+### 8. (BARU di revisi kedua ini) Koreksi FG Reguler juga tidak bisa lagi menembus FG yang sudah dialokasikan
+
+Sebelumnya, kalau dokumen FG Reguler yang sudah Disubmit dibuka kembali
+("Buka Kembali") lalu angka **Packed** dikoreksi TURUN dan disubmit ulang,
+sistem langsung mengurangi stok fisik tanpa mengecek apakah sebagian dari
+stok itu sudah dialokasikan untuk Pesanan Khusus/Non-Toko. Sekarang
+sistem selalu mengecek dulu:
+
+- Kalau koreksi turun masih menyisakan stok fisik **≥** jumlah yang sudah
+  dialokasikan, koreksi **diperbolehkan** seperti biasa.
+- Kalau koreksi turun akan membuat stok fisik **jatuh di bawah** jumlah
+  yang sudah dialokasikan, sistem **menolak** submit-nya dengan pesan
+  jelas berisi: nama produk, jumlah yang ingin dikurangi, stok fisik saat
+  ini, jumlah yang sudah dialokasikan, dan maksimal koreksi turun yang
+  masih diperbolehkan. **Tidak ada perubahan apa pun yang tersimpan** saat
+  ditolak — termasuk kalau satu batch FG berisi beberapa produk sekaligus
+  dan hanya salah satu produk yang melanggar, seluruh submit batch itu
+  dibatalkan (bukan hanya produk yang bermasalah).
+- Koreksi yang **menaikkan** Packed (menambah stok) tidak terpengaruh sama
+  sekali oleh perubahan ini — tetap bekerja seperti sebelumnya.
+- Kalau memang perlu mengurangi stok fisik sampai di bawah jumlah yang
+  sudah dialokasikan (misalnya karena ternyata alokasi itu keliru atau
+  pesanan terkait dibatalkan), **lepaskan dulu alokasinya** (batalkan
+  pesanan terkait, atau lepas alokasi dari pesanan itu) — setelah alokasi
+  dilepas, koreksi FG akan berjalan normal tanpa batasan ini.
+
+**Contoh:** stok fisik 10 pcs, Pesanan CS sudah mengalokasikan 8 pcs →
+dokumen FG lama dibuka kembali, Packed dikoreksi jadi 5 pcs (turun 5) →
+DITOLAK karena stok fisik akan jatuh ke 5, di bawah 8 yang sudah
+dialokasikan (maksimal koreksi turun yang diperbolehkan saat itu hanya 2
+pcs, dari 10 ke 8). Kalau dikoreksi jadi tepat 8 pcs (turun 2, pas di
+batas alokasi), koreksi **berhasil**.
+
 ---
 
 ## Cara pasang (cPanel, tanpa command line)
@@ -173,12 +215,15 @@ Reguler hanya melihat dan bisa mengirim maksimal 2 pcs — bukan 10 pcs.
 
 - Alur PO Reguler Toko (target, Ceklis Produksi, FG & Packing, DO, Driver
   Portal, email, konfirmasi toko) — semuanya bekerja PERSIS seperti
-  sebelumnya, TERMASUK Pengiriman/Kirim — **selama tidak ada Pesanan
-  Khusus/Non-Toko yang mengalokasikan FG produk yang sama.** Begitu ada
-  alokasi aktif untuk suatu produk, Pengiriman PO Reguler otomatis hanya
-  melihat sisa yang benar-benar bebas (lihat poin 7 di atas) — ini
-  satu-satunya perubahan pada alur PO Reguler, dan sifatnya melindungi,
-  bukan mengubah cara kerja normalnya.
+  sebelumnya, TERMASUK Pengiriman/Kirim dan Buka Kembali/Koreksi FG —
+  **selama tidak ada Pesanan Khusus/Non-Toko yang mengalokasikan FG
+  produk yang sama.** Begitu ada alokasi aktif untuk suatu produk,
+  Pengiriman PO Reguler otomatis hanya melihat sisa yang benar-benar
+  bebas (lihat poin 7), dan koreksi FG turun yang akan menembus alokasi
+  itu ditolak (lihat poin 8) — ini satu-satunya perubahan pada alur PO
+  Reguler, dan sifatnya melindungi, bukan mengubah cara kerja normalnya.
+  "Buka Kembali" pada dokumen FG sendiri tetap TIDAK mengubah stok apa
+  pun sampai submit ulang benar-benar dilakukan.
 - Model data PO Reguler sendiri (po_batch/po_item/po_store_item/delivery_
   order/shipment/shipment_item) tidak disentuh sama sekali.
 - Item custom/katalog (bukan produk-existing) TIDAK PERNAH bisa memakai

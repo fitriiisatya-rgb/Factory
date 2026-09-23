@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Amor\Api\Fg;
 
 use Amor\Api\ApiException;
+use Amor\Api\Delivery\DoRepository;
+use Amor\Api\SpecialOrder\SpecialOrderFgAllocationRepository;
 use PDO;
 
 /**
@@ -34,16 +36,31 @@ use PDO;
  *     nothing at all (idempotent retries never double-post).
  *   - draft/reopened never write to stock_ledger. Only submit() does,
  *     inside the same transaction as the version bump.
+ *   - GLOBAL FG RESERVATION SAFETY (cross-flow deep-check fix): a
+ *     downward correction (delta < 0) can never drop physical
+ *     stock_balance below what special_order_fg_allocation actively
+ *     reserves for that product+factory — preflighted for every
+ *     negative-delta item, in deterministic product_id order, BEFORE any
+ *     ledger row is written, so a blocked correction on one product line
+ *     never leaves the rest of the batch partially posted. See
+ *     Delivery\ShipmentService's own docblock for the shared canonical
+ *     lock order (stock_balance row FIRST, then a locking read of the
+ *     active reservation sum) every General-FG-decreasing writer in this
+ *     codebase now follows.
  */
 final class FgService
 {
     private FgRepository $repo;
     private FgTargetService $targets;
+    private DoRepository $doRepo;
+    private SpecialOrderFgAllocationRepository $allocRepo;
 
     public function __construct(private PDO $pdo)
     {
         $this->repo = new FgRepository();
         $this->targets = new FgTargetService();
+        $this->doRepo = new DoRepository();
+        $this->allocRepo = new SpecialOrderFgAllocationRepository();
     }
 
     /** GET /api/fg/target — live SUBMITTED Production actual, no document created. */
@@ -225,10 +242,52 @@ final class FgService
             }
         }
 
-        $postings = [];
+        $deltas = [];
         foreach ($items as $productId => $item) {
             $posted = $this->repo->postedQtyForItem($this->pdo, (int) $item['fg_item_id']);
-            $delta = (float) $item['packed_qty'] - $posted;
+            $deltas[$productId] = (float) $item['packed_qty'] - $posted;
+        }
+
+        // GLOBAL FG RESERVATION SAFETY (cross-flow deep-check fix): a
+        // downward correction here is a General-FG-decreasing write, the
+        // SAME class of write ShipmentService::ship() and
+        // SpecialOrderFgAllocationService::consumeForDispatch() are
+        // already gated on — physical stock may never drop below what a
+        // special/non-regular order has ACTIVELY reserved. Preflighted
+        // for EVERY negative-delta item, in deterministic (ascending
+        // product_id) lock order, BEFORE any stock_ledger row is written
+        // for this submit — so a blocked correction on one product can
+        // never leave a partially-applied FG batch (some products posted,
+        // others not). Positive/zero deltas never conflict with a
+        // reservation (they only ever grow physical stock) and skip this
+        // check entirely, per the canonical lock order every General-FG
+        // writer in this codebase now shares: lock stock_balance row
+        // FIRST, then locking-read the active reservation sum, then
+        // validate, then write.
+        $negativeProductIds = array_keys(array_filter($deltas, static fn ($d) => $d < -0.0001));
+        sort($negativeProductIds);
+        foreach ($negativeProductIds as $productId) {
+            $delta = $deltas[$productId];
+            $balanceRow = $this->doRepo->lockBalance($this->pdo, $productId, $locationId);
+            $physical = $balanceRow !== null ? (float) $balanceRow['qty_on_hand'] : 0.0;
+            $reservedSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
+            $newPhysical = $physical + $delta;
+            if ($newPhysical < $reservedSpecial - 0.0001) {
+                $maxDown = max(0.0, $physical - $reservedSpecial);
+                $productName = $items[$productId]['product_name'];
+                throw new ApiException(
+                    409,
+                    'FG_CORRECTION_BELOW_RESERVED',
+                    "Tidak dapat mengurangi FG {$productName} sebanyak " . abs($delta) . " pcs. "
+                    . "Stok fisik: {$physical} pcs. Sudah dialokasikan: {$reservedSpecial} pcs. "
+                    . "Maksimal koreksi turun: {$maxDown} pcs."
+                );
+            }
+        }
+
+        $postings = [];
+        foreach ($items as $productId => $item) {
+            $delta = $deltas[$productId];
             if (abs($delta) > 0.0001) {
                 $ledgerId = $this->repo->postLedgerDelta(
                     $this->pdo, $productId, $locationId, $delta, $tanggal, (int) $item['fg_item_id'], $userId
