@@ -307,6 +307,15 @@ final class SpecialOrderService
             [$userId, $reason]
         );
         Audit::write($this->pdo, $requestId, $userId, 'special_order.cancelled', 'special_order', (string) $orderId, 'ok', $expectedVersion, $expectedVersion + 1, ['reason' => $reason]);
+
+        // Existing FG Allocation Bridge: release any still-active General FG
+        // earmark for this order now that it can never ship (task's own
+        // "if order cancelled BEFORE shipment, release unused active
+        // allocation" — already-consumed qty is untouched, matching
+        // "never reverse already-dispatched stock without a formal
+        // reversal flow").
+        (new SpecialOrderFgAllocationService($this->pdo))->releaseAllForOrder($this->pdo, $orderId, $userId, $requestId);
+
         return $this->getOrder($orderId);
     }
 
@@ -319,6 +328,7 @@ final class SpecialOrderService
     public function productionInbox(array $filters): array
     {
         $rows = $this->repo->findProductionDemandItems($this->pdo, $filters);
+        $allocSvc = new SpecialOrderFgAllocationService($this->pdo);
 
         $byDivision = [];
         $totalsBySource = ['toko_khusus' => 0.0, 'non_toko' => 0.0];
@@ -332,15 +342,26 @@ final class SpecialOrderService
                 $byDivision[$divId]['factoryName'] = $r['item_factory_name'];
             }
             $fgAvailable = null;
+            $allocatedFromGeneralFg = 0.0;
             $productionNeed = null;
+            $maxAllocatable = 0.0;
+            $allocationStatus = null;
             // Stock is checked at the ITEM's own routed factory
             // (item_factory_id, derived from division.factory_id) —
             // never the order header's factory_id, which is null (or
-            // simply irrelevant) for a multi-factory order.
+            // simply irrelevant) for a multi-factory order. "Existing FG
+            // Allocation Bridge": fgAvailable is now the TRUE free FG
+            // (physical minus every other order's active reservation,
+            // never raw stock_balance alone), and productionNeed already
+            // nets out whatever this item has explicitly allocated —
+            // never silently, only via a prior "Alokasikan dari FG" call.
             if ($r['item_type'] === 'existing_product' && $r['product_id'] !== null) {
-                $stock = $this->repo->findStockOnHand($this->pdo, (int) $r['product_id'], (int) $r['item_factory_id']);
-                $fgAvailable = $stock;
-                $productionNeed = max(0.0, (float) $r['qty'] - $stock);
+                $view = $allocSvc->itemAllocationView((int) $r['special_order_item_id']);
+                $fgAvailable = $view['fgAvailable'];
+                $allocatedFromGeneralFg = $view['allocatedFromGeneralFg'];
+                $productionNeed = $view['productionNeed'];
+                $maxAllocatable = $view['maxAllocatable'];
+                $allocationStatus = $view['status'];
             }
             $byDivision[$divId]['items'][] = [
                 'orderNo' => $r['order_no'],
@@ -364,8 +385,13 @@ final class SpecialOrderService
                 'requiredTime' => $r['required_time'],
                 'specialNote' => $r['special_note'],
                 'status' => $r['status'],
+                'itemId' => (int) $r['special_order_item_id'],
                 'fgAvailable' => $fgAvailable,
+                'allocatedFromGeneralFg' => $allocatedFromGeneralFg,
                 'productionNeed' => $productionNeed,
+                'maxAllocatable' => $maxAllocatable,
+                'allocationStatus' => $allocationStatus,
+                'canAllocateFg' => $maxAllocatable > 0.0001,
             ];
             $totalsBySource[$r['source_type']] = ($totalsBySource[$r['source_type']] ?? 0.0) + (float) $r['qty'];
         }
@@ -400,14 +426,26 @@ final class SpecialOrderService
     public function fgEligibleItems(array $filters): array
     {
         $rows = $this->repo->findProductionDemandItems($this->pdo, $filters);
+        $allocSvc = new SpecialOrderFgAllocationService($this->pdo);
         $out = [];
         foreach ($rows as $r) {
+            $itemId = (int) $r['special_order_item_id'];
             $aktual = (float) $r['aktual_produksi'];
-            if ($aktual <= 0.0001) {
+            $allocSummary = $r['item_type'] === 'existing_product' && $r['product_id'] !== null
+                ? $allocSvc->allocationSummaryForItem($itemId)
+                : ['remaining' => 0.0, 'committed' => 0.0, 'consumed' => 0.0];
+            // "Existing FG Allocation Bridge" — an item with zero special
+            // production but an explicit General FG allocation must NOT
+            // dead-end here (the real cPanel UAT bug this feature fixes);
+            // it is eligible the moment EITHER origin has something ready.
+            if ($aktual <= 0.0001 && $allocSummary['committed'] <= 0.0001) {
                 continue;
             }
-            $allocated = $this->repo->sumAllocatedForItem($this->pdo, (int) $r['special_order_item_id']);
-            $shipped = $this->repo->sumShippedForItem($this->pdo, (int) $r['special_order_item_id']);
+            $allocated = $this->repo->sumAllocatedForItem($this->pdo, $itemId);
+            $shipped = $this->repo->sumShippedForItem($this->pdo, $itemId);
+            $dariFgExisting = $allocSummary['remaining'];
+            $dariProduksiKhusus = (float) $r['fg_verified_qty'];
+            $totalSiapUntukOrder = $dariFgExisting + $dariProduksiKhusus;
             // Normalized downstream source (task's own "Final Blocker Fix"
             // — CS/Sales Executive/Konsumen Langsung/Umum must never
             // collapse into generic "Pesanan Non-Toko"). sourceType stays
@@ -441,9 +479,18 @@ final class SpecialOrderService
                 // availableForDo is what a NEW DO may still draw from —
                 // never double-countable (see SpecialOrderRepository's own
                 // sumAllocatedForItem/sumShippedForItem docblocks).
+                // Existing FG Allocation Bridge: availableForDo now combines
+                // BOTH fulfillment origins — dariFgExisting (still-active,
+                // unconsumed General FG earmark) + dariProduksiKhusus
+                // (verified special production) — before subtracting what's
+                // already committed to a DO, so an order can reach DO purely
+                // from allocated General FG with zero special production.
                 'allocatedQty' => $allocated,
                 'shippedQty' => $shipped,
-                'availableForDo' => max(0.0, (float) $r['fg_verified_qty'] - $allocated),
+                'dariFgExisting' => $dariFgExisting,
+                'dariProduksiKhusus' => $dariProduksiKhusus,
+                'totalSiapUntukOrder' => $totalSiapUntukOrder,
+                'availableForDo' => max(0.0, $totalSiapUntukOrder - $allocated),
                 'requiredDate' => $r['required_date'] ?? null,
                 'specialNote' => $r['special_note'] ?? null,
                 'status' => $r['status'],

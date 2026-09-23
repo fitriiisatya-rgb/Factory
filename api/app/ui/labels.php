@@ -89,16 +89,18 @@ function ui_special_order_status_label(string $status): string
  */
 function ui_status_color(string $label): string
 {
-    static $neutral = ['Belum Diproduksi', 'Belum Diverifikasi', 'Belum Dikirim', 'Belum Dipacking', 'Belum Dimulai', 'Belum Dikonfirmasi'];
-    static $primary = ['Draft', 'Siap Diproses', 'Belum Diverifikasi FG'];
+    static $neutral = ['Belum Diproduksi', 'Belum Diverifikasi', 'Belum Dikirim', 'Belum Dipacking', 'Belum Dimulai', 'Belum Dikonfirmasi', 'Perlu Produksi'];
+    static $primary = ['Draft', 'Siap Diproses', 'Belum Diverifikasi FG', 'Sudah Dialokasikan'];
     static $warning = [
         'Dibuka Kembali', 'Sebagian Terverifikasi', 'Belum Sesuai Target', 'Sebagian Dikirim',
         'Sudah Preprint', 'Selisih', 'Sebagian Dipacking', 'Ada Selisih', 'Menunggu Konfirmasi',
         'Email Toko Belum Diisi', 'Dikirim ke Produksi', 'Sedang Diproduksi', 'Belum Selesai',
+        'Sebagian FG / Perlu Produksi',
     ];
     static $success = [
         'Sudah Disubmit', 'Sesuai Target', 'Sesuai Produksi', 'Selesai Dipacking', 'Terkirim Penuh',
         'Terverifikasi FG', 'Aktif', 'Terkirim', 'Diterima Sesuai', 'Diverifikasi Admin', 'Siap', 'Selesai',
+        'Bisa Dipenuhi dari FG', 'Tidak Perlu Produksi', 'Siap ke DO',
     ];
     static $danger = ['Overproduction', 'Dibatalkan', 'Error', 'Melebihi Produksi', 'Packing Melebihi FG', 'Nonaktif', 'Gagal'];
 

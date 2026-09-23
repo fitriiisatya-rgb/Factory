@@ -97,7 +97,7 @@ $inbox = $service->productionInbox(array_filter([
     </div>
   </div>
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>No. Pesanan</th><th>Sumber</th><th>Toko/Customer</th><th>Item</th><th class="num">Qty</th><th class="num">FG Tersedia</th><th class="num">Kebutuhan Produksi</th><th>Tanggal Dibutuhkan</th><th>Catatan Khusus</th><th>Status</th></tr></thead>
+    <thead><tr><th>No. Pesanan</th><th>Sumber</th><th>Toko/Customer</th><th>Item</th><th class="num">Qty Order</th><th class="num">FG Tersedia</th><th class="num">Sudah Dialokasikan</th><th class="num">Kebutuhan Produksi</th><th>Tanggal Dibutuhkan</th><th>Catatan Khusus</th><th>Status Pesanan</th><th>Status FG</th><th>Aksi</th></tr></thead>
     <tbody>
     <?php foreach ($div['items'] as $it): ?>
     <tr>
@@ -107,13 +107,96 @@ $inbox = $service->productionInbox(array_filter([
       <td><?= ui_esc($it['itemName']) ?><?= $it['charge'] > 0.0001 ? ' <span style="color:var(--text-muted);font-size:var(--text-xs);">(+charge ' . ui_fmt_money($it['charge']) . ')</span>' : '' ?></td>
       <td class="num"><?= ui_fmt_num($it['qty']) ?></td>
       <td class="num"><?= $it['fgAvailable'] !== null ? ui_fmt_num($it['fgAvailable']) : '-' ?></td>
+      <td class="num"><?= ui_fmt_num($it['allocatedFromGeneralFg']) ?></td>
       <td class="num"><?= $it['productionNeed'] !== null ? ui_fmt_num($it['productionNeed']) : '-' ?></td>
       <td><?= ui_esc($it['requiredDate']) ?><?= $it['requiredTime'] ? ' · ' . ui_esc(substr($it['requiredTime'], 0, 5)) : '' ?></td>
       <td style="max-width:200px;overflow-wrap:anywhere;"><?= $it['specialNote'] ? ui_esc($it['specialNote']) : '-' ?></td>
       <td><?= ui_badge(ui_special_order_status_label($it['status'])) ?></td>
+      <td><?= $it['allocationStatus'] !== null ? ui_badge($it['allocationStatus']) : '-' ?></td>
+      <td>
+        <?php if (!empty($it['canAllocateFg'])): ?>
+        <button type="button" class="btn btn-primary btn-sm fg-allocate-btn"
+          data-item-id="<?= (int) $it['itemId'] ?>"
+          data-item-name="<?= ui_esc($it['itemName']) ?>"
+          data-order-no="<?= ui_esc($it['orderNo']) ?>"
+          data-qty-order="<?= ui_esc((string) $it['qty']) ?>"
+          data-fg-free="<?= ui_esc((string) $it['fgAvailable']) ?>"
+          data-max-allocatable="<?= ui_esc((string) $it['maxAllocatable']) ?>">Alokasikan dari FG</button>
+        <?php else: ?>-<?php endif; ?>
+      </td>
     </tr>
     <?php endforeach; ?>
     </tbody>
   </table></div>
 </div>
 <?php endforeach; endif; ?>
+
+<div id="fg-allocate-backdrop" class="modal-backdrop">
+  <div class="modal">
+    <h3 class="modal-title">Alokasikan dari FG Existing</h3>
+    <div class="modal-summary">
+      <div>Produk: <span id="fg-allocate-item-name"></span></div>
+      <div>Order: <span id="fg-allocate-order-no"></span></div>
+      <div>Qty Order: <span id="fg-allocate-qty-order"></span></div>
+      <div>FG Bebas: <span id="fg-allocate-fg-free"></span></div>
+      <div>Maksimal Bisa Dialokasikan: <span id="fg-allocate-max"></span></div>
+    </div>
+    <div class="field" style="margin-bottom:var(--space-4);">
+      <label>Qty Alokasi</label>
+      <input type="number" id="fg-allocate-qty-input" min="0" step="0.01" style="width:100%;">
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-neutral" id="fg-allocate-cancel">Batal</button>
+      <button type="button" class="btn btn-primary" id="fg-allocate-confirm">Konfirmasi Alokasi</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var backdrop = document.getElementById('fg-allocate-backdrop');
+  var activeItemId = null;
+
+  document.querySelectorAll('.fg-allocate-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      activeItemId = btn.getAttribute('data-item-id');
+      document.getElementById('fg-allocate-item-name').textContent = btn.getAttribute('data-item-name');
+      document.getElementById('fg-allocate-order-no').textContent = btn.getAttribute('data-order-no');
+      document.getElementById('fg-allocate-qty-order').textContent = btn.getAttribute('data-qty-order');
+      document.getElementById('fg-allocate-fg-free').textContent = btn.getAttribute('data-fg-free');
+      var max = btn.getAttribute('data-max-allocatable');
+      document.getElementById('fg-allocate-max').textContent = max;
+      var input = document.getElementById('fg-allocate-qty-input');
+      input.value = max;
+      input.max = max;
+      backdrop.classList.add('open');
+    });
+  });
+
+  document.getElementById('fg-allocate-cancel').addEventListener('click', function () {
+    backdrop.classList.remove('open');
+    activeItemId = null;
+  });
+
+  document.getElementById('fg-allocate-confirm').addEventListener('click', async function () {
+    if (activeItemId === null) { return; }
+    var input = document.getElementById('fg-allocate-qty-input');
+    var qty = parseFloat(input.value);
+    if (isNaN(qty) || qty <= 0) { Amor.toast('Qty alokasi tidak valid.', 'danger'); return; }
+    var confirmBtn = document.getElementById('fg-allocate-confirm');
+    confirmBtn.disabled = true;
+    try {
+      await Amor.apiFetch('/api/special-orders/items/' + activeItemId + '/allocate-fg', {
+        method: 'POST',
+        body: { qty: qty },
+      });
+      Amor.toast('FG berhasil dialokasikan.', 'success');
+      window.location.reload();
+    } catch (err) {
+      Amor.toast(err.message, 'danger');
+    } finally {
+      confirmBtn.disabled = false;
+    }
+  });
+})();
+</script>

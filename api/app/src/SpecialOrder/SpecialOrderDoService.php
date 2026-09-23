@@ -100,6 +100,8 @@ final class SpecialOrderDoService
             $demandByItem[(int) $d['special_order_item_id']] = $d;
         }
 
+        $allocSvc = new SpecialOrderFgAllocationService($this->pdo);
+
         $lines = [];
         if ($itemsOverride !== null) {
             foreach ($itemsOverride as $line) {
@@ -114,8 +116,15 @@ final class SpecialOrderDoService
             }
         } else {
             foreach ($demandByItem as $itemId => $d) {
+                // Existing FG Allocation Bridge: an item ready purely from
+                // an explicit General FG allocation (fg_verified_qty still
+                // 0) must be included in the default "Buat DO" set too —
+                // this is exactly the dead-end the bridge exists to fix.
                 $verified = (float) $d['fg_verified_qty'];
-                if ($verified <= 0.0001) {
+                $generalFgRemaining = $d['item_type'] === 'existing_product' && $d['product_id'] !== null
+                    ? $allocSvc->generalFgHeadroomForItem($itemId)
+                    : 0.0;
+                if ($verified <= 0.0001 && $generalFgRemaining <= 0.0001) {
                     continue;
                 }
                 $lines[$itemId] = null; // resolved to full availableForDo under lock below
@@ -135,8 +144,19 @@ final class SpecialOrderDoService
         $resolved = [];
         foreach ($itemIds as $itemId) {
             $item = $this->orderRepo->lockItemById($this->pdo, $itemId);
-            $allocated = $this->orderRepo->sumAllocatedForItem($this->pdo, $itemId);
-            $available = max(0.0, (float) $item['fg_verified_qty'] - $allocated);
+            $allocatedToDo = $this->orderRepo->sumAllocatedForItem($this->pdo, $itemId);
+            // Existing FG Allocation Bridge: DO eligibility now combines
+            // BOTH fulfillment origins before subtracting what's already
+            // committed to another DO — verified special production PLUS
+            // whatever General FG this item currently has explicitly
+            // allocated and still unconsumed (task's own "DO creation must
+            // use actual fulfillment-ready quantity = allocated existing
+            // General FG + verified special-production FG combined").
+            $generalFgRemaining = $item['item_type'] === 'existing_product' && $item['product_id'] !== null
+                ? $allocSvc->generalFgHeadroomForItem($itemId)
+                : 0.0;
+            $totalReady = (float) $item['fg_verified_qty'] + $generalFgRemaining;
+            $available = max(0.0, $totalReady - $allocatedToDo);
             $requested = $lines[$itemId] ?? $available;
             if ($requested <= 0.0001) {
                 continue;
@@ -358,6 +378,8 @@ final class SpecialOrderDoService
         $orderedDoItemIds = array_keys($requested);
         usort($orderedDoItemIds, fn ($a, $b) => $itemIdByDoItemId[$a] <=> $itemIdByDoItemId[$b]);
 
+        $allocSvc = new SpecialOrderFgAllocationService($this->pdo);
+
         $shipmentId = null;
         $createdLines = [];
         foreach ($orderedDoItemIds as $doItemId) {
@@ -372,12 +394,23 @@ final class SpecialOrderDoService
             // inside the transaction).
             $item = $this->orderRepo->lockItemById($this->pdo, $specialOrderItemId);
             $doItemRemaining = max(0.0, (float) $doItem['planned_qty'] - $this->repo->sumShippedForDoItem($this->pdo, $doItemId));
-            $fgHeadroom = max(0.0, (float) $item['fg_verified_qty'] - $this->orderRepo->sumShippedForItem($this->pdo, $specialOrderItemId));
-            $maxShippable = min($doItemRemaining, $fgHeadroom);
+
+            // MIXED FULFILLMENT: a line may be filled from General FG
+            // allocation AND special production FG in the SAME shipment
+            // (task's own worked example: order 40, general 35, special
+            // production 5, shipment 40). generalFgHeadroom is the
+            // still-active unconsumed allocation for this item;
+            // specialFgHeadroom nets out only what's ALREADY shipped from
+            // that origin (shippedFromSpecial), never double-counting the
+            // general-FG share of past shipments.
+            $shippedSplit = $allocSvc->shippedSplitForItem($specialOrderItemId);
+            $generalFgHeadroom = $allocSvc->generalFgHeadroomForItem($specialOrderItemId);
+            $specialFgHeadroom = max(0.0, (float) $item['fg_verified_qty'] - $shippedSplit['shippedFromSpecial']);
+            $maxShippable = min($doItemRemaining, $generalFgHeadroom + $specialFgHeadroom);
 
             if ($qty > $maxShippable + 0.0001) {
                 throw new ApiException(409, 'EXCEEDS_AVAILABLE',
-                    "Item {$doItem['item_name_snapshot']}: qty {$qty} melebihi yang bisa dikirim sekarang ({$maxShippable} — sisa DO {$doItemRemaining}, FG tersedia {$fgHeadroom})");
+                    "Item {$doItem['item_name_snapshot']}: qty {$qty} melebihi yang bisa dikirim sekarang ({$maxShippable} — sisa DO {$doItemRemaining}, FG Existing {$generalFgHeadroom}, FG Produksi Khusus {$specialFgHeadroom})");
             }
 
             if ($shipmentId === null) {
@@ -393,8 +426,20 @@ final class SpecialOrderDoService
                     $userId
                 );
             }
-            $this->repo->insertShipmentDoLine($this->pdo, $shipmentId, $doItemId, $qty);
-            $createdLines[] = ['doItemId' => $doItemId, 'itemName' => $doItem['item_name_snapshot'], 'qty' => $qty];
+            $shipmentItemId = $this->repo->insertShipmentDoLine($this->pdo, $shipmentId, $doItemId, $qty);
+
+            // CONSUMPTION ORDER (documented strategy — General FG first,
+            // then special-production FG): only the general-FG share
+            // performs a real stock_ledger deduction here (Existing FG
+            // Allocation Bridge's own dispatch-time write); the
+            // special-production share needs no ledger write, matching
+            // this class's unchanged pre-existing behavior.
+            $fromGeneral = min($qty, $generalFgHeadroom);
+            if ($fromGeneral > 0.0001) {
+                $allocSvc->consumeForDispatch($specialOrderItemId, $fromGeneral, $shipmentItemId, (string) $do['tanggal'], $userId);
+            }
+
+            $createdLines[] = ['doItemId' => $doItemId, 'itemName' => $doItem['item_name_snapshot'], 'qty' => $qty, 'fromGeneralFg' => $fromGeneral, 'fromSpecialProduction' => $qty - $fromGeneral];
         }
 
         if ($shipmentId === null) {

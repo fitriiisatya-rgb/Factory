@@ -6,6 +6,7 @@ namespace Amor\Api\Production;
 
 use Amor\Api\ApiException;
 use Amor\Api\SpecialOrder\NormalizedSourceType;
+use Amor\Api\SpecialOrder\SpecialOrderFgAllocationService;
 use Amor\Api\SpecialOrder\SpecialOrderRepository;
 use PDO;
 
@@ -57,12 +58,14 @@ final class ProductionTaskService
     private ProductionRepository $productionRepo;
     private ProductionTargetService $targets;
     private SpecialOrderRepository $specialOrderRepo;
+    private SpecialOrderFgAllocationService $allocSvc;
 
     public function __construct(private PDO $pdo)
     {
         $this->productionRepo = new ProductionRepository();
         $this->targets = new ProductionTargetService();
         $this->specialOrderRepo = new SpecialOrderRepository();
+        $this->allocSvc = new SpecialOrderFgAllocationService($this->pdo);
     }
 
     /** GET /api/production-tasks — Task per Divisi for ONE division+date. */
@@ -176,12 +179,23 @@ final class ProductionTaskService
                 $sourceLabel = $srcType === self::SOURCE_PESANAN_KHUSUS ? 'Pesanan Khusus' : NormalizedSourceType::label($normalizedSourceType);
                 $who = $srcType === self::SOURCE_PESANAN_KHUSUS ? ($r['store_name'] ?? '-') : ($r['customer_name'] ?? '-');
                 $reference = $r['order_no'] . ' — ' . $who;
+                // Existing FG Allocation Bridge: the production TARGET only
+                // shows the qty that actually still requires production —
+                // whatever this item already has committed from General FG
+                // (active or already consumed, never released) is netted
+                // out here, before Actual/Reject entry even starts (task's
+                // own worked example: order 40, allocated 35 -> target 5,
+                // never 40).
+                $allocatedFromGeneralFg = $r['item_type'] === 'existing_product' && $r['product_id'] !== null
+                    ? $this->allocSvc->allocationSummaryForItem((int) $r['special_order_item_id'])['committed']
+                    : 0.0;
+                $target = max(0.0, (float) $r['qty'] - $allocatedFromGeneralFg);
                 $tasks[] = $this->buildTaskRow(
                     $srcType,
                     $sourceLabel,
                     $r['item_name_snapshot'],
                     $reference,
-                    (float) $r['qty'],
+                    $target,
                     (float) $r['aktual_produksi'],
                     (float) $r['reject_produksi'],
                     $r['special_note'],

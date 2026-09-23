@@ -265,3 +265,83 @@ ALTER TABLE shipment_receipt_item
 
 ALTER TABLE shipment_receipt_item
   ADD CONSTRAINT fk_sri_special_line FOREIGN KEY (special_order_do_shipment_item_id) REFERENCES special_order_do_shipment_item(special_order_do_shipment_item_id);
+
+-- ============================================================================
+-- Existing FG allocation bridge (task's own "Implementation — Existing FG
+-- Allocation Bridge" pass) — a real cPanel UAT found that an existing-
+-- product special/non-regular order item could NOT proceed to DO at all
+-- unless special_order_item.aktual_produksi > 0, even when general FG
+-- (stock_balance, the SAME pool Regular PO ships from) already had enough
+-- stock to fully satisfy the order. SpecialOrderRepository::
+-- findStockOnHand()'s own pre-existing docblock explicitly documented this
+-- as a deliberate prior-phase deferral ("never written here... building
+-- real reservation would need locking semantics this phase's tables don't
+-- have") — this migration builds that reservation layer.
+--
+-- special_order_fg_allocation — one row per explicit "Alokasikan dari FG"
+-- operator action (never silent/automatic — task's own "Do NOT silently
+-- auto-reserve stock just because the page opens"). Represents "this qty
+-- of EXISTING general FG is earmarked for this special/non-regular order
+-- item" — an EARMARK, never a physical stock movement (task's own
+-- "CRITICAL STOCK PRINCIPLE": allocation must NOT write stock_ledger;
+-- physical stock only leaves the factory at real dispatch). Applies ONLY
+-- to item_type='existing_product' lines (enforced in the service layer,
+-- never at the DB level, same app-layer-invariant convention as every
+-- other cross-source rule in this codebase) — a special_catalog/custom
+-- item has no general-FG identity to allocate from.
+--
+-- source_type/special_order_id are explicit denormalized columns (never
+-- ONLY derivable via a join chain through special_order_item) — same
+-- "explicit source identity, never fragile inference" principle as
+-- special_order_do's own source_type column.
+--
+-- allocated_qty/consumed_qty/released_qty are a running ledger on the row
+-- itself (never a second event-log table — the existing audit_log table
+-- already captures the full create/consume/release history for this row,
+-- same convention as every other mutation in this codebase). remaining
+-- reservation = allocated_qty - consumed_qty - released_qty, ALWAYS
+-- computed fresh, never cached elsewhere. status is DERIVED and
+-- rewritten on every mutation (never hand-set), mirroring special_order_
+-- do.status's own "always recomputed from real sums" convention:
+--   'active'             — remaining > 0 (still earmarked, nothing shipped/released yet, or partially so)
+--   'partially_consumed' — remaining <= 0, but consumed_qty > 0 AND released_qty > 0 (part shipped, the rest released — e.g. order cancelled after a partial shipment)
+--   'consumed'            — remaining <= 0, released_qty = 0 (fully shipped)
+--   'released'            — remaining <= 0, consumed_qty = 0 (fully released, nothing ever shipped from it)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS special_order_fg_allocation (
+  special_order_fg_allocation_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  special_order_item_id           BIGINT UNSIGNED NOT NULL,
+  special_order_id                 BIGINT UNSIGNED NOT NULL,
+  source_type                       ENUM('toko_khusus','non_toko') NOT NULL,
+  product_id                         BIGINT UNSIGNED NOT NULL,
+  factory_id                         BIGINT UNSIGNED NOT NULL,
+  allocated_qty                      DECIMAL(12,2)  NOT NULL,
+  consumed_qty                        DECIMAL(12,2)  NOT NULL DEFAULT 0,
+  released_qty                        DECIMAL(12,2)  NOT NULL DEFAULT 0,
+  status                              ENUM('active','partially_consumed','consumed','released') NOT NULL DEFAULT 'active',
+  created_by                          BIGINT UNSIGNED NOT NULL,
+  created_at                          DATETIME       NOT NULL,
+  updated_at                          DATETIME       NULL,
+  KEY ix_sofa_item (special_order_item_id),
+  KEY ix_sofa_order (special_order_id),
+  KEY ix_sofa_product_factory (product_id, factory_id),
+  KEY ix_sofa_status (status),
+  CONSTRAINT fk_sofa_item FOREIGN KEY (special_order_item_id) REFERENCES special_order_item(special_order_item_id),
+  CONSTRAINT fk_sofa_order FOREIGN KEY (special_order_id) REFERENCES special_order(special_order_id),
+  CONSTRAINT fk_sofa_product FOREIGN KEY (product_id) REFERENCES product(product_id),
+  CONSTRAINT fk_sofa_factory FOREIGN KEY (factory_id) REFERENCES factory(factory_id),
+  CONSTRAINT fk_sofa_created_by FOREIGN KEY (created_by) REFERENCES users(user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- stock_ledger.source_type widened (never narrowed — the full current
+-- list, including 'fg_item' already added by migration 0005, must be
+-- preserved verbatim here; a MODIFY COLUMN that omits an already-live
+-- ENUM value would silently break every existing/future 'fg_item' row)
+-- so a real dispatch that consumes an EXISTING general-FG allocation for
+-- a special/non-regular order can post its own real 'shipment_out' row,
+-- traceable back to the exact special_order_do_shipment_item that caused
+-- it (source_id), without ever claiming source_type='shipment_item'
+-- (that value stays reserved for Regular PO's own real shipment_item
+-- rows — never conflated).
+ALTER TABLE stock_ledger
+  MODIFY COLUMN source_type ENUM('production_run','shipment_item','stock_adjustment','stock_transfer','opening_balance_cutover','historical_replay','reversal','fg_item','special_order_fg_allocation') NOT NULL;

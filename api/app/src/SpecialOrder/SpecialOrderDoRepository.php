@@ -266,12 +266,13 @@ final class SpecialOrderDoRepository
         return (int) $pdo->lastInsertId();
     }
 
-    public function insertShipmentDoLine(PDO $pdo, int $shipmentId, int $doItemId, float $qty): void
+    public function insertShipmentDoLine(PDO $pdo, int $shipmentId, int $doItemId, float $qty): int
     {
         $stmt = $pdo->prepare(
             'INSERT INTO special_order_do_shipment_item (shipment_id, special_order_do_item_id, qty, created_at) VALUES (?, ?, ?, UTC_TIMESTAMP())'
         );
         $stmt->execute([$shipmentId, $doItemId, $qty]);
+        return (int) $pdo->lastInsertId();
     }
 
     /**

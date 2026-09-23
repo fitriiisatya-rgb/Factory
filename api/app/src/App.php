@@ -153,6 +153,8 @@ final class App
         $router->get('/api/special-orders/production-inbox', [SpecialOrderController::class, 'productionInbox']);
         $router->get('/api/special-orders/fg-eligible', [SpecialOrderController::class, 'fgEligible']);
         $router->post('/api/special-orders/items/{itemId}/verify-fg', [SpecialOrderController::class, 'verifyItemFg']);
+        $router->post('/api/special-orders/items/{itemId}/allocate-fg', [SpecialOrderController::class, 'allocateFg']);
+        $router->post('/api/special-order-fg-allocations/{id}/release', [SpecialOrderController::class, 'releaseFgAllocation']);
         $router->get('/api/special-orders', [SpecialOrderController::class, 'index']);
         $router->post('/api/special-orders', [SpecialOrderController::class, 'create']);
         $router->get('/api/special-orders/{id}', [SpecialOrderController::class, 'show']);

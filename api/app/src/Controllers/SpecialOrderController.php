@@ -10,6 +10,7 @@ use Amor\Api\Database;
 use Amor\Api\Idempotency;
 use Amor\Api\Request;
 use Amor\Api\Response;
+use Amor\Api\SpecialOrder\SpecialOrderFgAllocationService;
 use Amor\Api\SpecialOrder\SpecialOrderService;
 use PDO;
 
@@ -181,6 +182,33 @@ final class SpecialOrderController
             $service = new SpecialOrderService($pdo);
             $dto = $service->verifyItemFg($itemId, $qty, $userId, $request->header('Idempotency-Key'));
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_item', 'recordKey' => (string) $itemId];
+        });
+    }
+
+    /** POST /api/special-orders/items/{itemId}/allocate-fg — the "Alokasikan dari FG" operator action (Existing FG Allocation Bridge). ADMIN/PPIC only — allocation mutates availability for every other order, never a public/read-only role. */
+    public static function allocateFg(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::EDITOR_ROLES);
+        $itemId = (int) $request->routeParams['itemId'];
+        $qty = (float) ($request->input('qty') ?? 0);
+
+        Idempotency::handle($request, 'POST /api/special-orders/items/{itemId}/allocate-fg', function (PDO $pdo) use ($request, $userId, $itemId, $qty) {
+            $service = new SpecialOrderFgAllocationService($pdo);
+            $dto = $service->allocate($itemId, $qty, $userId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_item', 'recordKey' => (string) $itemId];
+        });
+    }
+
+    /** POST /api/special-order-fg-allocations/{id}/release — manual release of an unconsumed FG allocation. */
+    public static function releaseFgAllocation(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::EDITOR_ROLES);
+        $id = (int) $request->routeParams['id'];
+
+        Idempotency::handle($request, 'POST /api/special-order-fg-allocations/{id}/release', function (PDO $pdo) use ($request, $userId, $id) {
+            $service = new SpecialOrderFgAllocationService($pdo);
+            $dto = $service->release($id, $userId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_fg_allocation', 'recordKey' => (string) $id];
         });
     }
 
