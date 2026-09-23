@@ -90,6 +90,15 @@ grep -q "function release" "$STAGE/api/app/src/SpecialOrder/SpecialOrderFgAlloca
 echo "--- sanity: confirm the custom-item rule (special_catalog items can NEVER consume general FG) is enforced ---"
 grep -q "CUSTOM_ITEM_NOT_ALLOCATABLE" "$STAGE/api/app/src/SpecialOrder/SpecialOrderFgAllocationService.php" || { echo "REFUSING TO BUILD: the CUSTOM_ITEM_NOT_ALLOCATABLE guard is missing."; exit 1; }
 
+echo "--- sanity: confirm the GLOBAL cross-flow reservation fix (Regular PO can no longer consume FG reserved for special orders) is present ---"
+grep -q "SpecialOrderFgAllocationRepository" "$STAGE/api/app/src/Delivery/ShipmentService.php" || { echo "REFUSING TO BUILD: Delivery\\ShipmentService no longer subtracts active special-order reservations — Regular PO could over-ship reserved FG."; exit 1; }
+grep -q "reservedForSpecial" "$STAGE/api/app/src/Delivery/ShipmentService.php" || { echo "REFUSING TO BUILD: ShipmentService::preview()/ship() no longer compute reservedForSpecial."; exit 1; }
+grep -q "reservedForSpecial" "$STAGE/api/app/src/Delivery/DoService.php" || { echo "REFUSING TO BUILD: DoService::getDo() (the real ship-form page's own data source) no longer subtracts active special-order reservations."; exit 1; }
+grep -q "reservedForSpecial" "$STAGE/api/app/src/Dispatch/DispatchService.php" || { echo "REFUSING TO BUILD: DispatchService's driver-facing FG-available display no longer subtracts active special-order reservations."; exit 1; }
+grep -qE "special_order_fg_allocation.*FOR UPDATE|FOR UPDATE" "$STAGE/api/app/src/SpecialOrder/SpecialOrderFgAllocationRepository.php" || { echo "REFUSING TO BUILD: sumActiveAllocatedForProductFactory() is no longer a locking read — a concurrent allocate() vs Regular ship() race could read a stale REPEATABLE READ snapshot and over-commit physical stock."; exit 1; }
+grep -q "INSUFFICIENT_PHYSICAL_FG" "$STAGE/api/app/src/SpecialOrder/SpecialOrderFgAllocationService.php" || { echo "REFUSING TO BUILD: consumeForDispatch() no longer re-validates physical stock_balance under lock before writing the ledger deduction."; exit 1; }
+grep -q "shippedFromSpecial" "$STAGE/api/app/src/SpecialOrder/SpecialOrderService.php" || { echo "REFUSING TO BUILD: verifyItemFg()'s floor no longer uses shippedFromSpecial — it would wrongly require fgVerifiedQty to cover General-FG-fulfilled qty too."; exit 1; }
+
 echo "--- sanity: confirm the routes + UI action for 'Alokasikan dari FG' are wired ---"
 grep -q "allocate-fg" "$STAGE/api/app/src/App.php" || { echo "REFUSING TO BUILD: the allocate-fg route is missing from App.php."; exit 1; }
 grep -q "allocateFg" "$STAGE/api/app/src/Controllers/SpecialOrderController.php" || { echo "REFUSING TO BUILD: SpecialOrderController::allocateFg is missing."; exit 1; }
@@ -111,8 +120,18 @@ echo "--- sanity: confirm normalized source identity (Task 11's own fix) is not 
 grep -q "SALES_ORDER => 'Sales Executive'" "$STAGE/api/app/src/SpecialOrder/NormalizedSourceType.php" || { echo "REFUSING TO BUILD: the SALES_ORDER => 'Sales Executive' label fix has regressed."; exit 1; }
 
 echo "--- sanity: confirm NO business rule / server-side validation file OUTSIDE this pass's own scope changed byte-for-byte ---"
+# NOTE: $STAGE is copied directly from $REPO_ROOT earlier in this script,
+# so this loop only guards against a FUTURE edit to this build script
+# accidentally staging a file from somewhere else — it documents intent,
+# it is not a git-history diff. Files this pass legitimately touches
+# (ShipmentService.php/DoService.php/DispatchService.php/
+# SpecialOrderFgAllocationRepository.php — the cross-flow reservation
+# fix — plus SpecialOrderRepository.php/SpecialOrderService.php/
+# SpecialOrderController.php/SpecialOrderDoService.php/
+# SpecialOrderDoRepository.php/ProductionTaskService.php/App.php/
+# labels.php/produksi-demand.php/fg-khusus-non-toko.php) are deliberately
+# EXCLUDED from this list — checked additively above instead.
 for f in api/app/src/Dispatch/EvidenceUploader.php api/app/src/Controllers/DispatchController.php \
-         api/app/src/Delivery/ShipmentService.php api/app/src/Delivery/DoService.php \
          api/app/src/Delivery/DoRepository.php \
          api/app/src/Controllers/ReceiptController.php api/app/src/Controllers/DoController.php \
          api/app/src/Import/PoImporter.php api/app/src/Production/ProductionTargetService.php \
@@ -122,7 +141,7 @@ for f in api/app/src/Dispatch/EvidenceUploader.php api/app/src/Controllers/Dispa
          api/app/src/Users/UserService.php api/app/src/Fg/FgService.php api/app/src/Fg/FgRepository.php \
          api/app/src/Mail/ShipmentEmailRepository.php api/app/src/Mail/ShipmentEmailService.php \
          api/app/src/Dispatch/ShipmentLineResolver.php api/app/src/Dispatch/ReceiptService.php \
-         api/app/src/Dispatch/DispatchRepository.php api/app/src/Dispatch/DispatchService.php \
+         api/app/src/Dispatch/DispatchRepository.php \
          api/assets/js/receipt.js api/assets/css/receipt.css api/assets/css/print.css api/_receive/index.php \
          api/_driver-uat/login.php api/_driver-uat/shipment.php api/_driver-uat/stop.php api/_driver-uat/print-shipment.php \
          api/app/ui/pages/produksi-task-per-divisi.php api/app/ui/pages/konfirmasi-toko.php api/app/ui/pages/pengiriman.php \
@@ -133,11 +152,6 @@ for f in api/app/src/Dispatch/EvidenceUploader.php api/app/src/Controllers/Dispa
     exit 1
   fi
 done
-# SpecialOrderRepository.php/SpecialOrderService.php/SpecialOrderController.php/
-# SpecialOrderDoService.php/SpecialOrderDoRepository.php/ProductionTaskService.php/
-# App.php/labels.php/produksi-demand.php/fg-khusus-non-toko.php ARE expected
-# to differ (this pass's own core deliverable) — checked additively above
-# instead of byte-diffed.
 
 echo "--- copying canonical schema DDL (0001-0012) ---"
 mkdir -p "$STAGE/api/app/database"
@@ -167,15 +181,42 @@ enough stock to satisfy the order — a dead end. This pass lets such an
 order draw from existing general FG first, and only requires NEW
 production for the shortfall.
 
+GLOBAL RESERVATION (cross-flow deep-check fix, added after the first real
+cPanel UAT of this feature found Regular PO could still ship stock a
+special order had already reserved): "True free FG" is a SINGLE
+authoritative formula — physical stock_balance MINUS every ACTIVE
+special-order reservation for that product+factory — consulted
+consistently by EVERY flow that consumes General FG, not only special-
+order allocation:
+- SpecialOrder\SpecialOrderFgAllocationService::allocate() (a NEW
+  allocation can never exceed true free FG).
+- Delivery\ShipmentService::preview()/ship() (Regular PO can no longer
+  preview or ship stock a special order has reserved).
+- Delivery\DoService::getDo() (the real Kirim/ship-form page's own FG
+  Available column — so the UI never shows a number the server would
+  then reject).
+- Dispatch\DispatchService's driver-facing "Konfirmasi Berangkat" actual-
+  qty screen (same consistency, for the same reason).
+Every one of these locks the stock_balance row FIRST (the SAME
+lockBalance() Regular PO's own ShipmentService::ship() always used), for
+the WHOLE read-decide-write sequence — this is what makes a concurrent
+Regular ship() and a concurrent special allocate()/dispatch for the same
+product+location serialize correctly instead of both reading a stale
+"free" number. The active-allocation SUM itself is a REQUIRED locking
+read (`FOR UPDATE`), not a plain SELECT — under MariaDB/InnoDB
+REPEATABLE READ, a plain read can still see a stale snapshot from before
+a concurrent commit even while sitting inside a transaction that already
+holds the fresher stock_balance lock; this was caught by a real two-
+process concurrency test that intermittently failed before the fix.
+
 Architecture (see SpecialOrder/SpecialOrderFgAllocationService.php's own
 docblock for the full detail):
 - special_order_fg_allocation is an EARMARK, never a physical stock
-  movement — allocate()/release() NEVER write stock_ledger.
-- "True free FG" = physical stock_balance MINUS every other order's
-  still-active allocation for the same product+factory — computed under
-  the SAME stock_balance row lock Regular PO's own ShipmentService::
-  ship() uses, so two concurrent allocation attempts against the same
-  stock can never both succeed beyond what's physically free.
+  movement — allocate()/release() NEVER write stock_ledger. A real
+  dispatch consuming General FG allocation ALSO re-locks and re-verifies
+  the real physical stock_balance immediately before writing its ledger
+  deduction — an allocation existing is never treated as proof physical
+  stock is still there.
 - Applies ONLY to item_type=existing_product lines — a custom/
   special_catalog item can never consume general FG.
 - A real dispatch (confirmDeparture/courierHandover) may fulfill a single
@@ -191,8 +232,18 @@ docblock for the full detail):
 - Source identity (SPECIAL_STORE_ORDER/CS_ORDER/SALES_ORDER/
   DIRECT_CUSTOMER/GENERAL_ORDER) is preserved throughout every new/
   touched screen — no regression of the prior pass's own fix.
-- Regular PO (po_batch/po_item/po_store_item/delivery_order/shipment/
-  shipment_item) is completely unchanged by this pass.
+- FG Verified guard (SpecialOrderService::verifyItemFg()) now floors
+  against shippedFromSpecial ONLY, never the total shipped qty — an
+  order fulfilled entirely from General FG allocation can keep
+  fgVerifiedQty at 0 even after full shipment; a mixed order (general 35
+  + special 5) only ever requires fgVerifiedQty >= 5, never >= 40.
+- Regular PO's own demand model (po_batch/po_item/po_store_item/
+  delivery_order/shipment/shipment_item) is untouched, and its shipment
+  BEHAVIOR is unchanged whenever no special-order reservation exists for
+  a product+factory (verified: Regular PO ships its full physical stock
+  exactly as before when nothing is reserved) — the cross-flow fix only
+  ever REDUCES the FG a Regular shipment can see when a special order has
+  actually reserved some of it.
 
 New UI: Produksi -> Order Masuk / Demand Tambahan shows FG Tersedia,
 Sudah Dialokasikan, Kebutuhan Produksi, and an explicit "Alokasikan dari

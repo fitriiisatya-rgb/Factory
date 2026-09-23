@@ -7,6 +7,7 @@ namespace Amor\Api\Delivery;
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Fg\FgRepository;
+use Amor\Api\SpecialOrder\SpecialOrderFgAllocationRepository;
 use PDO;
 
 /**
@@ -29,16 +30,42 @@ use PDO;
  * available) are revalidated INSIDE ship()'s own transaction against
  * freshly re-read, row-locked values — never trusting whatever preview()
  * computed moments earlier (task section 16/20).
+ *
+ * GLOBAL FG RESERVATION ("Existing FG Allocation Bridge" cross-flow fix):
+ * "FG available" here is NEVER raw stock_balance.qty_on_hand alone — it is
+ * physical qty_on_hand MINUS every active/partially_consumed
+ * special_order_fg_allocation reservation for the same product+factory
+ * (SpecialOrderFgAllocationRepository::sumActiveAllocatedForProductFactory,
+ * the SAME authoritative sum the special-order allocation side itself
+ * uses — never a second, divergent computation). Regular PO can never ship
+ * stock a special/non-regular order has already reserved.
+ *
+ * CANONICAL LOCK ORDER (documented once, honored by every writer that
+ * touches General FG for a given product+location — this class's own
+ * ship(), SpecialOrder\SpecialOrderFgAllocationService::allocate(), and
+ * ::consumeForDispatch()): lock the stock_balance row (SELECT ... FOR
+ * UPDATE) FIRST, for the ENTIRE remainder of the read-decide-write
+ * sequence, THEN read/write special_order_fg_allocation rows, THEN write
+ * the shipment/ledger rows. Holding the stock_balance lock across the
+ * whole sequence is what makes a concurrent Regular ship() and a
+ * concurrent special allocate()/consumeForDispatch() for the SAME
+ * product+location serialize correctly instead of both reading a stale
+ * "free" number — the second writer always sees the first's already-
+ * committed reservation or already-committed physical deduction. No
+ * writer may read the active-allocation SUM or the physical balance
+ * without first holding this same lock.
  */
 final class ShipmentService
 {
     private DoRepository $repo;
     private FgRepository $fg;
+    private SpecialOrderFgAllocationRepository $allocRepo;
 
     public function __construct(private PDO $pdo)
     {
         $this->repo = new DoRepository();
         $this->fg = new FgRepository();
+        $this->allocRepo = new SpecialOrderFgAllocationRepository();
     }
 
     /**
@@ -171,10 +198,16 @@ final class ShipmentService
             // the concurrency guard: two simultaneous shippers serialize
             // here, the second sees the first's already-decremented balance
             // (task section 20 — "no negative stock, no silent overship").
+            // Held for the rest of this line's read-decide-write sequence
+            // per this class's own canonical-lock-order docblock, so a
+            // concurrent special-order allocate()/consumeForDispatch() for
+            // the same product+location can never race this check.
             $balanceRow = $this->repo->lockBalance($this->pdo, $productId, $locationId);
-            $available = $balanceRow !== null ? (float) $balanceRow['qty_on_hand'] : 0.0;
-            if ($requested > $available + 0.0001) {
-                throw new ApiException(409, 'INSUFFICIENT_FG_AVAILABLE', "Product {$productId}: requested {$requested} exceeds FG available {$available}");
+            $physical = $balanceRow !== null ? (float) $balanceRow['qty_on_hand'] : 0.0;
+            $reservedForSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
+            $trueFree = max(0.0, $physical - $reservedForSpecial);
+            if ($requested > $trueFree + 0.0001) {
+                throw new ApiException(409, 'INSUFFICIENT_FG_AVAILABLE', "Product {$productId}: requested {$requested} exceeds FG available {$trueFree} (physical {$physical}, reserved for special/non-regular orders {$reservedForSpecial})");
             }
 
             if ($shipmentId === null) {
@@ -245,6 +278,7 @@ final class ShipmentService
         ];
     }
 
+    /** Read-only, never locks (preview never writes/reserves) — physical FG minus active special-order reservations, the SAME "true free" formula ship() re-validates under lock. */
     private function liveAvailable(int $productId, int $factoryId): float
     {
         $factory = $this->repo->findFactory($this->pdo, $factoryId);
@@ -253,6 +287,8 @@ final class ShipmentService
         }
         $locationId = $this->fg->findOrCreateLocationForFactory($this->pdo, $factoryId, $factory['name']);
         $balance = $this->fg->findBalance($this->pdo, $productId, $locationId);
-        return $balance !== null ? (float) $balance['qty_on_hand'] : $this->fg->sumLedger($this->pdo, $productId, $locationId);
+        $physical = $balance !== null ? (float) $balance['qty_on_hand'] : $this->fg->sumLedger($this->pdo, $productId, $locationId);
+        $reservedForSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
+        return max(0.0, $physical - $reservedForSpecial);
     }
 }

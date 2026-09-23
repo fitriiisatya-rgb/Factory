@@ -38,6 +38,32 @@ use PDO;
  * INSERT is what makes two concurrent "Order A wants 8, Order B wants 8,
  * physical=10" allocation attempts serialize correctly instead of both
  * succeeding.
+ *
+ * GLOBAL RESERVATION, NOT JUST BETWEEN SPECIAL ORDERS (cross-flow deep-
+ * check fix): the SAME "true free FG" formula, and the SAME
+ * sumActiveAllocatedForProductFactory() this class uses, is also
+ * consulted by Regular PO's own Delivery\ShipmentService::preview()/
+ * ship() — see that class's own docblock for the canonical lock order
+ * both sides honor. A special order's active allocation is therefore
+ * invisible to Regular PO shipment too, not only to other special orders.
+ * consumeForDispatch() below is the one exception: it is consuming its
+ * OWN already-reserved allocation, so it never re-subtracts reservations
+ * — it only re-locks and re-verifies the real physical stock_balance
+ * immediately before writing the ledger deduction (never trusting that
+ * physical stock is still there just because the allocation exists).
+ *
+ * STOCK LEDGER TRACEABILITY (source_type='special_order_fg_allocation'):
+ * source_id is deliberately the causing special_order_do_shipment_item_id
+ * (the real physical dispatch line), not a per-allocation-row id. One
+ * shipment line may FIFO-consume several allocation rows but always
+ * writes exactly ONE ledger row — the ledger's job is "physical stock
+ * changed because of THIS shipment", not "which allocation row paid for
+ * it". That finer-grained split is already queryable (each allocation
+ * row's own consumed_qty, plus the dispatch's own audit_log entry listing
+ * fromGeneralFg/fromSpecialProduction per item) — a dedicated per-
+ * consumption-event table was considered and rejected as unnecessary
+ * schema for what audit_log + the shipment-line reference already trace
+ * sufficiently.
  */
 final class SpecialOrderFgAllocationService
 {
@@ -161,15 +187,19 @@ final class SpecialOrderFgAllocationService
     /**
      * Real dispatch consumption — called from SpecialOrderDoService's
      * private dispatch() method for the General-FG portion of a shipment
-     * line, AFTER dispatch has already validated total headroom (task's
-     * own "DISPATCH — Existing FG Allocation", steps 1-2 already done by
-     * the caller; this performs steps 3-6 for the general-FG share only:
-     * FIFO-consume allocation rows, then post exactly ONE real
-     * stock_ledger deduction for the combined qty, mirroring Delivery\
-     * DoRepository::postShipmentOutLedger() but with source_type=
-     * 'special_order_fg_allocation' so it's traceable back to the causing
-     * special_order_do_shipment_item without ever claiming Regular PO's
-     * own 'shipment_item' source_type).
+     * line, AFTER dispatch has already validated total headroom against
+     * the allocation's own bookkeeping (task's own "DISPATCH — Existing FG
+     * Allocation", steps 1 done by the caller). This method itself
+     * performs steps 2-6: (2) locks stock_balance and re-verifies REAL
+     * physical qty_on_hand >= qty (the cross-flow deep-check's own "Special
+     * dispatch does not revalidate physical stock" fix — an allocation
+     * existing is never proof physical stock is still there), (3) FIFO-
+     * consumes allocation rows, then (4-6) posts exactly ONE real
+     * stock_ledger deduction for the combined qty + upserts stock_balance,
+     * mirroring Delivery\DoRepository::postShipmentOutLedger() but with
+     * source_type='special_order_fg_allocation' so it's traceable back to
+     * the causing special_order_do_shipment_item without ever claiming
+     * Regular PO's own 'shipment_item' source_type.
      *
      * CONSUMPTION ORDER (documented strategy, per the task's own request):
      * General FG is consumed FIRST, oldest allocation row first — the
@@ -178,16 +208,32 @@ final class SpecialOrderFgAllocationService
      * to special-production fulfillment (unchanged existing behavior),
      * so this method never itself decides the split.
      */
-    public function consumeForDispatch(int $specialOrderItemId, float $qty, int $shipmentItemId, string $eventDate, ?int $userId): void
+    public function consumeForDispatch(int $specialOrderItemId, int $productId, int $factoryId, float $qty, int $shipmentItemId, string $eventDate, ?int $userId): void
     {
         if ($qty <= 0.0001) {
             return;
         }
 
+        // CRITICAL BUG FIX (cross-flow reservation deep-check): this
+        // dispatch is consuming its OWN already-reserved allocation, so it
+        // does NOT re-subtract other orders' reservations (that rule only
+        // applies to a NEW allocate() or a Regular PO ship() — see this
+        // repository's own class docblock) — but it MUST still re-lock and
+        // re-verify the REAL physical stock_balance under lock immediately
+        // before writing the ledger deduction, per the canonical lock
+        // order (stock_balance row FIRST, held for the whole sequence).
+        // Without this, a concurrent flow that already depleted physical
+        // stock since this allocation was created could drive stock_balance
+        // negative.
+        $locationId = $this->fgRepo->findOrCreateLocationForFactory($this->pdo, $factoryId, '');
+        $balanceRow = $this->doRepo->lockBalance($this->pdo, $productId, $locationId);
+        $physical = $balanceRow !== null ? (float) $balanceRow['qty_on_hand'] : 0.0;
+        if ($qty > $physical + 0.0001) {
+            throw new ApiException(409, 'INSUFFICIENT_PHYSICAL_FG', "Product {$productId}: dispatching {$qty} from General FG allocation exceeds physical stock on hand {$physical}");
+        }
+
         $rows = $this->allocRepo->lockActiveForItem($this->pdo, $specialOrderItemId);
         $remainingToConsume = $qty;
-        $productId = null;
-        $factoryId = null;
         foreach ($rows as $row) {
             if ($remainingToConsume <= 0.0001) {
                 break;
@@ -199,15 +245,12 @@ final class SpecialOrderFgAllocationService
             $take = min($rowRemaining, $remainingToConsume);
             $this->allocRepo->consume($this->pdo, $row, $take);
             $remainingToConsume -= $take;
-            $productId = (int) $row['product_id'];
-            $factoryId = (int) $row['factory_id'];
         }
 
         if ($remainingToConsume > 0.0001) {
             throw new ApiException(409, 'INSUFFICIENT_ALLOCATION', "Item {$specialOrderItemId}: requested {$qty} exceeds active General FG allocation");
         }
 
-        $locationId = $this->fgRepo->findOrCreateLocationForFactory($this->pdo, (int) $factoryId, '');
         $this->postAllocationConsumptionLedger($productId, $locationId, $qty, $eventDate, $shipmentItemId, $userId);
     }
 

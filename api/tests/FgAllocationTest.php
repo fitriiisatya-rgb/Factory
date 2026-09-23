@@ -5,12 +5,16 @@ declare(strict_types=1);
 /**
  * "Existing FG Allocation Bridge" (migration 0012's own
  * special_order_fg_allocation table + stock_ledger source_type widening) —
- * ALLOC-01..17, run via api/tests/run-fg-allocation.sh, which stands up a
+ * ALLOC-01..15, plus ALLOC-GLOBAL-01..12 (the "FINAL BLOCKER FIX"
+ * cross-flow reservation pass — Regular PO shipment must never consume
+ * FG a special/non-regular order has already reserved, and special
+ * dispatch must never trust an allocation as proof physical stock is
+ * still there). Run via api/tests/run-fg-allocation.sh, which stands up a
  * disposable local MariaDB, applies migrations 0001-0012, bootstraps
- * realistic master data, then drives the real /api/special-orders/* and
- * /api/special-order-do/* JSON APIs end to end against a live `php -S`
- * server — same harness shape as SpecialOrderTest.php/
- * FinalPreliveReworkTest.php.
+ * realistic master data, then drives the real /api/special-orders/*,
+ * /api/special-order-do/*, and /api/do/* JSON APIs end to end against a
+ * live `php -S` server — same harness shape as SpecialOrderTest.php/
+ * FinalPreliveReworkTest.php/Phase5DoShipmentTest.php.
  *
  * Do not run this file directly against anything but a disposable test DB.
  */
@@ -220,6 +224,63 @@ function stockOnHand(PDO $pdo, int $productId, int $locationId): float
     $stmt->execute([$productId, $locationId]);
     $v = $stmt->fetchColumn();
     return $v === false ? 0.0 : (float) $v;
+}
+
+/** Nth (0-indexed) active product in a division — lets ALLOC-GLOBAL fixtures get a FRESH, never-before-used product id within an already-known division instead of colliding with ALLOC-01..15's own picks. */
+function productForDivisionAt(PDO $pdo, string $divisionName, int $offset): array
+{
+    $divId = (int) $pdo->query("SELECT division_id FROM division WHERE name = " . $pdo->quote($divisionName))->fetchColumn();
+    expect($divId > 0, "expected division '{$divisionName}' to be seeded");
+    $stmt = $pdo->prepare("SELECT product_id FROM product WHERE division_id = ? AND aktif = 1 ORDER BY product_id LIMIT 1 OFFSET {$offset}");
+    $stmt->execute([$divId]);
+    $productId = (int) $stmt->fetchColumn();
+    expect($productId > 0, "expected an active product at offset {$offset} in division '{$divisionName}'");
+    return ['divisionId' => $divId, 'productId' => $productId];
+}
+
+/** Seeds po_batch/po_item/po_store_item directly for ONE store's demand (never through the parser) — same convention as Phase5DoShipmentTest.php's own seedStorePo(), needed so a Regular PO DO has a real planned_qty to ship against. */
+function seedStorePo(PDO $pdo, string $tanggal, int $factoryId, int $storeId, int $productId, float $poAwal): int
+{
+    $find = $pdo->prepare('SELECT po_batch_id FROM po_batch WHERE tanggal = ? AND factory_id = ?');
+    $find->execute([$tanggal, $factoryId]);
+    $batchId = $find->fetchColumn();
+    if ($batchId === false) {
+        $pdo->prepare('INSERT INTO po_batch (tanggal, factory_id, version, created_at) VALUES (?, ?, 1, UTC_TIMESTAMP())')->execute([$tanggal, $factoryId]);
+        $batchId = (int) $pdo->lastInsertId();
+    } else {
+        $batchId = (int) $batchId;
+    }
+    $pdo->prepare('INSERT INTO po_item (po_batch_id, product_id, po_awal, po_revisi, pb) VALUES (?, ?, ?, 0, 0) ON DUPLICATE KEY UPDATE po_awal = VALUES(po_awal)')
+        ->execute([$batchId, $productId, $poAwal]);
+    $poItemId = (int) $pdo->query("SELECT po_item_id FROM po_item WHERE po_batch_id = {$batchId} AND product_id = {$productId}")->fetchColumn();
+    $pdo->prepare('INSERT INTO po_store_item (po_item_id, store_id, po_awal, po_revisi) VALUES (?, ?, ?, 0) ON DUPLICATE KEY UPDATE po_awal = VALUES(po_awal)')
+        ->execute([$poItemId, $storeId, $poAwal]);
+    return $batchId;
+}
+
+/** Creates a Regular PO Draft DO for tanggal/storeId via the real API (derives its items from po_store_item — seedStorePo() must run first). */
+function createRegularDoDraft(HttpAlloc $http, string $csrf, string $tanggal, int $storeId): array
+{
+    $r = $http->request('POST', '/api/do', ['tanggal' => $tanggal, 'storeId' => $storeId], array_merge(['X-CSRF-Token' => $csrf], idemKey('regdo-create')));
+    expect($r['status'] === 200, 'Regular DO create failed: ' . json_encode($r['json']));
+    return ['doId' => (int) $r['json']['data']['doId'], 'version' => (int) $r['json']['data']['version']];
+}
+
+function regularShipmentPreview(HttpAlloc $http, string $csrf, int $doId, int $productId, float $qty): array
+{
+    return $http->request('POST', "/api/do/{$doId}/shipment-preview", ['items' => [['productId' => $productId, 'actualQty' => $qty]]], ['X-CSRF-Token' => $csrf]);
+}
+
+function regularShip(HttpAlloc $http, string $csrf, int $doId, int $expectedVersion, int $productId, float $qty, string $tag): array
+{
+    return $http->request('POST', "/api/do/{$doId}/ship", ['expectedVersion' => $expectedVersion, 'shipmentGroup' => 'MAIN', 'items' => [['productId' => $productId, 'actualQty' => $qty]]], array_merge(['X-CSRF-Token' => $csrf], idemKey($tag)));
+}
+
+function getRegularDo(HttpAlloc $http, string $csrf, int $doId): array
+{
+    $r = $http->request('GET', "/api/do/{$doId}", null, ['X-CSRF-Token' => $csrf]);
+    expect($r['status'] === 200, 'Regular DO get failed: ' . json_encode($r['json']));
+    return $r['json']['data'];
 }
 
 $pdo = new PDO(
@@ -588,6 +649,227 @@ runTest('ALLOC-15 Regular PO remains completely unchanged by the Existing FG All
     expect($GLOBALS['po_batch_count_at_start'] === $poBatchCountAfter, 'ALLOC-15: expected po_batch row count UNCHANGED');
     expect($GLOBALS['po_item_count_at_start'] === $poItemCountAfter, 'ALLOC-15: expected po_item row count UNCHANGED');
     expect($GLOBALS['po_store_item_count_at_start'] === $poStoreItemCountAfter, 'ALLOC-15: expected po_store_item row count UNCHANGED');
+});
+
+// ============================================================================
+// ALLOC-GLOBAL-01..12 — "FINAL BLOCKER FIX" cross-flow reservation bridge:
+// Regular PO shipment must NEVER be able to consume FG a special/non-
+// regular order has already reserved, and special dispatch must NEVER
+// trust an allocation as proof physical stock is still there.
+// ============================================================================
+
+// --- ALLOC-GLOBAL-01..04 — sequential: allocate 8 of 10, Regular sees only 2 free, ships 2, special owner ships its own 8, physical ends at 0 ---
+
+$g1234 = productForDivisionAt($pdo, 'Roti & Bollen', 1);
+$g1234LocId = seedStockBalance($pdo, $g1234['productId'], $karangtengahFactoryId, 10);
+$globalTanggal = '2026-09-25';
+
+runTest('ALLOC-GLOBAL-01 Regular Shipment Preview subtracts active special allocation (physical 10, special alloc 8 -> preview shows 2)', function () use ($adminHttp, $adminCsrf, $storeAId, $g1234, $karangtengahFactoryId, $globalTanggal, $pdo) {
+    [$orderId, $itemId] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'non_toko', 'nonStoreSource' => 'cs', 'customerName' => 'ALLOC-GLOBAL CS Customer',
+        'orderDate' => '2026-09-22', 'requiredDate' => $globalTanggal,
+        'items' => [['itemType' => 'existing_product', 'productId' => $g1234['productId'], 'qty' => 8]],
+    ], 'allocglobal01');
+    $alloc = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/allocate-fg", ['qty' => 8], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal01alloc')));
+    expect($alloc['status'] === 200, 'ALLOC-GLOBAL-01: allocate-fg 8 failed: ' . json_encode($alloc['json']));
+
+    seedStorePo($pdo, $globalTanggal, $karangtengahFactoryId, $storeAId, $g1234['productId'], 10);
+    $do = createRegularDoDraft($adminHttp, $adminCsrf, $globalTanggal, $storeAId);
+
+    $preview = regularShipmentPreview($adminHttp, $adminCsrf, $do['doId'], $g1234['productId'], 2);
+    expect($preview['status'] === 200, 'ALLOC-GLOBAL-01: preview failed: ' . json_encode($preview['json']));
+    $line = $preview['json']['data']['lines'][0];
+    expect(abs($line['fgAvailable'] - 2.0) < 0.01, 'ALLOC-GLOBAL-01: expected Regular FG available=2 (physical 10 - reserved 8), got ' . $line['fgAvailable']);
+
+    // The real DO detail/ship page (pengiriman.php?doId=X) reads fgAvailable
+    // straight from GET /api/do/{id} (DoService::getDo()), a SEPARATE code
+    // path from ShipmentService::preview() — must show the SAME reserved-
+    // aware number, or an operator would see "10 available" on screen and
+    // have the server reject their qty.
+    $regularDo = getRegularDo($adminHttp, $adminCsrf, $do['doId']);
+    $doItemLine = $regularDo['items'][0];
+    expect(abs($doItemLine['fgAvailable'] - 2.0) < 0.01, 'ALLOC-GLOBAL-01: expected DO detail/ship page (GET /api/do/{id}) to ALSO show fgAvailable=2, got ' . $doItemLine['fgAvailable']);
+
+    $GLOBALS['g1234_orderId'] = $orderId;
+    $GLOBALS['g1234_itemId'] = $itemId;
+    $GLOBALS['g1234_doId'] = $do['doId'];
+    $GLOBALS['g1234_doVersion'] = $do['version'];
+});
+
+runTest('ALLOC-GLOBAL-02 Regular shipment attempt of 3 (exceeding the 2 truly free) is rejected', function () use ($adminHttp, $adminCsrf, $g1234) {
+    $r = regularShip($adminHttp, $adminCsrf, $GLOBALS['g1234_doId'], $GLOBALS['g1234_doVersion'], $g1234['productId'], 3, 'allocglobal02');
+    expect($r['status'] === 409 && $r['json']['code'] === 'INSUFFICIENT_FG_AVAILABLE', 'ALLOC-GLOBAL-02: expected 409 INSUFFICIENT_FG_AVAILABLE (reserved-FG protection), got ' . json_encode($r['json']));
+});
+
+runTest('ALLOC-GLOBAL-03 Regular shipment of 2 (within the truly free amount) succeeds; special allocation stays untouched', function () use ($adminHttp, $adminCsrf, $g1234, $g1234LocId, $pdo) {
+    $r = regularShip($adminHttp, $adminCsrf, $GLOBALS['g1234_doId'], $GLOBALS['g1234_doVersion'], $g1234['productId'], 2, 'allocglobal03');
+    expect($r['status'] === 200, 'ALLOC-GLOBAL-03: expected the within-free-amount shipment to succeed: ' . json_encode($r['json']));
+    expect(abs(stockOnHand($pdo, $g1234['productId'], $g1234LocId) - 8.0) < 0.01, 'ALLOC-GLOBAL-03: expected physical stock 10 -> 8 after Regular ships 2');
+    $row = allocationRow($pdo, $GLOBALS['g1234_itemId']);
+    expect(abs((float) $row['allocated_qty'] - 8.0) < 0.01 && abs((float) $row['consumed_qty'] - 0.0) < 0.01, 'ALLOC-GLOBAL-03: expected the special allocation to remain fully intact (8 allocated, 0 consumed) — Regular PO never touches it');
+    $GLOBALS['g1234_doVersion'] = getRegularDo($adminHttp, $adminCsrf, $GLOBALS['g1234_doId'])['version'];
+});
+
+runTest('ALLOC-GLOBAL-04 the special order owner then ships its own reserved 8 -- succeeds, physical ends at exactly 0, never negative', function () use ($adminHttp, $adminCsrf, $driverHttp, $driverCsrf, $storeAId, $karangtengahFactoryId, $g1234, $g1234LocId, $pdo) {
+    $orderId = $GLOBALS['g1234_orderId'];
+    // ALLOC-GLOBAL-01's order is non_toko (CS) -- dropStoreId is a DO-level field required for every non_toko order.
+    $do = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $orderId, 'factoryId' => $karangtengahFactoryId, 'deliveryMethod' => 'DRIVER_INTERNAL', 'dropStoreId' => $storeAId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal04do')));
+    expect($do['status'] === 200, 'ALLOC-GLOBAL-04: special DO create failed: ' . json_encode($do['json']));
+    $doId = $do['json']['data']['doId'];
+    $claim = $driverHttp->request('POST', "/api/special-order-do/{$doId}/claim", null, array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('allocglobal04claim')));
+    expect($claim['status'] === 200, 'ALLOC-GLOBAL-04: claim failed: ' . json_encode($claim['json']));
+    $depart = $driverHttp->request('POST', "/api/special-order-do/{$doId}/depart", ['items' => null], array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('allocglobal04depart')));
+    expect($depart['status'] === 200, 'ALLOC-GLOBAL-04: depart failed: ' . json_encode($depart['json']));
+
+    $final = stockOnHand($pdo, $g1234['productId'], $g1234LocId);
+    expect(abs($final - 0.0) < 0.01, "ALLOC-GLOBAL-04: expected physical stock to end at exactly 0, got {$final}");
+    expect($final >= -0.0001, 'ALLOC-GLOBAL-04: physical stock must never go negative');
+});
+
+// --- ALLOC-GLOBAL-05 — REAL concurrency race: physical=10, special allocate(8) vs Regular ship(8) at nearly the same time ---
+
+$g5 = productForDivisionAt($pdo, 'Pastry', 1);
+$g5LocId = seedStockBalance($pdo, $g5['productId'], $karangtengahFactoryId, 10);
+
+runTest('ALLOC-GLOBAL-05 real-process race: special allocate(8) vs Regular ship(8) against physical=10 never both succeed', function () use ($adminHttp, $adminCsrf, $storeAId, $g5, $karangtengahFactoryId, $adminUserId, $pdo, $g5LocId) {
+    [, $itemId] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-26',
+        'items' => [['itemType' => 'existing_product', 'productId' => $g5['productId'], 'qty' => 8]],
+    ], 'allocglobal05');
+
+    seedStorePo($pdo, '2026-09-26', $karangtengahFactoryId, $storeAId, $g5['productId'], 8);
+    $do = createRegularDoDraft($adminHttp, $adminCsrf, '2026-09-26', $storeAId);
+
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $procAlloc = proc_open(['php', __DIR__ . '/_fg_allocate_race_child.php', (string) $itemId, '8', (string) $adminUserId], $descriptors, $pipesAlloc);
+    $procShip = proc_open(['php', __DIR__ . '/_regular_ship_race_child.php', (string) $do['doId'], (string) $do['version'], (string) $g5['productId'], '8', (string) $adminUserId, 'MAIN'], $descriptors, $pipesShip);
+
+    $outAlloc = stream_get_contents($pipesAlloc[1]); $errAlloc = stream_get_contents($pipesAlloc[2]);
+    fclose($pipesAlloc[1]); fclose($pipesAlloc[2]); $codeAlloc = proc_close($procAlloc);
+    $outShip = stream_get_contents($pipesShip[1]); $errShip = stream_get_contents($pipesShip[2]);
+    fclose($pipesShip[1]); fclose($pipesShip[2]); $codeShip = proc_close($procShip);
+
+    expect($codeAlloc === 0, "ALLOC-GLOBAL-05: allocate child exited {$codeAlloc}: {$errAlloc}");
+    expect($codeShip === 0, "ALLOC-GLOBAL-05: ship child exited {$codeShip}: {$errShip}");
+    $resAlloc = json_decode($outAlloc, true);
+    $resShip = json_decode($outShip, true);
+    expect($resAlloc !== null && $resShip !== null, 'ALLOC-GLOBAL-05: expected valid JSON from both children, got alloc=' . $outAlloc . ' ship=' . $outShip);
+
+    $successCount = ($resAlloc['ok'] ? 1 : 0) + ($resShip['ok'] ? 1 : 0);
+    expect($successCount === 1, 'ALLOC-GLOBAL-05: expected EXACTLY ONE of {special allocate 8, Regular ship 8} to succeed against physical=10, got alloc.ok=' . json_encode($resAlloc['ok']) . ' ship.ok=' . json_encode($resShip['ok']));
+
+    $activeAllocated = (float) $pdo->query("SELECT COALESCE(SUM(allocated_qty - consumed_qty - released_qty),0) FROM special_order_fg_allocation WHERE product_id = {$g5['productId']} AND status IN ('active','partially_consumed')")->fetchColumn();
+    $physical = stockOnHand($pdo, $g5['productId'], $g5LocId);
+    expect($activeAllocated + (10.0 - $physical) <= 10.0 + 0.01, "ALLOC-GLOBAL-05: committed total (allocated {$activeAllocated} + shipped " . (10.0 - $physical) . ") must never exceed physical 10");
+    expect($physical - $activeAllocated >= -0.01, 'ALLOC-GLOBAL-05: true free FG (physical - active allocation) must never go negative');
+});
+
+// --- ALLOC-GLOBAL-06 — two special allocations + one Regular shipment racing concurrently cannot over-commit physical stock ---
+
+$g6 = productForDivisionAt($pdo, 'Donat/Mochi/AKB', 1);
+$g6LocId = seedStockBalance($pdo, $g6['productId'], $karangtengahFactoryId, 10);
+
+runTest('ALLOC-GLOBAL-06 two concurrent special allocations (5 each) plus a concurrent Regular ship(5) never over-commit physical=10', function () use ($adminHttp, $adminCsrf, $storeAId, $g6, $karangtengahFactoryId, $adminUserId, $pdo, $g6LocId) {
+    [, $itemX] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-27',
+        'items' => [['itemType' => 'existing_product', 'productId' => $g6['productId'], 'qty' => 5]],
+    ], 'allocglobal06x');
+    [, $itemY] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-27',
+        'items' => [['itemType' => 'existing_product', 'productId' => $g6['productId'], 'qty' => 5]],
+    ], 'allocglobal06y');
+    seedStorePo($pdo, '2026-09-27', $karangtengahFactoryId, $storeAId, $g6['productId'], 5);
+    $do = createRegularDoDraft($adminHttp, $adminCsrf, '2026-09-27', $storeAId);
+
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $procX = proc_open(['php', __DIR__ . '/_fg_allocate_race_child.php', (string) $itemX, '5', (string) $adminUserId], $descriptors, $pipesX);
+    $procY = proc_open(['php', __DIR__ . '/_fg_allocate_race_child.php', (string) $itemY, '5', (string) $adminUserId], $descriptors, $pipesY);
+    $procShip = proc_open(['php', __DIR__ . '/_regular_ship_race_child.php', (string) $do['doId'], (string) $do['version'], (string) $g6['productId'], '5', (string) $adminUserId, 'MAIN'], $descriptors, $pipesShip);
+
+    $outX = stream_get_contents($pipesX[1]); fclose($pipesX[1]); fclose($pipesX[2]); $codeX = proc_close($procX);
+    $outY = stream_get_contents($pipesY[1]); fclose($pipesY[1]); fclose($pipesY[2]); $codeY = proc_close($procY);
+    $outShip = stream_get_contents($pipesShip[1]); fclose($pipesShip[1]); fclose($pipesShip[2]); $codeShip = proc_close($procShip);
+    expect($codeX === 0 && $codeY === 0 && $codeShip === 0, "ALLOC-GLOBAL-06: a child process failed (codes X={$codeX} Y={$codeY} ship={$codeShip})");
+
+    $resX = json_decode($outX, true); $resY = json_decode($outY, true); $resShip = json_decode($outShip, true);
+    $activeAllocated = (float) $pdo->query("SELECT COALESCE(SUM(allocated_qty - consumed_qty - released_qty),0) FROM special_order_fg_allocation WHERE product_id = {$g6['productId']} AND status IN ('active','partially_consumed')")->fetchColumn();
+    $physical = stockOnHand($pdo, $g6['productId'], $g6LocId);
+    $shippedQty = 10.0 - $physical;
+    expect($activeAllocated + $shippedQty <= 10.0 + 0.01, "ALLOC-GLOBAL-06: total committed (allocated {$activeAllocated} + shipped {$shippedQty}) must never exceed physical 10 -- results X=" . json_encode($resX) . " Y=" . json_encode($resY) . " ship=" . json_encode($resShip));
+    expect($physical - $activeAllocated >= -0.01, 'ALLOC-GLOBAL-06: true free FG must never go negative after the 3-way race');
+});
+
+// --- ALLOC-GLOBAL-07 — Regular PO with NO special reservations behaves exactly as before ---
+
+$g7 = productForDivisionAt($pdo, 'Basic', 1);
+$g7LocId = seedStockBalance($pdo, $g7['productId'], $karangtengahFactoryId, 10);
+
+runTest('ALLOC-GLOBAL-07 Regular PO with zero special reservations ships its full physical stock exactly as before', function () use ($adminHttp, $adminCsrf, $storeAId, $g7, $karangtengahFactoryId, $g7LocId, $pdo) {
+    seedStorePo($pdo, '2026-09-28', $karangtengahFactoryId, $storeAId, $g7['productId'], 10);
+    $do = createRegularDoDraft($adminHttp, $adminCsrf, '2026-09-28', $storeAId);
+    $preview = regularShipmentPreview($adminHttp, $adminCsrf, $do['doId'], $g7['productId'], 10);
+    expect(abs($preview['json']['data']['lines'][0]['fgAvailable'] - 10.0) < 0.01, 'ALLOC-GLOBAL-07: expected FG available=10 with no reservations, got ' . $preview['json']['data']['lines'][0]['fgAvailable']);
+    $ship = regularShip($adminHttp, $adminCsrf, $do['doId'], $do['version'], $g7['productId'], 10, 'allocglobal07');
+    expect($ship['status'] === 200, 'ALLOC-GLOBAL-07: expected the full-stock shipment to succeed unchanged: ' . json_encode($ship['json']));
+    expect(abs(stockOnHand($pdo, $g7['productId'], $g7LocId) - 0.0) < 0.01, 'ALLOC-GLOBAL-07: expected physical stock 10 -> 0');
+});
+
+// --- ALLOC-GLOBAL-08 — pure General FG special order (order 2, allocation 2, special production 0) ships successfully, fgVerifiedQty stays valid at 0 ---
+
+$g8 = productForDivisionAt($pdo, 'Cookies', 1);
+seedStockBalance($pdo, $g8['productId'], $karangtengahFactoryId, 10);
+
+runTest('ALLOC-GLOBAL-08 pure General-FG order (2/2, zero special production) ships successfully and fgVerifiedQty remains valid at 0', function () use ($adminHttp, $adminCsrf, $driverHttp, $driverCsrf, $storeAId, $g8, $karangtengahFactoryId) {
+    [$orderId, $itemId] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-29',
+        'items' => [['itemType' => 'existing_product', 'productId' => $g8['productId'], 'qty' => 2]],
+    ], 'allocglobal08');
+    $alloc = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/allocate-fg", ['qty' => 2], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal08alloc')));
+    expect($alloc['status'] === 200, 'ALLOC-GLOBAL-08: allocate-fg failed: ' . json_encode($alloc['json']));
+
+    $do = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $orderId, 'factoryId' => $karangtengahFactoryId, 'deliveryMethod' => 'DRIVER_INTERNAL'], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal08do')));
+    expect($do['status'] === 200, 'ALLOC-GLOBAL-08: DO create failed: ' . json_encode($do['json']));
+    $doId = $do['json']['data']['doId'];
+    $claim = $driverHttp->request('POST', "/api/special-order-do/{$doId}/claim", null, array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('allocglobal08claim')));
+    expect($claim['status'] === 200, 'ALLOC-GLOBAL-08: claim failed: ' . json_encode($claim['json']));
+    $depart = $driverHttp->request('POST', "/api/special-order-do/{$doId}/depart", ['items' => null], array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('allocglobal08depart')));
+    expect($depart['status'] === 200, 'ALLOC-GLOBAL-08: expected shipment of a pure-General-FG order to succeed: ' . json_encode($depart['json']));
+
+    $item = $adminHttp->request('GET', "/api/special-orders/{$orderId}")['json']['data']['items'][0];
+    expect(abs($item['fgVerifiedQty'] - 0.0) < 0.01, 'ALLOC-GLOBAL-08: expected fgVerifiedQty to remain validly 0 (nothing shipped from special production) after a fully General-FG-fulfilled shipment');
+});
+
+// --- ALLOC-GLOBAL-09/10/11 — FG Verified guard tracks shippedFromSpecial ONLY, reusing ALLOC-07's own mixed-fulfillment fixture (order 40, general shipped 35, special shipped 5) ---
+
+runTest('ALLOC-GLOBAL-09 after mixed fulfillment (general 35 + special 5), fgVerifiedQty minimum is 5, NOT 40', function () use ($adminHttp, $adminCsrf) {
+    $itemId = $GLOBALS['alloc04_itemId'];
+    // Attempting to drop fgVerifiedQty to 0 (which would be required if the guard still used total-shipped=40) must fail specifically because of the 5-unit special-production floor, not a 40-unit one.
+    $r = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/verify-fg", ['fgVerifiedQty' => 0], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal09')));
+    expect($r['status'] === 400 && $r['json']['code'] === 'FG_BELOW_SHIPPED', 'ALLOC-GLOBAL-09: expected 400 FG_BELOW_SHIPPED, got ' . json_encode($r['json']));
+    expect(str_contains((string) $r['json']['message'], '5'), 'ALLOC-GLOBAL-09: expected the error message to cite the 5-unit special-production floor, got ' . json_encode($r['json']['message']));
+});
+
+runTest('ALLOC-GLOBAL-10 reducing fgVerifiedQty below shippedFromSpecial (4 < 5) fails', function () use ($adminHttp, $adminCsrf) {
+    $itemId = $GLOBALS['alloc04_itemId'];
+    $r = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/verify-fg", ['fgVerifiedQty' => 4], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal10')));
+    expect($r['status'] === 400 && $r['json']['code'] === 'FG_BELOW_SHIPPED', 'ALLOC-GLOBAL-10: expected 400 FG_BELOW_SHIPPED for 4 < shippedFromSpecial 5, got ' . json_encode($r['json']));
+});
+
+runTest('ALLOC-GLOBAL-11 reducing fgVerifiedQty to EXACTLY shippedFromSpecial (5) succeeds', function () use ($adminHttp, $adminCsrf) {
+    $itemId = $GLOBALS['alloc04_itemId'];
+    $r = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/verify-fg", ['fgVerifiedQty' => 5], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('allocglobal11')));
+    expect($r['status'] === 200, 'ALLOC-GLOBAL-11: expected reducing to exactly the special-production floor (5) to succeed: ' . json_encode($r['json']));
+});
+
+// --- ALLOC-GLOBAL-12 — stock_balance can never go negative anywhere touched by this suite ---
+
+runTest('ALLOC-GLOBAL-12 stock_balance never goes negative for any product this suite touched', function () use ($pdo) {
+    $negative = (int) $pdo->query('SELECT COUNT(*) FROM stock_balance WHERE qty_on_hand < 0')->fetchColumn();
+    expect($negative === 0, "ALLOC-GLOBAL-12: expected ZERO stock_balance rows with negative qty_on_hand, found {$negative}");
 });
 
 $failed = array_filter($results, fn ($ok) => !$ok);

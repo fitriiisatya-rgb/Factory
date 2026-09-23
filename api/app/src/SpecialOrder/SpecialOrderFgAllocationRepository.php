@@ -147,12 +147,29 @@ final class SpecialOrderFgAllocationRepository
      * against a concurrent allocator (same discipline as
      * Delivery\ShipmentService::ship()'s own lockBalance()-then-check).
      */
+    /**
+     * FOR UPDATE is REQUIRED here, not optional (cross-flow deep-check
+     * fix): under InnoDB REPEATABLE READ, an ordinary SELECT reads the
+     * consistent snapshot established by the transaction's FIRST
+     * consistent (non-locking) read — which, in a caller like
+     * Delivery\ShipmentService::ship() that runs other plain SELECTs
+     * (findDoItems/shippedQtyByProduct) BEFORE reaching this call, would
+     * already be stale by the time execution gets here, even though the
+     * stock_balance row was freshly re-locked moments earlier. A locking
+     * read always returns the latest COMMITTED data regardless of when
+     * the transaction's snapshot was established — this is what makes a
+     * concurrent allocate() that just committed actually visible to a
+     * Regular PO ship() checking trueFree right after. Confirmed via a
+     * real two-process race test (ALLOC-GLOBAL-05) that intermittently
+     * failed before this fix.
+     */
     public function sumActiveAllocatedForProductFactory(PDO $pdo, int $productId, int $factoryId): float
     {
         $stmt = $pdo->prepare(
             "SELECT COALESCE(SUM(allocated_qty - consumed_qty - released_qty), 0)
              FROM special_order_fg_allocation
-             WHERE product_id = ? AND factory_id = ? AND status IN ('active','partially_consumed')"
+             WHERE product_id = ? AND factory_id = ? AND status IN ('active','partially_consumed')
+             FOR UPDATE"
         );
         $stmt->execute([$productId, $factoryId]);
         return (float) $stmt->fetchColumn();

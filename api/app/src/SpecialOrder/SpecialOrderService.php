@@ -525,9 +525,18 @@ final class SpecialOrderService
         if ($fgVerifiedQty < 0 || $fgVerifiedQty > $aktual + 0.0001) {
             throw new ApiException(400, 'INVALID_FG_QTY', 'Qty FG terverifikasi harus antara 0 dan Aktual Produksi');
         }
-        $shipped = $this->repo->sumShippedForItem($this->pdo, $itemId);
-        if ($fgVerifiedQty < $shipped - 0.0001) {
-            throw new ApiException(400, 'FG_BELOW_SHIPPED', "FG Terverifikasi tidak boleh dikurangi di bawah jumlah yang sudah dikirim ({$shipped})");
+        // CRITICAL BUG FIX (cross-flow deep-check "BUG 3"): the floor here
+        // must be shippedFromSpecial ONLY, never sumShippedForItem()'s
+        // total — that total also includes qty fulfilled from General FG
+        // allocation, which has nothing to do with THIS item's own special
+        // production. An order fulfilled entirely from General FG (order
+        // 2, allocation 2, special production 0) must be able to keep
+        // fgVerifiedQty at 0 even after full shipment; a mixed order
+        // (general 35 + special 5) must only require fgVerifiedQty >= 5,
+        // never >= 40.
+        $shippedFromSpecial = (new SpecialOrderFgAllocationService($this->pdo))->shippedSplitForItem($itemId)['shippedFromSpecial'];
+        if ($fgVerifiedQty < $shippedFromSpecial - 0.0001) {
+            throw new ApiException(400, 'FG_BELOW_SHIPPED', "FG Terverifikasi tidak boleh dikurangi di bawah jumlah yang sudah dikirim dari produksi khusus ({$shippedFromSpecial})");
         }
         $this->repo->updateFgVerifiedQty($this->pdo, $itemId, $fgVerifiedQty);
         Audit::write(

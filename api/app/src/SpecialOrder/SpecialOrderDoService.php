@@ -436,7 +436,7 @@ final class SpecialOrderDoService
             // this class's unchanged pre-existing behavior.
             $fromGeneral = min($qty, $generalFgHeadroom);
             if ($fromGeneral > 0.0001) {
-                $allocSvc->consumeForDispatch($specialOrderItemId, $fromGeneral, $shipmentItemId, (string) $do['tanggal'], $userId);
+                $allocSvc->consumeForDispatch($specialOrderItemId, (int) $item['product_id'], (int) $item['item_factory_id'], $fromGeneral, $shipmentItemId, (string) $do['tanggal'], $userId);
             }
 
             $createdLines[] = ['doItemId' => $doItemId, 'itemName' => $doItem['item_name_snapshot'], 'qty' => $qty, 'fromGeneralFg' => $fromGeneral, 'fromSpecialProduction' => $qty - $fromGeneral];

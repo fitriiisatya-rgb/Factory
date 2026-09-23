@@ -10,6 +10,7 @@ use Amor\Api\Delivery\DoRepository;
 use Amor\Api\Fg\FgRepository;
 use Amor\Api\Mail\ShipmentEmailRepository;
 use Amor\Api\SpecialOrder\NormalizedSourceType;
+use Amor\Api\SpecialOrder\SpecialOrderFgAllocationRepository;
 use Amor\Api\Users\UserRepository;
 use PDO;
 
@@ -39,6 +40,7 @@ final class DispatchService
     private UserRepository $userRepo;
     private ShipmentEmailRepository $emailRepo;
     private ShipmentLineResolver $lineResolver;
+    private SpecialOrderFgAllocationRepository $allocRepo;
 
     public function __construct(private PDO $pdo)
     {
@@ -49,6 +51,7 @@ final class DispatchService
         $this->userRepo = new UserRepository();
         $this->emailRepo = new ShipmentEmailRepository();
         $this->lineResolver = new ShipmentLineResolver();
+        $this->allocRepo = new SpecialOrderFgAllocationRepository();
     }
 
     /**
@@ -620,6 +623,7 @@ final class DispatchService
         return stripos($divisionName, 'pastry') !== false ? 'PASTRY' : 'MAIN';
     }
 
+    /** GLOBAL FG RESERVATION: same "physical minus active special reservations" formula as Delivery\ShipmentService/DoService — a driver adjusting actual qty here must never be shown more than what ship() will actually allow. */
     private function liveFgAvailable(int $productId, int $factoryId): float
     {
         $factory = $this->doRepo->findFactory($this->pdo, $factoryId);
@@ -628,6 +632,8 @@ final class DispatchService
         }
         $locationId = $this->fg->findOrCreateLocationForFactory($this->pdo, $factoryId, $factory['name']);
         $balance = $this->fg->findBalance($this->pdo, $productId, $locationId);
-        return $balance !== null ? (float) $balance['qty_on_hand'] : $this->fg->sumLedger($this->pdo, $productId, $locationId);
+        $physical = $balance !== null ? (float) $balance['qty_on_hand'] : $this->fg->sumLedger($this->pdo, $productId, $locationId);
+        $reservedForSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
+        return max(0.0, $physical - $reservedForSpecial);
     }
 }

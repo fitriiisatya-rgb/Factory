@@ -7,6 +7,7 @@ namespace Amor\Api\Delivery;
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Fg\FgRepository;
+use Amor\Api\SpecialOrder\SpecialOrderFgAllocationRepository;
 use PDO;
 
 /**
@@ -38,11 +39,14 @@ final class DoService
     private DoTargetService $targets;
     private FgRepository $fg;
 
+    private SpecialOrderFgAllocationRepository $allocRepo;
+
     public function __construct(private PDO $pdo)
     {
         $this->repo = new DoRepository();
         $this->targets = new DoTargetService();
         $this->fg = new FgRepository();
+        $this->allocRepo = new SpecialOrderFgAllocationRepository();
     }
 
     /** GET /api/do/preview — live PO demand for a store/date, no document created. */
@@ -392,6 +396,13 @@ final class DoService
             $remaining = max(0.0, $planned - $shippedQty);
             $itemStatus = self::classifyItemStatus($shippedQty, $planned);
 
+            // GLOBAL FG RESERVATION (cross-flow deep-check fix): this is
+            // the SAME "physical minus active special reservations"
+            // formula Delivery\ShipmentService::preview()/ship() enforce
+            // — pengiriman.php's own ship form reads fgAvailable straight
+            // from here, so showing the raw unreserved qty_on_hand here
+            // would let an operator TYPE a qty the server then rejects,
+            // even though the number on screen looked available.
             $available = null;
             $factoryId = $item['factory_id'] !== null ? (int) $item['factory_id'] : null;
             if ($factoryId !== null) {
@@ -399,7 +410,9 @@ final class DoService
                 if ($factory !== null) {
                     $locationId = $this->fg->findOrCreateLocationForFactory($this->pdo, $factoryId, $factory['name']);
                     $balance = $this->fg->findBalance($this->pdo, $productId, $locationId);
-                    $available = $balance !== null ? (float) $balance['qty_on_hand'] : $this->fg->sumLedger($this->pdo, $productId, $locationId);
+                    $physical = $balance !== null ? (float) $balance['qty_on_hand'] : $this->fg->sumLedger($this->pdo, $productId, $locationId);
+                    $reservedForSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
+                    $available = max(0.0, $physical - $reservedForSpecial);
                 }
             }
 

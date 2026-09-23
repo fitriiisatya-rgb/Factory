@@ -15,6 +15,24 @@ sama sekali tidak berubah.
 
 ---
 
+## ⚠ Catatan revisi PENTING — JANGAN pasang paket sebelumnya
+
+Paket **sebelumnya** (Jembatan Alokasi FG Existing versi pertama) sudah
+benar mencegah dua Pesanan Khusus/Non-Toko saling merebut FG yang sama —
+**TAPI belum melindungi FG yang sudah dialokasikan itu dari PENGIRIMAN PO
+REGULER.** Artinya: FG yang sudah "dikunci" untuk satu Pesanan Khusus
+masih bisa ikut terkirim lewat PO Reguler seolah-olah belum dialokasikan
+sama sekali — jaminan alokasinya jadi tidak berlaku secara menyeluruh.
+
+**Paket ini (revisi) memperbaikinya total.** Jika Anda sudah mengunduh
+paket sebelumnya, **JANGAN dipasang** — gunakan paket ini sebagai
+penggantinya. Migrasi 0012 di paket ini adalah versi yang SAMA (masih
+migrasi 0012, bukan migrasi baru) — aman menimpa, karena migrasi 0012
+dipastikan belum pernah benar-benar dipasang di server manapun (lihat
+bagian "PENTING — cek dulu" di langkah pasang di bawah).
+
+---
+
 ## Masalah yang diperbaiki
 
 Saat UAT di cPanel sungguhan, ditemukan: sebuah item produk-existing pada
@@ -89,6 +107,29 @@ bersamaan, sistem menjamin totalnya tidak pernah melebihi stok fisik yang
 benar-benar ada — sudah diuji dengan skenario dua permintaan sungguhan
 berjalan bersamaan.
 
+### 7. (BARU di revisi ini) PO Reguler sekarang juga menghormati FG yang sudah dialokasikan
+
+Ini perbaikan utama revisi ini. Sebelumnya, FG yang sudah "dikunci" untuk
+Pesanan Khusus/Non-Toko masih bisa ikut terkirim lewat PO Reguler seperti
+biasa — sekarang TIDAK LAGI:
+
+- Halaman **Pratinjau Pengiriman** dan halaman **Kirim** PO Reguler
+  (`Pengiriman`) sekarang menampilkan **FG Available** yang sudah
+  dikurangi alokasi Pesanan Khusus/Non-Toko — bukan stok fisik mentah.
+- Kalau PIC Reguler mencoba mengirim melebihi sisa yang benar-benar bebas,
+  sistem **menolak** di server (bukan cuma dibatasi tampilan).
+- Sebaliknya, dispatch Pesanan Khusus/Non-Toko sendiri **selalu
+  mengecek ulang stok fisik sungguhan** tepat sebelum barang dianggap
+  keluar gudang — supaya stok tidak pernah minus walau ada aktivitas lain
+  di sistem pada saat bersamaan.
+- Kalau tidak ada Pesanan Khusus/Non-Toko yang memakai alokasi sama sekali
+  untuk suatu produk, PO Reguler bekerja **persis seperti sebelumnya** —
+  perbaikan ini hanya mengurangi FG yang terlihat/bisa dikirim PO Reguler
+  ketika memang ada alokasi aktif.
+
+**Contoh:** stok fisik 10 pcs, Pesanan CS sudah mengalokasikan 8 pcs → PO
+Reguler hanya melihat dan bisa mengirim maksimal 2 pcs — bukan 10 pcs.
+
 ---
 
 ## Cara pasang (cPanel, tanpa command line)
@@ -98,14 +139,23 @@ berjalan bersamaan.
 2. **Upload & extract.** Upload `amor-factory-fg-allocation-bridge.zip` ke
    `public_html/factory/`, lalu extract — ini akan MENIMPA file lama
    dengan versi baru (aman, tidak menghapus folder `api/app/config/`).
-3. **Jalankan migrasi.** Buka `https://domainanda.com/factory/api/_upgrade/`
-   di browser (login sebagai Admin dulu jika diminta), lalu jalankan
-   migrasi hingga selesai. Karena migrasi 0012 memang belum pernah
-   dipasang di server Anda, migrasi 0001–0012 semuanya akan diterapkan;
-   kalau server Anda kebetulan sudah pernah menjalankan versi 0012
-   sebelumnya (paket rework terakhir), yang sudah ada akan ditandai
-   "sudah diterapkan sebelumnya" dan hanya tambahan baru dari paket ini
-   yang dijalankan.
+3. **PENTING — cek dulu sebelum menjalankan migrasi.** Paket ini AMAN
+   menimpa file migrasi 0012 HANYA KARENA sudah dipastikan migrasi 0012
+   BELUM PERNAH dipasang di server manapun. Sistem migrasi mencatat status
+   "sudah diterapkan" per NAMA FILE, bukan per isi — jadi kalau server
+   Anda TERNYATA sudah pernah menjalankan migrasi 0012 versi sebelumnya
+   (misalnya dari paket rework yang lama), migrasi akan **melewati
+   seluruh file 0012 begitu saja** dan tabel/kolom baru di paket ini
+   **TIDAK AKAN PERNAH terpasang** — walau tidak ada pesan error yang
+   jelas. Sebelum melanjutkan: buka phpMyAdmin → tabel `schema_migrations`
+   → pastikan tidak ada baris untuk `0012_production_flow_completion.php`.
+   Kalau ternyata SUDAH ada baris untuk migrasi 0012 di server Anda,
+   **STOP** — jangan pasang paket ini, laporkan kembali agar dibuatkan
+   migrasi 0013 yang benar, bukan menimpa 0012 yang sudah berjalan.
+   Kalau memang belum ada (kondisi normal saat ini), buka
+   `https://domainanda.com/factory/api/_upgrade/` di browser (login
+   sebagai Admin dulu jika diminta), lalu jalankan migrasi hingga selesai
+   — migrasi 0001–0012 semuanya akan diterapkan dalam satu proses.
 4. **Coba alur berikut** untuk memastikan semuanya bekerja:
    - Buat Pesanan Khusus Toko dengan item produk-existing yang stok
      umumnya cukup → buka Produksi → Order Masuk → tekan "Alokasikan dari
@@ -121,9 +171,16 @@ berjalan bersamaan.
 
 ## Yang TIDAK berubah
 
-- Alur PO Reguler Toko (target, Ceklis Produksi, FG & Packing, DO,
-  Pengiriman, Driver Portal, email, konfirmasi toko) — semuanya bekerja
-  PERSIS seperti sebelumnya. Stok/ledger FG PO Reguler tidak disentuh.
+- Alur PO Reguler Toko (target, Ceklis Produksi, FG & Packing, DO, Driver
+  Portal, email, konfirmasi toko) — semuanya bekerja PERSIS seperti
+  sebelumnya, TERMASUK Pengiriman/Kirim — **selama tidak ada Pesanan
+  Khusus/Non-Toko yang mengalokasikan FG produk yang sama.** Begitu ada
+  alokasi aktif untuk suatu produk, Pengiriman PO Reguler otomatis hanya
+  melihat sisa yang benar-benar bebas (lihat poin 7 di atas) — ini
+  satu-satunya perubahan pada alur PO Reguler, dan sifatnya melindungi,
+  bukan mengubah cara kerja normalnya.
+- Model data PO Reguler sendiri (po_batch/po_item/po_store_item/delivery_
+  order/shipment/shipment_item) tidak disentuh sama sekali.
 - Item custom/katalog (bukan produk-existing) TIDAK PERNAH bisa memakai
   FG umum — tetap harus melalui produksi khusus seperti biasa.
 - Riwayat Aktual/Reject Produksi yang sudah ada tidak pernah disembunyikan
