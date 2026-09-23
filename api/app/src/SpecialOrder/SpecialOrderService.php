@@ -399,6 +399,8 @@ final class SpecialOrderService
             if ($aktual <= 0.0001) {
                 continue;
             }
+            $allocated = $this->repo->sumAllocatedForItem($this->pdo, (int) $r['special_order_item_id']);
+            $shipped = $this->repo->sumShippedForItem($this->pdo, (int) $r['special_order_item_id']);
             $out[] = [
                 'itemId' => (int) $r['special_order_item_id'],
                 'orderId' => (int) $r['special_order_id'],
@@ -417,6 +419,15 @@ final class SpecialOrderService
                 'rejectProduksi' => (float) $r['reject_produksi'],
                 'fgVerifiedQty' => (float) $r['fg_verified_qty'],
                 'availableToVerify' => max(0.0, $aktual - (float) $r['fg_verified_qty']),
+                // FG allocation model (task's own rework): allocatedQty is
+                // the SUM of planned_qty already committed to non-cancelled
+                // DOs; shippedQty is the real, physically-dispatched sum;
+                // availableForDo is what a NEW DO may still draw from —
+                // never double-countable (see SpecialOrderRepository's own
+                // sumAllocatedForItem/sumShippedForItem docblocks).
+                'allocatedQty' => $allocated,
+                'shippedQty' => $shipped,
+                'availableForDo' => max(0.0, (float) $r['fg_verified_qty'] - $allocated),
                 'requiredDate' => $r['required_date'] ?? null,
                 'specialNote' => $r['special_note'] ?? null,
                 'status' => $r['status'],
@@ -431,10 +442,16 @@ final class SpecialOrderService
      * and special_order_item.aktual_produksi/reject_produksi): each call
      * REPLACES the stored value, it never adds to it — repeating the same
      * call is naturally idempotent and never inflates availability.
+     *
+     * Row-locks the item first (concurrency guard) and refuses to drop
+     * fgVerifiedQty below what has ALREADY been physically shipped (task's
+     * own explicit rule: "FG Verified may not be reduced below shipped/
+     * consumed quantity" — e.g. FG Verified 10, Shipped 6 -> cannot change
+     * to 2).
      */
     public function verifyItemFg(int $itemId, float $fgVerifiedQty, int $userId, ?string $requestId): array
     {
-        $item = $this->repo->findItemById($this->pdo, $itemId);
+        $item = $this->repo->lockItemById($this->pdo, $itemId);
         if ($item === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Item pesanan tidak ditemukan');
         }
@@ -444,6 +461,10 @@ final class SpecialOrderService
         $aktual = (float) $item['aktual_produksi'];
         if ($fgVerifiedQty < 0 || $fgVerifiedQty > $aktual + 0.0001) {
             throw new ApiException(400, 'INVALID_FG_QTY', 'Qty FG terverifikasi harus antara 0 dan Aktual Produksi');
+        }
+        $shipped = $this->repo->sumShippedForItem($this->pdo, $itemId);
+        if ($fgVerifiedQty < $shipped - 0.0001) {
+            throw new ApiException(400, 'FG_BELOW_SHIPPED', "FG Terverifikasi tidak boleh dikurangi di bawah jumlah yang sudah dikirim ({$shipped})");
         }
         $this->repo->updateFgVerifiedQty($this->pdo, $itemId, $fgVerifiedQty);
         Audit::write(

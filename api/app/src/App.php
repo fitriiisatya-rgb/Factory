@@ -162,11 +162,16 @@ final class App
         $router->post('/api/special-orders/{id}/actual', [SpecialOrderController::class, 'updateItemsActual']);
         $router->post('/api/special-orders/{id}/cancel', [SpecialOrderController::class, 'cancel']);
 
+        $router->get('/api/special-order-do/driver-pool', [SpecialOrderDoController::class, 'driverPool']);
         $router->get('/api/special-order-do', [SpecialOrderDoController::class, 'index']);
         $router->post('/api/special-order-do', [SpecialOrderDoController::class, 'create']);
         $router->get('/api/special-order-do/{id}', [SpecialOrderDoController::class, 'show']);
-        $router->post('/api/special-order-do/{id}/ship', [SpecialOrderDoController::class, 'ship']);
+        $router->post('/api/special-order-do/{id}/claim', [SpecialOrderDoController::class, 'claim']);
+        $router->post('/api/special-order-do/{id}/release', [SpecialOrderDoController::class, 'release']);
         $router->post('/api/special-order-do/{id}/cancel', [SpecialOrderDoController::class, 'cancel']);
+        $router->post('/api/special-order-do/{id}/delivery-method', [SpecialOrderDoController::class, 'changeDeliveryMethod']);
+        $router->post('/api/special-order-do/{id}/depart', [SpecialOrderDoController::class, 'depart']);
+        $router->post('/api/special-order-do/{id}/courier-handover', [SpecialOrderDoController::class, 'courierHandover']);
         $router->get('/api/production-tasks/factory', [ProductionTaskController::class, 'forFactory']);
         $router->get('/api/production-tasks', [ProductionTaskController::class, 'forDivision']);
 

@@ -4,10 +4,17 @@
 tidak familiar dengan database atau coding.
 
 **Paket ini MEMBUTUHKAN migrasi database baru (migrasi 0012).** Migrasi
-ini HANYA menambah kolom baru di tabel yang sudah ada, DUA tabel baru
-khusus untuk DO Pesanan Khusus/Non-Toko, dan satu nilai baru di daftar
-pilihan `shipment.source_type` — **tidak ada tabel yang dihapus, tidak
-ada data yang dihapus, tidak ada perubahan pada DO PO Reguler.**
+ini HANYA menambah kolom baru di tabel yang sudah ada, TIGA tabel baru
+khusus untuk DO Pesanan Khusus/Non-Toko (termasuk pencatatan pengiriman
+aktual), dan kolom-kolom baru di tabel `shipment` yang sudah ada —
+**tidak ada tabel yang dihapus, tidak ada data yang dihapus, tidak ada
+perubahan pada DO PO Reguler.**
+
+**Catatan revisi:** paket ini adalah versi PERBAIKAN dari migrasi 0012
+sebelumnya (yang belum pernah dipasang di server manapun) — versi
+sebelumnya punya celah: DO bisa ditandai "Shipped" tanpa benar-benar
+membuat catatan pengiriman, dan Qty Aktual Dikirim tidak pernah terisi.
+Sudah diperbaiki total di paket ini.
 
 **Path yang BENAR di server Anda**: `public_html/factory/` (bukan
 `public_html/` itu sendiri).
@@ -78,15 +85,53 @@ Buka **Delivery Order** — sekarang ada 2 tab: **DO Toko (Reguler)**
 *(BARU)*.
 
 Setelah item pesanan diverifikasi FG, pesanan tersebut muncul di daftar
-"Pesanan Siap Dibuat DO" — klik **Buat DO** untuk membuat dokumen DO
-khusus (nomor dokumen berformat `DOK-tanggal-nomor urut`, BERBEDA dari
-format DO Reguler `DO/KRM/...` yang tidak berubah). Di halaman detail DO,
-tersedia tombol **Kirim DO** dan **Batalkan**.
+"Pesanan Siap Dibuat DO" (untuk pesanan non-toko, pilih dulu **Drop
+Bakery** — toko fisik tempat barang akan diturunkan). Klik **Buat DO**
+untuk membuat dokumen DO khusus (nomor dokumen berformat
+`DOK-tanggal-nomor urut`, BERBEDA dari format DO Reguler `DO/KRM/...`
+yang tidak berubah).
 
 **Aturan penting yang diterapkan:** Pesanan Khusus Toko, Pesanan
 Non-Toko, dan PO Reguler **TIDAK PERNAH digabung dalam satu DO** —
 walaupun tujuan/toko/tanggalnya sama. Setiap sumber pesanan punya DO-nya
 masing-masing, agar mudah ditelusuri asalnya.
+
+**Satu pesanan bisa punya LEBIH DARI SATU DO** (pengiriman bertahap) —
+misalnya pesanan 10 pcs, hari ini baru 5 pcs siap FG → buat DO untuk 5
+pcs. Besok 5 pcs lagi siap → klik **Buat DO** lagi untuk sisanya. DO
+pertama yang sudah terkirim TIDAK PERNAH menghalangi pembuatan DO
+berikutnya.
+
+### 7. Metode Pengiriman: Driver Internal / Kurir Eksternal (BARU)
+
+Di halaman detail DO, ada bagian **Metode Pengiriman**:
+- **Driver Internal** (default) — DO akan muncul di **Driver Portal**
+  (aplikasi HP untuk driver), tab baru **"Khusus/Non-Toko"**. Driver
+  klik **Ambil (Claim)**, lalu **Konfirmasi Berangkat** saat barang benar-
+  benar berangkat dari pabrik.
+- **Kurir Eksternal** (Grab / GoSend / Lalamove / Lainnya) — isi Provider,
+  Nama Kurir (opsional), dan No. Booking/Resi. **Pengambilan kurir
+  eksternal SELALU dari pabrik** (bukan dari toko/bakery). Admin klik
+  **Barang Diserahkan ke Kurir** saat barang benar-benar diserahkan.
+
+**Metode pengiriman hanya bisa diubah SEBELUM ada pengiriman aktual** —
+begitu DO punya pengiriman (baik penuh atau sebagian), metode terkunci
+(tidak bisa diubah dari Driver Internal ke Kurir Eksternal atau
+sebaliknya).
+
+**Aturan paling penting (CRITICAL DISPATCH RULE):**
+- **Membuat DO TIDAK mengurangi FG.**
+- **Booking/memilih kurir TIDAK mengurangi FG.**
+- **Driver mengambil (claim) TIDAK mengurangi FG.**
+- **FG baru berkurang SAAT barang benar-benar keluar dari pabrik** — yaitu
+  saat **Konfirmasi Berangkat** (Driver Internal) atau **Barang
+  Diserahkan ke Kurir** (Kurir Eksternal). Kedua aksi ini SELALU membuat
+  catatan pengiriman (shipment) yang nyata — tidak ada status "Shipped"
+  palsu tanpa catatan pengiriman di baliknya.
+
+Status DO (**Open** / **Partial** / **Shipped**) selalu dihitung otomatis
+dari jumlah yang BENAR-BENAR sudah dikirim — tidak pernah berubah hanya
+karena tombol diklik tanpa pengiriman aktual terjadi.
 
 ---
 
@@ -94,9 +139,10 @@ masing-masing, agar mudah ditelusuri asalnya.
 
 - **PO Reguler Toko, PO Revisi, routing Factory otomatis, Target/Actual
   Produksi Reguler, FG & Packing Reguler, DO Toko Reguler (nomor & aturan
-  sama persis), Pengiriman, bukti foto Konfirmasi Toko, Email otomatis,
-  Mutasi Antar Toko, perhitungan Invoice** — semua **tidak berubah sama
-  sekali**.
+  sama persis), Driver Portal untuk PO Reguler (tab Tersedia/Pengiriman
+  Saya/Rute Saya/Riwayat — sistem klaim lama tidak disentuh), Pengiriman,
+  bukti foto Konfirmasi Toko, Email otomatis, Mutasi Antar Toko,
+  perhitungan Invoice** — semua **tidak berubah sama sekali**.
 - Belum ada perhitungan Invoice baru di paket ini — fitur ini hanya
   menyiapkan data (asal pesanan, DO-nya) agar Invoice per-sumber bisa
   dibangun dengan aman di tahap berikutnya.
@@ -163,30 +209,55 @@ Subtotal Item = (Qty×Harga)+Charge+Extra Packaging (Extra Packaging TIDAK
 dikalikan qty). Simpan pesanan, buka halaman Detail-nya, pastikan angka
 uang tampil format **Rp46.000**.
 
-### 8. Uji alur FG & DO sumber khusus
+### 8. Uji alur lengkap — Driver Internal
 
 1. Kirim pesanan ke Produksi (Konfirmasi → Kirim ke Produksi).
 2. Buka **Produksi** → **Task per Divisi**, isi Aktual & Reject Produksi
    untuk item pesanan tadi, klik Simpan.
 3. Buka **FG & Packing** → tab **FG Sumber Khusus / Non-Toko**, cari item
    tadi, isi **FG Terverifikasi**, klik Simpan.
-4. Buka **Delivery Order** → tab **DO Pesanan Khusus / Non-Toko**, cari
-   pesanan tadi di "Pesanan Siap Dibuat DO", klik **Buat DO**. Pastikan
-   nomor dokumen berformat `DOK-...` (bukan `DO/KRM/...`).
-5. Buat pesanan Pesanan Khusus Toko DAN Pesanan Non-Toko untuk toko/
-   tanggal yang sama, ulangi langkah 1-4 untuk keduanya — pastikan
-   **masing-masing dapat nomor DO sendiri** (tidak digabung).
-6. Di halaman detail DO, klik **Kirim DO** — pastikan status berubah jadi
-   "Shipped" dan tombol Batalkan hilang (DO yang sudah dikirim tidak bisa
-   dibatalkan).
+4. Buka **Delivery Order** → tab **DO Pesanan Khusus / Non-Toko**, klik
+   **Buat DO**. Pastikan nomor dokumen berformat `DOK-...` (bukan
+   `DO/KRM/...`) dan Metode Pengiriman = Driver Internal.
+5. Buka aplikasi **Driver Portal** (login sebagai akun Driver), buka tab
+   **Khusus/Non-Toko** — pastikan DO tadi muncul dengan badge sumber yang
+   jelas (mis. "Pesanan Khusus Toko"). Klik **Ambil (Claim)**.
+6. Klik **Konfirmasi Berangkat** — pastikan berhasil, lalu kembali ke
+   halaman detail DO di Admin: status berubah jadi **Shipped**, kolom
+   **Sudah Dikirim** terisi (BUKAN tanda "-"), dan **Sisa** = 0.
 
-### 9. Pastikan fitur lain tidak berubah
+### 9. Uji alur lengkap — Kurir Eksternal (GoSend)
+
+1. Buat Pesanan Non-Toko sumber CS, kirim ke Produksi, isi Aktual
+   Produksi, verifikasi FG (seperti langkah 1-3 di atas).
+2. Buat DO untuk pesanan ini — pilih **Drop Bakery** tujuan pengiriman
+   fisik, lalu di halaman detail DO ubah Metode Pengiriman menjadi
+   **Kurir Eksternal**, Provider **GoSend**, isi No. Booking/Resi.
+3. Pastikan DO ini **TIDAK muncul** di Driver Portal tab Khusus/Non-Toko
+   (kurir eksternal tidak boleh bisa diklaim driver internal).
+4. Klik **Barang Diserahkan ke Kurir** — pastikan status berubah jadi
+   **Shipped**, kolom **Sudah Dikirim** terisi.
+5. Buka **FG Sumber Khusus / Non-Toko** — pastikan kolom **Sudah Dikirim**
+   pada item ini ikut bertambah (FG benar-benar berkurang setelah
+   diserahkan ke kurir, bukan sebelumnya).
+
+### 10. Uji pengiriman bertahap (parsial)
+
+Buat pesanan dengan qty besar (misal 10), verifikasi FG hanya 5, buat DO
+(planned=5), Konfirmasi Berangkat hanya sebagian (misal 3) — pastikan
+status DO menjadi **Partial**, Sisa=2. Klik Konfirmasi Berangkat lagi
+untuk sisa 2 — status menjadi **Shipped**. Verifikasi FG 5 lagi (total
+10), lalu **Buat DO** lagi — pastikan DO baru dibuat untuk sisa 5 pcs
+(DO pertama yang sudah shipped tidak menghalangi).
+
+### 11. Pastikan fitur lain tidak berubah
 
 Buka PO Toko, DO Toko Reguler (nomor formatnya harus tetap `DO/KRM/...`),
-FG & Packing (Reguler), Pengiriman, Konfirmasi Toko — pastikan semuanya
-sama seperti sebelum paket ini dipasang.
+FG & Packing (Reguler), Driver Portal tab Tersedia/Pengiriman Saya/Rute
+Saya (Regular PO), Pengiriman, Konfirmasi Toko — pastikan semuanya sama
+seperti sebelum paket ini dipasang.
 
-### 10. Cara mundur (rollback) jika ada masalah
+### 12. Cara mundur (rollback) jika ada masalah
 
 Kembalikan file-file dari backup langkah 1. Migrasi 0012 hanya menambah
 kolom/tabel baru — jika perlu benar-benar mengembalikan struktur
@@ -196,15 +267,27 @@ database, gunakan backup database dari langkah 1.
 
 ## Risiko & Catatan penting
 
-- **PO Reguler, DO Reguler, FG Reguler, Pengiriman, Konfirmasi Toko,
-  Email, Mutasi Toko, perhitungan Invoice — semua tidak tersentuh.**
+- **PO Reguler, DO Reguler, FG Reguler, Driver Portal Regular (Tersedia/
+  Pengiriman Saya/Rute Saya), Pengiriman, Konfirmasi Toko, Email, Mutasi
+  Toko, perhitungan Invoice — semua tidak tersentuh.**
 - **DO Pesanan Khusus Toko dan Pesanan Non-Toko SELALU terpisah dari DO
   PO Reguler dan dari satu sama lain** — tidak pernah digabung dalam satu
   dokumen, walau tujuan/tanggalnya sama.
+- **FG baru berkurang saat barang benar-benar berangkat/diserahkan ke
+  kurir — tidak pernah saat DO dibuat atau kurir dibooking.**
+- **FG Terverifikasi tidak bisa dikurangi di bawah jumlah yang sudah
+  dikirim** — sistem akan menolak dengan pesan jelas jika dicoba.
+- **Kurir Eksternal SELALU mengambil barang dari pabrik**, tidak
+  didukung mengambil dari toko/bakery di fase ini.
+- **DO Kurir Eksternal tidak pernah muncul atau bisa diklaim di Driver
+  Portal** — mencegah dua jalur pengiriman untuk dokumen yang sama.
 - **FG Pesanan Khusus/Non-Toko tidak bercampur dengan stok gudang umum.**
 - **Belum ada perhitungan Invoice final di paket ini** — hanya data asal
   (sumber pesanan + DO) yang disiapkan agar aman dipakai tahap
   berikutnya.
+- **Konfirmasi penerimaan fisik oleh Bakery (Store Receipt) untuk
+  pengiriman sumber khusus BELUM terhubung otomatis di fase ini** —
+  dicatat sebagai pekerjaan lanjutan yang aman untuk dibangun terpisah.
 - **Tema gelap (dark navy) Admin dipertahankan persis sama.**
 
 **Selesai.** Jika ada tampilan yang tidak sesuai, hentikan di situ dan

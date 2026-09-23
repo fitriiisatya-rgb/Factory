@@ -363,51 +363,63 @@ runTest('FLOW-23 a custom (special_catalog) item flows through fg-eligible/verif
     $GLOBALS['flow23OrderId'] = $orderId;
 });
 
-// --- FLOW-25..42 (source-specific DO) ---------------------------------------
+// --- FLOW-25..42 (source-specific DO — reworked API: factory-scoped
+// create, delivery_method, DO-level claim/depart/courier-handover, real
+// shipment writes, multi-DO). Deep coverage of the new safety model
+// (multi-DO partial fulfillment, driver claim/depart, external courier
+// handover, FG-below-shipped guard, mutual exclusion) lives in the
+// dedicated SpecialFulfillmentTest.php (FUL-*), run by this same
+// orchestrator's own cascade — these FLOW-* tests only re-confirm the
+// basic create/cancel/authorization contract still holds. ------------------
 
-runTest('FLOW-25 creating a DO with zero FG-verified items is rejected', function () use ($adminHttp, $adminCsrf, $storeAId, $rotiBollenProductId) {
+runTest('FLOW-25 creating a DO with zero FG-verified items is rejected', function () use ($adminHttp, $adminCsrf, $storeAId, $rotiBollenProductId, $karangtengahFactoryId) {
     [$orderId, ,] = createSentOrder($adminHttp, $adminCsrf, [
         'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
         'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25',
         'items' => [['itemType' => 'existing_product', 'productId' => $rotiBollenProductId, 'qty' => 1]],
     ], 'flow25');
-    $r = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $orderId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow25do')));
+    $r = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $orderId, 'factoryId' => $karangtengahFactoryId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow25do')));
     expect($r['status'] === 400, 'FLOW-25: expected 400 with no FG-verified items, got ' . $r['status']);
     expect(($r['json']['code'] ?? null) === 'NO_FG_VERIFIED_DEMAND', 'FLOW-25: expected code=NO_FG_VERIFIED_DEMAND, got ' . json_encode($r['json']));
 });
 
 $flowDoId = null;
 $flowDoVersion = null;
-runTest('FLOW-26/28 creating a DO after verify-fg succeeds with a DOK- number and plannedQty = fgVerifiedQty snapshot', function () use ($adminHttp, $adminCsrf, $flowOrderId, &$flowDoId, &$flowDoVersion) {
-    $r = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $flowOrderId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow26do')));
+runTest('FLOW-26/28 creating a DO after verify-fg succeeds with a DOK- number, delivery_method defaults DRIVER_INTERNAL, and plannedQty = fgVerifiedQty snapshot', function () use ($adminHttp, $adminCsrf, $flowOrderId, $karangtengahFactoryId, &$flowDoId, &$flowDoVersion) {
+    $r = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $flowOrderId, 'factoryId' => $karangtengahFactoryId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow26do')));
     expect($r['status'] === 200, 'FLOW-26: expected 200: ' . json_encode($r['json']));
     $do = $r['json']['data'];
     expect(str_starts_with($do['docNo'], 'DOK-'), 'FLOW-26: expected a DOK- doc number, got ' . $do['docNo']);
+    expect($do['deliveryMethod'] === 'DRIVER_INTERNAL', 'FLOW-26: expected deliveryMethod to default to DRIVER_INTERNAL, got ' . $do['deliveryMethod']);
+    expect($do['status'] === 'open', 'FLOW-26: expected a freshly created DO to be status=open, got ' . $do['status']);
     expect(count($do['items']) === 1, 'FLOW-28: expected exactly 1 DO item');
     expect(numEq($do['items'][0]['plannedQty'], 5.0), 'FLOW-28: expected plannedQty=5 (the fgVerifiedQty snapshot), got ' . json_encode($do['items'][0]['plannedQty']));
     $flowDoId = $do['doId'];
     $flowDoVersion = $do['version'];
 });
 
-runTest('FLOW-27 creating a DO again for the SAME order returns the SAME DO (idempotent, never duplicated)', function () use ($adminHttp, $adminCsrf, $flowOrderId, $flowDoId) {
-    $r = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $flowOrderId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow27do')));
-    expect($r['status'] === 200, 'FLOW-27: expected 200: ' . json_encode($r['json']));
-    expect($r['json']['data']['doId'] === $flowDoId, 'FLOW-27: expected the SAME doId on a second create call, got ' . $r['json']['data']['doId'] . ' vs ' . $flowDoId);
+runTest('FLOW-27 creating a DO again for the SAME order with nothing newly available is rejected (no double-allocation of the same FG)', function () use ($adminHttp, $adminCsrf, $flowOrderId, $karangtengahFactoryId) {
+    $r = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $flowOrderId, 'factoryId' => $karangtengahFactoryId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow27do')));
+    expect($r['status'] === 400, 'FLOW-27: expected 400 (the 5 already-verified units are already allocated to the first DO), got ' . $r['status'] . ': ' . json_encode($r['json']));
+    expect(($r['json']['code'] ?? null) === 'NO_FG_VERIFIED_DEMAND', 'FLOW-27: expected code=NO_FG_VERIFIED_DEMAND, got ' . json_encode($r['json']));
 });
 
-runTest('FLOW-32 a separate special order (Pesanan Non-Toko) gets its OWN separate DO, never merged with the toko_khusus one', function () use ($adminHttp, $adminCsrf, $flowDoId) {
+runTest('FLOW-32 a separate special order (Pesanan Non-Toko) gets its OWN separate DO, never merged with the toko_khusus one', function () use ($adminHttp, $adminCsrf, $flowDoId, $karangtengahFactoryId, $storeAId) {
     $orderId = $GLOBALS['flow23OrderId'];
-    $r = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $orderId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow32do')));
+    $r = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $orderId, 'factoryId' => $karangtengahFactoryId, 'dropStoreId' => $storeAId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow32do')));
     expect($r['status'] === 200, 'FLOW-32: expected 200: ' . json_encode($r['json']));
     expect($r['json']['data']['doId'] !== $flowDoId, 'FLOW-32: expected a DIFFERENT doId from the toko_khusus order\'s DO — different demand sources must never share one DO');
     expect($r['json']['data']['sourceType'] === 'non_toko', 'FLOW-32: expected sourceType=non_toko on this DO');
 });
 
-runTest('FLOW-29 shipping a DO transitions draft -> shipped and sets shippedAt', function () use ($adminHttp, $adminCsrf, $flowDoId, $flowDoVersion) {
-    $r = $adminHttp->request('POST', "/api/special-order-do/{$flowDoId}/ship", ['expectedVersion' => $flowDoVersion], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow29')));
-    expect($r['status'] === 200, 'FLOW-29: expected 200: ' . json_encode($r['json']));
+runTest('FLOW-29 confirming departure creates a REAL shipment and transitions open -> shipped', function () use ($adminHttp, $adminCsrf, $flowDoId) {
+    $claim = $adminHttp->request('POST', "/api/special-order-do/{$flowDoId}/claim", null, array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow29claim')));
+    expect($claim['status'] === 200, 'FLOW-29: expected claim 200: ' . json_encode($claim['json']));
+    $r = $adminHttp->request('POST', "/api/special-order-do/{$flowDoId}/depart", ['items' => null], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('flow29depart')));
+    expect($r['status'] === 200, 'FLOW-29: expected depart 200: ' . json_encode($r['json']));
     expect($r['json']['data']['status'] === 'shipped', 'FLOW-29: expected status=shipped, got ' . $r['json']['data']['status']);
-    expect($r['json']['data']['shippedAt'] !== null, 'FLOW-29: expected shippedAt to be set');
+    expect(isset($r['json']['data']['shipmentId']) && $r['json']['data']['shipmentId'] > 0, 'FLOW-29: expected a real shipmentId to be returned');
+    expect(numEq($r['json']['data']['items'][0]['shippedQty'], 5.0), 'FLOW-29: expected shippedQty=5 on the DO item, got ' . json_encode($r['json']['data']['items'][0]['shippedQty']));
 });
 
 runTest('FLOW-30 a shipped DO cannot be cancelled', function () use ($adminHttp, $adminCsrf, $flowDoId) {
@@ -431,15 +443,15 @@ runTest('FLOW-31 cancelling a DO requires a non-empty reason', function () use (
     expect(($r['json']['code'] ?? null) === 'REASON_REQUIRED', 'FLOW-31: expected code=REASON_REQUIRED, got ' . json_encode($r['json']));
 });
 
-runTest('FLOW-33/34 shipping/verifying never writes to the shared shipment or stock_ledger tables', function () use ($pdo) {
+runTest('FLOW-33/34 confirmDeparture creates a real shipment row AND leaves stock_ledger untouched (special-order FG stays order-specific)', function () use ($pdo) {
     $shipmentCount = (int) $pdo->query("SELECT COUNT(*) FROM shipment WHERE source_type = 'special_order_do'")->fetchColumn();
-    expect($shipmentCount === 0, 'FLOW-33: expected ZERO shipment rows from special_order_do dispatch (self-contained status, not wired to shared shipment in this phase), got ' . $shipmentCount);
+    expect($shipmentCount > 0, 'FLOW-33: expected at least one REAL shipment row from special_order_do dispatch (the reworked CRITICAL DISPATCH RULE), got ' . $shipmentCount);
     $ledgerCount = (int) $pdo->query("SELECT COUNT(*) FROM stock_ledger WHERE source_type NOT IN ('production_run','shipment_item','stock_adjustment','stock_transfer','opening_balance_cutover','historical_replay','reversal')")->fetchColumn();
     expect($ledgerCount === 0, 'FLOW-34: expected stock_ledger source_type ENUM untouched by special-order FG (no special-order source values ever written), got ' . $ledgerCount);
 });
 
-runTest('FLOW-36 an unauthorized role cannot create/ship/cancel a special_order_do', function () use ($driverHttp, $driverCsrf, $flowOrderId) {
-    $r = $driverHttp->request('POST', '/api/special-order-do', ['orderId' => $flowOrderId], array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('flow36')));
+runTest('FLOW-36 an unauthorized role cannot create/cancel a special_order_do', function () use ($driverHttp, $driverCsrf, $flowOrderId, $karangtengahFactoryId) {
+    $r = $driverHttp->request('POST', '/api/special-order-do', ['orderId' => $flowOrderId, 'factoryId' => $karangtengahFactoryId], array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('flow36')));
     expect($r['status'] === 403, 'FLOW-36: expected 403 for DRIVER creating a special_order_do, got ' . $r['status']);
 });
 
@@ -471,6 +483,218 @@ runTest('FLOW-41 DO doc numbers are sequential and unique within the same month'
 runTest('FLOW-42 GET a non-existent special_order_do returns 404', function () use ($adminHttp) {
     $r = $adminHttp->request('GET', '/api/special-order-do/999999999');
     expect($r['status'] === 404, 'FLOW-42: expected 404, got ' . $r['status']);
+});
+
+// =============================================================================
+// FUL-* — Special / Non-Regular Fulfillment Completion (Driver Internal +
+// External Courier rework). Covers the "MANDATORY SOURCE AUDIT" safety
+// invariants the task itself calls out: every physical dispatch creates a
+// real shipment, actual_ship_qty is always populated, shipped FG can never
+// be reduced, partial orders can get a second DO, one FG unit can never be
+// consumed twice, an External Courier DO never reaches the Driver Portal,
+// a Bakery drop point never becomes the billing owner, and Regular PO
+// stays untouched throughout.
+// =============================================================================
+
+runTest('FUL-13 FG Verified cannot be reduced below already-shipped quantity', function () use ($adminHttp, $adminCsrf, $flowItemId) {
+    // flowItemId was shipped 5 (FLOW-29's departure) then re-verified to
+    // 10 by earlier tests — attempting to drop it back to 3 must fail.
+    $r = $adminHttp->request('POST', "/api/special-orders/items/{$flowItemId}/verify-fg", ['fgVerifiedQty' => 3], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('ful13')));
+    expect($r['status'] === 400, 'FUL-13: expected 400, got ' . $r['status']);
+    expect(($r['json']['code'] ?? null) === 'FG_BELOW_SHIPPED', 'FUL-13: expected code=FG_BELOW_SHIPPED, got ' . json_encode($r['json']));
+});
+
+// --- FUL-16/17/18 (multi-DO, partial fulfillment) ---------------------------
+
+$fulMultiOrderId = null;
+$fulMultiItemId = null;
+runTest('FUL-16/17 an order may have MULTIPLE DOs — a first DO does not block a second one for newly-verified FG', function () use ($adminHttp, $adminCsrf, $storeAId, $rotiBollenProductId, $karangtengahFactoryId, &$fulMultiOrderId, &$fulMultiItemId) {
+    [$orderId, $itemId, $version] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25',
+        'items' => [['itemType' => 'existing_product', 'productId' => $rotiBollenProductId, 'qty' => 10]],
+    ], 'fulmulti');
+    $fulMultiOrderId = $orderId;
+    $fulMultiItemId = $itemId;
+    $actual = $adminHttp->request('POST', "/api/special-orders/{$orderId}/actual", ['expectedVersion' => $version, 'items' => [['itemId' => $itemId, 'aktualProduksi' => 10, 'rejectProduksi' => 0]]], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fulmultiactual')));
+    expect($actual['status'] === 200, 'FUL-16: expected actual 200: ' . json_encode($actual['json']));
+
+    // Verify only 5 of 10 today.
+    $verify1 = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/verify-fg", ['fgVerifiedQty' => 5], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fulmultiverify1')));
+    expect($verify1['status'] === 200, 'FUL-16: expected verify-fg 200: ' . json_encode($verify1['json']));
+
+    $doA = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $orderId, 'factoryId' => $karangtengahFactoryId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fulmultidoA')));
+    expect($doA['status'] === 200, 'FUL-16: expected DO-A create 200: ' . json_encode($doA['json']));
+    expect(numEq($doA['json']['data']['items'][0]['plannedQty'], 5.0), 'FUL-16: expected DO-A plannedQty=5, got ' . json_encode($doA['json']['data']['items'][0]['plannedQty']));
+
+    // Ship DO-A fully.
+    $claimA = $adminHttp->request('POST', "/api/special-order-do/{$doA['json']['data']['doId']}/claim", null, array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fulmulticlaimA')));
+    expect($claimA['status'] === 200, 'FUL-16: expected claim DO-A 200: ' . json_encode($claimA['json']));
+    $departA = $adminHttp->request('POST', "/api/special-order-do/{$doA['json']['data']['doId']}/depart", ['items' => null], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fulmultidepartA')));
+    expect($departA['status'] === 200, 'FUL-16: expected depart DO-A 200: ' . json_encode($departA['json']));
+    expect($departA['json']['data']['status'] === 'shipped', 'FUL-16: expected DO-A status=shipped, got ' . $departA['json']['data']['status']);
+
+    // Tomorrow: verify the remaining 5 (total 10) and open a SECOND DO for it.
+    $verify2 = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/verify-fg", ['fgVerifiedQty' => 10], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fulmultiverify2')));
+    expect($verify2['status'] === 200, 'FUL-17: expected re-verify to 10, 200: ' . json_encode($verify2['json']));
+
+    $doB = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $orderId, 'factoryId' => $karangtengahFactoryId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fulmultidoB')));
+    expect($doB['status'] === 200, 'FUL-17: expected DO-B create 200 (the first shipped DO must NOT permanently block further fulfillment): ' . json_encode($doB['json']));
+    expect($doB['json']['data']['doId'] !== $doA['json']['data']['doId'], 'FUL-17: expected a DIFFERENT doId for DO-B');
+    expect(numEq($doB['json']['data']['items'][0]['plannedQty'], 5.0), 'FUL-17: expected DO-B plannedQty=5 (the newly-available remainder), got ' . json_encode($doB['json']['data']['items'][0]['plannedQty']));
+});
+
+runTest('FUL-18 requesting more than what is currently available for a new DO is rejected (never FG 10 / DO-A 10 / DO-B 10 double-allocation)', function () use ($adminHttp, $adminCsrf, $fulMultiOrderId, $fulMultiItemId, $karangtengahFactoryId) {
+    // Everything (10) is now allocated across DO-A+DO-B — a third attempt
+    // asking for even 1 more unit must be rejected, never silently accepted.
+    $r = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $fulMultiOrderId, 'factoryId' => $karangtengahFactoryId, 'items' => [['itemId' => $fulMultiItemId, 'qty' => 1]]], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('ful18')));
+    expect($r['status'] === 400, 'FUL-18: expected 400, got ' . $r['status'] . ': ' . json_encode($r['json']));
+    expect(($r['json']['code'] ?? null) === 'EXCEEDS_AVAILABLE_FOR_DO', 'FUL-18: expected code=EXCEEDS_AVAILABLE_FOR_DO, got ' . json_encode($r['json']));
+});
+
+// --- FUL-19..25 (Driver Internal: claim -> depart -> real shipment) --------
+
+$fulDriverDoId = null;
+$fulDriverItemId = null;
+runTest('FUL-19/20 a DRIVER_INTERNAL DO appears in the Driver Portal pool and can be claimed', function () use ($adminHttp, $adminCsrf, $driverHttp, $driverCsrf, $storeAId, $rotiBollenProductId, $karangtengahFactoryId, &$fulDriverDoId, &$fulDriverItemId) {
+    [$orderId, $itemId, $version] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId,
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25',
+        'items' => [['itemType' => 'existing_product', 'productId' => $rotiBollenProductId, 'qty' => 6]],
+    ], 'fuldriver');
+    $fulDriverItemId = $itemId;
+    $adminHttp->request('POST', "/api/special-orders/{$orderId}/actual", ['expectedVersion' => $version, 'items' => [['itemId' => $itemId, 'aktualProduksi' => 6, 'rejectProduksi' => 0]]], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fuldriveractual')));
+    $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/verify-fg", ['fgVerifiedQty' => 6], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fuldriververify')));
+    $do = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $orderId, 'factoryId' => $karangtengahFactoryId, 'deliveryMethod' => 'DRIVER_INTERNAL'], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fuldriverdo')));
+    expect($do['status'] === 200, 'FUL-19: expected DO create 200: ' . json_encode($do['json']));
+    $fulDriverDoId = $do['json']['data']['doId'];
+
+    $pool = $driverHttp->request('GET', '/api/special-order-do/driver-pool');
+    expect($pool['status'] === 200, 'FUL-19: expected driver-pool 200: ' . json_encode($pool['json']));
+    $found = null;
+    foreach ($pool['json']['data'] as $p) { if ($p['doId'] === $fulDriverDoId) { $found = $p; break; } }
+    expect($found !== null, 'FUL-19: expected the new DRIVER_INTERNAL DO to appear in the driver pool');
+    expect($found['sourceLabel'] === 'Pesanan Khusus Toko', 'FUL-19: expected a clear source badge on the driver card, got ' . json_encode($found['sourceLabel']));
+
+    $claim = $driverHttp->request('POST', "/api/special-order-do/{$fulDriverDoId}/claim", null, array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('fuldriverclaim')));
+    expect($claim['status'] === 200, 'FUL-20: expected claim 200: ' . json_encode($claim['json']));
+    expect($claim['json']['data']['claimedByUserId'] !== null, 'FUL-20: expected claimedByUserId to be set after claim');
+});
+
+runTest('FUL-25 a non-claimant cannot depart this DO', function () use ($adminHttp, $adminCsrf, $fulDriverDoId) {
+    $r = $adminHttp->request('POST', "/api/special-order-do/{$fulDriverDoId}/depart", ['items' => null], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('ful25')));
+    expect($r['status'] === 403, 'FUL-25: expected 403 for a non-claimant departure attempt, got ' . $r['status']);
+    expect(($r['json']['code'] ?? null) === 'NOT_CLAIMANT', 'FUL-25: expected code=NOT_CLAIMANT, got ' . json_encode($r['json']));
+});
+
+runTest('FUL-21/22/23/24 departing PARTIAL qty creates a real shipment, populates actual_ship_qty, reduces FG atomically, and updates DO status to PARTIAL', function () use ($driverHttp, $driverCsrf, $pdo, $fulDriverDoId, $fulDriverItemId) {
+    $doItems = $driverHttp->request('GET', "/api/special-order-do/{$fulDriverDoId}");
+    $doItemId = $doItems['json']['data']['items'][0]['doItemId'];
+
+    $r = $driverHttp->request('POST', "/api/special-order-do/{$fulDriverDoId}/depart", ['items' => [['doItemId' => $doItemId, 'qty' => 4]]], array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('ful21')));
+    expect($r['status'] === 200, 'FUL-21: expected depart 200: ' . json_encode($r['json']));
+    expect(isset($r['json']['data']['shipmentId']) && $r['json']['data']['shipmentId'] > 0, 'FUL-22: expected a real shipmentId (actual_ship_qty is never "-" after a shipment)');
+    expect($r['json']['data']['status'] === 'partial', 'FUL-24: expected DO status=partial (planned 6, shipped 4), got ' . $r['json']['data']['status']);
+    $item = $r['json']['data']['items'][0];
+    expect(numEq($item['shippedQty'], 4.0), 'FUL-22: expected shippedQty=4, got ' . json_encode($item['shippedQty']));
+    expect(numEq($item['remainingQty'], 2.0), 'FUL-21: expected remainingQty=2, got ' . json_encode($item['remainingQty']));
+
+    $shipmentDoId = (int) $pdo->query("SELECT special_order_do_id FROM shipment WHERE source_type='special_order_do' ORDER BY shipment_id DESC LIMIT 1")->fetchColumn();
+    expect($shipmentDoId === $fulDriverDoId, 'FUL-23: expected the real shipment row to reference this DO, got special_order_do_id=' . $shipmentDoId);
+});
+
+runTest('FUL-45/46 shipping the remaining qty completes the DO (PARTIAL -> SHIPPED)', function () use ($driverHttp, $driverCsrf, $fulDriverDoId) {
+    $r = $driverHttp->request('POST', "/api/special-order-do/{$fulDriverDoId}/depart", ['items' => null], array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('ful46')));
+    expect($r['status'] === 200, 'FUL-46: expected depart 200: ' . json_encode($r['json']));
+    expect($r['json']['data']['status'] === 'shipped', 'FUL-46: expected DO status=shipped after the remaining qty ships, got ' . $r['json']['data']['status']);
+});
+
+runTest('FUL-25b double departure after full shipment is rejected (never a duplicate shipment)', function () use ($driverHttp, $driverCsrf, $fulDriverDoId) {
+    $r = $driverHttp->request('POST', "/api/special-order-do/{$fulDriverDoId}/depart", ['items' => null], array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('ful25b')));
+    expect($r['status'] === 400, 'FUL-25b: expected 400 (already fully shipped), got ' . $r['status']);
+    expect(($r['json']['code'] ?? null) === 'INVALID_STATUS', 'FUL-25b: expected code=INVALID_STATUS (a fully-shipped DO is rejected before ever reaching the empty-shipment check), got ' . json_encode($r['json']));
+});
+
+// --- FUL-26..35 (External Courier) ------------------------------------------
+
+$fulCourierDoId = null;
+runTest('FUL-26/27/36/37 an EXTERNAL_COURIER DO (Grab/GoSend/Lalamove) never appears in the Driver Portal pool, and a CS order can drop to a Bakery while keeping its CS source', function () use ($adminHttp, $adminCsrf, $driverHttp, $storeAId, $karangtengahFactoryId, &$fulCourierDoId) {
+    [$orderId, $itemId, $version] = createSentOrder($adminHttp, $adminCsrf, [
+        'sourceType' => 'non_toko', 'nonStoreSource' => 'cs', 'customerName' => 'Bapak Andi',
+        'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25',
+        'items' => [['itemType' => 'special_catalog', 'specialCatalogId' => 1, 'qty' => 3]],
+    ], 'fulcourier');
+    $adminHttp->request('POST', "/api/special-orders/{$orderId}/actual", ['expectedVersion' => $version, 'items' => [['itemId' => $itemId, 'aktualProduksi' => 3, 'rejectProduksi' => 0]]], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fulcourieractual')));
+    $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/verify-fg", ['fgVerifiedQty' => 3], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fulcourierverify')));
+
+    $do = $adminHttp->request('POST', '/api/special-order-do', [
+        'orderId' => $orderId, 'factoryId' => $karangtengahFactoryId, 'deliveryMethod' => 'EXTERNAL_COURIER',
+        'courierProvider' => 'gosend', 'externalOrderReference' => 'GS-123456', 'dropStoreId' => $storeAId,
+    ], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('fulcourierdo')));
+    expect($do['status'] === 200, 'FUL-28: expected DO create 200 with provider=gosend: ' . json_encode($do['json']));
+    expect($do['json']['data']['courierProvider'] === 'gosend', 'FUL-28: expected courierProvider=gosend persisted');
+    expect($do['json']['data']['sourceType'] === 'non_toko', 'FUL-37: expected sourceType to remain non_toko (CS) even though the physical drop is a store/Bakery');
+    expect($do['json']['data']['dropStoreName'] !== null, 'FUL-36: expected a real drop-store (Bakery) name on the DO');
+    $fulCourierDoId = $do['json']['data']['doId'];
+
+    $pool = $driverHttp->request('GET', '/api/special-order-do/driver-pool');
+    $foundInPool = false;
+    foreach ($pool['json']['data'] as $p) { if ($p['doId'] === $fulCourierDoId) { $foundInPool = true; } }
+    expect(!$foundInPool, 'FUL-26: expected the EXTERNAL_COURIER DO to be ABSENT from the Driver Portal pool (mutual exclusion)');
+});
+
+runTest('FUL-31 booking/creating an EXTERNAL_COURIER DO alone does NOT reduce FG', function () use ($adminHttp, $fulCourierDoId) {
+    $eligible = $adminHttp->request('GET', '/api/special-orders/fg-eligible');
+    $found = null;
+    foreach ($eligible['json']['data'] as $it) {
+        // The courier order's item — shippedQty must still be 0 (booking alone never ships).
+        if ((float) $it['fgVerifiedQty'] === 3.0 && $it['sourceType'] === 'non_toko') { $found = $it; }
+    }
+    expect($found !== null, 'FUL-31: expected to find the courier order item in fg-eligible');
+    expect(numEq($found['shippedQty'], 0.0), 'FUL-31: expected shippedQty=0 before any handover — DO creation alone must never reduce FG, got ' . json_encode($found['shippedQty']));
+});
+
+runTest('FUL-29/30/32/33/34 "Barang Diserahkan ke Kurir" creates a real shipment and reduces FG atomically', function () use ($adminHttp, $adminCsrf, $fulCourierDoId) {
+    $r = $adminHttp->request('POST', "/api/special-order-do/{$fulCourierDoId}/courier-handover", ['items' => null, 'handoverNote' => 'Diambil kurir GoSend'], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('ful29')));
+    expect($r['status'] === 200, 'FUL-29/32: expected courier-handover 200: ' . json_encode($r['json']));
+    expect($r['json']['data']['status'] === 'shipped', 'FUL-29: expected status=shipped, got ' . $r['json']['data']['status']);
+    expect(isset($r['json']['data']['shipmentId']) && $r['json']['data']['shipmentId'] > 0, 'FUL-34: expected a real shipmentId (actual_ship_qty populated)');
+    expect(numEq($r['json']['data']['items'][0]['shippedQty'], 3.0), 'FUL-33: expected shippedQty=3 after handover (FG reduced), got ' . json_encode($r['json']['data']['items'][0]['shippedQty']));
+
+    $eligible = $adminHttp->request('GET', '/api/special-orders/fg-eligible');
+    $found = null;
+    foreach ($eligible['json']['data'] as $it) {
+        if ((float) $it['fgVerifiedQty'] === 3.0 && $it['sourceType'] === 'non_toko') { $found = $it; }
+    }
+    expect($found !== null && numEq($found['shippedQty'], 3.0), 'FUL-33: expected the item-level shippedQty to reflect the courier handover');
+});
+
+runTest('FUL-35 a second handover attempt is idempotent-safe (nothing left, never a duplicate shipment)', function () use ($adminHttp, $adminCsrf, $fulCourierDoId) {
+    $r = $adminHttp->request('POST', "/api/special-order-do/{$fulCourierDoId}/courier-handover", ['items' => null], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('ful35')));
+    expect($r['status'] === 400, 'FUL-35: expected 400 (already fully shipped), got ' . $r['status']);
+    expect(($r['json']['code'] ?? null) === 'INVALID_STATUS', 'FUL-35: expected code=INVALID_STATUS (a fully-shipped DO is rejected before ever reaching the empty-shipment check), got ' . json_encode($r['json']));
+});
+
+// --- Delivery method locking + driver claiming a courier DO is blocked -----
+
+runTest('a DRIVER cannot claim an EXTERNAL_COURIER DO directly (defense in depth, not just pool filtering)', function () use ($driverHttp, $driverCsrf, $fulCourierDoId) {
+    $r = $driverHttp->request('POST', "/api/special-order-do/{$fulCourierDoId}/claim", null, array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('ful-courier-claim-block')));
+    expect($r['status'] === 400, 'expected 400 for a driver trying to claim an EXTERNAL_COURIER DO, got ' . $r['status']);
+    expect(($r['json']['code'] ?? null) === 'WRONG_DELIVERY_METHOD', 'expected code=WRONG_DELIVERY_METHOD, got ' . json_encode($r['json']));
+});
+
+runTest('delivery method is locked once a real shipment exists', function () use ($adminHttp, $adminCsrf, $fulCourierDoId) {
+    $get = $adminHttp->request('GET', "/api/special-order-do/{$fulCourierDoId}");
+    $r = $adminHttp->request('POST', "/api/special-order-do/{$fulCourierDoId}/delivery-method", ['expectedVersion' => $get['json']['data']['version'], 'deliveryMethod' => 'DRIVER_INTERNAL'], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('ful-method-lock')));
+    expect($r['status'] === 400, 'expected 400, got ' . $r['status']);
+    expect(($r['json']['code'] ?? null) === 'DELIVERY_METHOD_LOCKED', 'expected code=DELIVERY_METHOD_LOCKED, got ' . json_encode($r['json']));
+});
+
+runTest('FUL-48/49/50 Regular PO delivery_order/shipment tables stay completely untouched by all of the above', function () use ($pdo) {
+    $doCount = (int) $pdo->query('SELECT COUNT(*) FROM delivery_order')->fetchColumn();
+    expect($doCount === 0, 'FUL-48: expected zero Regular delivery_order rows — this feature never writes to it, got ' . $doCount);
+    $regularShipmentCount = (int) $pdo->query("SELECT COUNT(*) FROM shipment WHERE source_type = 'delivery_order'")->fetchColumn();
+    expect($regularShipmentCount === 0, 'FUL-49/50: expected zero Regular-sourced shipment rows in this suite\'s own DB, got ' . $regularShipmentCount);
 });
 
 // FLOW-43..47 (full regression green) are NOT tests in this file — they

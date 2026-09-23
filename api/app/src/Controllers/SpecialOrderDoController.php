@@ -14,13 +14,14 @@ use Amor\Api\SpecialOrder\SpecialOrderDoService;
 use PDO;
 
 /**
- * JSON API for special_order_do — the source-specific DO for Pesanan
- * Khusus Toko / Pesanan Non-Toko (migration 0012). Mirrors
- * DoController's own shape.
+ * JSON API for special_order_do — the source-specific DO + real shipment
+ * write path for Pesanan Khusus Toko / Pesanan Non-Toko (migration 0012,
+ * reworked). Mirrors DoController/DispatchController's own shape.
  */
 final class SpecialOrderDoController
 {
     private const EDITOR_ROLES = ['ADMIN', 'PPIC'];
+    private const DRIVER_ROLES = ['DRIVER', 'ADMIN'];
 
     public static function index(Request $request): void
     {
@@ -30,8 +31,18 @@ final class SpecialOrderDoController
             'sourceType' => $request->query('sourceType'),
             'status' => $request->query('status'),
             'tanggal' => $request->query('tanggal'),
+            'deliveryMethod' => $request->query('deliveryMethod'),
+            'factoryId' => $request->query('factoryId') !== null ? (int) $request->query('factoryId') : null,
         ], fn ($v) => $v !== null);
         Response::json($service->listDos($filters));
+    }
+
+    /** GET /api/special-order-do/driver-pool — Driver Portal's own eligible-dispatch list. */
+    public static function driverPool(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::DRIVER_ROLES);
+        $service = new SpecialOrderDoService(Database::pdo());
+        Response::json($service->driverPool($userId));
     }
 
     public static function show(Request $request): void
@@ -46,23 +57,40 @@ final class SpecialOrderDoController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $orderId = self::requireInt($request->input('orderId'), 'orderId');
+        $factoryId = self::requireInt($request->input('factoryId'), 'factoryId');
+        $items = $request->input('items');
+        $deliveryMethod = (string) ($request->input('deliveryMethod') ?? 'DRIVER_INTERNAL');
+        $courierProvider = $request->input('courierProvider');
+        $courierName = $request->input('courierName');
+        $externalOrderReference = $request->input('externalOrderReference');
+        $dropStoreId = $request->input('dropStoreId') !== null ? (int) $request->input('dropStoreId') : null;
 
-        Idempotency::handle($request, 'POST /api/special-order-do', function (PDO $pdo) use ($userId, $orderId, $request) {
+        Idempotency::handle($request, 'POST /api/special-order-do', function (PDO $pdo) use ($userId, $orderId, $factoryId, $items, $deliveryMethod, $courierProvider, $courierName, $externalOrderReference, $dropStoreId, $request) {
             $service = new SpecialOrderDoService($pdo);
-            $dto = $service->createDraft($orderId, $userId, $request->header('Idempotency-Key'));
+            $dto = $service->create($orderId, $factoryId, is_array($items) ? $items : null, $deliveryMethod, $courierProvider, $courierName, $externalOrderReference, $dropStoreId, $userId, $request->header('Idempotency-Key'));
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_do', 'recordKey' => (string) $dto['doId']];
         });
     }
 
-    public static function ship(Request $request): void
+    public static function claim(Request $request): void
     {
-        $userId = Auth::requireRole(...self::EDITOR_ROLES);
+        $userId = Auth::requireRole(...self::DRIVER_ROLES);
         $id = (int) $request->routeParams['id'];
-        $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
-
-        Idempotency::handle($request, 'POST /api/special-order-do/{id}/ship', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion) {
+        Idempotency::handle($request, 'POST /api/special-order-do/{id}/claim', function (PDO $pdo) use ($request, $userId, $id) {
             $service = new SpecialOrderDoService($pdo);
-            $dto = $service->ship($id, $expectedVersion, $userId, $request->header('Idempotency-Key'));
+            $dto = $service->claim($id, $userId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_do', 'recordKey' => (string) $id];
+        });
+    }
+
+    public static function release(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::DRIVER_ROLES);
+        $isAdmin = in_array('ADMIN', Auth::currentRoles(), true);
+        $id = (int) $request->routeParams['id'];
+        Idempotency::handle($request, 'POST /api/special-order-do/{id}/release', function (PDO $pdo) use ($request, $userId, $isAdmin, $id) {
+            $service = new SpecialOrderDoService($pdo);
+            $dto = $service->release($id, $userId, $isAdmin, $request->header('Idempotency-Key'));
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_do', 'recordKey' => (string) $id];
         });
     }
@@ -77,6 +105,52 @@ final class SpecialOrderDoController
         Idempotency::handle($request, 'POST /api/special-order-do/{id}/cancel', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $reason) {
             $service = new SpecialOrderDoService($pdo);
             $dto = $service->cancel($id, $expectedVersion, $reason, $userId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_do', 'recordKey' => (string) $id];
+        });
+    }
+
+    public static function changeDeliveryMethod(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::EDITOR_ROLES);
+        $id = (int) $request->routeParams['id'];
+        $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
+        $method = (string) ($request->input('deliveryMethod') ?? '');
+        $provider = $request->input('courierProvider');
+        $courierName = $request->input('courierName');
+        $externalRef = $request->input('externalOrderReference');
+
+        Idempotency::handle($request, 'POST /api/special-order-do/{id}/delivery-method', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $method, $provider, $courierName, $externalRef) {
+            $service = new SpecialOrderDoService($pdo);
+            $dto = $service->changeDeliveryMethod($id, $expectedVersion, $method, $provider, $courierName, $externalRef, $userId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_do', 'recordKey' => (string) $id];
+        });
+    }
+
+    /** POST /api/special-order-do/{id}/depart — DRIVER_INTERNAL's "Confirm Departure / Berangkat". */
+    public static function depart(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::DRIVER_ROLES);
+        $id = (int) $request->routeParams['id'];
+        $items = $request->input('items');
+
+        Idempotency::handle($request, 'POST /api/special-order-do/{id}/depart', function (PDO $pdo) use ($request, $userId, $id, $items) {
+            $service = new SpecialOrderDoService($pdo);
+            $dto = $service->confirmDeparture($id, is_array($items) ? $items : null, $userId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_do', 'recordKey' => (string) $id];
+        });
+    }
+
+    /** POST /api/special-order-do/{id}/courier-handover — EXTERNAL_COURIER's "Barang Diserahkan ke Kurir". */
+    public static function courierHandover(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::EDITOR_ROLES);
+        $id = (int) $request->routeParams['id'];
+        $items = $request->input('items');
+        $note = $request->input('handoverNote');
+
+        Idempotency::handle($request, 'POST /api/special-order-do/{id}/courier-handover', function (PDO $pdo) use ($request, $userId, $id, $items, $note) {
+            $service = new SpecialOrderDoService($pdo);
+            $dto = $service->courierHandover($id, is_array($items) ? $items : null, $note, $userId, $request->header('Idempotency-Key'));
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_do', 'recordKey' => (string) $id];
         });
     }

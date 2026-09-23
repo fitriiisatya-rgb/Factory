@@ -84,12 +84,17 @@ php "$REPO_ROOT/api/bin/migrate.php" --yes || { echo "migrate.php FAILED"; exit 
 php "$REPO_ROOT/api/bin/seed.php" || { echo "seed.php FAILED"; exit 1; }
 ADMIN_PASSWORD="$ADMIN_PASS" php "$REPO_ROOT/api/bin/create_admin.php" flowval_admin "Flow Apache Validate Admin" || exit 1
 php "$REPO_ROOT/api/tests/_phase2_bootstrap_master.php" || { echo "master bootstrap FAILED"; exit 1; }
+DRIVER_PASS="ApacheFlowDriver#$(date +%s)"
+export DRIVER_PASS
+DRIVER_HASH="$(php -r "echo password_hash(getenv('DRIVER_PASS'), PASSWORD_DEFAULT);")"
 mariadb --socket="$SOCK" -u root "$DB_NAME" -e "
   INSERT INTO po_batch (tanggal, factory_id, version, created_at)
   SELECT '2026-09-25', factory_id, 1, UTC_TIMESTAMP() FROM factory WHERE name='Karangtengah';
   INSERT INTO po_item (po_batch_id, product_id, po_awal, po_revisi, pb)
   SELECT pb.po_batch_id, p.product_id, 50, 0, 0 FROM po_batch pb, product p, division d
   WHERE pb.tanggal='2026-09-25' AND d.name='Roti & Bollen' AND p.division_id=d.division_id AND p.aktif=1 LIMIT 1;
+  INSERT INTO users (username, password_hash, full_name, active, created_at) VALUES ('flowval_driver', '$DRIVER_HASH', 'Flow Apache Validate Driver', 1, UTC_TIMESTAMP());
+  INSERT INTO user_roles (user_id, role_id) SELECT (SELECT user_id FROM users WHERE username='flowval_driver'), role_id FROM roles WHERE code='DRIVER';
 "
 rm -f "$REPO_ROOT/api/app/config/config.php"
 
@@ -157,6 +162,8 @@ const adminUsername = process.argv[3];
 const adminPassword = process.argv[4];
 const storeName = process.argv[5];
 const shotPrefix = process.argv[6];
+const driverUsername = process.argv[7];
+const driverPassword = process.argv[8];
 
 let FAIL = 0;
 function check(desc, cond) { if (cond) { console.log('PASS: ' + desc); } else { console.log('FAIL: ' + desc); FAIL = 1; } }
@@ -293,32 +300,152 @@ async function loginAsAdmin(context, base, username, password) {
     }
     await page.screenshot({ path: shotPrefix + '-fg-desktop.png', fullPage: true });
 
-    // --- DO Pesanan Khusus/Non-Toko: create + ship ---
+    // --- SCENARIO A: DO Pesanan Khusus Toko -> Driver Internal -> Driver Portal claim -> Konfirmasi Berangkat ---
     await page.goto(base + '/api/_ui-preview/?page=delivery-order-khusus-non-toko&factoryId=' + karangtengahFactoryId);
     await page.waitForLoadState('networkidle');
     check('DO Pesanan Khusus/Non-Toko tab bar renders', (await page.locator('.filter-bar .btn-group .btn').count()) >= 2);
     const doBtn = page.locator('.do-create-btn[data-order-id="' + orderId + '"]');
     check('the FG-verified order appears in "Pesanan Siap Dibuat DO"', (await doBtn.count()) === 1);
+    let scenarioADoId = null;
     if (await doBtn.count() === 1) {
       await doBtn.click();
       await page.waitForURL(/delivery-order-khusus-non-toko-detail/, { timeout: 10000 }).catch(() => {});
       const doBody = await page.content();
       check('the created DO uses the DOK- number format (never DO/KRM/...)', /DOK-\d{8}-\d{3}/.test(doBody));
       check('the DO detail shows the source badge (Pesanan Khusus Toko)', doBody.includes('Pesanan Khusus Toko'));
+      check('delivery method defaults to Driver Internal', doBody.includes('Driver Internal'));
       await page.screenshot({ path: shotPrefix + '-do-desktop.png', fullPage: true });
-
-      const shipBtn = page.locator('#btn-ship-do');
-      if (await shipBtn.count() === 1) {
-        page.once('dialog', d => d.accept());
-        await shipBtn.click();
-        await page.waitForTimeout(300);
-        const confirmBtn = page.locator('.modal .btn-primary[data-act="confirm"]');
-        if (await confirmBtn.count() === 1) { await confirmBtn.click(); }
-        await page.waitForTimeout(1000);
-        const afterShipBody = await page.content();
-        check('after shipping, the DO shows status Shipped and no Cancel action', afterShipBody.includes('Shipped') && (await page.locator('#btn-cancel-do').count()) === 0);
-      }
+      scenarioADoId = new URL(page.url()).searchParams.get('id');
     }
+
+    if (scenarioADoId) {
+      // --- Driver Portal: a SEPARATE browser context, logged in as the driver ---
+      const driverCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      await loginAsAdmin(driverCtx, base, driverUsername, driverPassword);
+      const dpage = await driverCtx.newPage();
+      dpage.on('pageerror', err => console.log('  [driver pageerror]', err.message));
+      dpage.on('console', msg => console.log('  [driver console]', msg.text()));
+      await dpage.goto(base + '/api/_driver-uat/index.php?tab=khusus');
+      await dpage.waitForLoadState('networkidle');
+      const poolDebug = await dpage.evaluate(async (base) => {
+        const r = await fetch(base + '/api/special-order-do/driver-pool');
+        return { status: r.status, body: await r.text() };
+      }, base).catch(err => ({ status: -1, body: String(err) }));
+      console.log('  [debug] GET /api/special-order-do/driver-pool -> ' + poolDebug.status + ' ' + poolDebug.body);
+      await dpage.waitForTimeout(1000);
+      const poolBody = await dpage.content();
+      check('SCENARIO A: the DO appears in the Driver Portal Khusus/Non-Toko tab', poolBody.includes('DOK-'));
+      check('SCENARIO A: the driver card shows a clear source badge', poolBody.includes('Pesanan Khusus Toko'));
+      await dpage.screenshot({ path: shotPrefix + '-driverportal-pool.png', fullPage: true });
+
+      const claimBtn = dpage.locator('[data-act="claim"][data-id="' + scenarioADoId + '"]');
+      check('SCENARIO A: an "Ambil (Claim)" button is present', (await claimBtn.count()) === 1);
+      if (await claimBtn.count() === 1) {
+        await claimBtn.click();
+        await dpage.waitForTimeout(800);
+      }
+      const departBtn = dpage.locator('[data-act="depart"][data-id="' + scenarioADoId + '"]');
+      check('SCENARIO A: after claiming, a "Konfirmasi Berangkat" button appears', (await departBtn.count()) === 1);
+      if (await departBtn.count() === 1) {
+        await departBtn.click();
+        await dpage.waitForTimeout(400);
+        const confirmBtn = dpage.locator('.modal .btn-primary[data-act="confirm"]');
+        if (await confirmBtn.count() === 1) { await confirmBtn.click(); }
+        await dpage.waitForTimeout(1200);
+      }
+      await dpage.screenshot({ path: shotPrefix + '-driverportal-departed.png', fullPage: true });
+      await driverCtx.close();
+
+      // Back on the Admin side: confirm the REAL dispatch effect.
+      await page.goto(base + '/api/_ui-preview/?page=delivery-order-khusus-non-toko-detail&id=' + scenarioADoId);
+      await page.waitForLoadState('networkidle');
+      const afterDepartBody = await page.content();
+      check('SCENARIO A: DO status is Shipped after Konfirmasi Berangkat (CRITICAL DISPATCH RULE — a real shipment was created)', afterDepartBody.includes('Shipped'));
+      check('SCENARIO A: "Sudah Dikirim" is populated (never "-") after a real shipment', !/Sudah Dikirim<\/th>[\s\S]{0,300}>-</.test(afterDepartBody));
+      await page.screenshot({ path: shotPrefix + '-do-shipped-desktop.png', fullPage: true });
+    }
+
+    // --- SCENARIO B: Pesanan Non-Toko (CS) -> Kurir Eksternal (GoSend) -> Barang Diserahkan ke Kurir ---
+    const scenarioB = await page.evaluate(async ({ base }) => {
+      async function post(path, body) {
+        const r = await fetch(base + path, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': window.AMOR.csrfToken, 'Idempotency-Key': 'validate-b-' + Math.random() },
+          body: JSON.stringify(body || {}),
+        });
+        return { status: r.status, json: await r.json().catch(() => null) };
+      }
+      const order = await post('/api/special-orders', {
+        sourceType: 'non_toko', nonStoreSource: 'cs', customerName: 'Bapak Andi',
+        orderDate: '2026-09-22', requiredDate: '2026-09-25',
+        items: [{ itemType: 'special_catalog', specialCatalogId: 1, qty: 3 }],
+      });
+      const confirmed = await post('/api/special-orders/' + order.json.data.orderId + '/confirm', { expectedVersion: order.json.data.version });
+      const sent = await post('/api/special-orders/' + order.json.data.orderId + '/send-to-production', { expectedVersion: confirmed.json.data.version });
+      const itemId = sent.json.data.items[0].itemId;
+      await post('/api/special-orders/' + order.json.data.orderId + '/actual', { expectedVersion: sent.json.data.version, items: [{ itemId, aktualProduksi: 3, rejectProduksi: 0 }] });
+      await post('/api/special-orders/items/' + itemId + '/verify-fg', { fgVerifiedQty: 3 });
+      return { orderId: order.json.data.orderId, orderNo: order.json.data.orderNo, itemId };
+    }, { base });
+    check('SCENARIO B: CS order created + sent to production + FG verified (via API, real UI drives the dispatch below)', !!scenarioB.orderId);
+
+    await page.goto(base + '/api/_ui-preview/?page=delivery-order-khusus-non-toko&factoryId=' + karangtengahFactoryId);
+    await page.waitForLoadState('networkidle');
+    const dropSelB = page.locator('.do-drop-store[data-order-id="' + scenarioB.orderId + '"]');
+    check('SCENARIO B: a Drop Bakery selector appears for the non-toko order', (await dropSelB.count()) === 1);
+    if (await dropSelB.count() === 1) { await dropSelB.selectOption({ label: storeName }); }
+    const doBtnB = page.locator('.do-create-btn[data-order-id="' + scenarioB.orderId + '"]');
+    await doBtnB.click();
+    await page.waitForURL(/delivery-order-khusus-non-toko-detail/, { timeout: 10000 }).catch(() => {});
+    const doBodyB = await page.content();
+    check('SCENARIO B: the DO shows sourceType-preserving badge (Pesanan Non-Toko), never converted to a store order', doBodyB.includes('Pesanan Non-Toko'));
+    const scenarioBDoId = new URL(page.url()).searchParams.get('id');
+
+    // Change delivery method to External Courier / GoSend through the REAL UI.
+    const methodSel = page.locator('#dm-method');
+    check('SCENARIO B: the delivery-method form is present (still status=open, unshipped)', (await methodSel.count()) === 1);
+    if (await methodSel.count() === 1) {
+      await methodSel.selectOption('EXTERNAL_COURIER');
+      await page.locator('#dm-provider').selectOption('gosend');
+      await page.locator('#dm-ref').fill('GS-123456');
+      await page.click('#delivery-method-form button[type=submit]');
+      await page.waitForLoadState('networkidle');
+    }
+    const afterMethodBody = await page.content();
+    check('SCENARIO B: provider GoSend persisted', afterMethodBody.includes('GoSend'));
+    check('SCENARIO B: booking reference GS-123456 persisted', afterMethodBody.includes('GS-123456'));
+    await page.screenshot({ path: shotPrefix + '-courier-do-desktop.png', fullPage: true });
+
+    // Confirm this DO never reaches the Driver Portal now that it's External Courier.
+    const driverCheckCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await loginAsAdmin(driverCheckCtx, base, driverUsername, driverPassword);
+    const dcpage = await driverCheckCtx.newPage();
+    await dcpage.goto(base + '/api/_driver-uat/index.php?tab=khusus');
+    await dcpage.waitForLoadState('networkidle');
+    const dcBody = await dcpage.content();
+    check('SCENARIO B: the External Courier DO is ABSENT from the Driver Portal (mutual exclusion)', !dcBody.includes(scenarioB.orderNo));
+    await driverCheckCtx.close();
+
+    // "Barang Diserahkan ke Kurir" — the CRITICAL DISPATCH action for External Courier.
+    const courierBtn = page.locator('#btn-courier-handover');
+    check('SCENARIO B: "Barang Diserahkan ke Kurir" action is present', (await courierBtn.count()) === 1);
+    if (await courierBtn.count() === 1) {
+      await courierBtn.click();
+      await page.waitForTimeout(400);
+      const confirmBtn2 = page.locator('.modal .btn-primary[data-act="confirm"]');
+      if (await confirmBtn2.count() === 1) { await confirmBtn2.click(); }
+      await page.waitForTimeout(1200);
+    }
+    const afterHandoverBody = await page.content();
+    check('SCENARIO B: DO status is Shipped after handover (a real shipment was created)', afterHandoverBody.includes('Shipped'));
+    await page.screenshot({ path: shotPrefix + '-courier-shipped-desktop.png', fullPage: true });
+
+    const fgAfterB = await page.evaluate(async (base) => {
+      const r = await fetch(base + '/api/special-orders/fg-eligible');
+      const j = await r.json();
+      return j.data;
+    }, base);
+    const fgRowB = Array.isArray(fgAfterB) ? fgAfterB.find(it => it.itemId === scenarioB.itemId) : null;
+    check('SCENARIO B: FG shippedQty reflects the courier handover (FG only reduced at handover, never at booking)', !!fgRowB && Math.abs(fgRowB.shippedQty - 3) < 0.001);
   }
 
   // --- Responsive pass: tablet + mobile, no horizontal overflow, dark theme intact ---
@@ -337,14 +464,30 @@ async function loginAsAdmin(context, base, username, password) {
     await ctx2.close();
   }
 
+  // Driver Portal responsive pass (mobile is its PRIMARY form factor).
+  for (const vp of [{ name: 'ipad', width: 768, height: 1024 }, { name: 'mobile', width: 375, height: 667 }]) {
+    const ctx3 = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
+    await loginAsAdmin(ctx3, base, driverUsername, driverPassword);
+    const p3 = await ctx3.newPage();
+    await p3.goto(base + '/api/_driver-uat/index.php?tab=khusus');
+    await p3.waitForLoadState('networkidle');
+    const sw3 = await p3.evaluate(() => document.documentElement.scrollWidth);
+    const cw3 = await p3.evaluate(() => document.documentElement.clientWidth);
+    check('Driver Portal Khusus/Non-Toko [' + vp.name + ']: no horizontal overflow', sw3 <= cw3);
+    await p3.screenshot({ path: shotPrefix + '-driverportal-' + vp.name + '.png', fullPage: true });
+    await ctx3.close();
+  }
+
   await browser.close();
   process.exit(FAIL);
 })().catch((err) => { console.error('CRASHED:', err.stack); process.exit(1); });
 NODEEOF
-NODE_PATH=/opt/node22/lib/node_modules node "$WORKDIR/flow.js" "$BASE" "flowval_admin" "$ADMIN_PASS" "P2 TEST STORE A" "$WORKDIR/flow"
+NODE_PATH=/opt/node22/lib/node_modules node "$WORKDIR/flow.js" "$BASE" "flowval_admin" "$ADMIN_PASS" "P2 TEST STORE A" "$WORKDIR/flow" "flowval_driver" "$DRIVER_PASS"
 FLOW_EXIT=$?
 if [ "$FLOW_EXIT" != "0" ]; then FAIL=1; fi
-for shot in create-desktop detail-desktop fg-desktop do-desktop create-ipad create-mobile; do
+for shot in create-desktop detail-desktop fg-desktop do-desktop create-ipad create-mobile \
+            driverportal-pool driverportal-departed do-shipped-desktop \
+            courier-do-desktop courier-shipped-desktop driverportal-ipad driverportal-mobile; do
   cp "$WORKDIR/flow-$shot.png" "$DIST_DIR/flow-ui-$shot-screenshot.png" 2>/dev/null || true
 done
 
@@ -358,7 +501,7 @@ echo ""
 if [ "$FAIL" = "0" ]; then
   echo "=== REAL APACHE + DESKTOP/TABLET/MOBILE BROWSER VALIDATION PASSED ==="
   echo "ZIP: $ZIP_PATH"
-  echo "New product autocomplete (no native datalist, invalidates on edit), Extra Packaging (added once, Rp-formatted), the special-order FG bridge, and source-specific DO (DOK- numbering, separate from Regular DO/KRM/...) all verified end to end through the REAL UI at desktop/tablet/mobile."
+  echo "New product autocomplete, Extra Packaging, the special-order FG bridge, and source-specific DO all verified. SCENARIO A (Driver Internal: FG->DO->Driver Portal claim->Konfirmasi Berangkat->real shipment) and SCENARIO B (External Courier/GoSend: DO->delivery-method change->Barang Diserahkan ke Kurir->real shipment, absent from Driver Portal) both passed end to end through the REAL UI at desktop/tablet/mobile."
   echo "Screenshots saved to: $DIST_DIR/flow-ui-*.png"
 else
   echo "=== VALIDATION FAILED — see FAIL lines above ==="

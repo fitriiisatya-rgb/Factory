@@ -364,6 +364,15 @@
     MIXED_FACTORY_SHIPMENT: 'Satu pengiriman tidak boleh mencampur produk dari dua pabrik berbeda.',
     UNAUTHENTICATED: 'Sesi Anda sudah berakhir — silakan login kembali.',
     FORBIDDEN: 'Akun Anda tidak memiliki izin untuk aksi ini.',
+    FG_BELOW_SHIPPED: 'FG Terverifikasi tidak boleh dikurangi di bawah jumlah yang sudah dikirim.',
+    NO_FG_VERIFIED_DEMAND: 'Belum ada item yang terverifikasi FG untuk pesanan/pabrik ini.',
+    EXCEEDS_AVAILABLE_FOR_DO: 'Jumlah melebihi yang tersedia untuk DO baru (sudah dialokasikan ke DO lain).',
+    ALREADY_CLAIMED: 'DO ini sudah diambil driver lain.',
+    NOT_CLAIMANT: 'Anda belum mengambil (claim) DO ini.',
+    WRONG_DELIVERY_METHOD: 'Aksi ini tidak berlaku untuk metode pengiriman DO ini.',
+    DELIVERY_METHOD_LOCKED: 'Metode pengiriman terkunci setelah pengiriman aktual pertama.',
+    DROP_STORE_REQUIRED: 'Toko/Bakery tujuan pengiriman fisik wajib dipilih.',
+    EMPTY_SHIPMENT: 'Tidak ada jumlah yang bisa dikirim sekarang.',
   };
   function friendlyError(code, fallbackMessage) {
     return ERROR_MESSAGES[code] || fallbackMessage || 'Terjadi kesalahan. Coba lagi, atau hubungi admin jika berulang.';

@@ -81,21 +81,37 @@ for f in api/app/src/SpecialOrder/SpecialOrderDoRepository.php api/app/src/Speci
   [ -f "$STAGE/$f" ] || { echo "REFUSING TO BUILD: $f is missing"; exit 1; }
 done
 grep -q "SpecialOrderDoController::class" "$STAGE/api/app/src/App.php" || { echo "REFUSING TO BUILD: special-order-do routes are not registered in App.php"; exit 1; }
-for route in "/api/special-orders/fg-eligible" "/api/special-orders/items/{itemId}/verify-fg" "/api/special-order-do" "/api/special-order-do/{id}/ship" "/api/special-order-do/{id}/cancel"; do
+for route in "/api/special-orders/fg-eligible" "/api/special-orders/items/{itemId}/verify-fg" \
+             "/api/special-order-do/driver-pool" "/api/special-order-do" "/api/special-order-do/{id}/claim" \
+             "/api/special-order-do/{id}/release" "/api/special-order-do/{id}/cancel" \
+             "/api/special-order-do/{id}/delivery-method" "/api/special-order-do/{id}/depart" \
+             "/api/special-order-do/{id}/courier-handover"; do
   grep -qF "$route" "$STAGE/api/app/src/App.php" || { echo "REFUSING TO BUILD: route $route is missing from App.php"; exit 1; }
 done
 grep -q "function fgEligibleItems" "$STAGE/api/app/src/SpecialOrder/SpecialOrderService.php" || { echo "REFUSING TO BUILD: SpecialOrderService::fgEligibleItems() is missing"; exit 1; }
 grep -q "function verifyItemFg" "$STAGE/api/app/src/SpecialOrder/SpecialOrderService.php" || { echo "REFUSING TO BUILD: SpecialOrderService::verifyItemFg() is missing"; exit 1; }
 
-echo "--- sanity: confirm the FG bridge stays order-specific (never posts to stock_ledger/fg_batch — no cross-source FG mixing) ---"
+echo "--- sanity: confirm the CRITICAL DISPATCH RULE — every physical dispatch creates a REAL shipment row, but stock_ledger/fg_batch stay untouched (special-order FG stays order-specific, no cross-source FG mixing) ---"
 if grep -n "INSERT INTO stock_ledger\|INSERT INTO fg_batch\|INSERT INTO fg_item" "$STAGE/api/app/src/SpecialOrder/SpecialOrderService.php" "$STAGE/api/app/src/SpecialOrder/SpecialOrderDoService.php" "$STAGE/api/app/src/SpecialOrder/SpecialOrderDoRepository.php" | grep -q .; then
   echo "REFUSING TO BUILD: special-order FG/DO code writes to the shared stock_ledger/fg_batch tables — this phase's architecture decision requires special-order FG to stay order-specific, never silently merged into general warehouse stock." >&2
   exit 1
 fi
-if grep -n "INSERT INTO shipment\b" "$STAGE/api/app/src/SpecialOrder/SpecialOrderDoService.php" "$STAGE/api/app/src/SpecialOrder/SpecialOrderDoRepository.php" | grep -q .; then
-  echo "REFUSING TO BUILD: special_order_do writes to the shared shipment table — this phase keeps its own self-contained status column only (see migration 0012's own docblock item 4)." >&2
-  exit 1
-fi
+grep -q "INSERT INTO shipment\b" "$STAGE/api/app/src/SpecialOrder/SpecialOrderDoRepository.php" || { echo "REFUSING TO BUILD: special_order_do no longer creates a real shipment row on dispatch — the earlier draft's exact bug this rework fixes (DO could be marked shipped without a real shipment)." >&2; exit 1; }
+grep -q "insertShipmentDoLine" "$STAGE/api/app/src/SpecialOrder/SpecialOrderDoRepository.php" || { echo "REFUSING TO BUILD: special_order_do_shipment_item write path (actual_ship_qty) is missing"; exit 1; }
+grep -q "function dispatch(" "$STAGE/api/app/src/SpecialOrder/SpecialOrderDoService.php" || { echo "REFUSING TO BUILD: the shared atomic dispatch() method (confirmDeparture/courierHandover) is missing"; exit 1; }
+
+echo "--- sanity: confirm FG cannot be double-consumed (FG Verified cannot drop below shipped, DO creation cannot exceed availableForDo) ---"
+grep -q "FG_BELOW_SHIPPED" "$STAGE/api/app/src/SpecialOrder/SpecialOrderService.php" || { echo "REFUSING TO BUILD: the FG-cannot-drop-below-shipped guard is missing from verifyItemFg()"; exit 1; }
+grep -q "EXCEEDS_AVAILABLE_FOR_DO" "$STAGE/api/app/src/SpecialOrder/SpecialOrderDoService.php" || { echo "REFUSING TO BUILD: the DO-creation double-allocation guard is missing"; exit 1; }
+grep -q "sumShippedForItem\|sumAllocatedForItem" "$STAGE/api/app/src/SpecialOrder/SpecialOrderRepository.php" || { echo "REFUSING TO BUILD: the allocated/shipped SUM queries (never a cached, driftable column) are missing"; exit 1; }
+
+echo "--- sanity: confirm Driver Internal / External Courier delivery methods + mutual exclusion exist ---"
+grep -q "DRIVER_INTERNAL" "$REPO_ROOT/database/schema-v1-0012-production-flow-completion.sql" || { echo "REFUSING TO BUILD: delivery_method ENUM is missing from the migration"; exit 1; }
+grep -q "CREATE TABLE IF NOT EXISTS special_order_do_shipment_item " "$REPO_ROOT/database/schema-v1-0012-production-flow-completion.sql" || { echo "REFUSING TO BUILD: special_order_do_shipment_item table is missing from the migration"; exit 1; }
+grep -q "findDriverPool" "$STAGE/api/app/src/SpecialOrder/SpecialOrderDoRepository.php" || { echo "REFUSING TO BUILD: the Driver Portal pool query is missing"; exit 1; }
+grep -q "delivery_method = 'DRIVER_INTERNAL'" "$STAGE/api/app/src/SpecialOrder/SpecialOrderDoRepository.php" || { echo "REFUSING TO BUILD: the driver pool no longer filters to DRIVER_INTERNAL only — an EXTERNAL_COURIER DO must never be claimable by an internal driver"; exit 1; }
+grep -q "function renderKhusus" "$STAGE/api/assets/js/driver.js" || { echo "REFUSING TO BUILD: the Driver Portal's own Khusus/Non-Toko tab is missing from driver.js"; exit 1; }
+grep -qF "'khusus'" "$STAGE/api/_driver-uat/index.php" || { echo "REFUSING TO BUILD: the 'khusus' tab is not registered in the driver portal's index.php"; exit 1; }
 
 echo "--- sanity: confirm Extra Packaging is added ONCE (never multiplied by qty) ---"
 grep -qE '\$qty \* \$unitPrice \+ \$charge \+ \$extraPackaging' "$STAGE/api/app/src/SpecialOrder/SpecialOrderService.php" || { echo "REFUSING TO BUILD: the Extra Packaging subtotal formula (qty*unitPrice+charge+extraPackaging) is missing or was changed"; exit 1; }
@@ -153,6 +169,7 @@ fi
 echo "--- sanity: confirm NO business rule / server-side validation file (unrelated to this feature) changed byte-for-byte ---"
 for f in api/app/src/Dispatch/ReceiptService.php api/app/src/Dispatch/ReceiptRepository.php \
          api/app/src/Dispatch/EvidenceUploader.php api/app/src/Dispatch/DispatchService.php \
+         api/app/src/Dispatch/DispatchRepository.php api/app/src/Controllers/DispatchController.php \
          api/app/src/Delivery/ShipmentService.php api/app/src/Delivery/DoService.php api/app/src/Delivery/DoRepository.php \
          api/app/src/Controllers/ReceiptController.php api/app/src/Controllers/DoController.php \
          api/app/src/Import/PoImporter.php api/app/src/Production/ProductionTargetService.php \
@@ -162,17 +179,19 @@ for f in api/app/src/Dispatch/ReceiptService.php api/app/src/Dispatch/ReceiptRep
          api/app/src/Users/UserService.php api/app/src/Fg/FgService.php api/app/src/Fg/FgRepository.php \
          api/app/src/Mail/ShipmentEmailService.php \
          api/assets/js/receipt.js api/assets/css/receipt.css api/_receive/index.php \
+         api/_driver-uat/login.php api/_driver-uat/shipment.php api/_driver-uat/stop.php api/_driver-uat/print-shipment.php \
          api/app/ui/print-template.php api/app/ui/pages/produksi-task-per-divisi.php; do
   if [ ! -f "$REPO_ROOT/$f" ]; then continue; fi
   if ! diff -q "$REPO_ROOT/$f" "$STAGE/$f" > /dev/null 2>&1; then
-    echo "REFUSING TO BUILD: $f differs from the repo — this feature must not touch PO import/target, PO routing, Regular Production, Regular Task per Divisi, receipt/evidence, dispatch/shipment, Regular DO, email, or user-management." >&2
+    echo "REFUSING TO BUILD: $f differs from the repo — this feature must not touch PO import/target, PO routing, Regular Production, Regular Task per Divisi, receipt/evidence, Regular Driver dispatch/shipment, Regular DO, email, or user-management." >&2
     exit 1
   fi
 done
-# produksi.php/produksi-demand.php/app.js/app.css/bootstrap.php/components.php/
-# fg-packing.php/delivery-order.php/SpecialOrder*.php ARE expected to differ
-# (bugfix, autocomplete, money formatting, new tabs) — checked additively
-# above instead of byte-diffed.
+# produksi.php/produksi-demand.php/app.js/driver.js/app.css/bootstrap.php/
+# components.php/fg-packing.php/delivery-order.php/SpecialOrder*.php/
+# _driver-uat/index.php+bootstrap.php ARE expected to differ (bugfix,
+# autocomplete, money formatting, new tabs, new Khusus/Non-Toko driver
+# tab) — checked additively above instead of byte-diffed.
 
 echo "--- copying canonical schema DDL (0001-0012) ---"
 mkdir -p "$STAGE/api/app/database"
@@ -187,41 +206,61 @@ done
 
 echo "--- writing package-local short docs ---"
 cat > "$STAGE/api/PACKAGE-INFO.md" <<'EOF'
-# Amor Factory System — Production Flow Completion (migration 0012)
+# Amor Factory System — Production Flow Completion (migration 0012, reworked)
 
-ONE NEW MIGRATION (0012) — additive only:
+This REPLACES an earlier draft of migration 0012 that was never applied
+to any live database — corrected before deployment, not patched with a
+0013 (per the task's own instruction). ONE migration (0012) — additive
+only:
 - special_order_item gains extra_packaging + fg_verified_qty (2 columns).
-- special_order_do / special_order_do_item — a NEW, SEPARATE pair of
-  tables for Pesanan Khusus Toko / Pesanan Non-Toko's own DO. Regular
-  PO's delivery_order/delivery_order_item are completely untouched.
-- shipment.source_type gains one new ENUM value + a nullable FK column
-  (schema-ready extension point, not yet wired to a write path this
-  phase — special_order_do's own status column is self-contained).
+  allocated/shipped are NEVER a stored column — always the live SUM of
+  the real child tables below, so nothing can drift out of sync.
+- special_order_do / special_order_do_item / special_order_do_shipment_item
+  — a NEW, SEPARATE set of tables for Pesanan Khusus Toko / Pesanan
+  Non-Toko's own DO + real per-dispatch shipment lines. Regular PO's
+  delivery_order/delivery_order_item/shipment_item are completely
+  untouched.
+- shipment gains special_order_do_id (nullable FK) + delivery_method/
+  courier_provider/courier_name/external_order_reference/handover_note —
+  and, unlike the earlier draft, this is now ACTUALLY WRITTEN TO on every
+  real dispatch (no enum/FK left unwired).
+
+CRITICAL DISPATCH RULE: DO creation, courier booking, and driver claim
+NEVER reduce FG. FG is reduced ONLY when goods physically leave the
+factory — Driver Internal's "Konfirmasi Berangkat" or External Courier's
+"Barang Diserahkan ke Kurir" — and BOTH actions create a REAL shipment
+row (never a fake parallel "shipped" status).
 
 Quick facts:
-- Ceklis Produksi bugfix: the item Target/Catatan columns and the notes
-  save path now use the authoritative DTO/wire keys (liveTarget/notes),
-  fixing both a display bug and a previously-silent notes-save bug.
-- Existing-product search on Pesanan Khusus Toko / Pesanan Non-Toko is
-  now a real searchable dropdown (Amor.createAutocomplete) — no native
-  <datalist>, product_id is always authoritative, a selection is
-  invalidated the moment the text is edited again.
-- Money fields display "Rp46.000" style; storage stays plain numeric.
-- Extra Packaging: a new per-item manual Rupiah field, added ONCE to the
-  item subtotal (never multiplied by qty).
-- Special/non-regular Production -> FG: special_order_item.aktual_produksi
-  (migration 0011) stays the one authoritative Actual Produksi value;
-  fg_verified_qty tracks how much of it has been confirmed FG-ready.
-  Snapshot semantics (same convention as Actual/Reject) — never additive.
-- Special-order FG stays ORDER-SPECIFIC in this phase — it does not post
-  to the shared stock_ledger/fg_batch tables, so it can never silently
-  become general warehouse stock or mix with Regular PO's FG.
-- DO is separated by demand source: Pesanan Khusus Toko / Pesanan
-  Non-Toko get their own DOK-{date}-{seq} documents from
-  special_order_do — Regular PO's own DO/KRM/{seq}/{month}/{year}
-  numbering and (tanggal,store_id) identity are entirely unaffected.
-- Reuses the EXISTING dark navy Admin UI; new pages are added as tabs
-  next to the existing Produksi/FG/DO pages, never a redesign.
+- Ceklis Produksi bugfix, product autocomplete, Rp money formatting, and
+  Extra Packaging are unchanged from the prior pass — see this package's
+  own README for the full list.
+- Delivery Method per DO: Driver Internal (default) or External Courier
+  (Grab/GoSend/Lalamove/Other) — External Courier pickup is always FROM
+  FACTORY; locked once any real shipment exists for that DO.
+- An order may have MULTIPLE DOs over time — partial fulfillment (ship 5
+  of 10 today, the remaining 5 tomorrow via a second DO) is fully
+  supported; the first DO never permanently blocks the rest.
+- FG double-consumption is actively prevented: DO creation checks live
+  availability (fg_verified - already allocated), actual dispatch
+  re-checks under a fresh row lock (fg_verified - already shipped), and
+  FG Verified can never be reduced below what has already been shipped.
+- DO status (Open/Partial/Shipped) is always DERIVED from real shipped
+  quantities — never hand-set by a button click.
+- The Driver Portal gets its own new "Khusus/Non-Toko" tab, completely
+  separate from the existing pooled Regular-PO claim system — an
+  External Courier DO can never appear there or be claimed by a driver.
+- Special-order FG still stays ORDER-SPECIFIC — it never posts to the
+  shared stock_ledger/fg_batch tables Regular PO's FG uses.
+- Reuses the EXISTING dark navy Admin UI; new pages/tabs only, never a
+  redesign.
+
+Deferred by design this phase (documented, not a gap): per-line
+shipment_receipt_item breakdown for a special-order shipment (blocked by
+custom/catalog items having no real product_id — the shipment_receipt
+HEADER confirmation is schema-compatible and can be wired in a focused
+follow-up), the token-based Bakery receipt-confirmation ENTRY POINT
+(currently Regular-DO-only), and Phase 6 invoice calculations.
 EOF
 
 find "$STAGE" -name '.DS_Store' -delete 2>/dev/null || true

@@ -1,80 +1,132 @@
 -- ============================================================================
--- Migration 0012 — Production Flow Completion: Extra Packaging, FG bridge,
--- source-specific DO for Pesanan Khusus Toko / Pesanan Non-Toko
+-- Migration 0012 — Production Flow Completion + Special/Non-Regular
+-- Fulfillment Completion (Driver Internal + External Courier)
 -- ============================================================================
 --
--- Purely additive. No existing table's existing columns/rows change
--- meaning; po_batch/po_item/po_store_item, production_run/production_item,
--- fg_batch/fg_item, delivery_order/delivery_order_item are all completely
--- untouched by this migration (regular flows keep their exact existing
--- schema and semantics).
+-- REWORK NOTE: this file replaces an earlier draft of migration 0012 that
+-- was never applied to any live database (confirmed: the live cPanel DB is
+-- still at 0011). Per the task's own explicit instruction ("Do NOT create
+-- 0013 just to fix an undeployed bad 0012"), this is a full, corrected
+-- replacement — not a patch on top of the draft. Migrations 0001-0011
+-- remain byte-for-byte untouched.
 --
--- 1. special_order_item.extra_packaging — approved new per-item monetary
---    field (task's own "Extra Packaging"): manually entered, per line,
---    added once to the item subtotal, NEVER multiplied by qty. Same
---    DECIMAL(14,2) convention as unit_price/charge/subtotal on this same
---    table — no second money datatype introduced.
+-- Purely additive against 0011's schema. po_batch/po_item/po_store_item,
+-- production_run/production_item, fg_batch/fg_item, delivery_order/
+-- delivery_order_item are all completely untouched (Regular PO's own DO/
+-- shipment semantics keep their exact existing structure and behavior).
 --
--- 2. special_order_item.fg_verified_qty — the smallest safe FG-bridge
---    linkage for special/non-regular production (task's own explicit
---    permission: "If existing schema cannot safely model this: introduce
---    the smallest dedicated source-aware FG linkage"). aktual_produksi
---    (migration 0011) REMAINS the authoritative Actual Produksi value for
---    special orders — this column never copies or duplicates it, it only
---    tracks how much of that already-authoritative quantity has been
---    confirmed FG-ready (available_to_verify = aktual_produksi -
---    fg_verified_qty, computed in the service layer, never stored).
+-- ----------------------------------------------------------------------------
+-- 1. special_order_item.extra_packaging / fg_verified_qty — unchanged from
+--    the original draft. extra_packaging: manual per-line Rupiah field,
+--    added once to the subtotal. fg_verified_qty: the Production->FG
+--    bridge (snapshot semantics) — aktual_produksi (migration 0011) stays
+--    the one authoritative Actual Produksi value.
 --
---    Architecture decision (documented per the task's own "Document the
---    decision clearly" instruction): special-order FG — for BOTH existing
---    products and custom/special-catalog items — stays entirely
---    order-specific in this phase. It does NOT post to the shared
---    stock_ledger/stock_balance tables that Regular PO's FG flow uses.
---    stock_ledger is this project's "sole stock-truth write" (see
---    FgService's own docblock) with a strict, narrow source_type ENUM
---    that does not yet include a special-order source — widening that
---    ENUM and deciding how special-order-sourced stock should coexist
---    with regular per-store FG stock is a real design question deserving
---    its own dedicated review, not a rushed addition here. Until that
---    review happens, special-order FG-verified quantity is tracked here,
---    consumed directly by special_order_do below, and never silently
---    mixed into the general 472-product warehouse pool.
+--    allocated_qty / shipped_qty are DELIBERATELY NOT stored columns here
+--    — they are always computed from the real child tables below (SUM of
+--    special_order_do_item.planned_qty / special_order_do_shipment_item.qty)
+--    so there is no cached value that can ever drift out of sync with the
+--    real DO/shipment rows. This mirrors this codebase's own existing
+--    convention: delivery_order_item has no stored "shipped_qty" column
+--    either — DoRepository::shippedQtyByProduct() always sums the real
+--    shipment_item rows on read.
 --
--- 3. special_order_do / special_order_do_item — a SEPARATE, parallel DO
---    concept for Pesanan Khusus Toko / Pesanan Non-Toko (task's own
---    approved rule: "DIFFERENT DEMAND SOURCES MUST HAVE SEPARATE DO...
---    DO NOT MERGE DIFFERENT SOURCE TYPES INTO ONE DO"). Deliberately NOT
---    modeled as new rows in the EXISTING delivery_order/delivery_order_item
---    tables — those tables' partial-unique-index (tanggal, store_id,
---    shipment_group) and NOT NULL store_id are load-bearing for Regular
---    PO's own DO semantics ("keep existing DO semantics exactly... do not
---    change existing regular DO number format unless necessary"); reusing
---    them for a non-store destination would require weakening that
---    NOT NULL constraint and inventing a parallel uniqueness rule anyway.
---    A dedicated pair of tables is the actually-smallest-risk design: zero
---    changes to Regular DO's proven structure, and store_id here is
---    naturally nullable (a non-store destination — CS/Sales/Direct/
---    General — has no store at all).
+-- 2. special_order_do — reworked from the earlier draft. Key changes:
+--    - factory_id NOT NULL: one DO = one pickup factory (a multi-factory
+--      special order needs one DO per factory — the same "MIXED_FACTORY_
+--      SHIPMENT" principle Regular PO's own ShipmentService already
+--      enforces, just applied one level higher here, since External
+--      Courier pickup is a single physical location).
+--    - drop_store_id NOT NULL (renamed conceptually from the draft's
+--      nullable store_id): the PHYSICAL destination (a Bakery/store),
+--      REQUIRED for every source — even CS/Sales/Direct/General — because
+--      "in this phase, all physical drops may use a Bakery/store as
+--      destination" (task's own rule). This is never the billing owner —
+--      source_type/special_order_id alone determine that.
+--    - delivery_method + courier_provider/courier_name/
+--      external_order_reference: the DO-level delivery method (task's own
+--      approved rule — DRIVER_INTERNAL default, EXTERNAL_COURIER with
+--      provider metadata).
+--    - claimed_by_user_id/claimed_at: a single DO-level claim (see the
+--      migration's own note on the Driver Portal integration choice below).
+--    - status now ENUM('open','partial','shipped','cancelled') —
+--      DERIVED from real shipped quantities on every write, never hand-set
+--      by a button click (task's own "Do NOT mark DO shipped merely
+--      because a button was clicked").
+--    - NO unique/business-key constraint tying one order to one DO — an
+--      order may have MULTIPLE special_order_do rows (task's own explicit
+--      "Do NOT enforce one-and-only-one DO per special order").
 --
--- 4. shipment.source_type gains ONE new ENUM value ('special_order_do')
---    and shipment.special_order_do_id (nullable FK) — additive only; the
---    three existing values and every existing shipment row are
---    unaffected. This is the exact extension point the ORIGINAL schema
---    already designed shipment.source_type for (it was never a single
---    fixed source). NOT wired into a real write path in this phase —
---    same "schema ready, write path deferred" convention as
---    DocumentSequenceService's own docblock. Reason: shipment.store_id is
---    NOT NULL, which is fine for Pesanan Khusus Toko (always has a real
---    store_id) but cannot represent Pesanan Non-Toko's non-store
---    destinations (CS/Sales/Direct/Umum) without either violating that
---    constraint or forcing a fake store row into the store master — the
---    task's own explicit rule ("without forcing non-store customers into
---    store master"). It also risks pulling special-order dispatches into
---    Konfirmasi Toko's existing store-receipt-confirmation queries, which
---    are scoped to shipment/delivery_order today and must not regress.
---    special_order_do's own status column (draft/ready/shipped/cancelled)
---    plus shipped_at/shipped_by is therefore the authoritative, self-
---    contained dispatch record for BOTH source types in this phase.
+--    Driver Portal integration choice (documented per the task's own
+--    "Document the decision clearly"): the EXISTING Phase 5.5 driver flow
+--    (dispatch_claim/driver_route/driver_route_stop) is a POOLED, PER-
+--    PRODUCT-ITEM claim system keyed on delivery_order_item_id + product_id
+--    — both assumptions break for special orders (a special_order_do can
+--    contain a custom/catalog line with NO product_id at all, and its
+--    natural unit of work is the whole document, not a per-product pool
+--    shared across drivers). Reusing that exact table would require
+--    weakening its product_id NOT NULL foreign keys or forking its entire
+--    concurrency model — high risk to a proven, heavily-tested Regular PO
+--    flow for no real benefit, since a special-order DO already has ONE
+--    destination and ONE pickup factory by construction (it's not a pool
+--    of many stores a driver picks from). special_order_do therefore gets
+--    its OWN, simpler, DO-level claim (claimed_by_user_id/claimed_at) —
+--    a driver claims the WHOLE document, not a per-item slice — and its
+--    own Driver Portal tab (never touching dispatch_claim/driver_route at
+--    all). This still satisfies the task's own flow: "FG Ready ->
+--    Source-specific DO -> appears in Driver Portal -> Driver claims ->
+--    Driver confirms departure -> Shipment created."
+--
+-- 3. special_order_do_item — the PLANNED line (mirrors delivery_order_item).
+--    No actual_ship_qty column (removed from the earlier draft, which
+--    never wired it to a real write path) — actual dispatched quantity is
+--    now the real, auditable SUM of special_order_do_shipment_item rows
+--    below, exactly mirroring how delivery_order_item's own "shipped" is
+--    computed from shipment_item, never a cached scalar.
+--
+-- 4. special_order_do_shipment_item — NEW. The actual per-dispatch-event
+--    line item — this is what shipment_item is for Regular PO, but
+--    keyed on special_order_do_item_id (never product_id) so it works
+--    identically for both existing-product AND custom/catalog special-
+--    order items. One shipment can have many of these; one
+--    special_order_do_item can be covered by MANY of these across
+--    multiple partial shipments (task's own PARTIAL FULFILLMENT example:
+--    DO-1 planned 6, ships 4 today, ships the remaining 2 later — two
+--    real shipment events against the same DO).
+--
+-- 5. shipment gains: special_order_do_id (nullable FK, COMPLETES the
+--    ENUM value the earlier draft left unwired — "do not leave an enum/
+--    FK without a real write path" is now honored: SpecialOrderDoService
+--    actually INSERTs into this column on every real dispatch), plus
+--    delivery_method/courier_provider/courier_name/
+--    external_order_reference/handover_note — a denormalized snapshot of
+--    the DO's delivery method AT THE TIME of that specific shipment event
+--    (task's own requirement: "For source-specific dispatch preserve:
+--    ...delivery method, driver_id OR external courier metadata..." on
+--    the SHIPMENT itself, not only inferred via a join). Every existing
+--    shipment row gets NULL for all of these — zero behavior change for
+--    Regular PO's own shipments.
+--
+--    shipment.store_id (NOT NULL) is populated with the DO's drop_store_id
+--    for a special-order shipment — this is now always safely satisfiable
+--    because drop_store_id itself is required on every special_order_do
+--    (see point 2). This resolves the exact blocker documented in the
+--    ORIGINAL draft of this migration (which is why that draft never
+--    wired a real shipment write path at all).
+--
+-- 6. Receipt/confirmation reuse (task's own "reuse Store Receipt flow
+--    where SAFE"): shipment_receipt itself keys ONLY on shipment_id (not
+--    shipment_item), so its HEADER confirmation (confirmed_ok/
+--    confirmed_discrepancy, receiver_name, note) is schema-compatible
+--    with a special-order-sourced shipment_id with ZERO schema change —
+--    no new table needed for that. shipment_receipt_item (the per-product
+--    line breakdown) requires a real shipment_item_id, which conflicts
+--    with custom/catalog special items exactly the same way shipment_item
+--    itself does — deliberately NOT wired to special-order shipments in
+--    this phase (see the accompanying code's own DEFERRED note). The
+--    token-based confirmation ENTRY POINT (ReceiptService::confirmReceipt,
+--    keyed on a Regular delivery_order id today) is also not extended in
+--    this phase — a focused follow-up, not a schema gap.
 -- ============================================================================
 
 ALTER TABLE special_order_item
@@ -82,33 +134,42 @@ ALTER TABLE special_order_item
   ADD COLUMN IF NOT EXISTS fg_verified_qty DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER reject_produksi;
 
 CREATE TABLE IF NOT EXISTS special_order_do (
-  special_order_do_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  doc_no               VARCHAR(50)     NOT NULL,
-  tanggal              DATE            NOT NULL,
-  special_order_id     BIGINT UNSIGNED NOT NULL,
-  source_type          ENUM('toko_khusus','non_toko') NOT NULL,
-  status               ENUM('draft','ready','shipped','cancelled') NOT NULL DEFAULT 'draft',
-  store_id             BIGINT UNSIGNED NULL,
-  customer_name        VARCHAR(255)    NULL,
-  customer_contact     VARCHAR(100)    NULL,
-  delivery_address     VARCHAR(500)    NULL,
-  version              INT UNSIGNED    NOT NULL DEFAULT 1,
-  created_by           BIGINT UNSIGNED NOT NULL,
-  created_at           DATETIME        NOT NULL,
-  updated_at           DATETIME        NULL,
-  shipped_at           DATETIME        NULL,
-  shipped_by           BIGINT UNSIGNED NULL,
-  cancelled_at         DATETIME        NULL,
-  cancelled_by         BIGINT UNSIGNED NULL,
-  cancel_reason        VARCHAR(500)    NULL,
+  special_order_do_id      BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  doc_no                    VARCHAR(50)     NOT NULL,
+  tanggal                   DATE            NOT NULL,
+  special_order_id          BIGINT UNSIGNED NOT NULL,
+  source_type               ENUM('toko_khusus','non_toko') NOT NULL,
+  factory_id                BIGINT UNSIGNED NOT NULL,
+  drop_store_id              BIGINT UNSIGNED NOT NULL,
+  delivery_method            ENUM('DRIVER_INTERNAL','EXTERNAL_COURIER') NOT NULL DEFAULT 'DRIVER_INTERNAL',
+  courier_provider           ENUM('grab','gosend','lalamove','other') NULL,
+  courier_name               VARCHAR(100)    NULL,
+  external_order_reference   VARCHAR(100)    NULL,
+  status                     ENUM('open','partial','shipped','cancelled') NOT NULL DEFAULT 'open',
+  claimed_by_user_id         BIGINT UNSIGNED NULL,
+  claimed_at                 DATETIME        NULL,
+  customer_name              VARCHAR(255)    NULL,
+  customer_contact           VARCHAR(100)    NULL,
+  delivery_address           VARCHAR(500)    NULL,
+  version                    INT UNSIGNED    NOT NULL DEFAULT 1,
+  created_by                 BIGINT UNSIGNED NOT NULL,
+  created_at                 DATETIME        NOT NULL,
+  updated_at                 DATETIME        NULL,
+  cancelled_at                DATETIME        NULL,
+  cancelled_by                BIGINT UNSIGNED NULL,
+  cancel_reason                VARCHAR(500)    NULL,
   UNIQUE KEY uq_special_order_do_no (doc_no),
   KEY ix_sodo_order (special_order_id),
   KEY ix_sodo_status (status),
-  KEY ix_sodo_store (store_id),
+  KEY ix_sodo_drop_store (drop_store_id),
+  KEY ix_sodo_factory (factory_id),
+  KEY ix_sodo_delivery_method (delivery_method),
+  KEY ix_sodo_claimed_by (claimed_by_user_id),
   CONSTRAINT fk_sodo_order FOREIGN KEY (special_order_id) REFERENCES special_order(special_order_id),
-  CONSTRAINT fk_sodo_store FOREIGN KEY (store_id) REFERENCES store(store_id),
+  CONSTRAINT fk_sodo_drop_store FOREIGN KEY (drop_store_id) REFERENCES store(store_id),
+  CONSTRAINT fk_sodo_factory FOREIGN KEY (factory_id) REFERENCES factory(factory_id),
+  CONSTRAINT fk_sodo_claimed_by FOREIGN KEY (claimed_by_user_id) REFERENCES users(user_id),
   CONSTRAINT fk_sodo_created_by FOREIGN KEY (created_by) REFERENCES users(user_id),
-  CONSTRAINT fk_sodo_shipped_by FOREIGN KEY (shipped_by) REFERENCES users(user_id),
   CONSTRAINT fk_sodo_cancelled_by FOREIGN KEY (cancelled_by) REFERENCES users(user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -117,15 +178,32 @@ CREATE TABLE IF NOT EXISTS special_order_do_item (
   special_order_do_id       BIGINT UNSIGNED NOT NULL,
   special_order_item_id     BIGINT UNSIGNED NOT NULL,
   planned_qty                DECIMAL(12,2)  NOT NULL,
-  actual_ship_qty             DECIMAL(12,2) NULL,
   UNIQUE KEY uq_sodo_item (special_order_do_id, special_order_item_id),
+  KEY ix_sodoi_item (special_order_item_id),
   CONSTRAINT fk_sodoi_do FOREIGN KEY (special_order_do_id) REFERENCES special_order_do(special_order_do_id) ON DELETE CASCADE,
   CONSTRAINT fk_sodoi_item FOREIGN KEY (special_order_item_id) REFERENCES special_order_item(special_order_item_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS special_order_do_shipment_item (
+  special_order_do_shipment_item_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  shipment_id                        BIGINT UNSIGNED NOT NULL,
+  special_order_do_item_id           BIGINT UNSIGNED NOT NULL,
+  qty                                 DECIMAL(12,2)  NOT NULL,
+  created_at                          DATETIME       NOT NULL,
+  KEY ix_sodsi_shipment (shipment_id),
+  KEY ix_sodsi_do_item (special_order_do_item_id),
+  CONSTRAINT fk_sodsi_shipment FOREIGN KEY (shipment_id) REFERENCES shipment(shipment_id) ON DELETE CASCADE,
+  CONSTRAINT fk_sodsi_do_item FOREIGN KEY (special_order_do_item_id) REFERENCES special_order_do_item(special_order_do_item_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 ALTER TABLE shipment
   MODIFY COLUMN source_type ENUM('delivery_order','manual_kirim','customer_order_fulfillment','special_order_do') NOT NULL,
-  ADD COLUMN IF NOT EXISTS special_order_do_id BIGINT UNSIGNED NULL AFTER customer_order_id;
+  ADD COLUMN IF NOT EXISTS special_order_do_id BIGINT UNSIGNED NULL AFTER customer_order_id,
+  ADD COLUMN IF NOT EXISTS delivery_method ENUM('DRIVER_INTERNAL','EXTERNAL_COURIER') NULL AFTER special_order_do_id,
+  ADD COLUMN IF NOT EXISTS courier_provider ENUM('grab','gosend','lalamove','other') NULL AFTER delivery_method,
+  ADD COLUMN IF NOT EXISTS courier_name VARCHAR(100) NULL AFTER courier_provider,
+  ADD COLUMN IF NOT EXISTS external_order_reference VARCHAR(100) NULL AFTER courier_name,
+  ADD COLUMN IF NOT EXISTS handover_note VARCHAR(500) NULL AFTER external_order_reference;
 
 -- MariaDB has no "ADD CONSTRAINT IF NOT EXISTS ... FOREIGN KEY" (confirmed
 -- empirically in migration 0002) — relies on the migration runner's own

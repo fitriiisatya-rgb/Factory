@@ -213,6 +213,30 @@ final class SpecialOrderRepository
         return $stmt->rowCount() > 0;
     }
 
+    /**
+     * Row-locks one special_order_item for the duration of the caller's
+     * transaction — the concurrency guard for FG verify / DO create /
+     * actual dispatch, all of which read-then-write this row's
+     * fg_verified_qty (indirectly, via the allocated/shipped sums above)
+     * and must never race (task's own "Two users must not dispatch the
+     * same available FG simultaneously").
+     */
+    public function lockItemById(PDO $pdo, int $itemId): ?array
+    {
+        $stmt = $pdo->prepare(
+            'SELECT soi.*, d.name AS division_name, d.factory_id AS item_factory_id, f.name AS item_factory_name,
+                    so.order_no, so.source_type, so.status AS order_status
+             FROM special_order_item soi
+             INNER JOIN division d ON d.division_id = soi.division_id
+             INNER JOIN factory f ON f.factory_id = d.factory_id
+             INNER JOIN special_order so ON so.special_order_id = soi.special_order_id
+             WHERE soi.special_order_item_id = ? FOR UPDATE'
+        );
+        $stmt->execute([$itemId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
     public function findItemById(PDO $pdo, int $itemId): ?array
     {
         $stmt = $pdo->prepare(
@@ -388,6 +412,46 @@ final class SpecialOrderRepository
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         return $stmt->fetchAll();
+    }
+
+    /**
+     * SUM(planned_qty) across every NON-CANCELLED special_order_do_item
+     * for this special_order_item — the "soft" allocation check used at
+     * DO-CREATION time (task's own "planned qty must not exceed remaining
+     * unfulfilled demand"). Never counts a cancelled DO's planned qty.
+     */
+    public function sumAllocatedForItem(PDO $pdo, int $specialOrderItemId): float
+    {
+        $stmt = $pdo->prepare(
+            "SELECT COALESCE(SUM(sodi.planned_qty), 0)
+             FROM special_order_do_item sodi
+             INNER JOIN special_order_do sodo ON sodo.special_order_do_id = sodi.special_order_do_id
+             WHERE sodi.special_order_item_id = ? AND sodo.status <> 'cancelled'"
+        );
+        $stmt->execute([$specialOrderItemId]);
+        return (float) $stmt->fetchColumn();
+    }
+
+    /**
+     * SUM(qty) across every REAL special_order_do_shipment_item for this
+     * special_order_item — the "hard" safety check used at actual
+     * departure/handover time, and the floor FG Verified can never be
+     * reduced below (task's own "FG Verified may not be reduced below
+     * shipped/consumed quantity"). This is the true physical-dispatch
+     * truth, computed fresh on every read — never a cached column that
+     * could drift (same convention as Regular PO's own
+     * DoRepository::shippedQtyByProduct()).
+     */
+    public function sumShippedForItem(PDO $pdo, int $specialOrderItemId): float
+    {
+        $stmt = $pdo->prepare(
+            'SELECT COALESCE(SUM(sodsi.qty), 0)
+             FROM special_order_do_shipment_item sodsi
+             INNER JOIN special_order_do_item sodi ON sodi.special_order_do_item_id = sodsi.special_order_do_item_id
+             WHERE sodi.special_order_item_id = ?'
+        );
+        $stmt->execute([$specialOrderItemId]);
+        return (float) $stmt->fetchColumn();
     }
 
     /** Read-only FG stock-on-hand for an existing product at a factory's location (never written here — see SpecialOrderService's own docblock on why no reservation is built). */

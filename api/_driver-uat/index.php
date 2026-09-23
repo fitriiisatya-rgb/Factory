@@ -12,7 +12,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/bootstrap.php';
 
-$tabs = ['tersedia', 'saya', 'rute', 'riwayat'];
+$tabs = ['tersedia', 'saya', 'rute', 'khusus', 'riwayat'];
 $tab = (string) ($_GET['tab'] ?? 'tersedia');
 if (!in_array($tab, $tabs, true)) {
     $tab = 'tersedia';
@@ -21,6 +21,7 @@ $titles = [
     'tersedia' => 'Pengiriman Tersedia',
     'saya' => 'Pengiriman Saya',
     'rute' => 'Rute Saya',
+    'khusus' => 'Pesanan Khusus/Non-Toko',
     'riwayat' => 'Riwayat Pengiriman',
 ];
 

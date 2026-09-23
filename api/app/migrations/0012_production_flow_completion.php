@@ -3,10 +3,15 @@
 declare(strict_types=1);
 
 /**
- * Migration 0012: Production Flow Completion — Extra Packaging, the
- * special-order FG bridge (fg_verified_qty), and source-specific DO
- * (special_order_do/special_order_do_item) for Pesanan Khusus Toko /
- * Pesanan Non-Toko. See the .sql file's own docblock for full rationale.
+ * Migration 0012: Production Flow Completion + Special/Non-Regular
+ * Fulfillment Completion — Extra Packaging, the special-order FG bridge
+ * (fg_verified_qty), source-specific DO with Driver Internal / External
+ * Courier delivery methods (special_order_do/special_order_do_item/
+ * special_order_do_shipment_item), and the real shipment write path for
+ * source-specific dispatch. See the .sql file's own docblock for full
+ * rationale — this REPLACES an earlier draft of 0012 that was never
+ * applied to any live database (per the task's own "Do NOT create 0013
+ * just to fix an undeployed bad 0012").
  *
  * Same dual-location pointer pattern as 0001-0011 — the canonical DDL
  * lives in exactly one place in this monorepo (/database/schema-v1-0012-

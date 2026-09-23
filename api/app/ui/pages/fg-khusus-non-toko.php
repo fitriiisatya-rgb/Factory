@@ -72,11 +72,12 @@ foreach ($items as $it) {
     <thead><tr>
       <th>No. Pesanan</th><th>Sumber</th><th>Toko/Customer</th><th>Item</th><th>Divisi</th>
       <th class="num">Aktual Produksi</th><th class="num">Reject</th><th class="num">Sudah Terverifikasi</th>
+      <th class="num">Dialokasikan ke DO</th><th class="num">Sudah Dikirim</th>
       <th class="num">Tersedia</th><th>Verifikasi FG</th>
     </tr></thead>
     <tbody id="fg-source-rows">
     <?php if ($items === []): ?>
-    <tr><td colspan="10"><?= ui_empty_state('Belum ada item produksi Khusus/Non-Toko untuk diverifikasi', 'Item akan muncul di sini setelah Aktual Produksi diisi pada Task per Divisi.') ?></td></tr>
+    <tr><td colspan="12"><?= ui_empty_state('Belum ada item produksi Khusus/Non-Toko untuk diverifikasi', 'Item akan muncul di sini setelah Aktual Produksi diisi pada Task per Divisi.') ?></td></tr>
     <?php else: foreach ($items as $it): ?>
     <tr data-item-id="<?= (int) $it['itemId'] ?>">
       <td><?= ui_esc($it['orderNo']) ?></td>
@@ -87,6 +88,8 @@ foreach ($items as $it) {
       <td class="num"><?= ui_fmt_num($it['aktualProduksi']) ?></td>
       <td class="num"><?= ui_fmt_num($it['rejectProduksi']) ?></td>
       <td class="num fg-verified-cell"><?= ui_fmt_num($it['fgVerifiedQty']) ?></td>
+      <td class="num"><?= ui_fmt_num($it['allocatedQty']) ?></td>
+      <td class="num"><?= ui_fmt_num($it['shippedQty']) ?></td>
       <td class="num fg-available-cell"><?= ui_fmt_num($it['availableToVerify']) ?></td>
       <td>
         <div style="display:flex;gap:var(--space-2);align-items:center;">

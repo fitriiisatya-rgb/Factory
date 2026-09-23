@@ -603,6 +603,82 @@
     }).catch(function (err) { root.innerHTML = emptyState(err.message); });
   }
 
+  // -----------------------------------------------------------------
+  // TAB: Khusus/Non-Toko — source-specific DOs (Pesanan Khusus Toko,
+  // CS, Sales, Direct Customer, Umum). A SEPARATE list from Tersedia
+  // (which stays Regular PO's own pooled per-product claim system,
+  // completely untouched) — driven by /api/special-order-do/driver-pool,
+  // which already excludes every EXTERNAL_COURIER DO server-side (task's
+  // own mutual-exclusion rule — a courier delivery is never claimable by
+  // an internal driver). Claim/depart here is DO-LEVEL (the whole
+  // document), not a per-product pool — see migration 0012's own
+  // docblock for why a source-specific DO doesn't need the pooled model.
+  // -----------------------------------------------------------------
+  function sourceBadgeClass(sourceType) {
+    return sourceType === 'toko_khusus' ? 'main' : 'pastry';
+  }
+
+  function renderKhusus(root) {
+    root.innerHTML = '<div class="driver-empty">Memuat...</div>';
+
+    function load() {
+      Amor.apiFetch('/api/special-order-do/driver-pool').then(function (rows) {
+        if (!rows || rows.length === 0) {
+          root.innerHTML = emptyState('Tidak ada DO Pesanan Khusus/Non-Toko yang tersedia.');
+          return;
+        }
+        root.innerHTML = rows.map(function (d) {
+          var itemsHtml = (d.items || []).map(function (it) {
+            return '<div class="driver-row"><span>' + esc(it.itemName) + '</span><b>Sisa: ' + fmtNum(it.remainingQty) + '</b></div>';
+          }).join('');
+          var actionHtml;
+          if (!d.claimedByUserId) {
+            actionHtml = '<button type="button" class="driver-btn primary" data-act="claim" data-id="' + d.doId + '" style="margin-top:8px;width:100%;">Ambil (Claim)</button>';
+          } else if (d.isMine) {
+            actionHtml = '<button type="button" class="driver-btn primary" data-act="depart" data-id="' + d.doId + '" style="margin-top:8px;width:100%;">Konfirmasi Berangkat</button>';
+          } else {
+            actionHtml = '<div class="driver-card-sub">Diambil oleh ' + esc(d.claimedByName || '-') + '</div>';
+          }
+          return '' +
+            '<div class="driver-card">' +
+            '<div class="driver-select-row">' +
+            '<div style="flex:1">' +
+            '<div class="driver-card-title">' + esc(d.docNo) + ' &middot; ' + esc(d.dropStoreName) + '</div>' +
+            '<div class="driver-card-sub">' + esc(d.orderNo) + ' &middot; ' + esc(d.factoryName) + '</div>' +
+            '</div>' +
+            '<span class="driver-badge ' + sourceBadgeClass(d.sourceType) + '">' + esc(d.sourceLabel) + '</span>' +
+            '</div>' +
+            itemsHtml +
+            actionHtml +
+            '</div>';
+        }).join('');
+
+        root.querySelectorAll('[data-act="claim"]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            btn.disabled = true;
+            Amor.apiFetch('/api/special-order-do/' + btn.dataset.id + '/claim', { method: 'POST', body: {} })
+              .then(function () { Amor.toast('DO berhasil diambil', 'success'); load(); })
+              .catch(function (err) { Amor.toast(err.message, 'error'); btn.disabled = false; });
+          });
+        });
+        root.querySelectorAll('[data-act="depart"]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            Amor.confirmModal({
+              title: 'Konfirmasi Berangkat',
+              body: 'Seluruh sisa qty pada DO ini akan dikirim sekarang.',
+              onConfirm: function () {
+                return Amor.apiFetch('/api/special-order-do/' + btn.dataset.id + '/depart', { method: 'POST', body: { items: null } });
+              },
+            }).then(function (ok) {
+              if (ok) { Amor.toast('Pengiriman berhasil dikonfirmasi', 'success'); load(); }
+            });
+          });
+        });
+      }).catch(function (err) { root.innerHTML = emptyState(err.message); });
+    }
+    load();
+  }
+
   function renderDepartureSuccess(root, storeName, result) {
     var totalQty = 0;
     var productCount = 0;
@@ -641,6 +717,7 @@
       if (tab === 'tersedia') renderTersedia(appRoot);
       else if (tab === 'saya') renderSaya(appRoot);
       else if (tab === 'rute') renderRute(appRoot);
+      else if (tab === 'khusus') renderKhusus(appRoot);
       else if (tab === 'riwayat') renderRiwayat(appRoot);
     }
     var stopRoot = document.getElementById('driver-stop-app');

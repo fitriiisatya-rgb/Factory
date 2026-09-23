@@ -112,6 +112,7 @@ function driver_page_foot(string $active): void
         ['key' => 'tersedia', 'label' => 'Tersedia', 'icon' => 'box'],
         ['key' => 'saya', 'label' => 'Pengiriman Saya', 'icon' => 'truck'],
         ['key' => 'rute', 'label' => 'Rute Saya', 'icon' => 'file'],
+        ['key' => 'khusus', 'label' => 'Khusus/Non-Toko', 'icon' => 'cart'],
         ['key' => 'riwayat', 'label' => 'Riwayat', 'icon' => 'chart'],
     ];
     ?>
