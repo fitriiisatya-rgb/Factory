@@ -314,6 +314,9 @@ textarea:focus-visible, [tabindex]:focus-visible {
   border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface);
   color: var(--text-muted); font-size: var(--text-sm);
 }
+/* Rp-formatted live preview under a raw numeric input (task's own C:
+   "Rp46.000" display, storage stays numeric — the input itself). */
+.field-hint { font-size: var(--text-xs); color: var(--text-muted); }
 
 /* ---------------------------------------------------------------------
    Order item cards (Pesanan Khusus Toko / Pesanan Non-Toko item entry) —
@@ -516,3 +519,19 @@ table.data-table { width: 100%; border-collapse: collapse; min-width: 640px; }
 
 /* No page ever scrolls horizontally as a whole — only .table-scroll does. */
 html, body { overflow-x: hidden; }
+
+/* -------------------------------------------------------------------
+ * Autocomplete (Amor.createAutocomplete) — real searchable dropdown,
+ * replaces native <datalist> for product search (task's own B: no
+ * native datalist, reliable on iPad/mobile). Sized/touch-target large
+ * enough for a finger tap, not just a mouse click.
+ * ------------------------------------------------------------------- */
+.ac-wrap { position: relative; }
+.ac-menu {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 60;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card); max-height: 260px; overflow-y: auto;
+}
+.ac-option { padding: 10px 12px; font-size: var(--text-sm); cursor: pointer; }
+.ac-option.active, .ac-option:hover { background: var(--primary-soft); color: var(--primary); }
+.ac-empty { padding: 10px 12px; font-size: var(--text-sm); color: var(--text-muted); }

@@ -223,6 +223,129 @@
   }
 
   // -----------------------------------------------------------------
+  // createAutocomplete — real searchable dropdown over a preloaded item
+  // array (never a native <datalist>, which is unreliable on iPad/mobile
+  // Safari: no touch-filtering, inconsistent option tap targets). Used by
+  // Pesanan Khusus Toko / Pesanan Non-Toko's "Produk Existing" item input
+  // (task's own B: "existing-product autocomplete... product_id
+  // authoritative, no free text submittable, works on iPad/mobile, no
+  // native datalist, invalidates selection if text changes after
+  // selecting").
+  //
+  // input: a plain <input type="text"> already in the DOM.
+  // opts: { items: Array, getLabel: fn(item)=>string, onSelect: fn(item|null),
+  //         minChars (default 0), maxResults (default 20) }
+  //
+  // Selection is authoritative: setting input.value programmatically
+  // (picking an option) never fires the browser's native 'input' event,
+  // so the selected item stays valid until the user actually types again
+  // — at which point onSelect(null) fires immediately, invalidating the
+  // prior pick exactly as required.
+  //
+  // Touch safety: the option list handles 'mousedown'/'touchstart' (not
+  // 'click') with preventDefault(), so a tap registers BEFORE the input's
+  // own 'blur' (which would otherwise close the menu first on iOS Safari
+  // and swallow the tap).
+  // -----------------------------------------------------------------
+  function createAutocomplete(input, opts) {
+    opts = opts || {};
+    var items = opts.items || [];
+    var getLabel = opts.getLabel || function (it) { return String(it.label || ''); };
+    var onSelect = opts.onSelect || function () {};
+    var minChars = opts.minChars || 0;
+    var maxResults = opts.maxResults || 20;
+
+    input.setAttribute('autocomplete', 'off');
+    input.classList.add('ac-input');
+
+    var wrap = document.createElement('div');
+    wrap.className = 'ac-wrap';
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+
+    var menu = document.createElement('div');
+    menu.className = 'ac-menu';
+    menu.hidden = true;
+    wrap.appendChild(menu);
+
+    var selected = null;
+    var filtered = [];
+    var activeIndex = -1;
+
+    function setSelected(item) {
+      selected = item;
+      onSelect(item);
+    }
+
+    function filterItems(q) {
+      q = (q || '').toLowerCase().trim();
+      if (q.length < minChars) return items.slice(0, maxResults);
+      return items.filter(function (it) { return getLabel(it).toLowerCase().indexOf(q) !== -1; }).slice(0, maxResults);
+    }
+
+    function highlight() {
+      Array.prototype.forEach.call(menu.querySelectorAll('.ac-option'), function (el, i) {
+        el.classList.toggle('active', i === activeIndex);
+      });
+    }
+
+    function render(list) {
+      filtered = list;
+      activeIndex = -1;
+      if (list.length === 0) {
+        menu.innerHTML = '<div class="ac-empty">Tidak ditemukan</div>';
+      } else {
+        menu.innerHTML = list.map(function (it, i) {
+          return '<div class="ac-option" data-index="' + i + '">' + getLabel(it).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>';
+        }).join('');
+      }
+      menu.hidden = false;
+    }
+
+    function close() {
+      menu.hidden = true;
+      activeIndex = -1;
+    }
+
+    input.addEventListener('input', function () {
+      if (selected) setSelected(null);
+      render(filterItems(input.value));
+    });
+    input.addEventListener('focus', function () { render(filterItems(input.value)); });
+    input.addEventListener('blur', function () { setTimeout(close, 150); });
+
+    function pickAt(idx) {
+      var item = filtered[idx];
+      if (!item) return;
+      input.value = getLabel(item);
+      setSelected(item);
+      close();
+    }
+    function handlePointer(e) {
+      var opt = e.target.closest('.ac-option');
+      if (!opt) return;
+      e.preventDefault();
+      pickAt(parseInt(opt.getAttribute('data-index'), 10));
+    }
+    menu.addEventListener('mousedown', handlePointer);
+    menu.addEventListener('touchstart', handlePointer, { passive: false });
+
+    input.addEventListener('keydown', function (e) {
+      if (menu.hidden) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); activeIndex = Math.min(activeIndex + 1, filtered.length - 1); highlight(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); activeIndex = Math.max(activeIndex - 1, 0); highlight(); }
+      else if (e.key === 'Enter') { if (activeIndex >= 0) { e.preventDefault(); pickAt(activeIndex); } }
+      else if (e.key === 'Escape') { close(); }
+    });
+
+    return {
+      setItems: function (list) { items = list; },
+      getSelected: function () { return selected; },
+      clear: function () { input.value = ''; setSelected(null); },
+    };
+  }
+
+  // -----------------------------------------------------------------
   // Friendly error mapping — technical detail stays in console/logs,
   // never the default user-facing message.
   // -----------------------------------------------------------------
@@ -282,6 +405,15 @@
     return json ? json.data : null;
   }
 
+  // -----------------------------------------------------------------
+  // fmtRupiah — "Rp46.000" style (task's own C: "Currency display
+  // formatting"). Display-only; the caller's underlying numeric value/
+  // input is never touched by this.
+  // -----------------------------------------------------------------
+  function fmtRupiah(n) {
+    return 'Rp' + Math.round(n || 0).toLocaleString('id-ID');
+  }
+
   window.Amor = {
     toast: toast,
     confirmModal: confirmModal,
@@ -290,6 +422,8 @@
     friendlyError: friendlyError,
     toggleSidebar: toggleSidebar,
     toggleTheme: toggleTheme,
+    createAutocomplete: createAutocomplete,
+    fmtRupiah: fmtRupiah,
   };
 
   document.addEventListener('DOMContentLoaded', function () {

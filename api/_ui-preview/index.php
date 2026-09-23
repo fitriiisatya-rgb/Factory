@@ -32,8 +32,11 @@ $pages = [
     'produksi-demand' => ['title' => 'Produksi', 'subtitle' => 'Order Masuk / Demand Tambahan dari Pesanan Khusus Toko dan Pesanan Non-Toko.'],
     'produksi-task-per-divisi' => ['title' => 'Produksi', 'subtitle' => 'Task per Divisi — target, realisasi, dan reject produksi lintas sumber demand.'],
     'fg-packing' => ['title' => 'FG & Packing', 'subtitle' => 'Verifikasi hasil produksi dan pantau proses packing.'],
+    'fg-khusus-non-toko' => ['title' => 'FG Sumber Khusus / Non-Toko', 'subtitle' => 'Verifikasi FG untuk Pesanan Khusus Toko dan Pesanan Non-Toko — terpisah dari FG PO Reguler.'],
     'delivery-order' => ['title' => 'Delivery Order', 'subtitle' => 'Kelola DO toko, dokumen pengiriman, dan fulfillment.'],
     'delivery-order-detail' => ['title' => 'Delivery Order', 'subtitle' => 'Detail dokumen dan pengiriman bertahap.'],
+    'delivery-order-khusus-non-toko' => ['title' => 'DO Pesanan Khusus / Non-Toko', 'subtitle' => 'DO terpisah per sumber untuk Pesanan Khusus Toko dan Pesanan Non-Toko.'],
+    'delivery-order-khusus-non-toko-detail' => ['title' => 'DO Pesanan Khusus / Non-Toko', 'subtitle' => 'Detail satu DO khusus/non-toko.'],
     'pengiriman' => ['title' => 'Pengiriman', 'subtitle' => 'Kelola pengiriman aktual dan pengiriman bertahap.'],
     'konfirmasi-toko' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Tinjau konfirmasi penerimaan barang dari toko dan verifikasi selisih.'],
     'konfirmasi-toko-detail' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Detail konfirmasi penerimaan satu pengiriman.'],
@@ -49,7 +52,8 @@ if (!isset($pages[$page])) {
 $activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order'
     : (str_starts_with($page, 'konfirmasi-toko') ? 'konfirmasi-toko'
     : ((str_starts_with($page, 'pesanan-khusus-toko') || str_starts_with($page, 'pesanan-non-toko')) ? 'pesanan-toko'
-    : (str_starts_with($page, 'produksi-') ? 'produksi' : $page)));
+    : (str_starts_with($page, 'produksi-') ? 'produksi'
+    : (str_starts_with($page, 'fg-') && $page !== 'fg-packing' ? 'fg-packing' : $page))));
 
 // Shared date/factory selection every page can use as its default filter
 // state, so the topbar's date/factory chips stay meaningful app-wide.

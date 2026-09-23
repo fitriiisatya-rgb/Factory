@@ -129,23 +129,15 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
   </table></div>
 </div>
 
-<datalist id="pnt-product-list">
-  <?php foreach ($productsForEntry as $p): ?>
-  <option value="<?= ui_esc($p['name']) ?>"></option>
-  <?php endforeach; ?>
-</datalist>
-
 <script>
 (function () {
   var PRODUCTS = <?= json_encode($productsForEntry, JSON_UNESCAPED_UNICODE) ?>;
   var CATALOG = <?= json_encode($catalog, JSON_UNESCAPED_UNICODE) ?>;
-  var productByName = {};
-  PRODUCTS.forEach(function (p) { productByName[p.name] = p; });
 
   var list = document.getElementById('pnt-items');
   var cards = [];
 
-  function fmtRp(n) { return 'Rp' + Math.round(n || 0).toLocaleString('id-ID'); }
+  function fmtRp(n) { return Amor.fmtRupiah(n); }
 
   function catalogOptions() {
     return '<option value="">— Pilih Item Khusus —</option>' + CATALOG.map(function (c) {
@@ -167,20 +159,22 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
       '<div class="order-item-grid">' +
         '<div class="field"><label>Item</label>' +
           (itemType === 'existing_product'
-            ? '<input class="pnt-item-input" list="pnt-product-list" placeholder="Ketik nama produk...">'
+            ? '<input type="text" class="pnt-item-input" placeholder="Ketik nama produk...">'
             : '<select class="pnt-item-input">' + catalogOptions() + '</select>') +
         '</div>' +
         '<div class="field"><label>Tipe Item</label><div class="badge-slot">' + typeBadge + '</div></div>' +
         '<div class="field"><label>Divisi Produksi</label><div class="badge-slot pnt-division-slot"><span class="badge badge-neutral">—</span></div></div>' +
         '<div class="field"><label>Factory</label><div class="badge-slot pnt-factory-slot"><span class="badge badge-neutral">—</span></div></div>' +
         '<div class="field"><label>Qty</label><input type="number" class="pnt-qty" min="0.01" step="0.01" value="1"></div>' +
-        '<div class="field"><label>Harga (Rp)</label><input type="number" class="pnt-price" min="0" step="1" value="0"></div>' +
-        '<div class="field"><label>Charge (Rp)</label><input type="number" class="pnt-charge" min="0" step="1" value="0"></div>' +
+        '<div class="field"><label>Harga (Rp)</label><input type="number" class="pnt-price" min="0" step="1" value="0"><span class="field-hint pnt-price-preview"></span></div>' +
+        '<div class="field"><label>Charge (Rp)</label><input type="number" class="pnt-charge" min="0" step="1" value="0"><span class="field-hint pnt-charge-preview"></span></div>' +
+        '<div class="field"><label>Extra Packaging (Rp)</label><input type="number" class="pnt-extra-packaging" min="0" step="1" value="0"><span class="field-hint pnt-extra-packaging-preview"></span></div>' +
+        '<div class="field"><label>Subtotal Item</label><div class="field-static pnt-item-subtotal">Rp0</div></div>' +
         '<div class="field order-item-note-field"><label>Catatan Khusus</label><textarea class="pnt-note" rows="2" placeholder="Contoh: Dominan warna biru, packing terpisah..."></textarea></div>' +
       '</div>';
     list.appendChild(card);
 
-    var state = { itemType: itemType, card: card, divisionName: null, factoryName: null };
+    var state = { itemType: itemType, card: card, divisionName: null, factoryName: null, selectedProduct: null };
     cards.push(state);
 
     var itemInput = card.querySelector('.pnt-item-input');
@@ -188,6 +182,7 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
     var factorySlot = card.querySelector('.pnt-factory-slot');
     var priceInput = card.querySelector('.pnt-price');
     var chargeInput = card.querySelector('.pnt-charge');
+    var extraPackagingInput = card.querySelector('.pnt-extra-packaging');
 
     function applyRouting(divisionName, factoryName) {
       state.divisionName = divisionName;
@@ -199,14 +194,18 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
     }
 
     if (itemType === 'existing_product') {
-      itemInput.addEventListener('input', function () {
-        var p = productByName[itemInput.value];
-        if (p) {
-          priceInput.value = p.harga;
-          applyRouting(p.divisionName, p.factoryName);
-        } else {
-          applyRouting(null, null);
-        }
+      Amor.createAutocomplete(itemInput, {
+        items: PRODUCTS,
+        getLabel: function (p) { return p.name; },
+        onSelect: function (p) {
+          state.selectedProduct = p;
+          if (p) {
+            priceInput.value = p.harga;
+            applyRouting(p.divisionName, p.factoryName);
+          } else {
+            applyRouting(null, null);
+          }
+        },
       });
     } else {
       itemInput.addEventListener('change', function () {
@@ -222,6 +221,7 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
     }
     priceInput.addEventListener('input', refreshSummary);
     chargeInput.addEventListener('input', refreshSummary);
+    extraPackagingInput.addEventListener('input', refreshSummary);
     card.querySelector('.pnt-qty').addEventListener('input', refreshSummary);
 
     card.querySelector('.order-item-remove').addEventListener('click', function () {
@@ -246,36 +246,54 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
       var qty = parseFloat(s.card.querySelector('.pnt-qty').value) || 0;
       var unitPrice = parseFloat(s.card.querySelector('.pnt-price').value) || 0;
       var charge = parseFloat(s.card.querySelector('.pnt-charge').value) || 0;
+      var extraPackaging = parseFloat(s.card.querySelector('.pnt-extra-packaging').value) || 0;
       var note = s.card.querySelector('.pnt-note').value.trim() || null;
       var itemInput = s.card.querySelector('.pnt-item-input');
+      var subtotal = qty * unitPrice + charge + extraPackaging;
       if (s.itemType === 'existing_product') {
-        var p = productByName[itemInput.value];
-        if (!p) { rowError = 'Setiap item "Produk Existing" harus memilih produk yang valid dari daftar.'; return; }
-        items.push({ itemType: 'existing_product', productId: p.productId, qty: qty, unitPrice: unitPrice, charge: charge, specialNote: note, divisionName: p.divisionName, factoryName: p.factoryName });
+        var p = s.selectedProduct;
+        if (!p) { rowError = 'Setiap item "Produk Existing" harus memilih produk yang valid dari daftar pencarian.'; return; }
+        items.push({ itemType: 'existing_product', productId: p.productId, qty: qty, unitPrice: unitPrice, charge: charge, extraPackaging: extraPackaging, subtotal: subtotal, specialNote: note, divisionName: p.divisionName, factoryName: p.factoryName });
       } else {
         var catalogId = itemInput.value;
         if (!catalogId) { rowError = 'Setiap item "Item Khusus / Custom" harus memilih item dari katalog.'; return; }
         var c = CATALOG.filter(function (x) { return String(x.catalogId) === catalogId; })[0];
-        items.push({ itemType: 'special_catalog', specialCatalogId: parseInt(catalogId, 10), qty: qty, unitPrice: unitPrice, charge: charge, specialNote: note, divisionName: c ? c.divisionName : null, factoryName: c ? c.factoryName : null });
+        items.push({ itemType: 'special_catalog', specialCatalogId: parseInt(catalogId, 10), qty: qty, unitPrice: unitPrice, charge: charge, extraPackaging: extraPackaging, subtotal: subtotal, specialNote: note, divisionName: c ? c.divisionName : null, factoryName: c ? c.factoryName : null });
       }
     });
     return { items: items, rowError: rowError };
   }
 
+  function refreshCardPreviews() {
+    cards.forEach(function (s) {
+      var qty = parseFloat(s.card.querySelector('.pnt-qty').value) || 0;
+      var unitPrice = parseFloat(s.card.querySelector('.pnt-price').value) || 0;
+      var charge = parseFloat(s.card.querySelector('.pnt-charge').value) || 0;
+      var extraPackaging = parseFloat(s.card.querySelector('.pnt-extra-packaging').value) || 0;
+      s.card.querySelector('.pnt-price-preview').textContent = fmtRp(unitPrice);
+      s.card.querySelector('.pnt-charge-preview').textContent = fmtRp(charge);
+      s.card.querySelector('.pnt-extra-packaging-preview').textContent = fmtRp(extraPackaging);
+      s.card.querySelector('.pnt-item-subtotal').textContent = fmtRp(qty * unitPrice + charge + extraPackaging);
+    });
+  }
+
   function refreshSummary() {
+    refreshCardPreviews();
     var r = readCards();
     var items = r.items;
     var jumlahItem = items.length;
     var totalQty = items.reduce(function (s, it) { return s + it.qty; }, 0);
     var subtotalProduk = items.reduce(function (s, it) { return s + it.qty * it.unitPrice; }, 0);
     var totalCharge = items.reduce(function (s, it) { return s + it.charge; }, 0);
-    var estimasiTotal = subtotalProduk + totalCharge;
+    var totalExtraPackaging = items.reduce(function (s, it) { return s + it.extraPackaging; }, 0);
+    var estimasiTotal = subtotalProduk + totalCharge + totalExtraPackaging;
 
     document.getElementById('pnt-summary').innerHTML =
       kpiTile('Jumlah Item', String(jumlahItem)) +
       kpiTile('Total Qty', String(totalQty)) +
       kpiTile('Subtotal Produk', fmtRp(subtotalProduk)) +
       kpiTile('Total Charge', fmtRp(totalCharge)) +
+      kpiTile('Total Extra Packaging', fmtRp(totalExtraPackaging)) +
       kpiTile('Estimasi Total', fmtRp(estimasiTotal));
 
     var byFactory = {};
@@ -305,7 +323,10 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
 
   document.getElementById('pnt-add-existing').addEventListener('click', function () { addCard('existing_product'); });
   document.getElementById('pnt-add-custom').addEventListener('click', function () { addCard('special_catalog'); });
-  addCard('existing_product');
+  // Deferred to DOMContentLoaded — see pesanan-khusus-toko.php's own
+  // comment on this exact same fix (app.js/window.Amor loads via a
+  // <script> tag placed AFTER this page's own inline script).
+  document.addEventListener('DOMContentLoaded', function () { addCard('existing_product'); });
 
   async function submitOrder(sendToProduction) {
     var errEl = document.getElementById('pnt-error');
@@ -320,7 +341,7 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
     if (r.items.length === 0) { errEl.textContent = 'Minimal 1 item pesanan.'; return; }
 
     var items = r.items.map(function (it) {
-      return { itemType: it.itemType, productId: it.productId, specialCatalogId: it.specialCatalogId, qty: it.qty, unitPrice: it.unitPrice, charge: it.charge, specialNote: it.specialNote };
+      return { itemType: it.itemType, productId: it.productId, specialCatalogId: it.specialCatalogId, qty: it.qty, unitPrice: it.unitPrice, charge: it.charge, extraPackaging: it.extraPackaging, specialNote: it.specialNote };
     });
 
     var draftBtn = document.getElementById('pnt-submit-draft');

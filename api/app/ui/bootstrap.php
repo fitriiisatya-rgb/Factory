@@ -55,6 +55,15 @@ function ui_fmt_num(float $n): string
     return rtrim(rtrim(number_format($n, 2, ',', '.'), '0'), ',');
 }
 
+/**
+ * Money display formatter ("Rp46.000" style, task's own approved format).
+ * Display-only — storage stays a plain numeric column, never this string.
+ */
+function ui_fmt_money(float $n): string
+{
+    return 'Rp' . number_format($n, 0, ',', '.');
+}
+
 function ui_fmt_pct(float $numerator, float $denominator): int
 {
     if ($denominator <= 0.0001) {

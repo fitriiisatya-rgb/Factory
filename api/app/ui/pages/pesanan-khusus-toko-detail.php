@@ -47,7 +47,7 @@ try {
 
   <h3 class="card-title" style="margin:var(--space-4) 0 var(--space-2);">Item Pesanan</h3>
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Item</th><th>Tipe</th><th>Divisi Produksi</th><th>Factory</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Charge</th><th class="num">Subtotal</th><th>Catatan Khusus</th></tr></thead>
+    <thead><tr><th>Item</th><th>Tipe</th><th>Divisi Produksi</th><th>Factory</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Charge</th><th class="num">Extra Packaging</th><th class="num">Subtotal</th><th>Catatan Khusus</th></tr></thead>
     <tbody>
     <?php foreach ($order['items'] as $it): ?>
     <tr>
@@ -56,9 +56,10 @@ try {
       <td><span class="badge badge-primary"><?= ui_esc($it['divisionName']) ?></span></td>
       <td><span class="badge badge-neutral"><?= ui_esc($it['factoryName']) ?></span></td>
       <td class="num"><?= ui_fmt_num($it['qty']) ?></td>
-      <td class="num"><?= ui_fmt_num($it['unitPrice']) ?></td>
-      <td class="num"><?= ui_fmt_num($it['charge']) ?></td>
-      <td class="num"><?= ui_fmt_num($it['subtotal']) ?></td>
+      <td class="num"><?= ui_fmt_money($it['unitPrice']) ?></td>
+      <td class="num"><?= ui_fmt_money($it['charge']) ?></td>
+      <td class="num"><?= ui_fmt_money($it['extraPackaging']) ?></td>
+      <td class="num"><?= ui_fmt_money($it['subtotal']) ?></td>
       <td style="max-width:220px;overflow-wrap:anywhere;"><?= $it['specialNote'] ? ui_esc($it['specialNote']) : '-' ?></td>
     </tr>
     <?php endforeach; ?>

@@ -180,7 +180,7 @@ if ($runIdParam !== null) {
     <?php foreach ($runDetail['items'] as $it): ?>
     <tr>
       <td><?= ui_esc($it['productName']) ?></td>
-      <td class="num"><?= ui_fmt_num($it['target']) ?></td>
+      <td class="num"><?= ui_fmt_num($it['liveTarget']) ?><?php if ($it['targetChangedSinceDraft']): ?> <span class="badge badge-warning" title="Target PO berubah sejak draft dibuat">berubah</span><?php endif; ?></td>
       <td class="num">
         <?php if ($editable): ?>
         <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="actual" value="<?= ui_fmt_num($it['actual']) ?>">
@@ -192,7 +192,7 @@ if ($runIdParam !== null) {
         <?php else: ?><?= ui_fmt_num($it['reject']) ?><?php endif; ?>
       </td>
       <td><?= ui_badge($it['displayStatusLabel']) ?></td>
-      <td><?php if ($editable): ?><input type="text" style="width:9rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="keterangan" value="<?= ui_esc((string) ($it['keterangan'] ?? '')) ?>"><?php else: ?><?= ui_esc((string) ($it['keterangan'] ?? '')) ?><?php endif; ?></td>
+      <td><?php if ($editable): ?><input type="text" style="width:9rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="keterangan" value="<?= ui_esc((string) ($it['notes'] ?? '')) ?>"><?php else: ?><?= ui_esc((string) ($it['notes'] ?? '')) ?><?php endif; ?></td>
     </tr>
     <?php endforeach; ?>
     </tbody>
@@ -225,7 +225,7 @@ if ($runIdParam !== null) {
         productId: parseInt(pid, 10),
         actualQty: parseFloat(input.value || '0'),
         rejectQty: parseFloat(rejectInput ? (rejectInput.value || '0') : '0'),
-        keterangan: notesInput ? notesInput.value : '',
+        notes: notesInput ? notesInput.value : '',
       });
     });
     return items;

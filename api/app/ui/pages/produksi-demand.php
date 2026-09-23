@@ -103,7 +103,7 @@ $inbox = $service->productionInbox(array_filter([
       <td><?= ui_esc($it['orderNo']) ?></td>
       <td><?= $it['sourceType'] === 'toko_khusus' ? '<span class="badge badge-neutral">Pesanan Khusus Toko</span>' : '<span class="badge badge-neutral">Pesanan Non-Toko</span>' ?></td>
       <td><?= ui_esc($it['storeOrCustomerName']) ?></td>
-      <td><?= ui_esc($it['itemName']) ?><?= $it['charge'] > 0.0001 ? ' <span style="color:var(--text-muted);font-size:var(--text-xs);">(+charge ' . ui_fmt_num($it['charge']) . ')</span>' : '' ?></td>
+      <td><?= ui_esc($it['itemName']) ?><?= $it['charge'] > 0.0001 ? ' <span style="color:var(--text-muted);font-size:var(--text-xs);">(+charge ' . ui_fmt_money($it['charge']) . ')</span>' : '' ?></td>
       <td class="num"><?= ui_fmt_num($it['qty']) ?></td>
       <td class="num"><?= $it['fgAvailable'] !== null ? ui_fmt_num($it['fgAvailable']) : '-' ?></td>
       <td class="num"><?= $it['productionNeed'] !== null ? ui_fmt_num($it['productionNeed']) : '-' ?></td>

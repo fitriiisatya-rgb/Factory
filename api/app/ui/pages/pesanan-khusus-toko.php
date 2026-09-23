@@ -132,23 +132,15 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
   </table></div>
 </div>
 
-<datalist id="pkt-product-list">
-  <?php foreach ($productsForEntry as $p): ?>
-  <option value="<?= ui_esc($p['name']) ?>"></option>
-  <?php endforeach; ?>
-</datalist>
-
 <script>
 (function () {
   var PRODUCTS = <?= json_encode($productsForEntry, JSON_UNESCAPED_UNICODE) ?>;
   var CATALOG = <?= json_encode($catalog, JSON_UNESCAPED_UNICODE) ?>;
-  var productByName = {};
-  PRODUCTS.forEach(function (p) { productByName[p.name] = p; });
 
   var list = document.getElementById('pkt-items');
   var cards = [];
 
-  function fmtRp(n) { return 'Rp' + Math.round(n || 0).toLocaleString('id-ID'); }
+  function fmtRp(n) { return Amor.fmtRupiah(n); }
 
   function catalogOptions() {
     return '<option value="">— Pilih Item Khusus —</option>' + CATALOG.map(function (c) {
@@ -170,20 +162,22 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
       '<div class="order-item-grid">' +
         '<div class="field"><label>Item</label>' +
           (itemType === 'existing_product'
-            ? '<input class="pkt-item-input" list="pkt-product-list" placeholder="Ketik nama produk...">'
+            ? '<input type="text" class="pkt-item-input" placeholder="Ketik nama produk...">'
             : '<select class="pkt-item-input">' + catalogOptions() + '</select>') +
         '</div>' +
         '<div class="field"><label>Tipe Item</label><div class="badge-slot">' + typeBadge + '</div></div>' +
         '<div class="field"><label>Divisi Produksi</label><div class="badge-slot pkt-division-slot"><span class="badge badge-neutral">—</span></div></div>' +
         '<div class="field"><label>Factory</label><div class="badge-slot pkt-factory-slot"><span class="badge badge-neutral">—</span></div></div>' +
         '<div class="field"><label>Qty</label><input type="number" class="pkt-qty" min="0.01" step="0.01" value="1"></div>' +
-        '<div class="field"><label>Harga (Rp)</label><input type="number" class="pkt-price" min="0" step="1" value="0"></div>' +
-        '<div class="field"><label>Charge (Rp)</label><input type="number" class="pkt-charge" min="0" step="1" value="0"></div>' +
+        '<div class="field"><label>Harga (Rp)</label><input type="number" class="pkt-price" min="0" step="1" value="0"><span class="field-hint pkt-price-preview"></span></div>' +
+        '<div class="field"><label>Charge (Rp)</label><input type="number" class="pkt-charge" min="0" step="1" value="0"><span class="field-hint pkt-charge-preview"></span></div>' +
+        '<div class="field"><label>Extra Packaging (Rp)</label><input type="number" class="pkt-extra-packaging" min="0" step="1" value="0"><span class="field-hint pkt-extra-packaging-preview"></span></div>' +
+        '<div class="field"><label>Subtotal Item</label><div class="field-static pkt-item-subtotal">Rp0</div></div>' +
         '<div class="field order-item-note-field"><label>Catatan Khusus</label><textarea class="pkt-note" rows="2" placeholder="Contoh: Tema Spiderman, tulisan HBD Raka, dominan warna biru..."></textarea></div>' +
       '</div>';
     list.appendChild(card);
 
-    var state = { itemType: itemType, card: card, divisionName: null, factoryName: null };
+    var state = { itemType: itemType, card: card, divisionName: null, factoryName: null, selectedProduct: null };
     cards.push(state);
 
     var itemInput = card.querySelector('.pkt-item-input');
@@ -191,6 +185,7 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
     var factorySlot = card.querySelector('.pkt-factory-slot');
     var priceInput = card.querySelector('.pkt-price');
     var chargeInput = card.querySelector('.pkt-charge');
+    var extraPackagingInput = card.querySelector('.pkt-extra-packaging');
 
     function applyRouting(divisionName, factoryName) {
       state.divisionName = divisionName;
@@ -202,14 +197,21 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
     }
 
     if (itemType === 'existing_product') {
-      itemInput.addEventListener('input', function () {
-        var p = productByName[itemInput.value];
-        if (p) {
-          priceInput.value = p.harga;
-          applyRouting(p.divisionName, p.factoryName);
-        } else {
-          applyRouting(null, null);
-        }
+      // Real searchable dropdown, product_id authoritative — never free
+      // text (task's own B). Selection is invalidated the moment the
+      // user types again (Amor.createAutocomplete's own contract).
+      Amor.createAutocomplete(itemInput, {
+        items: PRODUCTS,
+        getLabel: function (p) { return p.name; },
+        onSelect: function (p) {
+          state.selectedProduct = p;
+          if (p) {
+            priceInput.value = p.harga;
+            applyRouting(p.divisionName, p.factoryName);
+          } else {
+            applyRouting(null, null);
+          }
+        },
       });
     } else {
       itemInput.addEventListener('change', function () {
@@ -225,6 +227,7 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
     }
     priceInput.addEventListener('input', refreshSummary);
     chargeInput.addEventListener('input', refreshSummary);
+    extraPackagingInput.addEventListener('input', refreshSummary);
     card.querySelector('.pkt-qty').addEventListener('input', refreshSummary);
 
     card.querySelector('.order-item-remove').addEventListener('click', function () {
@@ -249,36 +252,56 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
       var qty = parseFloat(s.card.querySelector('.pkt-qty').value) || 0;
       var unitPrice = parseFloat(s.card.querySelector('.pkt-price').value) || 0;
       var charge = parseFloat(s.card.querySelector('.pkt-charge').value) || 0;
+      var extraPackaging = parseFloat(s.card.querySelector('.pkt-extra-packaging').value) || 0;
       var note = s.card.querySelector('.pkt-note').value.trim() || null;
       var itemInput = s.card.querySelector('.pkt-item-input');
+      // Extra Packaging: added ONCE per line (task's own D), never
+      // multiplied by qty — unlike unitPrice, which IS multiplied by qty.
+      var subtotal = qty * unitPrice + charge + extraPackaging;
       if (s.itemType === 'existing_product') {
-        var p = productByName[itemInput.value];
-        if (!p) { rowError = 'Setiap item "Produk Existing" harus memilih produk yang valid dari daftar.'; return; }
-        items.push({ itemType: 'existing_product', productId: p.productId, qty: qty, unitPrice: unitPrice, charge: charge, specialNote: note, divisionName: p.divisionName, factoryName: p.factoryName });
+        var p = s.selectedProduct;
+        if (!p) { rowError = 'Setiap item "Produk Existing" harus memilih produk yang valid dari daftar pencarian.'; return; }
+        items.push({ itemType: 'existing_product', productId: p.productId, qty: qty, unitPrice: unitPrice, charge: charge, extraPackaging: extraPackaging, subtotal: subtotal, specialNote: note, divisionName: p.divisionName, factoryName: p.factoryName });
       } else {
         var catalogId = itemInput.value;
         if (!catalogId) { rowError = 'Setiap item "Item Khusus / Custom" harus memilih item dari katalog.'; return; }
         var c = CATALOG.filter(function (x) { return String(x.catalogId) === catalogId; })[0];
-        items.push({ itemType: 'special_catalog', specialCatalogId: parseInt(catalogId, 10), qty: qty, unitPrice: unitPrice, charge: charge, specialNote: note, divisionName: c ? c.divisionName : null, factoryName: c ? c.factoryName : null });
+        items.push({ itemType: 'special_catalog', specialCatalogId: parseInt(catalogId, 10), qty: qty, unitPrice: unitPrice, charge: charge, extraPackaging: extraPackaging, subtotal: subtotal, specialNote: note, divisionName: c ? c.divisionName : null, factoryName: c ? c.factoryName : null });
       }
     });
     return { items: items, rowError: rowError };
   }
 
+  function refreshCardPreviews() {
+    cards.forEach(function (s) {
+      var qty = parseFloat(s.card.querySelector('.pkt-qty').value) || 0;
+      var unitPrice = parseFloat(s.card.querySelector('.pkt-price').value) || 0;
+      var charge = parseFloat(s.card.querySelector('.pkt-charge').value) || 0;
+      var extraPackaging = parseFloat(s.card.querySelector('.pkt-extra-packaging').value) || 0;
+      s.card.querySelector('.pkt-price-preview').textContent = fmtRp(unitPrice);
+      s.card.querySelector('.pkt-charge-preview').textContent = fmtRp(charge);
+      s.card.querySelector('.pkt-extra-packaging-preview').textContent = fmtRp(extraPackaging);
+      s.card.querySelector('.pkt-item-subtotal').textContent = fmtRp(qty * unitPrice + charge + extraPackaging);
+    });
+  }
+
   function refreshSummary() {
+    refreshCardPreviews();
     var r = readCards();
     var items = r.items;
     var jumlahItem = items.length;
     var totalQty = items.reduce(function (s, it) { return s + it.qty; }, 0);
     var subtotalProduk = items.reduce(function (s, it) { return s + it.qty * it.unitPrice; }, 0);
     var totalCharge = items.reduce(function (s, it) { return s + it.charge; }, 0);
-    var estimasiTotal = subtotalProduk + totalCharge;
+    var totalExtraPackaging = items.reduce(function (s, it) { return s + it.extraPackaging; }, 0);
+    var estimasiTotal = subtotalProduk + totalCharge + totalExtraPackaging;
 
     document.getElementById('pkt-summary').innerHTML =
       kpiTile('Jumlah Item', String(jumlahItem)) +
       kpiTile('Total Qty', String(totalQty)) +
       kpiTile('Subtotal Produk', fmtRp(subtotalProduk)) +
       kpiTile('Total Charge', fmtRp(totalCharge)) +
+      kpiTile('Total Extra Packaging', fmtRp(totalExtraPackaging)) +
       kpiTile('Estimasi Total', fmtRp(estimasiTotal));
 
     var byFactory = {};
@@ -308,7 +331,13 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
 
   document.getElementById('pkt-add-existing').addEventListener('click', function () { addCard('existing_product'); });
   document.getElementById('pkt-add-custom').addEventListener('click', function () { addCard('special_catalog'); });
-  addCard('existing_product');
+  // Deferred to DOMContentLoaded: app.js (window.Amor) loads via a <script>
+  // tag placed AFTER this page's own inline script (see layout.php's
+  // ui_page_foot()) — addCard() now calls Amor.createAutocomplete()
+  // synchronously, so calling it here directly would run before Amor
+  // exists. DOMContentLoaded fires only after every synchronous <script>
+  // in the document (including that later app.js tag) has executed.
+  document.addEventListener('DOMContentLoaded', function () { addCard('existing_product'); });
 
   async function submitOrder(sendToProduction) {
     var errEl = document.getElementById('pkt-error');
@@ -321,7 +350,7 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
     if (r.items.length === 0) { errEl.textContent = 'Minimal 1 item pesanan.'; return; }
 
     var items = r.items.map(function (it) {
-      return { itemType: it.itemType, productId: it.productId, specialCatalogId: it.specialCatalogId, qty: it.qty, unitPrice: it.unitPrice, charge: it.charge, specialNote: it.specialNote };
+      return { itemType: it.itemType, productId: it.productId, specialCatalogId: it.specialCatalogId, qty: it.qty, unitPrice: it.unitPrice, charge: it.charge, extraPackaging: it.extraPackaging, specialNote: it.specialNote };
     });
 
     var draftBtn = document.getElementById('pkt-submit-draft');

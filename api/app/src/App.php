@@ -20,6 +20,7 @@ use Amor\Api\Controllers\ReceiptController;
 use Amor\Api\Controllers\ShipmentEmailController;
 use Amor\Api\Controllers\ProductionTaskController;
 use Amor\Api\Controllers\SpecialOrderController;
+use Amor\Api\Controllers\SpecialOrderDoController;
 use Amor\Api\Controllers\StoreController;
 use Amor\Api\Controllers\UserController;
 
@@ -150,6 +151,8 @@ final class App
         // Never touches po_batch/po_item/po_store_item (PO Reguler Toko).
         $router->get('/api/special-orders/catalog', [SpecialOrderController::class, 'catalog']);
         $router->get('/api/special-orders/production-inbox', [SpecialOrderController::class, 'productionInbox']);
+        $router->get('/api/special-orders/fg-eligible', [SpecialOrderController::class, 'fgEligible']);
+        $router->post('/api/special-orders/items/{itemId}/verify-fg', [SpecialOrderController::class, 'verifyItemFg']);
         $router->get('/api/special-orders', [SpecialOrderController::class, 'index']);
         $router->post('/api/special-orders', [SpecialOrderController::class, 'create']);
         $router->get('/api/special-orders/{id}', [SpecialOrderController::class, 'show']);
@@ -158,6 +161,12 @@ final class App
         $router->post('/api/special-orders/{id}/status', [SpecialOrderController::class, 'updateStatus']);
         $router->post('/api/special-orders/{id}/actual', [SpecialOrderController::class, 'updateItemsActual']);
         $router->post('/api/special-orders/{id}/cancel', [SpecialOrderController::class, 'cancel']);
+
+        $router->get('/api/special-order-do', [SpecialOrderDoController::class, 'index']);
+        $router->post('/api/special-order-do', [SpecialOrderDoController::class, 'create']);
+        $router->get('/api/special-order-do/{id}', [SpecialOrderDoController::class, 'show']);
+        $router->post('/api/special-order-do/{id}/ship', [SpecialOrderDoController::class, 'ship']);
+        $router->post('/api/special-order-do/{id}/cancel', [SpecialOrderDoController::class, 'cancel']);
         $router->get('/api/production-tasks/factory', [ProductionTaskController::class, 'forFactory']);
         $router->get('/api/production-tasks', [ProductionTaskController::class, 'forDivision']);
 

@@ -32,6 +32,7 @@ if ($batchView !== null) {
     }
 }
 ?>
+<?= ui_fg_tabs('fg-packing', $uiTanggal, $uiFactoryId) ?>
 <div class="filter-bar">
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;">
     <input type="hidden" name="page" value="fg-packing">

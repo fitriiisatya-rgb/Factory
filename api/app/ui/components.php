@@ -195,6 +195,50 @@ function ui_produksi_tabs(string $active, string $tanggal, int $factoryId): stri
 }
 
 /**
+ * Same tab-bar pattern as ui_pesanan_tabs()/ui_produksi_tabs(), splitting
+ * FG verification into Regular (fg-packing, untouched) vs Sumber Khusus/
+ * Non-Toko (migration 0012's own order-specific FG bridge — task's own
+ * "DO NOT merge them into one opaque number without source traceability").
+ */
+function ui_fg_tabs(string $active, string $tanggal, int $factoryId): string
+{
+    $tabs = [
+        'fg-packing' => 'FG & Packing (Reguler)',
+        'fg-khusus-non-toko' => 'FG Sumber Khusus / Non-Toko',
+    ];
+    $html = '<div class="filter-bar"><div class="btn-group">';
+    foreach ($tabs as $key => $label) {
+        $cls = $active === $key ? 'btn-primary' : 'btn-secondary';
+        $html .= '<a class="btn ' . $cls . ' btn-sm" href="/api/_ui-preview/?page=' . $key
+            . '&tanggal=' . urlencode($tanggal) . '&factoryId=' . $factoryId . '">' . ui_esc($label) . '</a>';
+    }
+    $html .= '</div></div>';
+    return $html;
+}
+
+/**
+ * Same tab-bar pattern, splitting DO into Regular (delivery-order, whose
+ * (tanggal,store_id) identity and doc-number format are never touched)
+ * vs Sumber Khusus/Non-Toko (special_order_do — a SEPARATE, parallel
+ * table; task's own "DO NOT MERGE DIFFERENT SOURCE TYPES INTO ONE DO").
+ */
+function ui_do_tabs(string $active, string $tanggal, int $factoryId): string
+{
+    $tabs = [
+        'delivery-order' => 'DO Toko (Reguler)',
+        'delivery-order-khusus-non-toko' => 'DO Pesanan Khusus / Non-Toko',
+    ];
+    $html = '<div class="filter-bar"><div class="btn-group">';
+    foreach ($tabs as $key => $label) {
+        $cls = $active === $key ? 'btn-primary' : 'btn-secondary';
+        $html .= '<a class="btn ' . $cls . ' btn-sm" href="/api/_ui-preview/?page=' . $key
+            . '&tanggal=' . urlencode($tanggal) . '&factoryId=' . $factoryId . '">' . ui_esc($label) . '</a>';
+    }
+    $html .= '</div></div>';
+    return $html;
+}
+
+/**
  * Compact status timeline for a Pesanan Khusus Toko / Pesanan Non-Toko
  * detail page (task's own "Order Status / Timeline" requirement — "do not
  * create complex workflow logic just for the visual timeline. Timeline

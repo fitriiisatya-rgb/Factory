@@ -42,6 +42,7 @@ foreach ($storesWithPo as $s) {
     $rows[] = ['store' => $s, 'do' => $d];
 }
 ?>
+<?= ui_do_tabs('delivery-order', $uiTanggal, $uiFactoryId) ?>
 <div class="filter-bar">
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;">
     <input type="hidden" name="page" value="delivery-order">

@@ -156,6 +156,34 @@ final class SpecialOrderController
         Response::json($service->productionInbox($filters));
     }
 
+    /** GET /api/special-orders/fg-eligible — FG source-verification inbox for special/non-regular orders. */
+    public static function fgEligible(Request $request): void
+    {
+        Auth::requireAuth();
+        $service = new SpecialOrderService(Database::pdo());
+        $filters = array_filter([
+            'factoryId' => $request->query('factoryId') !== null ? (int) $request->query('factoryId') : null,
+            'divisionId' => $request->query('divisionId') !== null ? (int) $request->query('divisionId') : null,
+            'tanggal' => $request->query('tanggal'),
+            'sourceType' => $request->query('sourceType'),
+        ], fn ($v) => $v !== null);
+        Response::json($service->fgEligibleItems($filters));
+    }
+
+    /** POST /api/special-orders/items/{itemId}/verify-fg — Production → FG bridge for special/non-regular orders. */
+    public static function verifyItemFg(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::STATUS_UPDATE_ROLES);
+        $itemId = (int) $request->routeParams['itemId'];
+        $qty = (float) ($request->input('fgVerifiedQty') ?? 0);
+
+        Idempotency::handle($request, 'POST /api/special-orders/items/{itemId}/verify-fg', function (PDO $pdo) use ($request, $userId, $itemId, $qty) {
+            $service = new SpecialOrderService($pdo);
+            $dto = $service->verifyItemFg($itemId, $qty, $userId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_item', 'recordKey' => (string) $itemId];
+        });
+    }
+
     private static function requireInt(mixed $v, string $field): int
     {
         if ($v === null || $v === '' || !is_numeric($v)) {

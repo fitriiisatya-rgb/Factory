@@ -185,8 +185,8 @@ final class SpecialOrderRepository
         $stmt = $pdo->prepare(
             'INSERT INTO special_order_item
                 (special_order_id, item_type, product_id, special_catalog_id, division_id, item_name_snapshot,
-                 qty, unit_price, charge, subtotal, special_note, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())'
+                 qty, unit_price, charge, extra_packaging, subtotal, special_note, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())'
         );
         $stmt->execute([
             $orderId,
@@ -198,10 +198,35 @@ final class SpecialOrderRepository
             $item['qty'],
             $item['unitPrice'],
             $item['charge'],
+            $item['extraPackaging'],
             $item['subtotal'],
             $item['specialNote'],
         ]);
         return (int) $pdo->lastInsertId();
+    }
+
+    /** Snapshot semantics — $qty REPLACES the stored fg_verified_qty (never added to it), matching production_item's own convention. */
+    public function updateFgVerifiedQty(PDO $pdo, int $itemId, float $qty): bool
+    {
+        $stmt = $pdo->prepare('UPDATE special_order_item SET fg_verified_qty = ? WHERE special_order_item_id = ?');
+        $stmt->execute([$qty, $itemId]);
+        return $stmt->rowCount() > 0;
+    }
+
+    public function findItemById(PDO $pdo, int $itemId): ?array
+    {
+        $stmt = $pdo->prepare(
+            'SELECT soi.*, d.name AS division_name, d.factory_id AS item_factory_id, f.name AS item_factory_name,
+                    so.order_no, so.source_type, so.status AS order_status
+             FROM special_order_item soi
+             INNER JOIN division d ON d.division_id = soi.division_id
+             INNER JOIN factory f ON f.factory_id = d.factory_id
+             INNER JOIN special_order so ON so.special_order_id = soi.special_order_id
+             WHERE soi.special_order_item_id = ?'
+        );
+        $stmt->execute([$itemId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
     }
 
     public function findOrderById(PDO $pdo, int $id): ?array
@@ -322,7 +347,7 @@ final class SpecialOrderRepository
     public function findProductionDemandItems(PDO $pdo, array $filters): array
     {
         $sql = "SELECT soi.special_order_item_id, soi.item_type, soi.item_name_snapshot, soi.qty, soi.charge,
-                       soi.aktual_produksi, soi.reject_produksi,
+                       soi.extra_packaging, soi.aktual_produksi, soi.reject_produksi, soi.fg_verified_qty,
                        soi.special_note, soi.division_id, d.name AS division_name,
                        d.factory_id AS item_factory_id, f.name AS item_factory_name, soi.product_id,
                        so.special_order_id, so.order_no, so.source_type, so.status, so.order_date, so.version AS order_version,
@@ -354,6 +379,10 @@ final class SpecialOrderRepository
         if (isset($filters['sourceType'])) {
             $sql .= ' AND so.source_type = ?';
             $params[] = $filters['sourceType'];
+        }
+        if (isset($filters['orderId'])) {
+            $sql .= ' AND so.special_order_id = ?';
+            $params[] = $filters['orderId'];
         }
         $sql .= ' ORDER BY so.required_date, so.required_time IS NULL, so.required_time';
         $stmt = $pdo->prepare($sql);

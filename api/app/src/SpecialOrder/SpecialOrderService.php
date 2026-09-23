@@ -380,6 +380,87 @@ final class SpecialOrderService
         ];
     }
 
+    /**
+     * FG-eligible items for special/non-regular orders — the read side of
+     * the Production → FG bridge (task's own scope E/F). Reuses
+     * findProductionDemandItems() (already source-aware) rather than a new
+     * query, and only surfaces items that actually have Actual Produksi >
+     * 0 (nothing to verify otherwise). FG SOURCE MODEL fields (task's own
+     * spec): sourceType/sourceLabel/orderId (source_reference_id),
+     * division/factory, aktualProduksi (production_actual_good),
+     * fgVerifiedQty (already_verified_qty), availableToVerify.
+     */
+    public function fgEligibleItems(array $filters): array
+    {
+        $rows = $this->repo->findProductionDemandItems($this->pdo, $filters);
+        $out = [];
+        foreach ($rows as $r) {
+            $aktual = (float) $r['aktual_produksi'];
+            if ($aktual <= 0.0001) {
+                continue;
+            }
+            $out[] = [
+                'itemId' => (int) $r['special_order_item_id'],
+                'orderId' => (int) $r['special_order_id'],
+                'orderNo' => $r['order_no'],
+                'sourceType' => $r['source_type'],
+                'sourceLabel' => $r['source_type'] === 'toko_khusus' ? 'Pesanan Khusus Toko' : 'Pesanan Non-Toko',
+                'storeOrCustomerName' => $r['source_type'] === 'toko_khusus' ? ($r['store_name'] ?? '-') : ($r['customer_name'] ?? '-'),
+                'itemType' => $r['item_type'],
+                'itemName' => $r['item_name_snapshot'],
+                'divisionId' => (int) $r['division_id'],
+                'divisionName' => $r['division_name'],
+                'factoryId' => isset($r['item_factory_id']) ? (int) $r['item_factory_id'] : null,
+                'factoryName' => $r['item_factory_name'] ?? null,
+                'productId' => $r['product_id'] !== null ? (int) $r['product_id'] : null,
+                'aktualProduksi' => $aktual,
+                'rejectProduksi' => (float) $r['reject_produksi'],
+                'fgVerifiedQty' => (float) $r['fg_verified_qty'],
+                'availableToVerify' => max(0.0, $aktual - (float) $r['fg_verified_qty']),
+                'requiredDate' => $r['required_date'] ?? null,
+                'specialNote' => $r['special_note'] ?? null,
+                'status' => $r['status'],
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Verify (confirm) FG-ready quantity for one special/non-regular order
+     * item. Snapshot semantics (same convention as production_item.aktual
+     * and special_order_item.aktual_produksi/reject_produksi): each call
+     * REPLACES the stored value, it never adds to it — repeating the same
+     * call is naturally idempotent and never inflates availability.
+     */
+    public function verifyItemFg(int $itemId, float $fgVerifiedQty, int $userId, ?string $requestId): array
+    {
+        $item = $this->repo->findItemById($this->pdo, $itemId);
+        if ($item === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'Item pesanan tidak ditemukan');
+        }
+        if (!in_array($item['order_status'], self::PRODUCTION_STATUSES, true)) {
+            throw new ApiException(400, 'INVALID_STATUS', 'Verifikasi FG hanya bisa dilakukan setelah pesanan dikirim ke Produksi');
+        }
+        $aktual = (float) $item['aktual_produksi'];
+        if ($fgVerifiedQty < 0 || $fgVerifiedQty > $aktual + 0.0001) {
+            throw new ApiException(400, 'INVALID_FG_QTY', 'Qty FG terverifikasi harus antara 0 dan Aktual Produksi');
+        }
+        $this->repo->updateFgVerifiedQty($this->pdo, $itemId, $fgVerifiedQty);
+        Audit::write(
+            $this->pdo,
+            $requestId,
+            $userId,
+            'special_order.fg_verified',
+            'special_order_item',
+            (string) $itemId,
+            'ok',
+            null,
+            null,
+            ['fgVerifiedQty' => $fgVerifiedQty, 'orderId' => (int) $item['special_order_id']]
+        );
+        return $this->getOrder((int) $item['special_order_id']);
+    }
+
     // -----------------------------------------------------------------
     // Validation / resolution helpers
     // -----------------------------------------------------------------
@@ -469,6 +550,13 @@ final class SpecialOrderService
         if ($charge < 0) {
             throw new ApiException(400, 'INVALID_CHARGE', "Item #{$index}: charge cannot be negative");
         }
+        // Extra Packaging (task's own approved rule): a manually-entered,
+        // per-LINE nominal — added ONCE to the subtotal, never multiplied
+        // by qty (unlike unitPrice, which IS multiplied by qty).
+        $extraPackaging = (float) ($raw['extraPackaging'] ?? 0);
+        if ($extraPackaging < 0) {
+            throw new ApiException(400, 'INVALID_EXTRA_PACKAGING', "Item #{$index}: extraPackaging cannot be negative");
+        }
         $specialNote = $this->nullableString($raw['specialNote'] ?? null);
 
         if ($itemType === 'existing_product') {
@@ -486,7 +574,7 @@ final class SpecialOrderService
             $divisionId = (int) $product['division_id'];
             $routing = ProductionRoutingService::resolveFactoryForDivision($this->pdo, $divisionId);
             $unitPrice = isset($raw['unitPrice']) && $raw['unitPrice'] !== '' ? (float) $raw['unitPrice'] : (float) $product['harga'];
-            $subtotal = round($qty * $unitPrice + $charge, 2);
+            $subtotal = round($qty * $unitPrice + $charge + $extraPackaging, 2);
             return [
                 'itemType' => 'existing_product',
                 'productId' => $productId,
@@ -499,6 +587,7 @@ final class SpecialOrderService
                 'qty' => $qty,
                 'unitPrice' => $unitPrice,
                 'charge' => $charge,
+                'extraPackaging' => $extraPackaging,
                 'subtotal' => $subtotal,
                 'specialNote' => $specialNote,
             ];
@@ -520,7 +609,7 @@ final class SpecialOrderService
         if (!isset($raw['charge']) || $raw['charge'] === '' || $raw['charge'] === null) {
             $charge = $catalog['default_charge'] !== null ? (float) $catalog['default_charge'] : 0.0;
         }
-        $subtotal = round($qty * $unitPrice + $charge, 2);
+        $subtotal = round($qty * $unitPrice + $charge + $extraPackaging, 2);
         return [
             'itemType' => 'special_catalog',
             'productId' => null,
@@ -533,6 +622,7 @@ final class SpecialOrderService
             'qty' => $qty,
             'unitPrice' => $unitPrice,
             'charge' => $charge,
+            'extraPackaging' => $extraPackaging,
             'subtotal' => $subtotal,
             'specialNote' => $specialNote,
         ];
@@ -563,10 +653,13 @@ final class SpecialOrderService
             'qty' => (float) $it['qty'],
             'unitPrice' => (float) $it['unit_price'],
             'charge' => (float) $it['charge'],
+            'extraPackaging' => (float) $it['extra_packaging'],
             'subtotal' => (float) $it['subtotal'],
             'specialNote' => $it['special_note'],
             'aktualProduksi' => (float) $it['aktual_produksi'],
             'rejectProduksi' => (float) $it['reject_produksi'],
+            'fgVerifiedQty' => (float) $it['fg_verified_qty'],
+            'availableToVerify' => max(0.0, (float) $it['aktual_produksi'] - (float) $it['fg_verified_qty']),
         ], $items);
 
         $divisionNames = array_values(array_unique(array_column($itemDtos, 'divisionName')));
