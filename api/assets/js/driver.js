@@ -327,6 +327,16 @@
   // -----------------------------------------------------------------
   // TAB: Riwayat
   // -----------------------------------------------------------------
+  // Mirrors Amor\Api\SpecialOrder\NormalizedSourceType::fromSpecialOrder()/
+  // label() — plain-JS display copy only (never the source of truth; the
+  // server DTO is), same convention as this file's own groupBadgeClass().
+  function normalizedSourceLabel(r) {
+    if (!r.special_source_type) return null; // Regular PO shipment — no source badge needed here
+    if (r.special_source_type === 'toko_khusus') return 'Pesanan Khusus Toko';
+    var map = { cs: 'CS', sales_executive: 'Sales', konsumen_langsung: 'Konsumen Langsung', umum: 'Umum' };
+    return map[r.special_non_store_source] || 'Umum';
+  }
+
   function renderRiwayat(root) {
     root.innerHTML = '<div class="driver-empty">Memuat...</div>';
     Amor.apiFetch('/api/dispatch/history').then(function (rows) {
@@ -335,15 +345,19 @@
         return;
       }
       root.innerHTML = rows.map(function (r) {
+        var docNo = r.doc_no || r.special_doc_no || '-';
+        var sourceLabel = normalizedSourceLabel(r);
+        var receiptLabel = receiptStatusLabel(r.receipt_status);
+        var receiptBadgeClass = r.receipt_status === 'confirmed_discrepancy' ? 'danger' : (r.receipt_status ? 'success' : '');
         return '' +
           '<a class="driver-card driver-card-link" href="shipment.php?id=' + r.shipment_id + '">' +
           '<div class="driver-card-head"><div>' +
           '<div class="driver-card-title">' + esc(r.store_name) + '<span class="driver-card-chevron">&rsaquo;</span></div>' +
-          '<div class="driver-card-sub">' + esc(r.doc_no || '-') + '</div>' +
+          '<div class="driver-card-sub">' + esc(docNo) + (sourceLabel ? ' &middot; ' + esc(sourceLabel) : '') + '</div>' +
           '</div><span class="driver-badge ' + groupBadgeClass(r.shipment_group) + '">' + esc(r.shipment_group) + '</span></div>' +
           '<div class="driver-row"><span>Berangkat</span><b>' + fmtDateTimeId(r.shipped_at || r.created_at) + '</b></div>' +
           '<div class="driver-row"><span>' + Number(r.product_count || 0) + ' produk &middot; ' + fmtNum(r.total_qty) + ' pcs</span>' +
-          '<span class="driver-badge success">Sudah Berangkat</span></div>' +
+          '<span class="driver-badge ' + receiptBadgeClass + '">' + esc(receiptLabel) + '</span></div>' +
           '</a>';
       }).join('');
     }).catch(function (err) { root.innerHTML = emptyState(err.message); });
@@ -362,15 +376,19 @@
       var receiptHtml = renderReceiptSection(d.receipt, d.summary.totalQty);
       var timelineHtml = renderTimeline(d);
 
+      var sourceRow = (d.source && d.source.type !== 'REGULAR_STORE_PO')
+        ? '<div class="driver-row"><span>Sumber</span><b>' + esc(d.source.label) + (d.source.orderNo ? ' &middot; ' + esc(d.source.orderNo) : '') + '</b></div>'
+        : '';
       root.innerHTML =
         '<a href="riwayat-back" class="driver-back-link" id="btn-back-riwayat">&larr; Kembali ke Riwayat</a>' +
         '<div class="driver-card">' +
         '<div class="driver-card-title">' + esc(d.storeName) + '</div>' +
         '<div class="driver-row"><span>Shipment</span><b>SHP-' + d.shipmentId + '</b></div>' +
         '<div class="driver-row"><span>No. DO</span><b>' + esc(d.docNo || '-') + '</b></div>' +
+        sourceRow +
         '<div class="driver-row"><span>Tanggal DO</span><b>' + esc(d.doTanggal || d.tanggal || '-') + '</b></div>' +
         '<div class="driver-row"><span>Berangkat</span><b>' + fmtDateTimeId(d.shippedAt) + '</b></div>' +
-        '<div class="driver-row"><span>Driver</span><b>' + esc(d.driverName || '-') + '</b></div>' +
+        '<div class="driver-row"><span>' + (d.source && d.source.deliveryMethod === 'EXTERNAL_COURIER' ? 'Kurir' : 'Driver') + '</span><b>' + esc(d.driverName || '-') + '</b></div>' +
         '<div class="driver-row"><span>Grup</span><span class="driver-badge ' + groupBadgeClass(d.shipmentGroup) + '">' + esc(d.shipmentGroup) + '</span></div>' +
         '<div class="driver-row"><span>Factory asal</span><b>' + esc(d.factoryName || '-') + '</b></div>' +
         '<div class="driver-row"><span>Status</span><span class="driver-badge success">Sudah Berangkat</span></div>' +

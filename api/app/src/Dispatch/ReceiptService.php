@@ -7,6 +7,7 @@ namespace Amor\Api\Dispatch;
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Delivery\DoRepository;
+use Amor\Api\SpecialOrder\NormalizedSourceType;
 use Amor\Api\Users\UserRepository;
 use PDO;
 
@@ -30,31 +31,64 @@ final class ReceiptService
     private ReceiptRepository $repo;
     private DoRepository $doRepo;
     private UserRepository $userRepo;
+    private ShipmentLineResolver $lineResolver;
 
     public function __construct(private PDO $pdo)
     {
         $this->repo = new ReceiptRepository();
         $this->doRepo = new DoRepository();
         $this->userRepo = new UserRepository();
+        $this->lineResolver = new ShipmentLineResolver();
     }
 
-    /** Used by the print template — get-or-create, never regenerates an existing token. */
+    /** Used by the print template — get-or-create, never regenerates an existing token. Regular DO-keyed only. */
     public function getReceiptToken(int $doId): string
     {
         return $this->repo->getOrCreateToken($this->pdo, $doId);
     }
 
     /**
-     * GET /api/receive/{token} — public. If no shipment has departed yet,
-     * returns an empty shipments[] list so the UI can show "Pengiriman
-     * belum dikonfirmasi berangkat." (Part G/QR-before-departure behavior).
+     * Used by the special-order Surat Jalan print page / automatic email —
+     * get-or-create the SHIPMENT-scoped token (migration 0012's
+     * shipment_receipt_token — see this file's own docblock and
+     * ReceiptRepository::getOrCreateShipmentToken()'s for why this is a
+     * separate table from the Regular DO token rather than an overload of
+     * it).
+     */
+    public function getOrCreateShipmentToken(int $shipmentId): string
+    {
+        return $this->repo->getOrCreateShipmentToken($this->pdo, $shipmentId);
+    }
+
+    /**
+     * GET /api/receive/{token} — public. Resolves the incoming token
+     * against EITHER of the two token tables (task's own Section F —
+     * "shipment-capable receipt token abstraction... WITHOUT breaking
+     * existing Regular receipt URLs"): a Regular DO's token
+     * (delivery_receipt_token) is tried FIRST, byte-for-byte the same
+     * lookup/behavior as before this rework, so every link already sent
+     * by email keeps working; only when that lookup finds nothing does a
+     * special-order shipment token (shipment_receipt_token) get tried.
+     * The two token spaces never collide (each is its own random 64-hex
+     * value; a value minted for one table has no way to also exist as a
+     * row in the other).
      */
     public function getPublicView(string $token): array
     {
         $doId = $this->repo->findDoIdByToken($this->pdo, $token);
-        if ($doId === null) {
-            throw new ApiException(404, 'NOT_FOUND', 'Tautan tidak valid atau sudah tidak berlaku');
+        if ($doId !== null) {
+            return $this->getPublicViewForDo($doId);
         }
+        $shipmentId = $this->repo->findShipmentIdByToken($this->pdo, $token);
+        if ($shipmentId !== null) {
+            return $this->getPublicViewForShipmentToken($shipmentId);
+        }
+        throw new ApiException(404, 'NOT_FOUND', 'Tautan tidak valid atau sudah tidak berlaku');
+    }
+
+    /** Regular PO — unchanged from before this rework. If no shipment has departed yet, returns an empty shipments[] list (Part G/QR-before-departure behavior). */
+    private function getPublicViewForDo(int $doId): array
+    {
         $do = $this->doRepo->findDoById($this->pdo, $doId);
         if ($do === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Tautan tidak valid atau sudah tidak berlaku');
@@ -103,6 +137,62 @@ final class ReceiptService
     }
 
     /**
+     * Special/non-regular — a shipment-scoped token always resolves to
+     * EXACTLY ONE shipment (never a DO's whole list — there is no DO-level
+     * concept on this path), wrapped in the SAME `shipments: [...]` shape
+     * the existing receipt.js already renders, so the public portal's
+     * client-side code needs zero changes (task's own "reuse existing
+     * architecture where safe"). Bakery never sees another source's
+     * shipment: the token IS that one shipment's only key.
+     */
+    private function getPublicViewForShipmentToken(int $shipmentId): array
+    {
+        $sh = $this->doRepo->findShipmentById($this->pdo, $shipmentId);
+        if ($sh === null || $sh['status'] !== 'active') {
+            throw new ApiException(404, 'NOT_FOUND', 'Tautan tidak valid atau sudah tidak berlaku');
+        }
+        $lines = $this->lineResolver->linesForShipment($this->pdo, $sh);
+        $receipt = $this->repo->findReceiptForShipment($this->pdo, $shipmentId);
+        $isSpecial = ($sh['source_type'] ?? null) === 'special_order_do';
+        $docNo = $isSpecial ? $sh['special_doc_no'] : $sh['doc_no'];
+
+        return [
+            'docNo' => $docNo,
+            'storeName' => $sh['store_name'],
+            'tanggal' => $sh['tanggal'],
+            'shipments' => [[
+                'shipmentId' => $shipmentId,
+                'shipmentGroup' => $sh['shipment_group'],
+                'driverName' => $this->shipmentDriverLabel($sh),
+                'departedAt' => $sh['shipped_at'],
+                'items' => array_map(static fn ($l) => [
+                    'shipmentItemId' => $l['lineId'],
+                    'productId' => $l['productId'],
+                    'productName' => $l['itemName'],
+                    'shippedQty' => $l['qtyShipped'],
+                ], $lines),
+                'receiptStatus' => $receipt['status'] ?? 'pending',
+                'confirmedAt' => $receipt['confirmed_at'] ?? null,
+                'receiverName' => $receipt['receiver_name'] ?? null,
+            ]],
+        ];
+    }
+
+    /** EXTERNAL_COURIER has no internal Driver account carrying the goods — show the courier identity instead (same rule as DispatchService::shipmentDetail()). */
+    private function shipmentDriverLabel(array $sh): ?string
+    {
+        if (($sh['delivery_method'] ?? null) === 'EXTERNAL_COURIER') {
+            $providerLabel = ucfirst((string) ($sh['courier_provider'] ?? 'kurir'));
+            return 'Kurir: ' . ($sh['courier_name'] ?? $providerLabel) . ' (' . $providerLabel . ')';
+        }
+        if ($sh['shipped_by'] === null) {
+            return null;
+        }
+        $driver = $this->userRepo->findById($this->pdo, (int) $sh['shipped_by']);
+        return $driver !== null ? (($driver['full_name'] ?? '') !== '' ? $driver['full_name'] : $driver['username']) : null;
+    }
+
+    /**
      * POST /api/receive/{token}/shipments/{shipmentId}/confirm — public.
      * If this shipment already has a confirmation, returns the EXISTING one
      * unchanged (task's own "must also be protected from accidental
@@ -130,10 +220,18 @@ final class ReceiptService
     public function confirmReceipt(string $token, int $shipmentId, ?string $receiverName, ?string $note, array $items, array $evidenceFiles, ?string $requestId): array
     {
         $doId = $this->repo->findDoIdByToken($this->pdo, $token);
-        if ($doId === null) {
+        if ($doId !== null) {
+            return $this->confirmReceiptForDo($doId, $shipmentId, $receiverName, $note, $items, $evidenceFiles, $requestId);
+        }
+        $tokenShipmentId = $this->repo->findShipmentIdByToken($this->pdo, $token);
+        if ($tokenShipmentId === null || $tokenShipmentId !== $shipmentId) {
             throw new ApiException(404, 'NOT_FOUND', 'Tautan tidak valid atau sudah tidak berlaku');
         }
+        return $this->confirmReceiptForShipmentToken($shipmentId, $receiverName, $note, $items, $evidenceFiles, $requestId);
+    }
 
+    private function confirmReceiptForDo(int $doId, int $shipmentId, ?string $receiverName, ?string $note, array $items, array $evidenceFiles, ?string $requestId): array
+    {
         $shipments = $this->doRepo->findShipmentsForDo($this->pdo, $doId);
         $shipment = null;
         foreach ($shipments as $sh) {
@@ -152,59 +250,18 @@ final class ReceiptService
         }
 
         $shipmentItems = $this->doRepo->findShipmentItems($this->pdo, $shipmentId);
+        $shippedQtyByLineId = [];
         $byId = [];
         foreach ($shipmentItems as $it) {
-            $byId[(int) $it['shipment_item_id']] = $it;
+            $lineId = (int) $it['shipment_item_id'];
+            $shippedQtyByLineId[$lineId] = (float) $it['qty'];
+            $byId[$lineId] = $it;
         }
-        if (count($items) !== count($byId)) {
-            throw new ApiException(400, 'INCOMPLETE_RECEIPT', 'Semua produk pada pengiriman ini harus dikonfirmasi');
-        }
-
-        $rows = [];
-        $anyDiscrepancy = false;
-        foreach ($items as $line) {
-            $shipmentItemId = (int) ($line['shipmentItemId'] ?? 0);
-            if (!isset($byId[$shipmentItemId])) {
-                throw new ApiException(400, 'UNKNOWN_SHIPMENT_ITEM', "Item {$shipmentItemId} bukan bagian dari pengiriman ini");
-            }
-            $shippedQty = (float) $byId[$shipmentItemId]['qty'];
-            $good = (float) ($line['receivedGood'] ?? 0);
-            $reject = (float) ($line['reject'] ?? 0);
-            $shortage = (float) ($line['shortage'] ?? 0);
-            if ($good < 0 || $reject < 0 || $shortage < 0) {
-                throw new ApiException(400, 'NEGATIVE_QTY', "Item {$shipmentItemId}: jumlah tidak boleh negatif");
-            }
-            if (abs(($good + $reject + $shortage) - $shippedQty) > 0.0001) {
-                throw new ApiException(400, 'RECEIPT_MATH_INVALID',
-                    "Item {$shipmentItemId}: Diterima Baik + Reject + Kurang harus sama dengan jumlah dikirim ({$shippedQty})"
-                );
-            }
-            if ($reject > 0.0001 || $shortage > 0.0001) {
-                $anyDiscrepancy = true;
-            }
-            $rows[] = [
-                'shipmentItemId' => $shipmentItemId,
-                'productId' => (int) $byId[$shipmentItemId]['product_id'],
-                'shippedQty' => $shippedQty,
-                'good' => $good,
-                'reject' => $reject,
-                'shortage' => $shortage,
-                'reason' => isset($line['reason']) && trim((string) $line['reason']) !== '' ? (string) $line['reason'] : null,
-            ];
-        }
-
-        // Real-UAT rule: Reject/Kurang > 0 on ANY item requires at least
-        // one photo before the submission is even allowed to succeed —
-        // server-side, since a client-side-only check is not enough
-        // (task's own explicit "Frontend-only validation is NOT enough").
-        if ($anyDiscrepancy && $evidenceFiles === []) {
-            throw new ApiException(400, 'EVIDENCE_REQUIRED', 'Bukti foto wajib diunggah untuk barang reject/rusak atau kurang.');
-        }
-
-        $status = $anyDiscrepancy ? 'confirmed_discrepancy' : 'confirmed_ok';
+        $validated = $this->validateReceiptLines($items, $shippedQtyByLineId, $evidenceFiles);
+        $status = $validated['anyDiscrepancy'] ? 'confirmed_discrepancy' : 'confirmed_ok';
         $receiptId = $this->repo->insertReceipt($this->pdo, $shipmentId, $status, $receiverName, $note);
-        foreach ($rows as $r) {
-            $this->repo->insertReceiptItem($this->pdo, $receiptId, $r['shipmentItemId'], $r['productId'], $r['shippedQty'], $r['good'], $r['reject'], $r['shortage'], $r['reason']);
+        foreach ($validated['rows'] as $r) {
+            $this->repo->insertReceiptItem($this->pdo, $receiptId, $r['lineId'], (int) $byId[$r['lineId']]['product_id'], $r['shippedQty'], $r['good'], $r['reject'], $r['shortage'], $r['reason']);
         }
         foreach ($evidenceFiles as $ev) {
             $this->repo->insertEvidence($this->pdo, $receiptId, $ev['filePath'], $ev['mimeType'], $ev['fileSize'], $ev['originalName']);
@@ -222,20 +279,143 @@ final class ReceiptService
         return $this->buildReceiptDto($created);
     }
 
-    /** GET /api/admin/receipts — Konfirmasi Toko list (Part I). */
+    /**
+     * Special/non-regular — same math/evidence rules, same idempotent
+     * "already confirmed -> return existing" guard, same audit write; the
+     * only difference from confirmReceiptForDo() is which table each
+     * receipt line/product name comes from (task's own Section G: "Do NOT
+     * fabricate shipment_item" — this writes real
+     * special_order_do_shipment_item-keyed rows via
+     * insertReceiptItemForSpecialLine(), never a regular shipment_item
+     * row).
+     */
+    private function confirmReceiptForShipmentToken(int $shipmentId, ?string $receiverName, ?string $note, array $items, array $evidenceFiles, ?string $requestId): array
+    {
+        $shipment = $this->doRepo->findShipmentById($this->pdo, $shipmentId);
+        if ($shipment === null || $shipment['status'] !== 'active') {
+            throw new ApiException(404, 'NOT_FOUND', 'Pengiriman tidak ditemukan untuk tautan ini');
+        }
+
+        $existing = $this->repo->lockReceiptForShipment($this->pdo, $shipmentId);
+        if ($existing !== null) {
+            return $this->buildReceiptDto($existing);
+        }
+
+        $lines = $this->lineResolver->linesForShipment($this->pdo, $shipment);
+        $shippedQtyByLineId = [];
+        $byId = [];
+        foreach ($lines as $l) {
+            $shippedQtyByLineId[$l['lineId']] = $l['qtyShipped'];
+            $byId[$l['lineId']] = $l;
+        }
+        $validated = $this->validateReceiptLines($items, $shippedQtyByLineId, $evidenceFiles);
+        $status = $validated['anyDiscrepancy'] ? 'confirmed_discrepancy' : 'confirmed_ok';
+        $receiptId = $this->repo->insertReceipt($this->pdo, $shipmentId, $status, $receiverName, $note);
+        foreach ($validated['rows'] as $r) {
+            $line = $byId[$r['lineId']];
+            $this->repo->insertReceiptItemForSpecialLine($this->pdo, $receiptId, $r['lineId'], $line['productId'], $line['itemName'], $r['shippedQty'], $r['good'], $r['reject'], $r['shortage'], $r['reason']);
+        }
+        foreach ($evidenceFiles as $ev) {
+            $this->repo->insertEvidence($this->pdo, $receiptId, $ev['filePath'], $ev['mimeType'], $ev['fileSize'], $ev['originalName']);
+        }
+
+        Audit::write(
+            $this->pdo, $requestId, null, 'receipt.confirmed', 'shipment_receipt', (string) $receiptId,
+            'ok', null, null, ['shipmentId' => $shipmentId, 'status' => $status, 'receiverName' => $receiverName]
+        );
+
+        $created = $this->repo->findReceiptForShipment($this->pdo, $shipmentId);
+        return $this->buildReceiptDto($created);
+    }
+
+    /**
+     * Shared math/evidence validation for BOTH confirm paths — server-side
+     * always (task's own explicit "Frontend-only validation is NOT
+     * enough"). $shippedQtyByLineId keys every valid line id (a regular
+     * shipment_item_id or a special special_order_do_shipment_item_id —
+     * opaque to this method, it never cares which).
+     * @param array<int,array{shipmentItemId:int,receivedGood:float,reject:float,shortage:float,reason?:string}> $items
+     * @param array<int,float> $shippedQtyByLineId
+     * @param array<int,array> $evidenceFiles
+     * @return array{rows:array<int,array{lineId:int,shippedQty:float,good:float,reject:float,shortage:float,reason:?string}>,anyDiscrepancy:bool}
+     */
+    private function validateReceiptLines(array $items, array $shippedQtyByLineId, array $evidenceFiles): array
+    {
+        if (count($items) !== count($shippedQtyByLineId)) {
+            throw new ApiException(400, 'INCOMPLETE_RECEIPT', 'Semua produk pada pengiriman ini harus dikonfirmasi');
+        }
+
+        $rows = [];
+        $anyDiscrepancy = false;
+        foreach ($items as $line) {
+            $lineId = (int) ($line['shipmentItemId'] ?? 0);
+            if (!array_key_exists($lineId, $shippedQtyByLineId)) {
+                throw new ApiException(400, 'UNKNOWN_SHIPMENT_ITEM', "Item {$lineId} bukan bagian dari pengiriman ini");
+            }
+            $shippedQty = $shippedQtyByLineId[$lineId];
+            $good = (float) ($line['receivedGood'] ?? 0);
+            $reject = (float) ($line['reject'] ?? 0);
+            $shortage = (float) ($line['shortage'] ?? 0);
+            if ($good < 0 || $reject < 0 || $shortage < 0) {
+                throw new ApiException(400, 'NEGATIVE_QTY', "Item {$lineId}: jumlah tidak boleh negatif");
+            }
+            if (abs(($good + $reject + $shortage) - $shippedQty) > 0.0001) {
+                throw new ApiException(400, 'RECEIPT_MATH_INVALID',
+                    "Item {$lineId}: Diterima Baik + Reject + Kurang harus sama dengan jumlah dikirim ({$shippedQty})"
+                );
+            }
+            if ($reject > 0.0001 || $shortage > 0.0001) {
+                $anyDiscrepancy = true;
+            }
+            $rows[] = [
+                'lineId' => $lineId,
+                'shippedQty' => $shippedQty,
+                'good' => $good,
+                'reject' => $reject,
+                'shortage' => $shortage,
+                'reason' => isset($line['reason']) && trim((string) $line['reason']) !== '' ? (string) $line['reason'] : null,
+            ];
+        }
+
+        // Real-UAT rule: Reject/Kurang > 0 on ANY item requires at least
+        // one photo before the submission is even allowed to succeed.
+        if ($anyDiscrepancy && $evidenceFiles === []) {
+            throw new ApiException(400, 'EVIDENCE_REQUIRED', 'Bukti foto wajib diunggah untuk barang reject/rusak atau kurang.');
+        }
+
+        return ['rows' => $rows, 'anyDiscrepancy' => $anyDiscrepancy];
+    }
+
+    /**
+     * GET /api/admin/receipts — Konfirmasi Toko list (Part I). Every row
+     * (Regular or special/non-regular) now carries an explicit normalized
+     * `source` — task's own Section H: "special/non-regular shipments must
+     * appear with a clear source badge... and show Delivery Method."
+     */
     public function adminList(?string $tanggal, ?string $status): array
     {
         $rows = $this->repo->listForAdmin($this->pdo, $tanggal, $status);
-        return array_map(static fn ($r) => [
+        return array_map(static function ($r) {
+            $isSpecial = ($r['source_type'] ?? null) === 'special_order_do';
+            $sourceType = $isSpecial
+                ? NormalizedSourceType::fromSpecialOrder((string) $r['special_source_type'], $r['special_non_store_source'] ?? null)
+                : NormalizedSourceType::REGULAR_STORE_PO;
+            $deliveryMethod = $r['delivery_method'] ?? 'DRIVER_INTERNAL';
+            $driverName = ($deliveryMethod === 'EXTERNAL_COURIER')
+                ? 'Kurir: ' . ($r['courier_name'] ?? ucfirst((string) ($r['courier_provider'] ?? 'kurir')))
+                : (($r['driver_full_name'] ?? '') !== '' ? $r['driver_full_name'] : $r['driver_username']);
+            return [
             'shipmentId' => (int) $r['shipment_id'],
             'doId' => $r['delivery_order_id'] !== null ? (int) $r['delivery_order_id'] : null,
-            'docNo' => $r['doc_no'],
+            'docNo' => $r['doc_no'] ?? $r['special_doc_no'],
             'storeId' => (int) $r['store_id'],
             'storeName' => $r['store_name'],
             'tanggal' => $r['tanggal'],
             'shipmentGroup' => $r['shipment_group'],
             'shippedAt' => $r['shipped_at'],
-            'driverName' => ($r['driver_full_name'] ?? '') !== '' ? $r['driver_full_name'] : $r['driver_username'],
+            'driverName' => $driverName,
+            'source' => ['type' => $sourceType, 'label' => NormalizedSourceType::label($sourceType), 'orderNo' => $r['special_order_no'] ?? null],
+            'deliveryMethod' => $deliveryMethod,
             'emailStatus' => $r['email_status'] ?? null,
             'totalShipped' => (float) $r['total_shipped'],
             'totalGood' => (float) $r['total_good'],
@@ -246,7 +426,8 @@ final class ReceiptService
             'receiverName' => $r['receiver_name'],
             'confirmedAt' => $r['confirmed_at'],
             'verifiedAt' => $r['verified_at'],
-        ], $rows);
+            ];
+        }, $rows);
     }
 
     /**
@@ -306,8 +487,8 @@ final class ReceiptService
             'verifiedAt' => $receipt['verified_at'],
             'verifiedByName' => $this->repo->findVerifierName($this->pdo, $receipt['verified_by'] !== null ? (int) $receipt['verified_by'] : null),
             'items' => array_map(static fn ($it) => [
-                'shipmentItemId' => (int) $it['shipment_item_id'],
-                'productId' => (int) $it['product_id'],
+                'shipmentItemId' => $it['shipment_item_id'] !== null ? (int) $it['shipment_item_id'] : (int) $it['special_order_do_shipment_item_id'],
+                'productId' => $it['product_id'] !== null ? (int) $it['product_id'] : null,
                 'productName' => $it['product_name'],
                 'shippedQty' => (float) $it['shipped_qty'],
                 'receivedGoodQty' => (float) $it['received_good_qty'],

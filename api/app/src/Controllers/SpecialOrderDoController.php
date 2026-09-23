@@ -8,6 +8,7 @@ use Amor\Api\ApiException;
 use Amor\Api\Auth;
 use Amor\Api\Database;
 use Amor\Api\Idempotency;
+use Amor\Api\Mail\ShipmentEmailService;
 use Amor\Api\Request;
 use Amor\Api\Response;
 use Amor\Api\SpecialOrder\SpecialOrderDoService;
@@ -133,11 +134,20 @@ final class SpecialOrderDoController
         $id = (int) $request->routeParams['id'];
         $items = $request->input('items');
 
-        Idempotency::handle($request, 'POST /api/special-order-do/{id}/depart', function (PDO $pdo) use ($request, $userId, $id, $items) {
+        // Captured only if a fresh dispatch actually runs — an exact
+        // Idempotency-Key replay short-circuits before $work runs at all,
+        // so $emailOutboxId stays null and no duplicate email attempt ever
+        // fires for a replayed request (same discipline as
+        // Controllers\DispatchController::departures()'s own $createdShipments).
+        $emailOutboxId = null;
+        Idempotency::handle($request, 'POST /api/special-order-do/{id}/depart', function (PDO $pdo) use ($request, $userId, $id, $items, &$emailOutboxId) {
             $service = new SpecialOrderDoService($pdo);
             $dto = $service->confirmDeparture($id, is_array($items) ? $items : null, $userId, $request->header('Idempotency-Key'));
+            $emailOutboxId = $dto['emailOutboxId'] ?? null;
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_do', 'recordKey' => (string) $id];
         });
+
+        self::attemptEmailAfterCommit($emailOutboxId, $userId, $request);
     }
 
     /** POST /api/special-order-do/{id}/courier-handover — EXTERNAL_COURIER's "Barang Diserahkan ke Kurir". */
@@ -148,11 +158,36 @@ final class SpecialOrderDoController
         $items = $request->input('items');
         $note = $request->input('handoverNote');
 
-        Idempotency::handle($request, 'POST /api/special-order-do/{id}/courier-handover', function (PDO $pdo) use ($request, $userId, $id, $items, $note) {
+        $emailOutboxId = null;
+        Idempotency::handle($request, 'POST /api/special-order-do/{id}/courier-handover', function (PDO $pdo) use ($request, $userId, $id, $items, $note, &$emailOutboxId) {
             $service = new SpecialOrderDoService($pdo);
             $dto = $service->courierHandover($id, is_array($items) ? $items : null, $note, $userId, $request->header('Idempotency-Key'));
+            $emailOutboxId = $dto['emailOutboxId'] ?? null;
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order_do', 'recordKey' => (string) $id];
         });
+
+        self::attemptEmailAfterCommit($emailOutboxId, $userId, $request);
+    }
+
+    /**
+     * Runs ONLY after Database::transaction() (inside Idempotency::handle())
+     * has actually committed — see Mail\ShipmentEmailService::attemptSend()'s
+     * own docblock for why an SMTP failure here can NEVER roll back the
+     * dispatch that just succeeded. Best-effort: never turns an
+     * already-successful departure/handover into an error response the
+     * caller would see as failed.
+     */
+    private static function attemptEmailAfterCommit(?int $emailOutboxId, int $userId, Request $request): void
+    {
+        if ($emailOutboxId === null) {
+            return;
+        }
+        $emailService = new ShipmentEmailService();
+        try {
+            $emailService->attemptSend($emailOutboxId, $userId, $request->header('Idempotency-Key'));
+        } catch (\Throwable $e) {
+            error_log('ShipmentEmailService::attemptSend failed for outboxId=' . $emailOutboxId . ': ' . $e->getMessage());
+        }
     }
 
     private static function requireInt(mixed $v, string $field): int

@@ -245,16 +245,30 @@ final class DoRepository
         return $stmt->fetchAll();
     }
 
-    /** One shipment header, joined with store/DO/factory for the driver/admin detail screens. */
+    /**
+     * One shipment header, joined with store/DO/factory for the
+     * driver/admin detail screens. Also LEFT JOINs special_order_do +
+     * special_order — a special/non-regular shipment (source_type =
+     * 'special_order_do') has no delivery_order_id, so doc_no/do_tanggal
+     * come back NULL from the Regular-DO join above; callers that need to
+     * render source-specific fields use the special_* columns instead
+     * (task's own Section A — never infer source_type from a bare NULL
+     * doc_no, use the real joined columns).
+     */
     public function findShipmentById(PDO $pdo, int $shipmentId): ?array
     {
         $stmt = $pdo->prepare(
             'SELECT sh.*, s.canonical_name AS store_name, o.doc_no, o.tanggal AS do_tanggal,
-                    f.name AS factory_name
+                    f.name AS factory_name,
+                    sodo.doc_no AS special_doc_no, sodo.tanggal AS special_tanggal,
+                    sodo.special_order_id AS special_order_id, so2.order_no AS special_order_no,
+                    so2.source_type AS special_source_type, so2.non_store_source AS special_non_store_source
              FROM shipment sh
              INNER JOIN store s ON s.store_id = sh.store_id
              LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
              LEFT JOIN factory f ON f.factory_id = sh.factory_id
+             LEFT JOIN special_order_do sodo ON sodo.special_order_do_id = sh.special_order_do_id
+             LEFT JOIN special_order so2 ON so2.special_order_id = sodo.special_order_id
              WHERE sh.shipment_id = ?'
         );
         $stmt->execute([$shipmentId]);

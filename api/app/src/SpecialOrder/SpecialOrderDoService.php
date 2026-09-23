@@ -6,6 +6,7 @@ namespace Amor\Api\SpecialOrder;
 
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
+use Amor\Api\Mail\ShipmentEmailService;
 use Amor\Api\Users\UserRepository;
 use PDO;
 
@@ -38,12 +39,14 @@ final class SpecialOrderDoService
     private SpecialOrderDoRepository $repo;
     private SpecialOrderRepository $orderRepo;
     private UserRepository $userRepo;
+    private ShipmentEmailService $emailService;
 
     public function __construct(private PDO $pdo)
     {
         $this->repo = new SpecialOrderDoRepository();
         $this->orderRepo = new SpecialOrderRepository();
         $this->userRepo = new UserRepository();
+        $this->emailService = new ShipmentEmailService();
     }
 
     /**
@@ -400,6 +403,20 @@ final class SpecialOrderDoService
 
         $newStatus = $this->repo->refreshStatus($this->pdo, $doId);
 
+        // Automatic Bakery email / Digital Surat Jalan (task's own "Final
+        // Pre-Live Rework" Section E) — the outbox ROW is created here,
+        // INSIDE this same transaction, mirroring Dispatch\DepartureService
+        // ::confirmDeparture()'s own exact pattern: a row insert can never
+        // fail the way an SMTP handshake can, so it's safe here; the real
+        // send attempt happens strictly AFTER commit, in
+        // Controllers\SpecialOrderDoController::depart()/courierHandover().
+        // storeId = the DO's own drop_store_id — always a real store row
+        // (migration 0012 made drop_store_id NOT NULL on every
+        // special_order_do), so ShipmentEmailService::createOutboxForShipment()
+        // needs NO changes to work here: it already only ever looks up
+        // store.email by storeId, nothing Regular-DO-specific.
+        $outbox = $this->emailService->createOutboxForShipment($this->pdo, $shipmentId, (int) $do['drop_store_id']);
+
         Audit::write(
             $this->pdo, $requestId, $userId,
             $expectedMethod === 'DRIVER_INTERNAL' ? 'special_order_do.depart' : 'special_order_do.courier_handover',
@@ -409,6 +426,7 @@ final class SpecialOrderDoService
 
         $dto = $this->buildDoDto($doId);
         $dto['shipmentId'] = $shipmentId;
+        $dto['emailOutboxId'] = $outbox['outboxId'];
         return $dto;
     }
 

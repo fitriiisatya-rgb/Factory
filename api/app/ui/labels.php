@@ -144,3 +144,23 @@ function ui_task_source_badge(string $source, string $label): string
     };
     return '<span class="badge badge-' . $color . '">' . ui_esc($label) . '</span>';
 }
+
+/**
+ * Downstream normalized source badge (Amor\Api\SpecialOrder\
+ * NormalizedSourceType) — a DIFFERENT axis/vocabulary from
+ * ui_task_source_badge() above (that one is Task per Divisi's PRODUCTION
+ * demand source; this one is the shipment/DO/receipt's DOWNSTREAM
+ * fulfillment source — task's own Final Pre-Live Rework Section A/H).
+ */
+function ui_normalized_source_badge(string $normalizedType, string $label): string
+{
+    $color = match ($normalizedType) {
+        'REGULAR_STORE_PO' => 'primary',
+        'SPECIAL_STORE_ORDER' => 'warning',
+        'CS_ORDER', 'SALES_ORDER' => 'success',
+        'DIRECT_CUSTOMER', 'GENERAL_ORDER' => 'neutral',
+        'REPLACEMENT_REJECT' => 'danger',
+        default => 'neutral',
+    };
+    return '<span class="badge badge-' . $color . '">' . ui_esc($label) . '</span>';
+}

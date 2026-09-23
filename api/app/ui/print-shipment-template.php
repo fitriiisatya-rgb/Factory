@@ -72,13 +72,18 @@ function ui_render_shipment_print_document(array $shipment, string $printedByNam
     </div>
   </div>
 
+  <?php $source = $shipment['source'] ?? null; $isSpecial = $source !== null && $source['type'] !== 'REGULAR_STORE_PO'; ?>
   <div class="print-meta-grid">
     <div><b>No. DO</b><?= ui_esc((string) ($shipment['docNo'] ?? '-')) ?></div>
     <div><b>Tanggal DO</b><?= ui_esc((string) ($shipment['doTanggal'] ?? $shipment['tanggal'] ?? '-')) ?></div>
     <div><b>Tanggal/Jam Berangkat</b><?= ui_esc(ui_fmt_datetime_id($shipment['shippedAt'] ?? null)) ?></div>
-    <div><b>Nama Toko</b><?= ui_esc((string) ($shipment['storeName'] ?? '-')) ?></div>
+    <div><b>Nama Toko/Drop</b><?= ui_esc((string) ($shipment['storeName'] ?? '-')) ?></div>
     <div><b>Factory Asal</b><?= ui_esc((string) ($shipment['factoryName'] ?? '-')) ?></div>
-    <div><b>Driver</b><?= ui_esc((string) ($shipment['driverName'] ?? '-')) ?></div>
+    <?php if ($isSpecial): ?>
+    <div><b>Sumber</b><?= ui_esc((string) $source['label']) ?><?= $source['orderNo'] ? ' &middot; ' . ui_esc((string) $source['orderNo']) : '' ?></div>
+    <div><b>Metode Pengiriman</b><?= $source['deliveryMethod'] === 'EXTERNAL_COURIER' ? 'Kurir Eksternal' : 'Driver Internal' ?></div>
+    <?php endif; ?>
+    <div><b><?= $isSpecial && $source['deliveryMethod'] === 'EXTERNAL_COURIER' ? 'Kurir' : 'Driver' ?></b><?= ui_esc((string) ($shipment['driverName'] ?? '-')) ?></div>
     <div><b>Group Pengiriman</b><?= ui_esc((string) ($shipment['shipmentGroup'] ?? '-')) ?></div>
   </div>
 
@@ -111,10 +116,16 @@ function ui_render_shipment_print_document(array $shipment, string $printedByNam
 
   <?php if ($shipment['status'] !== 'void'): ?>
   <div class="print-receipt-qr">
-    <div class="print-receipt-qr-code <?= ui_esc($qrSizeClass) ?>"><?= ui_do_receipt_qr_svg($pdo, (int) $shipment['doId']) ?></div>
+    <div class="print-receipt-qr-code <?= ui_esc($qrSizeClass) ?>">
+      <?= $shipment['doId'] !== null ? ui_do_receipt_qr_svg($pdo, (int) $shipment['doId']) : ui_shipment_receipt_qr_svg($pdo, (int) $shipment['shipmentId']) ?>
+    </div>
     <div class="print-receipt-qr-label">
       Scan untuk Konfirmasi Penerimaan Barang<br>
+      <?php if ($shipment['doId'] !== null): ?>
       <span class="print-receipt-qr-note">(QR ini sama untuk semua pengiriman pada DO ini — toko memilih pengiriman yang sesuai saat konfirmasi)</span>
+      <?php else: ?>
+      <span class="print-receipt-qr-note">(QR ini khusus untuk pengiriman SHP-<?= (int) $shipment['shipmentId'] ?> ini)</span>
+      <?php endif; ?>
     </div>
   </div>
   <?php endif; ?>

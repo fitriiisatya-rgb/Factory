@@ -35,6 +35,24 @@ function ui_do_receipt_qr_svg(PDO $pdo, int $doId): string
 }
 
 /**
+ * The shipment-scoped counterpart of ui_do_receipt_qr_svg() — used by a
+ * special/non-regular Surat Jalan (Dispatch\ReceiptService::
+ * getOrCreateShipmentToken()), since that kind of shipment has no owning
+ * delivery_order_id to key a DO-level QR on. Same /api/_receive/ portal,
+ * same page, same receipt.js — only the token namespace differs (see
+ * ReceiptService::getPublicView()'s own docblock for how one token
+ * resolves against either table transparently).
+ */
+function ui_shipment_receipt_qr_svg(PDO $pdo, int $shipmentId): string
+{
+    $token = (new ReceiptService($pdo))->getOrCreateShipmentToken($shipmentId);
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $url = "{$scheme}://{$host}/api/_receive/?token={$token}";
+    return QrEncoder::toSvg($url, 3);
+}
+
+/**
  * Distinct factory name(s) for a DO's items, joined — a DO can legitimately
  * span two factories (locked cross-factory-store design), so this is never
  * a single lookup. $factoryNamesById is a cheap map built once per print

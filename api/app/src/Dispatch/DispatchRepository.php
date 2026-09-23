@@ -348,20 +348,35 @@ final class DispatchRepository
 
     /**
      * @return array<int,array> each row is a shipment header PLUS
-     * product_count/total_qty aggregated from its OWN shipment_item rows
-     * (one extra correlated-subquery pair per row, not a per-row extra
-     * round-trip — see the real-UAT "Riwayat card must show 2 produk · 7
-     * pcs, not just the store/DO/date" requirement).
+     * product_count/total_qty aggregated from its OWN real lines — either
+     * shipment_item (Regular PO) OR special_order_do_shipment_item
+     * (special/non-regular — task's own "Final Pre-Live Rework" Section C:
+     * a special shipment must not lose Driver History visibility after
+     * departure). Exactly one of the two correlated subqueries ever
+     * returns non-zero for a given row (a shipment's source_type is one or
+     * the other, never both), so simple addition is safe — never a
+     * per-row extra round-trip. Also exposes the special DO's own doc_no/
+     * source columns (LEFT JOIN, all NULL for a Regular shipment) so the
+     * Driver Portal's Riwayat card can show "Source: CS · DOK-..." without
+     * a second query per row.
      */
     public function findShipmentHistoryForDriver(PDO $pdo, int $driverUserId, int $limit = 50): array
     {
         $stmt = $pdo->prepare(
             "SELECT sh.*, s.canonical_name AS store_name, o.doc_no,
-                    (SELECT COUNT(*) FROM shipment_item si WHERE si.shipment_id = sh.shipment_id) AS product_count,
-                    (SELECT COALESCE(SUM(si.qty), 0) FROM shipment_item si WHERE si.shipment_id = sh.shipment_id) AS total_qty
+                    sodo.doc_no AS special_doc_no, so2.source_type AS special_source_type,
+                    so2.non_store_source AS special_non_store_source, so2.order_no AS special_order_no,
+                    r.status AS receipt_status,
+                    (SELECT COUNT(*) FROM shipment_item si WHERE si.shipment_id = sh.shipment_id)
+                      + (SELECT COUNT(*) FROM special_order_do_shipment_item sodsi WHERE sodsi.shipment_id = sh.shipment_id) AS product_count,
+                    (SELECT COALESCE(SUM(si.qty), 0) FROM shipment_item si WHERE si.shipment_id = sh.shipment_id)
+                      + (SELECT COALESCE(SUM(sodsi.qty), 0) FROM special_order_do_shipment_item sodsi WHERE sodsi.shipment_id = sh.shipment_id) AS total_qty
              FROM shipment sh
              INNER JOIN store s ON s.store_id = sh.store_id
              LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
+             LEFT JOIN special_order_do sodo ON sodo.special_order_do_id = sh.special_order_do_id
+             LEFT JOIN special_order so2 ON so2.special_order_id = sodo.special_order_id
+             LEFT JOIN shipment_receipt r ON r.shipment_id = sh.shipment_id
              WHERE sh.shipped_by = ? ORDER BY sh.shipment_id DESC LIMIT " . max(1, min(200, $limit))
         );
         $stmt->execute([$driverUserId]);

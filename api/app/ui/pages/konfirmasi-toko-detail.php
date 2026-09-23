@@ -66,9 +66,11 @@ $verifyBlockedByEvidence = $canVerify && $hasDiscrepancy && $evidenceCount === 0
     <?= ui_badge(ui_receipt_status_label($status)) ?>
   </div>
 
-  <div class="kpi-grid kpi-grid-4">
+  <?php $source = $shipment['source'] ?? ['type' => 'REGULAR_STORE_PO', 'label' => 'PO Reguler']; $isSpecial = $source['type'] !== 'REGULAR_STORE_PO'; ?>
+  <div class="kpi-grid kpi-grid-5">
     <?= ui_kpi_card(['label' => 'No. DO', 'value' => (string) ($shipment['docNo'] ?? '-'), 'icon' => 'file', 'color' => 'neutral', 'detail' => true]) ?>
-    <?= ui_kpi_card(['label' => 'Driver', 'value' => (string) ($shipment['driverName'] ?? '-'), 'icon' => 'truck', 'color' => 'primary', 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => 'Sumber', 'value' => $source['label'] . ($source['orderNo'] ?? null ? ' · ' . $source['orderNo'] : ''), 'icon' => 'file', 'color' => $isSpecial ? 'warning' : 'primary', 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => $isSpecial && $source['deliveryMethod'] === 'EXTERNAL_COURIER' ? 'Kurir' : 'Driver', 'value' => (string) ($shipment['driverName'] ?? '-'), 'icon' => 'truck', 'color' => 'primary', 'detail' => true]) ?>
     <?= ui_kpi_card(['label' => 'Factory Asal', 'value' => (string) ($shipment['factoryName'] ?? '-'), 'icon' => 'box', 'color' => 'neutral', 'detail' => true]) ?>
     <?= ui_kpi_card(['label' => 'Waktu Berangkat', 'value' => ui_fmt_datetime_id($shipment['shippedAt'] ?? null), 'icon' => 'chart', 'color' => 'neutral', 'detail' => true]) ?>
   </div>

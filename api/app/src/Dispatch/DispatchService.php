@@ -9,6 +9,7 @@ use Amor\Api\Audit;
 use Amor\Api\Delivery\DoRepository;
 use Amor\Api\Fg\FgRepository;
 use Amor\Api\Mail\ShipmentEmailRepository;
+use Amor\Api\SpecialOrder\NormalizedSourceType;
 use Amor\Api\Users\UserRepository;
 use PDO;
 
@@ -37,6 +38,7 @@ final class DispatchService
     private ReceiptRepository $receiptRepo;
     private UserRepository $userRepo;
     private ShipmentEmailRepository $emailRepo;
+    private ShipmentLineResolver $lineResolver;
 
     public function __construct(private PDO $pdo)
     {
@@ -46,6 +48,7 @@ final class DispatchService
         $this->receiptRepo = new ReceiptRepository();
         $this->userRepo = new UserRepository();
         $this->emailRepo = new ShipmentEmailRepository();
+        $this->lineResolver = new ShipmentLineResolver();
     }
 
     /**
@@ -456,13 +459,49 @@ final class DispatchService
             throw new ApiException(403, 'FORBIDDEN', 'Anda tidak memiliki akses ke pengiriman ini');
         }
 
-        // Product table: shipment_item's OWN qty is the dispatch truth after
-        // departure (task's own "Do NOT use original claim quantities if
-        // different") — never dispatch_claim.claimed_qty/active_qty.
-        $items = $this->doRepo->findShipmentItems($this->pdo, $shipmentId);
-        $totalQty = array_sum(array_map(static fn ($i) => (float) $i['qty'], $items));
+        $isSpecial = ($shipment['source_type'] ?? null) === 'special_order_do';
 
-        $driver = $shippedBy !== null ? $this->userRepo->findById($this->pdo, $shippedBy) : null;
+        // Real, per-dispatch lines via the shared normalized read model
+        // (Dispatch\ShipmentLineResolver) — shipment_item's/special_order_do_
+        // shipment_item's OWN qty is the dispatch truth after departure
+        // (task's own "Do NOT use original claim quantities if different")
+        // — never dispatch_claim.claimed_qty/active_qty, never planned_qty.
+        $lines = $this->lineResolver->linesForShipment($this->pdo, $shipment);
+        $totalQty = array_sum(array_map(static fn ($l) => $l['qtyShipped'], $lines));
+
+        // For EXTERNAL_COURIER, shipped_by is the ADMIN/PPIC account that
+        // performed the handover — never the courier itself (no Driver
+        // account exists for a courier) — so "driverName" must show the
+        // courier's identity instead of that admin's own name (task's own
+        // Section C: "External Courier shipments do NOT need to appear as
+        // Driver-owned" — but the detail screen must still say who/what
+        // actually carried the goods).
+        $driver = null;
+        $driverDisplayName = null;
+        if ($isSpecial && ($shipment['delivery_method'] ?? null) === 'EXTERNAL_COURIER') {
+            $providerLabel = ucfirst((string) ($shipment['courier_provider'] ?? 'kurir'));
+            $driverDisplayName = 'Kurir: ' . ($shipment['courier_name'] ?? $providerLabel) . ' (' . $providerLabel . ')';
+        } elseif ($shippedBy !== null) {
+            $driver = $this->userRepo->findById($this->pdo, $shippedBy);
+            $driverDisplayName = $driver !== null ? self::displayName($driver) : null;
+        }
+
+        $source = $isSpecial ? [
+            'type' => NormalizedSourceType::fromSpecialOrder((string) $shipment['special_source_type'], $shipment['special_non_store_source'] ?? null),
+            'orderNo' => $shipment['special_order_no'] ?? null,
+            'deliveryMethod' => $shipment['delivery_method'] ?? null,
+            'courierProvider' => $shipment['courier_provider'] ?? null,
+            'courierName' => $shipment['courier_name'] ?? null,
+            'externalOrderReference' => $shipment['external_order_reference'] ?? null,
+        ] : [
+            'type' => NormalizedSourceType::REGULAR_STORE_PO,
+            'orderNo' => null,
+            'deliveryMethod' => 'DRIVER_INTERNAL',
+            'courierProvider' => null,
+            'courierName' => null,
+            'externalOrderReference' => null,
+        ];
+        $source['label'] = NormalizedSourceType::label($source['type']);
 
         // Timeline "Driver Claim" event — earliest claim actually resolved
         // into this shipment, if any is still traceable. Never invented
@@ -488,7 +527,7 @@ final class DispatchService
                 'verifiedAt' => $receipt['verified_at'],
                 'verifiedByName' => $verifier !== null ? self::displayName($verifier) : null,
                 'items' => array_map(static fn ($ri) => [
-                    'productId' => (int) $ri['product_id'],
+                    'productId' => $ri['product_id'] !== null ? (int) $ri['product_id'] : null,
                     'productName' => $ri['product_name'],
                     'shippedQty' => (float) $ri['shipped_qty'],
                     'receivedGoodQty' => (float) $ri['received_good_qty'],
@@ -530,26 +569,35 @@ final class DispatchService
             // owning DO's real id (to reuse the EXISTING DO-level receipt
             // QR token — "1 DO = 1 receipt token" stays unchanged, never a
             // new per-shipment token) — additive field, doesn't affect any
-            // existing consumer of this DTO.
-            'doId' => (int) $shipment['delivery_order_id'],
+            // existing consumer of this DTO. null for a special-order
+            // shipment (it has no delivery_order_id at all) — use
+            // specialOrderDoId + the shipment-scoped QR token instead (see
+            // print-shipment-template.php's own branch).
+            'doId' => !$isSpecial ? (int) $shipment['delivery_order_id'] : null,
+            'specialOrderDoId' => $isSpecial ? (int) $shipment['special_order_do_id'] : null,
             'storeId' => (int) $shipment['store_id'],
             'storeName' => $shipment['store_name'],
-            'docNo' => $shipment['doc_no'],
-            'doTanggal' => $shipment['do_tanggal'],
+            'docNo' => $isSpecial ? $shipment['special_doc_no'] : $shipment['doc_no'],
+            'doTanggal' => $isSpecial ? $shipment['special_tanggal'] : $shipment['do_tanggal'],
             'tanggal' => $shipment['tanggal'],
             'shipmentGroup' => $shipment['shipment_group'],
             'factoryName' => $shipment['factory_name'],
             'status' => $shipment['status'],
             'shippedAt' => $shipment['shipped_at'] ?? $shipment['created_at'],
             'driverUserId' => $shippedBy,
-            'driverName' => $driver !== null ? self::displayName($driver) : null,
-            'items' => array_map(static fn ($i) => [
-                'productId' => (int) $i['product_id'],
-                'productName' => $i['product_name'],
-                'divisionName' => $i['division_name'] ?? null,
-                'qty' => (float) $i['qty'],
-            ], $items),
-            'summary' => ['productCount' => count($items), 'totalQty' => $totalQty],
+            'driverName' => $driverDisplayName,
+            'source' => $source,
+            'items' => array_map(static fn ($l) => [
+                'lineId' => $l['lineId'],
+                'itemType' => $l['itemType'],
+                'productId' => $l['productId'],
+                'specialCatalogId' => $l['specialCatalogId'],
+                'productName' => $l['itemName'],
+                'divisionName' => $l['division'],
+                'qty' => $l['qtyShipped'],
+                'notes' => $l['notes'],
+            ], $lines),
+            'summary' => ['productCount' => count($lines), 'totalQty' => $totalQty],
             'claim' => $firstClaim !== null ? [
                 'driverName' => $firstClaim['driver_full_name'] !== null && $firstClaim['driver_full_name'] !== ''
                     ? $firstClaim['driver_full_name'] : $firstClaim['driver_username'],

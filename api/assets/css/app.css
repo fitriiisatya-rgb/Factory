@@ -269,6 +269,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
  */
 .kpi-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .kpi-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.kpi-grid-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .kpi-delta { font-weight: 700; }
 .kpi-delta.up { color: var(--success); }
 .kpi-delta.down { color: var(--danger); }

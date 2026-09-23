@@ -45,7 +45,7 @@ $statusOptions = [
 <div class="card section">
   <div class="table-scroll"><table class="data-table">
     <thead><tr>
-      <th>Toko</th><th>No. DO</th><th>Driver</th><th>Grup</th><th class="num">Dikirim</th><th class="num">Baik</th>
+      <th>Toko/Drop</th><th>No. DO</th><th>Sumber</th><th>Metode</th><th>Driver/Kurir</th><th>Grup</th><th class="num">Dikirim</th><th class="num">Baik</th>
       <th class="num">Reject</th><th class="num">Kurang</th><th>Status Email</th><th>Status Penerimaan</th><th>Dikonfirmasi</th><th>Aksi</th>
     </tr></thead>
     <tbody>
@@ -54,6 +54,8 @@ $statusOptions = [
     <tr class="row-clickable" data-row-href="<?= ui_esc($detailUrl) ?>">
       <td><?= ui_esc((string) $r['storeName']) ?></td>
       <td><?= ui_esc((string) ($r['docNo'] ?? '-')) ?></td>
+      <td><?= ui_normalized_source_badge($r['source']['type'], $r['source']['label']) ?></td>
+      <td><?= $r['deliveryMethod'] === 'EXTERNAL_COURIER' ? 'Kurir Eksternal' : 'Driver Internal' ?></td>
       <td><?= ui_esc((string) ($r['driverName'] ?? '-')) ?></td>
       <td><?= ui_esc((string) $r['shipmentGroup']) ?></td>
       <td class="num"><?= ui_fmt_num($r['totalShipped']) ?></td>

@@ -2214,7 +2214,7 @@ runTest('ADM-TYPE-02 long email values stay inside their card (overflow-wrap/wor
     expect((bool) preg_match('/\.kpi-card--detail \.kpi-value\s*\{[^}]*word-break:\s*break-word/s', $css), 'ADM-TYPE-02: expected word-break: break-word as a fallback');
 });
 
-runTest('ADM-TYPE-03/04/05 all 10 detail-info cards across the 3 sections (4 summary + 3 email + 3 konfirmasi) carry the detail modifier, and the old inline grid override is gone', function () use ($adminHttp) {
+runTest('ADM-TYPE-03/04/05 all 11 detail-info cards across the 3 sections (5 summary + 3 email + 3 konfirmasi) carry the detail modifier, and the old inline grid override is gone', function () use ($adminHttp) {
     $shipmentId = $GLOBALS['photo_shipment_id'] ?? null;
     expect($shipmentId !== null, 'depends on STORE-EVID-04 having run first');
     $r = $adminHttp->request('GET', "/_ui-preview/?page=konfirmasi-toko-detail&shipmentId={$shipmentId}");
@@ -2222,11 +2222,13 @@ runTest('ADM-TYPE-03/04/05 all 10 detail-info cards across the 3 sections (4 sum
     // Whole-page counts (not a fragile fixed-length substring slice —
     // ui_icon()'s inline SVG paths vary a lot in byte length per icon)
     // are exact because this page renders EXACTLY these 3 kpi-grid
-    // sections: 4 summary cards (No. DO/Driver/Factory Asal/Waktu
-    // Berangkat) + 3 Email Pengiriman cards (Status/Tujuan/Percobaan) +
-    // 3 Konfirmasi Toko cards (Nama Penerima/Waktu Konfirmasi/Status).
-    expect(substr_count($r['body'], 'kpi-card--detail') === 10, 'ADM-TYPE-03/04/05: expected exactly 10 kpi-card--detail cards (4+3+3) on this page, got ' . substr_count($r['body'], 'kpi-card--detail'));
-    expect(substr_count($r['body'], 'kpi-grid-4') === 1, 'ADM-TYPE-04: expected exactly 1 kpi-grid-4 (the shipment summary row)');
+    // sections: 5 summary cards (No. DO/Sumber/Driver/Factory Asal/Waktu
+    // Berangkat — Sumber added by the Final Pre-Live Rework's downstream
+    // source badge, task's own Section H) + 3 Email Pengiriman cards
+    // (Status/Tujuan/Percobaan) + 3 Konfirmasi Toko cards (Nama
+    // Penerima/Waktu Konfirmasi/Status).
+    expect(substr_count($r['body'], 'kpi-card--detail') === 11, 'ADM-TYPE-03/04/05: expected exactly 11 kpi-card--detail cards (5+3+3) on this page, got ' . substr_count($r['body'], 'kpi-card--detail'));
+    expect(substr_count($r['body'], 'kpi-grid-5') === 1, 'ADM-TYPE-04: expected exactly 1 kpi-grid-5 (the shipment summary row)');
     expect(substr_count($r['body'], 'kpi-grid-3') === 2, 'ADM-TYPE-03/05: expected exactly 2 kpi-grid-3 (Email Pengiriman + Konfirmasi Toko rows)');
     expect(!str_contains($r['body'], 'style="grid-template-columns'), 'ADM-TYPE-03/04/05: expected the old inline grid-template-columns override to be COMPLETELY GONE (it beat the responsive .kpi-grid breakpoints by specificity, so these rows never actually collapsed to fewer columns on iPad/mobile)');
 });

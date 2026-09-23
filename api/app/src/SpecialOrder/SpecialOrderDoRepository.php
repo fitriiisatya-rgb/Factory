@@ -275,6 +275,32 @@ final class SpecialOrderDoRepository
     }
 
     /**
+     * Every real per-dispatch line for one shipment — the special-order
+     * counterpart of Delivery\DoRepository::findShipmentItems(), read
+     * through Dispatch\ShipmentLineResolver so both sources render behind
+     * one normalized shape (task's own Section B — never a fake product_id
+     * for a custom/catalog item).
+     * @return array<int,array>
+     */
+    public function findShipmentLines(PDO $pdo, int $shipmentId): array
+    {
+        $stmt = $pdo->prepare(
+            "SELECT sodsi.special_order_do_shipment_item_id, sodsi.special_order_do_item_id, sodsi.qty,
+                    soi.special_order_item_id, soi.item_type, soi.product_id, soi.special_catalog_id, soi.item_name_snapshot, soi.special_note,
+                    d.name AS division_name, f.name AS factory_name
+             FROM special_order_do_shipment_item sodsi
+             INNER JOIN special_order_do_item sodi ON sodi.special_order_do_item_id = sodsi.special_order_do_item_id
+             INNER JOIN special_order_item soi ON soi.special_order_item_id = sodi.special_order_item_id
+             INNER JOIN division d ON d.division_id = soi.division_id
+             INNER JOIN factory f ON f.factory_id = d.factory_id
+             WHERE sodsi.shipment_id = ?
+             ORDER BY sodsi.special_order_do_shipment_item_id"
+        );
+        $stmt->execute([$shipmentId]);
+        return $stmt->fetchAll();
+    }
+
+    /**
      * The Driver Portal pool — DRIVER_INTERNAL only (task's own explicit
      * mutual-exclusion rule: "A DO configured as EXTERNAL_COURIER must NOT
      * be claimable by internal driver"), open/partial only (nothing left

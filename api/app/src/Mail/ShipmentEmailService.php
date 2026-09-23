@@ -103,7 +103,16 @@ final class ShipmentEmailService
         // shipped_by-only ownership check this method also serves the
         // Driver's own detail page with).
         $detail = (new DispatchService($pdo))->shipmentDetail($shipmentId, $triggeredBy ?? 0, true);
-        $token = (new ReceiptService($pdo))->getReceiptToken((int) $detail['doId']);
+        // A special/non-regular shipment has no delivery_order_id (doId is
+        // null — see DispatchService::shipmentDetail()'s own branch) — its
+        // Digital Surat Jalan link uses the shipment-scoped token instead
+        // of the Regular DO token (task's own Section F). The link's own
+        // URL shape/handling never changes: ReceiptService::getPublicView()
+        // already resolves either token type transparently.
+        $receiptService = new ReceiptService($pdo);
+        $token = $detail['doId'] !== null
+            ? $receiptService->getReceiptToken((int) $detail['doId'])
+            : $receiptService->getOrCreateShipmentToken($shipmentId);
         $message = $this->buildMessage($detail, $store, $token, $recipient);
 
         $result = MailTransportFactory::create()->send($message);
@@ -183,6 +192,9 @@ final class ShipmentEmailService
             . '<tr><td style="padding:4px 8px;color:#666;">Bakery</td><td style="padding:4px 8px;font-weight:bold;">' . htmlspecialchars($storeName) . '</td></tr>'
             . '<tr><td style="padding:4px 8px;color:#666;">No. Shipment</td><td style="padding:4px 8px;">SHP-' . (int) $detail['shipmentId'] . '</td></tr>'
             . '<tr><td style="padding:4px 8px;color:#666;">No. DO</td><td style="padding:4px 8px;">' . htmlspecialchars((string) ($detail['docNo'] ?? '-')) . '</td></tr>'
+            . (($detail['source']['type'] ?? 'REGULAR_STORE_PO') !== 'REGULAR_STORE_PO'
+                ? '<tr><td style="padding:4px 8px;color:#666;">Sumber</td><td style="padding:4px 8px;">' . htmlspecialchars((string) $detail['source']['label']) . '</td></tr>'
+                : '')
             . '<tr><td style="padding:4px 8px;color:#666;">Driver</td><td style="padding:4px 8px;">' . htmlspecialchars((string) ($detail['driverName'] ?? '-')) . '</td></tr>'
             . '<tr><td style="padding:4px 8px;color:#666;">Grup</td><td style="padding:4px 8px;">' . htmlspecialchars((string) $detail['shipmentGroup']) . '</td></tr>'
             . '<tr><td style="padding:4px 8px;color:#666;">Waktu Berangkat</td><td style="padding:4px 8px;">' . htmlspecialchars((string) ($detail['shippedAt'] ?? '-')) . '</td></tr>'

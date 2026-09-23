@@ -59,6 +59,55 @@ final class ReceiptRepository
         return $id !== false ? (int) $id : null;
     }
 
+    // ------------------------------------------------------------------
+    // shipment_receipt_token (migration 0012) — the shipment-scoped
+    // counterpart of delivery_receipt_token/getOrCreateToken above, for a
+    // shipment with no delivery_order_id at all (special/non-regular DO).
+    // Regular PO shipments never mint or use one of these — they keep
+    // using the DO-level token exclusively (backward compatibility,
+    // task's own "existing receipt links already sent by email must
+    // remain valid" — untouched code path above this one).
+    // ------------------------------------------------------------------
+
+    /** Returns the existing token for this shipment, or mints a brand-new high-entropy one. Never regenerates an existing token. */
+    public function getOrCreateShipmentToken(PDO $pdo, int $shipmentId): string
+    {
+        $stmt = $pdo->prepare('SELECT token FROM shipment_receipt_token WHERE shipment_id = ?');
+        $stmt->execute([$shipmentId]);
+        $existing = $stmt->fetchColumn();
+        if ($existing !== false) {
+            return (string) $existing;
+        }
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $token = bin2hex(random_bytes(32));
+            try {
+                $ins = $pdo->prepare('INSERT INTO shipment_receipt_token (shipment_id, token, created_at) VALUES (?, ?, UTC_TIMESTAMP())');
+                $ins->execute([$shipmentId, $token]);
+                return $token;
+            } catch (\PDOException $e) {
+                if ((int) $e->getCode() !== 23000) {
+                    throw $e;
+                }
+                $stmt->execute([$shipmentId]);
+                $existing = $stmt->fetchColumn();
+                if ($existing !== false) {
+                    return (string) $existing;
+                }
+            }
+        }
+        throw new \RuntimeException('Could not allocate a unique shipment receipt token after 5 attempts');
+    }
+
+    /** Public lookup: token -> shipment_id, or null. Tried ONLY after findDoIdByToken() finds nothing (see ReceiptService::resolveToken()). */
+    public function findShipmentIdByToken(PDO $pdo, string $token): ?int
+    {
+        $stmt = $pdo->prepare('SELECT shipment_id FROM shipment_receipt_token WHERE token = ?');
+        $stmt->execute([$token]);
+        $id = $stmt->fetchColumn();
+        return $id !== false ? (int) $id : null;
+    }
+
     public function findReceiptForShipment(PDO $pdo, int $shipmentId): ?array
     {
         $stmt = $pdo->prepare('SELECT * FROM shipment_receipt WHERE shipment_id = ?');
@@ -76,13 +125,21 @@ final class ReceiptRepository
         return $row ?: null;
     }
 
-    /** @return array<int,array> shipment_receipt_item rows for one receipt, product name joined */
+    /**
+     * @return array<int,array> shipment_receipt_item rows for one receipt,
+     * product name joined. LEFT JOIN (never INNER) because a special-order
+     * line has product_id = NULL (migration 0012) — product_name falls
+     * back to the line's own item_name_snapshot in that case, so a
+     * custom/catalog item still renders with a real name, never a fake
+     * product row (task's own Section G — "Do NOT fabricate
+     * shipment_item").
+     */
     public function findReceiptItems(PDO $pdo, int $receiptId): array
     {
         $stmt = $pdo->prepare(
-            'SELECT ri.*, p.name AS product_name FROM shipment_receipt_item ri
-             INNER JOIN product p ON p.product_id = ri.product_id
-             WHERE ri.shipment_receipt_id = ? ORDER BY p.name'
+            'SELECT ri.*, COALESCE(p.name, ri.item_name_snapshot) AS product_name FROM shipment_receipt_item ri
+             LEFT JOIN product p ON p.product_id = ri.product_id
+             WHERE ri.shipment_receipt_id = ? ORDER BY COALESCE(p.name, ri.item_name_snapshot)'
         );
         $stmt->execute([$receiptId]);
         return $stmt->fetchAll();
@@ -98,6 +155,7 @@ final class ReceiptRepository
         return (int) $pdo->lastInsertId();
     }
 
+    /** Regular PO line — shipment_item_id + product_id populated, special_order_do_shipment_item_id/item_name_snapshot left NULL. */
     public function insertReceiptItem(PDO $pdo, int $receiptId, int $shipmentItemId, int $productId, float $shippedQty, float $good, float $reject, float $shortage, ?string $reason): void
     {
         $stmt = $pdo->prepare(
@@ -109,6 +167,24 @@ final class ReceiptRepository
     }
 
     /**
+     * Special/non-regular line — special_order_do_shipment_item_id +
+     * item_name_snapshot populated instead; shipment_item_id always NULL;
+     * product_id populated ONLY when the underlying line is itself an
+     * existing_product special-order item (still never a fake
+     * shipment_item — this is the real special_order_do_shipment_item's
+     * own line id, mutually exclusive with shipment_item_id on this row).
+     */
+    public function insertReceiptItemForSpecialLine(PDO $pdo, int $receiptId, int $specialLineId, ?int $productId, string $itemNameSnapshot, float $shippedQty, float $good, float $reject, float $shortage, ?string $reason): void
+    {
+        $stmt = $pdo->prepare(
+            'INSERT INTO shipment_receipt_item
+                (shipment_receipt_id, special_order_do_shipment_item_id, product_id, item_name_snapshot, shipped_qty, received_good_qty, reject_qty, shortage_qty, reason)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([$receiptId, $specialLineId, $productId, $itemNameSnapshot, $shippedQty, $good, $reject, $shortage, $reason]);
+    }
+
+    /**
      * @return array<int,array> every shipment that has departed (i.e. exists at all — a
      * shipment row is only ever created by a real ship() commit) for a factory/date/status
      * filter, joined with its receipt (if any) — for the Admin "Konfirmasi Toko" page.
@@ -116,17 +192,23 @@ final class ReceiptRepository
     public function listForAdmin(PDO $pdo, ?string $tanggal, ?string $status): array
     {
         $sql = "SELECT sh.shipment_id, sh.tanggal, sh.store_id, sh.shipment_group, sh.shipped_at, sh.delivery_order_id, sh.shipped_by,
+                       sh.source_type, sh.delivery_method, sh.courier_provider, sh.courier_name,
                        s.canonical_name AS store_name, o.doc_no,
+                       sodo.doc_no AS special_doc_no, so2.source_type AS special_source_type,
+                       so2.non_store_source AS special_non_store_source, so2.order_no AS special_order_no,
                        u.full_name AS driver_full_name, u.username AS driver_username,
                        r.shipment_receipt_id, r.status AS receipt_status, r.receiver_name, r.confirmed_at, r.verified_at,
                        e.status AS email_status,
-                       (SELECT COALESCE(SUM(qty), 0) FROM shipment_item WHERE shipment_id = sh.shipment_id) AS total_shipped,
+                       (SELECT COALESCE(SUM(qty), 0) FROM shipment_item WHERE shipment_id = sh.shipment_id)
+                         + (SELECT COALESCE(SUM(qty), 0) FROM special_order_do_shipment_item WHERE shipment_id = sh.shipment_id) AS total_shipped,
                        (SELECT COALESCE(SUM(received_good_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_good,
                        (SELECT COALESCE(SUM(reject_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_reject,
                        (SELECT COALESCE(SUM(shortage_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_shortage
                 FROM shipment sh
                 INNER JOIN store s ON s.store_id = sh.store_id
                 LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
+                LEFT JOIN special_order_do sodo ON sodo.special_order_do_id = sh.special_order_do_id
+                LEFT JOIN special_order so2 ON so2.special_order_id = sodo.special_order_id
                 LEFT JOIN users u ON u.user_id = sh.shipped_by
                 LEFT JOIN shipment_receipt r ON r.shipment_id = sh.shipment_id
                 LEFT JOIN shipment_email_delivery e ON e.shipment_id = sh.shipment_id

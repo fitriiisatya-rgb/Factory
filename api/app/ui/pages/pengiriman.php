@@ -148,10 +148,14 @@ $groupParam = isset($_GET['group']) && $_GET['group'] !== '' ? (string) $_GET['g
 $statusParam = isset($_GET['status']) && $_GET['status'] !== '' ? (string) $_GET['status'] : null;
 $searchTerm = trim((string) ($_GET['q'] ?? ''));
 
-$sql = "SELECT sh.*, s.canonical_name AS store_name, o.doc_no, u.username AS shipped_by_name
+$sql = "SELECT sh.*, s.canonical_name AS store_name, o.doc_no, u.username AS shipped_by_name,
+               sodo.doc_no AS special_doc_no, so2.source_type AS special_source_type,
+               so2.non_store_source AS special_non_store_source, so2.order_no AS special_order_no
         FROM shipment sh
         INNER JOIN store s ON s.store_id = sh.store_id
         LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
+        LEFT JOIN special_order_do sodo ON sodo.special_order_do_id = sh.special_order_do_id
+        LEFT JOIN special_order so2 ON so2.special_order_id = sodo.special_order_id
         LEFT JOIN users u ON u.user_id = sh.shipped_by
         WHERE sh.tanggal = ? AND sh.factory_id = ?";
 $params = [$uiTanggal, $uiFactoryId];
@@ -173,10 +177,16 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $shipmentRows = $stmt->fetchAll();
 
-$qtyStmt = $pdo->prepare('SELECT COALESCE(SUM(qty),0) FROM shipment_item WHERE shipment_id = ?');
+// Includes special_order_do_shipment_item too (task's own Section H — a
+// special/non-regular shipment must appear here with its real qty, not
+// zero) — exactly one of the two ever has rows for a given shipment.
+$qtyStmt = $pdo->prepare(
+    'SELECT COALESCE((SELECT SUM(qty) FROM shipment_item WHERE shipment_id = ?), 0)
+          + COALESCE((SELECT SUM(qty) FROM special_order_do_shipment_item WHERE shipment_id = ?), 0)'
+);
 $kpi = ['total' => 0, 'main' => 0, 'pastry' => 0, 'other' => 0, 'qty' => 0.0];
 foreach ($shipmentRows as &$sh) {
-    $qtyStmt->execute([$sh['shipment_id']]);
+    $qtyStmt->execute([$sh['shipment_id'], $sh['shipment_id']]);
     $sh['qty_total'] = (float) $qtyStmt->fetchColumn();
     $kpi['total']++;
     $kpi['qty'] += $sh['qty_total'];
@@ -240,14 +250,19 @@ $kpi['doParsial'] = (int) $partialDo->fetchColumn();
 
 <div class="table-card section">
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Shipment No</th><th>DO No</th><th>Toko</th><th>Grup</th><th class="num">Qty Kirim</th><th>Status</th><th>Waktu Kirim</th><th>Pengirim</th><th>Aksi</th></tr></thead>
+    <thead><tr><th>Shipment No</th><th>DO No</th><th>Sumber</th><th>Toko/Drop</th><th>Grup</th><th class="num">Qty Kirim</th><th>Status</th><th>Waktu Kirim</th><th>Pengirim</th><th>Aksi</th></tr></thead>
     <tbody>
     <?php if ($shipmentRows === []): ?>
-    <tr><td colspan="9"><?= ui_empty_state('Belum ada pengiriman', 'Buat pengiriman dari halaman Delivery Order.') ?></td></tr>
-    <?php else: foreach ($shipmentRows as $sh): ?>
+    <tr><td colspan="10"><?= ui_empty_state('Belum ada pengiriman', 'Buat pengiriman dari halaman Delivery Order.') ?></td></tr>
+    <?php else: foreach ($shipmentRows as $sh):
+      $isSpecial = $sh['delivery_order_id'] === null && $sh['special_doc_no'] !== null;
+      $sourceType = $isSpecial ? \Amor\Api\SpecialOrder\NormalizedSourceType::fromSpecialOrder((string) $sh['special_source_type'], $sh['special_non_store_source']) : \Amor\Api\SpecialOrder\NormalizedSourceType::REGULAR_STORE_PO;
+      $sourceLabel = \Amor\Api\SpecialOrder\NormalizedSourceType::label($sourceType);
+    ?>
     <tr>
       <td>#<?= (int) $sh['shipment_id'] ?></td>
-      <td><?= $sh['delivery_order_id'] !== null ? '<a href="/api/_ui-preview/?page=delivery-order-detail&doId=' . (int) $sh['delivery_order_id'] . '">' . ui_esc((string) $sh['doc_no']) . '</a>' : '-' ?></td>
+      <td><?= $sh['delivery_order_id'] !== null ? '<a href="/api/_ui-preview/?page=delivery-order-detail&doId=' . (int) $sh['delivery_order_id'] . '">' . ui_esc((string) $sh['doc_no']) . '</a>' : ui_esc((string) ($sh['special_doc_no'] ?? '-')) ?></td>
+      <td><?= ui_normalized_source_badge($sourceType, $sourceLabel) ?></td>
       <td><?= ui_esc($sh['store_name']) ?></td>
       <td><?= ui_esc($sh['shipment_group']) ?></td>
       <td class="num"><?= ui_fmt_num($sh['qty_total']) ?></td>

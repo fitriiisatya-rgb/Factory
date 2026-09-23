@@ -114,19 +114,41 @@
 --    ORIGINAL draft of this migration (which is why that draft never
 --    wired a real shipment write path at all).
 --
--- 6. Receipt/confirmation reuse (task's own "reuse Store Receipt flow
---    where SAFE"): shipment_receipt itself keys ONLY on shipment_id (not
---    shipment_item), so its HEADER confirmation (confirmed_ok/
---    confirmed_discrepancy, receiver_name, note) is schema-compatible
---    with a special-order-sourced shipment_id with ZERO schema change —
---    no new table needed for that. shipment_receipt_item (the per-product
---    line breakdown) requires a real shipment_item_id, which conflicts
---    with custom/catalog special items exactly the same way shipment_item
---    itself does — deliberately NOT wired to special-order shipments in
---    this phase (see the accompanying code's own DEFERRED note). The
---    token-based confirmation ENTRY POINT (ReceiptService::confirmReceipt,
---    keyed on a Regular delivery_order id today) is also not extended in
---    this phase — a focused follow-up, not a schema gap.
+-- 6. Receipt/confirmation reuse — REWORKED per the task's own "Special /
+--    Non-Regular Shipment -> Driver History -> Digital Surat Jalan ->
+--    Email -> Bakery Receipt" completion pass. shipment_receipt itself
+--    already keys ONLY on shipment_id (not shipment_item), so its HEADER
+--    confirmation (confirmed_ok/confirmed_discrepancy, receiver_name,
+--    note) needed ZERO schema change — untouched.
+--
+--    shipment_receipt_item (the per-product line breakdown) previously
+--    required a real shipment_item_id + product_id, which conflicts with
+--    custom/catalog special items exactly the same way shipment_item
+--    itself does. Solved here WITHOUT fabricating a fake shipment_item
+--    row (task's own explicit "Do NOT fabricate shipment_item"):
+--    shipment_item_id and product_id become NULLable, and a new nullable
+--    special_order_do_shipment_item_id + item_name_snapshot are added —
+--    a receipt line now references EITHER the regular shipment_item OR
+--    the special special_order_do_shipment_item, mutually exclusive by
+--    convention (enforced in ReceiptService, same app-layer-invariant
+--    discipline as every other cross-source rule in this codebase, never
+--    a DB CHECK constraint).
+--
+-- 7. shipment_receipt_token — NEW. The token-based confirmation ENTRY
+--    POINT (ReceiptService::confirmReceipt/getPublicView) was keyed ONLY
+--    on a Regular delivery_order id via delivery_receipt_token — a
+--    special-order shipment has no delivery_order_id to key on. Rather
+--    than weaken/overload delivery_receipt_token (which would risk the
+--    "existing receipt links already sent by email must remain valid"
+--    backward-compatibility rule), this is a SEPARATE, additive,
+--    shipment-keyed token table. ReceiptService now resolves an incoming
+--    token against EITHER table (DO-token first, shipment-token second)
+--    — a Regular DO's existing links keep working byte-for-byte unchanged
+--    (same table, same lookup, same token value), while a special-order
+--    shipment gets its own direct shipment-scoped token minted the first
+--    time its Surat Jalan is printed or its automatic email is sent
+--    (same get-or-create-once semantics as delivery_receipt_token's own
+--    ReceiptRepository::getOrCreateToken).
 -- ============================================================================
 
 ALTER TABLE special_order_item
@@ -212,3 +234,34 @@ ALTER TABLE shipment
 -- direct-apply failure on a rerun happens after the safe/idempotent parts.
 ALTER TABLE shipment
   ADD CONSTRAINT fk_shipment_special_order_do FOREIGN KEY (special_order_do_id) REFERENCES special_order_do(special_order_do_id);
+
+-- ----------------------------------------------------------------------------
+-- shipment_receipt_token (see point 7 above) — mints one high-entropy token
+-- PER SHIPMENT, used only by special-order (and any future non-DO-keyed)
+-- shipments. Regular PO shipments keep using delivery_receipt_token
+-- exclusively; this table is never consulted for them.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS shipment_receipt_token (
+  shipment_receipt_token_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  shipment_id                BIGINT UNSIGNED NOT NULL,
+  token                       CHAR(64)        NOT NULL,
+  created_at                  DATETIME        NOT NULL,
+  UNIQUE KEY uq_shipment_receipt_token_shipment (shipment_id),
+  UNIQUE KEY uq_shipment_receipt_token_token (token),
+  CONSTRAINT fk_srt_shipment FOREIGN KEY (shipment_id) REFERENCES shipment(shipment_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------------------------------------------------------
+-- shipment_receipt_item (migration 0007) — widen to accept a special-order
+-- line in place of a regular shipment_item/product line (point 6 above).
+-- Existing rows are all regular and keep shipment_item_id/product_id
+-- populated exactly as before — this is purely widening, never narrowing.
+-- ----------------------------------------------------------------------------
+ALTER TABLE shipment_receipt_item
+  MODIFY COLUMN shipment_item_id BIGINT UNSIGNED NULL,
+  MODIFY COLUMN product_id BIGINT UNSIGNED NULL,
+  ADD COLUMN IF NOT EXISTS special_order_do_shipment_item_id BIGINT UNSIGNED NULL AFTER shipment_item_id,
+  ADD COLUMN IF NOT EXISTS item_name_snapshot VARCHAR(255) NULL AFTER product_id;
+
+ALTER TABLE shipment_receipt_item
+  ADD CONSTRAINT fk_sri_special_line FOREIGN KEY (special_order_do_shipment_item_id) REFERENCES special_order_do_shipment_item(special_order_do_shipment_item_id);
