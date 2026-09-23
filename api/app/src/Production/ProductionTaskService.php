@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Amor\Api\Production;
 
 use Amor\Api\ApiException;
+use Amor\Api\SpecialOrder\NormalizedSourceType;
 use Amor\Api\SpecialOrder\SpecialOrderRepository;
 use PDO;
 
@@ -161,7 +162,18 @@ final class ProductionTaskService
                 if ($sourceFilter !== null && $sourceFilter !== $srcType) {
                     continue;
                 }
-                $sourceLabel = $srcType === self::SOURCE_PESANAN_KHUSUS ? 'Pesanan Khusus' : 'Pesanan Non-Toko';
+                // Line-level traceability must retain the real sub-source
+                // (task's own "Final Blocker Fix" Section G: "line-level
+                // traceability MUST retain actual source") — $srcType
+                // itself stays the existing 2-way po_reguler/pesanan_khusus/
+                // pesanan_non_toko/replacement_reject filter+badge-color
+                // axis (unchanged, still used by the Sumber filter buttons
+                // and ui_task_source_badge()'s color), but the LABEL text
+                // now shows CS/Sales Executive/Konsumen Langsung/Umum
+                // instead of collapsing every non-toko row into "Pesanan
+                // Non-Toko".
+                $normalizedSourceType = NormalizedSourceType::fromSpecialOrder((string) $r['source_type'], $r['non_store_source'] ?? null);
+                $sourceLabel = $srcType === self::SOURCE_PESANAN_KHUSUS ? 'Pesanan Khusus' : NormalizedSourceType::label($normalizedSourceType);
                 $who = $srcType === self::SOURCE_PESANAN_KHUSUS ? ($r['store_name'] ?? '-') : ($r['customer_name'] ?? '-');
                 $reference = $r['order_no'] . ' — ' . $who;
                 $tasks[] = $this->buildTaskRow(

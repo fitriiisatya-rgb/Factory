@@ -31,7 +31,7 @@ $isAdmin = in_array('ADMIN', $ui['roles'] ?? [], true);
   <div class="card-head">
     <div>
       <h2 class="card-title"><?= ui_esc($do['docNo']) ?></h2>
-      <div class="page-subtitle" style="margin-top:4px;"><span class="badge badge-neutral"><?= ui_esc($do['sourceLabel']) ?></span> &middot; Pesanan <?= ui_esc($do['orderNo']) ?> &middot; Pabrik <?= ui_esc($do['factoryName']) ?></div>
+      <div class="page-subtitle" style="margin-top:4px;"><?= ui_normalized_source_badge($do['normalizedSourceType'], $do['sourceLabel']) ?> &middot; Pesanan <?= ui_esc($do['orderNo']) ?> &middot; Pabrik <?= ui_esc($do['factoryName']) ?></div>
     </div>
     <span class="badge badge-<?= $doStatusColors[$do['status']] ?? 'neutral' ?>"><?= ui_esc($doStatusLabels[$do['status']] ?? $do['status']) ?></span>
   </div>

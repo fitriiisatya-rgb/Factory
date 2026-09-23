@@ -327,15 +327,6 @@
   // -----------------------------------------------------------------
   // TAB: Riwayat
   // -----------------------------------------------------------------
-  // Mirrors Amor\Api\SpecialOrder\NormalizedSourceType::fromSpecialOrder()/
-  // label() — plain-JS display copy only (never the source of truth; the
-  // server DTO is), same convention as this file's own groupBadgeClass().
-  function normalizedSourceLabel(r) {
-    if (!r.special_source_type) return null; // Regular PO shipment — no source badge needed here
-    if (r.special_source_type === 'toko_khusus') return 'Pesanan Khusus Toko';
-    var map = { cs: 'CS', sales_executive: 'Sales', konsumen_langsung: 'Konsumen Langsung', umum: 'Umum' };
-    return map[r.special_non_store_source] || 'Umum';
-  }
 
   function renderRiwayat(root) {
     root.innerHTML = '<div class="driver-empty">Memuat...</div>';
@@ -346,7 +337,11 @@
       }
       root.innerHTML = rows.map(function (r) {
         var docNo = r.doc_no || r.special_doc_no || '-';
-        var sourceLabel = normalizedSourceLabel(r);
+        // Server-authoritative label (Controllers\DispatchController::
+        // history()) — never re-derived here (task's own "prefer a
+        // server-authoritative normalized DTO over a second, JS-side
+        // mapping"). null for a Regular PO shipment — no badge needed.
+        var sourceLabel = r.sourceLabel;
         var receiptLabel = receiptStatusLabel(r.receipt_status);
         var receiptBadgeClass = r.receipt_status === 'confirmed_discrepancy' ? 'danger' : (r.receipt_status ? 'success' : '');
         return '' +

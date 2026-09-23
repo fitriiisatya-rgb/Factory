@@ -63,7 +63,7 @@ final class NormalizedSourceType
             self::REGULAR_STORE_PO => 'PO Reguler',
             self::SPECIAL_STORE_ORDER => 'Pesanan Khusus Toko',
             self::CS_ORDER => 'CS',
-            self::SALES_ORDER => 'Sales',
+            self::SALES_ORDER => 'Sales Executive',
             self::DIRECT_CUSTOMER => 'Konsumen Langsung',
             self::GENERAL_ORDER => 'Umum',
             self::REPLACEMENT_REJECT => 'Replacement Reject',

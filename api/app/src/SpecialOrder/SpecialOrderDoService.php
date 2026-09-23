@@ -448,6 +448,20 @@ final class SpecialOrderDoService
 
     private function summaryDto(array $r): array
     {
+        // Normalized downstream source identity (task's own "Final Blocker
+        // Fix" — CS/Sales Executive/Konsumen Langsung/Umum must never
+        // collapse into the generic "Pesanan Non-Toko" the way the
+        // earlier pass's naive `source_type === 'toko_khusus' ? ... :
+        // ...` ternary did). sourceType/sourceLabel stay RAW here
+        // (backward-compat: every existing caller — driver.js's
+        // sourceBadgeClass(), delivery-order-khusus-non-toko.php's
+        // "toko_khusus ? auto-store : pick-a-Bakery" branch — keys off
+        // the raw 'toko_khusus'/'non_toko' value, never the normalized
+        // one) — normalizedSourceType/nonStoreSource are ADDITIVE fields;
+        // every UI consumer this task asks to fix now reads sourceLabel
+        // (fixed below to the real, granular label) or normalizedSourceType
+        // directly, never re-deriving it from sourceType+text.
+        $normalizedSourceType = NormalizedSourceType::fromSpecialOrder((string) $r['source_type'], $r['non_store_source'] ?? null);
         return [
             'doId' => (int) $r['special_order_do_id'],
             'docNo' => $r['doc_no'],
@@ -455,7 +469,9 @@ final class SpecialOrderDoService
             'orderId' => (int) $r['special_order_id'],
             'orderNo' => $r['order_no'],
             'sourceType' => $r['source_type'],
-            'sourceLabel' => $r['source_type'] === 'toko_khusus' ? 'Pesanan Khusus Toko' : 'Pesanan Non-Toko',
+            'nonStoreSource' => $r['non_store_source'] ?? null,
+            'normalizedSourceType' => $normalizedSourceType,
+            'sourceLabel' => NormalizedSourceType::label($normalizedSourceType),
             'factoryId' => (int) $r['factory_id'],
             'factoryName' => $r['factory_name'],
             'dropStoreId' => (int) $r['drop_store_id'],

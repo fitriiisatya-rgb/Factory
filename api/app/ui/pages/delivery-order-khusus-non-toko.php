@@ -38,6 +38,7 @@ foreach ($fgItems as $it) {
             'orderId' => $it['orderId'],
             'orderNo' => $it['orderNo'],
             'sourceType' => $it['sourceType'],
+            'normalizedSourceType' => $it['normalizedSourceType'],
             'sourceLabel' => $it['sourceLabel'],
             'storeOrCustomerName' => $it['storeOrCustomerName'],
             'itemCount' => 0,
@@ -72,7 +73,7 @@ $doStatusColors = ['open' => 'neutral', 'partial' => 'warning', 'shipped' => 'su
     <?php else: foreach ($ordersReady as $o): ?>
     <tr>
       <td><?= ui_esc($o['orderNo']) ?></td>
-      <td><span class="badge badge-neutral"><?= ui_esc($o['sourceLabel']) ?></span></td>
+      <td><?= ui_normalized_source_badge($o['normalizedSourceType'], $o['sourceLabel']) ?></td>
       <td><?= ui_esc((string) $o['storeOrCustomerName']) ?></td>
       <td class="num"><?= (int) $o['itemCount'] ?></td>
       <td>
@@ -124,7 +125,7 @@ $doStatusColors = ['open' => 'neutral', 'partial' => 'warning', 'shipped' => 'su
     <?php else: foreach ($dos as $d): ?>
     <tr>
       <td><?= ui_esc($d['docNo']) ?></td>
-      <td><span class="badge badge-neutral"><?= ui_esc($d['sourceLabel']) ?></span></td>
+      <td><?= ui_normalized_source_badge($d['normalizedSourceType'], $d['sourceLabel']) ?></td>
       <td><?= ui_esc((string) $d['dropStoreName']) ?></td>
       <td><?= ui_esc($d['orderNo']) ?></td>
       <td><?= $d['deliveryMethod'] === 'DRIVER_INTERNAL' ? '<span class="badge badge-primary">Driver Internal</span>' : '<span class="badge badge-neutral">Kurir: ' . ui_esc((string) $d['courierProvider']) . '</span>' ?></td>

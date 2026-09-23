@@ -13,6 +13,7 @@ declare(strict_types=1);
  * production actual-entry screen").
  */
 
+use Amor\Api\SpecialOrder\NormalizedSourceType;
 use Amor\Api\SpecialOrder\SpecialOrderService;
 
 $divisionIdParam = isset($_GET['divisionId']) && $_GET['divisionId'] !== '' ? (int) $_GET['divisionId'] : null;
@@ -101,7 +102,7 @@ $inbox = $service->productionInbox(array_filter([
     <?php foreach ($div['items'] as $it): ?>
     <tr>
       <td><?= ui_esc($it['orderNo']) ?></td>
-      <td><?= $it['sourceType'] === 'toko_khusus' ? '<span class="badge badge-neutral">Pesanan Khusus Toko</span>' : '<span class="badge badge-neutral">Pesanan Non-Toko</span>' ?></td>
+      <td><?= ui_normalized_source_badge($it['normalizedSourceType'], NormalizedSourceType::label($it['normalizedSourceType'])) ?></td>
       <td><?= ui_esc($it['storeOrCustomerName']) ?></td>
       <td><?= ui_esc($it['itemName']) ?><?= $it['charge'] > 0.0001 ? ' <span style="color:var(--text-muted);font-size:var(--text-xs);">(+charge ' . ui_fmt_money($it['charge']) . ')</span>' : '' ?></td>
       <td class="num"><?= ui_fmt_num($it['qty']) ?></td>

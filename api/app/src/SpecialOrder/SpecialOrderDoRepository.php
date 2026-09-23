@@ -71,7 +71,7 @@ final class SpecialOrderDoRepository
     public function findDoById(PDO $pdo, int $doId): ?array
     {
         $stmt = $pdo->prepare(
-            'SELECT sodo.*, s.canonical_name AS drop_store_name, so.order_no, f.name AS factory_name,
+            'SELECT sodo.*, s.canonical_name AS drop_store_name, so.order_no, so.non_store_source, f.name AS factory_name,
                     cb.full_name AS created_by_name, cl.full_name AS claimed_by_name
              FROM special_order_do sodo
              INNER JOIN special_order so ON so.special_order_id = sodo.special_order_id
@@ -131,7 +131,7 @@ final class SpecialOrderDoRepository
      */
     public function findDos(PDO $pdo, array $filters): array
     {
-        $sql = 'SELECT sodo.*, s.canonical_name AS drop_store_name, so.order_no, f.name AS factory_name,
+        $sql = 'SELECT sodo.*, s.canonical_name AS drop_store_name, so.order_no, so.non_store_source, f.name AS factory_name,
                        cl.full_name AS claimed_by_name
                 FROM special_order_do sodo
                 INNER JOIN special_order so ON so.special_order_id = sodo.special_order_id
@@ -311,7 +311,7 @@ final class SpecialOrderDoRepository
     public function findDriverPool(PDO $pdo, int $driverUserId): array
     {
         $stmt = $pdo->prepare(
-            "SELECT sodo.*, s.canonical_name AS drop_store_name, so.order_no, f.name AS factory_name
+            "SELECT sodo.*, s.canonical_name AS drop_store_name, so.order_no, so.non_store_source, f.name AS factory_name
              FROM special_order_do sodo
              INNER JOIN special_order so ON so.special_order_id = sodo.special_order_id
              INNER JOIN store s ON s.store_id = sodo.drop_store_id

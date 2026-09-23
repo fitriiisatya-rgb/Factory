@@ -345,6 +345,13 @@ final class SpecialOrderService
             $byDivision[$divId]['items'][] = [
                 'orderNo' => $r['order_no'],
                 'sourceType' => $r['source_type'],
+                // sourceLabel here is "Sumber — Siapa" ($this->sourceLabel())
+                // — a different, richer field than the plain badge text a
+                // caller wants for a "Sumber" column; normalizedSourceType
+                // gives that badge its real, granular value (CS/Sales
+                // Executive/Konsumen Langsung/Umum — never generic "Pesanan
+                // Non-Toko", task's own "Final Blocker Fix" Section G).
+                'normalizedSourceType' => NormalizedSourceType::fromSpecialOrder((string) $r['source_type'], $r['non_store_source'] ?? null),
                 'sourceLabel' => $this->sourceLabel($r),
                 'storeOrCustomerName' => $r['source_type'] === 'toko_khusus' ? ($r['store_name'] ?? '-') : ($r['customer_name'] ?? '-'),
                 'itemType' => $r['item_type'],
@@ -401,12 +408,21 @@ final class SpecialOrderService
             }
             $allocated = $this->repo->sumAllocatedForItem($this->pdo, (int) $r['special_order_item_id']);
             $shipped = $this->repo->sumShippedForItem($this->pdo, (int) $r['special_order_item_id']);
+            // Normalized downstream source (task's own "Final Blocker Fix"
+            // — CS/Sales Executive/Konsumen Langsung/Umum must never
+            // collapse into generic "Pesanan Non-Toko"). sourceType stays
+            // RAW for backward compat (fg-khusus-non-toko.php's filter
+            // dropdown keys off it); sourceLabel is now the real, granular
+            // label.
+            $normalizedSourceType = NormalizedSourceType::fromSpecialOrder((string) $r['source_type'], $r['non_store_source'] ?? null);
             $out[] = [
                 'itemId' => (int) $r['special_order_item_id'],
                 'orderId' => (int) $r['special_order_id'],
                 'orderNo' => $r['order_no'],
                 'sourceType' => $r['source_type'],
-                'sourceLabel' => $r['source_type'] === 'toko_khusus' ? 'Pesanan Khusus Toko' : 'Pesanan Non-Toko',
+                'nonStoreSource' => $r['non_store_source'] ?? null,
+                'normalizedSourceType' => $normalizedSourceType,
+                'sourceLabel' => NormalizedSourceType::label($normalizedSourceType),
                 'storeOrCustomerName' => $r['source_type'] === 'toko_khusus' ? ($r['store_name'] ?? '-') : ($r['customer_name'] ?? '-'),
                 'itemType' => $r['item_type'],
                 'itemName' => $r['item_name_snapshot'],

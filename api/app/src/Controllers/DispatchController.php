@@ -169,7 +169,21 @@ final class DispatchController
     {
         $userId = Auth::requireRole(...self::DRIVER_ROLES);
         $repo = new \Amor\Api\Dispatch\DispatchRepository();
-        Response::json($repo->findShipmentHistoryForDriver(Database::pdo(), $userId));
+        $rows = $repo->findShipmentHistoryForDriver(Database::pdo(), $userId);
+        // Server-authoritative normalized source label (task's own "Final
+        // Blocker Fix" — prefer a server DTO over a second, JS-side
+        // mapping). driver.js's Riwayat card reads sourceLabel directly;
+        // every other raw column stays untouched for backward compat.
+        foreach ($rows as &$r) {
+            $isSpecial = $r['special_source_type'] !== null;
+            $normalizedSourceType = $isSpecial
+                ? \Amor\Api\SpecialOrder\NormalizedSourceType::fromSpecialOrder((string) $r['special_source_type'], $r['special_non_store_source'] ?? null)
+                : \Amor\Api\SpecialOrder\NormalizedSourceType::REGULAR_STORE_PO;
+            $r['normalizedSourceType'] = $normalizedSourceType;
+            $r['sourceLabel'] = $isSpecial ? \Amor\Api\SpecialOrder\NormalizedSourceType::label($normalizedSourceType) : null;
+        }
+        unset($r);
+        Response::json($rows);
     }
 
     /**

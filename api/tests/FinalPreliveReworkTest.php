@@ -588,6 +588,121 @@ runTest('FINAL-31/32 a partial DO produces TWO separate shipments, each with its
     expect((int) $view2['json']['data']['shipments'][0]['shipmentId'] === $shipment2, 'FINAL-31: expected the token to resolve to shipment2 specifically');
 });
 
+// --- SRC-E2E-01..12 (normalized source must never collapse to generic
+// "Pesanan Non-Toko" anywhere — FG/DO/Driver Pool/Driver History/Digital
+// SJ/Admin Receipt, and destination store must never alter it) ----------
+
+/** One order per normalized source, sent to production + FG-verified. Returns [orderId, itemId, doItemName]. */
+function createNormalizedSourceOrder(HttpFinal $adminHttp, string $adminCsrf, ?int $storeId, ?string $nonStoreSource, ?string $customerName, string $tag, float $qty = 2.0): array
+{
+    $body = $storeId !== null
+        ? ['sourceType' => 'toko_khusus', 'storeId' => $storeId, 'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25', 'items' => [['itemType' => 'special_catalog', 'specialCatalogId' => 1, 'qty' => $qty]]]
+        : ['sourceType' => 'non_toko', 'nonStoreSource' => $nonStoreSource, 'customerName' => $customerName, 'orderDate' => '2026-09-22', 'requiredDate' => '2026-09-25', 'items' => [['itemType' => 'special_catalog', 'specialCatalogId' => 1, 'qty' => $qty]]];
+    [$orderId, $itemId, $version] = createSentOrder($adminHttp, $adminCsrf, $body, $tag);
+    $adminHttp->request('POST', "/api/special-orders/{$orderId}/actual", ['expectedVersion' => $version, 'items' => [['itemId' => $itemId, 'aktualProduksi' => $qty, 'rejectProduksi' => 0]]], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey($tag . 'actual')));
+    $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/verify-fg", ['fgVerifiedQty' => $qty], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey($tag . 'verifyfg')));
+    return [$orderId, $itemId];
+}
+
+runTest('SRC-E2E-01/02/03/04/05 FG Khusus/Non-Toko shows the real granular source, never generic "Pesanan Non-Toko"', function () use ($adminHttp, $adminCsrf, $storeAId) {
+    $cases = [
+        ['final01', null, 'cs', 'CS Bapak Andi', 'CS_ORDER', 'CS'],
+        ['final02', null, 'sales_executive', 'Sales Budi', 'SALES_ORDER', 'Sales Executive'],
+        ['final03', null, 'konsumen_langsung', 'Konsumen Citra', 'DIRECT_CUSTOMER', 'Konsumen Langsung'],
+        ['final04', null, 'umum', 'Umum Dedi', 'GENERAL_ORDER', 'Umum'],
+        ['final05', $storeAId, null, null, 'SPECIAL_STORE_ORDER', 'Pesanan Khusus Toko'],
+    ];
+    foreach ($cases as $i => [$_, $storeId, $nonStoreSource, $customerName, $expectedType, $expectedLabel]) {
+        [$orderId] = createNormalizedSourceOrder($adminHttp, $adminCsrf, $storeId, $nonStoreSource, $customerName, 'srcfg' . $i);
+        $fg = $adminHttp->request('GET', '/api/special-orders/fg-eligible');
+        $row = null;
+        foreach ($fg['json']['data'] as $it) { if ((int) $it['orderId'] === $orderId) { $row = $it; break; } }
+        expect($row !== null, "SRC-E2E-0" . ($i + 1) . ": expected order {$orderId} to appear in FG Khusus/Non-Toko");
+        expect($row['normalizedSourceType'] === $expectedType, "SRC-E2E-0" . ($i + 1) . ": expected normalizedSourceType={$expectedType}, got " . json_encode($row['normalizedSourceType']));
+        expect($row['sourceLabel'] === $expectedLabel, "SRC-E2E-0" . ($i + 1) . ": expected sourceLabel='{$expectedLabel}' (never generic 'Pesanan Non-Toko'), got " . json_encode($row['sourceLabel']));
+    }
+});
+
+runTest('SRC-E2E-06 DO list/detail/driver-pool all show the real granular source for a Sales Executive order', function () use ($adminHttp, $adminCsrf, $driverHttp, $driverCsrf, $storeAId, $karangtengahFactoryId) {
+    [$orderId, $itemId] = createNormalizedSourceOrder($adminHttp, $adminCsrf, null, 'sales_executive', 'Sales Executive SRC-06', 'src06', 2.0);
+    $do = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $orderId, 'factoryId' => $karangtengahFactoryId, 'deliveryMethod' => 'DRIVER_INTERNAL', 'dropStoreId' => $storeAId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('src06do')));
+    expect($do['status'] === 200, 'SRC-E2E-06: expected DO create 200: ' . json_encode($do['json']));
+    expect($do['json']['data']['normalizedSourceType'] === 'SALES_ORDER', 'SRC-E2E-06: expected DO create response normalizedSourceType=SALES_ORDER, got ' . json_encode($do['json']['data']['normalizedSourceType'] ?? null));
+    expect($do['json']['data']['sourceLabel'] === 'Sales Executive', 'SRC-E2E-06: expected DO create response sourceLabel="Sales Executive", got ' . json_encode($do['json']['data']['sourceLabel']));
+    $doId = $do['json']['data']['doId'];
+
+    $list = $adminHttp->request('GET', '/api/special-order-do?sourceType=non_toko');
+    $listRow = null;
+    foreach ($list['json']['data'] as $r) { if ((int) $r['doId'] === $doId) { $listRow = $r; } }
+    expect($listRow !== null && $listRow['sourceLabel'] === 'Sales Executive', 'SRC-E2E-06: expected DO list sourceLabel="Sales Executive", got ' . json_encode($listRow['sourceLabel'] ?? null));
+
+    $detail = $adminHttp->request('GET', "/api/special-order-do/{$doId}");
+    expect($detail['json']['data']['sourceLabel'] === 'Sales Executive', 'SRC-E2E-06: expected DO detail sourceLabel="Sales Executive", got ' . json_encode($detail['json']['data']['sourceLabel']));
+
+    $claim = $driverHttp->request('POST', "/api/special-order-do/{$doId}/claim", null, array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('src06claim')));
+    expect($claim['status'] === 200, 'SRC-E2E-06: expected claim 200: ' . json_encode($claim['json']));
+    $pool = $driverHttp->request('GET', '/api/special-order-do/driver-pool');
+    $poolRow = null;
+    foreach ($pool['json']['data'] as $p) { if ((int) $p['doId'] === $doId) { $poolRow = $p; } }
+    expect($poolRow !== null, 'SRC-E2E-06: expected the DO to appear in the Driver Pool');
+    expect($poolRow['sourceLabel'] === 'Sales Executive', 'SRC-E2E-06: expected Driver Pool card sourceLabel="Sales Executive" (never generic "Pesanan Non-Toko"), got ' . json_encode($poolRow['sourceLabel']));
+
+    $GLOBALS['src06_doId'] = $doId;
+    $GLOBALS['src06_orderId'] = $orderId;
+});
+
+runTest('SRC-E2E-07/09 Driver History and Digital Surat Jalan both keep the Sales Executive source after departure', function () use ($driverHttp, $driverCsrf) {
+    $doId = $GLOBALS['src06_doId'];
+    $depart = $driverHttp->request('POST', "/api/special-order-do/{$doId}/depart", ['items' => null], array_merge(['X-CSRF-Token' => $driverCsrf], idemKey('src07depart')));
+    expect($depart['status'] === 200, 'SRC-E2E-07: expected depart 200: ' . json_encode($depart['json']));
+    $shipmentId = $depart['json']['data']['shipmentId'];
+
+    $hist = $driverHttp->request('GET', '/api/dispatch/history');
+    $row = null;
+    foreach ($hist['json']['data'] as $r) { if ((int) $r['shipment_id'] === $shipmentId) { $row = $r; break; } }
+    expect($row !== null && $row['special_non_store_source'] === 'sales_executive', 'SRC-E2E-07: expected Driver History row to carry non_store_source=sales_executive for normalized display, got ' . json_encode($row['special_non_store_source'] ?? null));
+
+    $detail = $driverHttp->request('GET', "/api/dispatch/shipments/{$shipmentId}");
+    expect($detail['json']['data']['source']['type'] === 'SALES_ORDER', 'SRC-E2E-07: expected Shipment Detail source.type=SALES_ORDER, got ' . json_encode($detail['json']['data']['source']));
+
+    $print = $driverHttp->request('GET', "/_driver-uat/print-shipment.php?id={$shipmentId}");
+    expect($print['status'] === 200, 'SRC-E2E-09: expected Surat Jalan 200: ' . substr($print['body'], 0, 200));
+    expect(str_contains($print['body'], 'Sales Executive'), 'SRC-E2E-09: expected Digital Surat Jalan to show "Sales Executive", never a generic "Pesanan Non-Toko"');
+    expect(!str_contains($print['body'], 'Pesanan Non-Toko'), 'SRC-E2E-09: expected the Surat Jalan to NEVER print the generic collapsed label when a real sub-source exists');
+
+    $GLOBALS['src07_shipmentId'] = $shipmentId;
+});
+
+runTest('SRC-E2E-11 Admin Konfirmasi Toko/Pengiriman keep the Sales Executive badge, consistent with FG/DO/Driver Pool/History/SJ', function () use ($adminHttp, $karangtengahFactoryId) {
+    $shipmentId = $GLOBALS['src07_shipmentId'];
+    $list = $adminHttp->request('GET', '/api/admin/receipts');
+    $row = null;
+    foreach ($list['json']['data'] as $r) { if ((int) $r['shipmentId'] === $shipmentId) { $row = $r; break; } }
+    expect($row !== null, 'SRC-E2E-11: expected the shipment to appear in Admin Konfirmasi Toko');
+    expect($row['source']['type'] === 'SALES_ORDER' && $row['source']['label'] === 'Sales Executive', 'SRC-E2E-11: expected Admin Konfirmasi Toko source=Sales Executive, got ' . json_encode($row['source']));
+
+    // shipment.tanggal comes from the DO's own tanggal = required_date
+    // (createNormalizedSourceOrder's own requiredDate=2026-09-25), never
+    // the order's orderDate=2026-09-22 — filtering by the wrong date here
+    // would legitimately find nothing.
+    $pengiriman = $adminHttp->request('GET', "/_ui-preview/?page=pengiriman&tanggal=2026-09-25&factoryId={$karangtengahFactoryId}");
+    expect($pengiriman['status'] === 200, 'SRC-E2E-11: expected pengiriman.php 200');
+    expect(str_contains($pengiriman['body'], 'Sales Executive'), 'SRC-E2E-11: expected Admin Pengiriman to show "Sales Executive" for this shipment');
+});
+
+runTest('SRC-E2E-12 the physical drop Bakery (destination store) never alters the normalized source — two different sources, same drop store, stay distinct', function () use ($adminHttp, $adminCsrf, $driverHttp, $driverCsrf, $storeAId, $karangtengahFactoryId) {
+    [$csOrderId] = createNormalizedSourceOrder($adminHttp, $adminCsrf, null, 'cs', 'CS SRC-12', 'src12cs', 2.0);
+    [$umumOrderId] = createNormalizedSourceOrder($adminHttp, $adminCsrf, null, 'umum', 'Umum SRC-12', 'src12umum', 2.0);
+
+    $doCs = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $csOrderId, 'factoryId' => $karangtengahFactoryId, 'deliveryMethod' => 'DRIVER_INTERNAL', 'dropStoreId' => $storeAId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('src12dodo1')));
+    $doUmum = $adminHttp->request('POST', '/api/special-order-do', ['orderId' => $umumOrderId, 'factoryId' => $karangtengahFactoryId, 'deliveryMethod' => 'DRIVER_INTERNAL', 'dropStoreId' => $storeAId], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('src12dodo2')));
+
+    // SAME drop store (storeAId) for both — the source label must still differ.
+    expect($doCs['json']['data']['dropStoreId'] === $doUmum['json']['data']['dropStoreId'], 'SRC-E2E-12 setup: expected both DOs to share the same drop store');
+    expect($doCs['json']['data']['sourceLabel'] === 'CS', 'SRC-E2E-12: expected the CS order to stay CS regardless of drop store, got ' . json_encode($doCs['json']['data']['sourceLabel']));
+    expect($doUmum['json']['data']['sourceLabel'] === 'Umum', 'SRC-E2E-12: expected the Umum order to stay Umum regardless of drop store, got ' . json_encode($doUmum['json']['data']['sourceLabel']));
+});
+
 $failed = array_filter($results, fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests run, ' . count($failed) . " failed.\n");
 exit(count($failed) === 0 ? 0 : 1);

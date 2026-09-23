@@ -81,7 +81,7 @@ foreach ($items as $it) {
     <?php else: foreach ($items as $it): ?>
     <tr data-item-id="<?= (int) $it['itemId'] ?>">
       <td><?= ui_esc($it['orderNo']) ?></td>
-      <td><?= $it['sourceType'] === 'toko_khusus' ? '<span class="badge badge-neutral">Pesanan Khusus Toko</span>' : '<span class="badge badge-neutral">Pesanan Non-Toko</span>' ?></td>
+      <td><?= ui_normalized_source_badge($it['normalizedSourceType'], $it['sourceLabel']) ?></td>
       <td><?= ui_esc((string) $it['storeOrCustomerName']) ?></td>
       <td><?= ui_esc($it['itemName']) ?></td>
       <td><span class="badge badge-primary"><?= ui_esc($it['divisionName']) ?></span></td>
