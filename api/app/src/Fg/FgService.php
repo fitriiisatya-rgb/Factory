@@ -145,39 +145,79 @@ final class FgService
     }
 
     /**
-     * PATCH /api/fg/{id} — draft/reopened only. $items is a list of
-     * {productId, fgVerified, packed, reject?, hilang?, sesuaiVerified?,
-     * sesuaiPacking?, notes?}; every write REPLACES that product's stored
-     * qty/packed_qty/reject_qty/hilang_qty (never additive). $refreshSource
-     * pulls newly-submitted divisions' products into the batch; it never
-     * touches an item that already has fgVerified>0 (see class docblock —
-     * never retroactively invalidates operator work already entered).
+     * PATCH /api/fg/{id} — draft/reopened only.
+     *
+     * $items (Per Produk edits): list of {productId, fgVerified, packed,
+     * reject?, hilang?, sesuaiVerified?, sesuaiPacking?, notes?}; every
+     * write REPLACES that product's stored qty/packed_qty/reject_qty/
+     * hilang_qty (never additive). Rejected with PRODUCT_IN_BREAKDOWN_MODE
+     * for any product currently split across stores — see class docblock
+     * "Option A": once a product has real per-store rows, its product-
+     * level fields are DERIVED (read-only) until an explicit collapse.
+     *
+     * $storeItems (Breakdown Toko edits): list of {productId, rows:[
+     * {storeId, fgVerified, packed, reject?, hilang?, sesuaiVerified?,
+     * sesuaiPacking?, notes?}]}. The FIRST store-level edit for a product
+     * still in Per Produk mode EXPLODES it (see explodeToStores()) —
+     * every subsequent product-level total is then simply
+     * SUM(these store rows), never a second, independently-writable
+     * number (task's own "no double counting" rule, satisfied here by
+     * construction: buildItemDto()/submit() both read
+     * FgRepository::findItems()'s aggregate, never a second store-side
+     * total).
+     *
+     * $collapseProductIds: explicit "Kembali ke Per Produk" action — merges
+     * a product's store rows back into ONE row (SUM of qty/packed_qty/
+     * reject_qty/hilang_qty, so totals never change across the switch —
+     * "switching modes never doubles").
+     *
+     * $refreshSource pulls newly-submitted divisions' products into the
+     * batch and refreshes production_actual_snapshot on EVERY existing row
+     * (Per Produk or Breakdown Toko); it never touches an item that
+     * already has fgVerified>0 for a brand-new product, and never
+     * auto-invalidates an already-entered store row (see class docblock).
      *
      * sesuaiVerified/sesuaiPacking are client-declared INTENT (the Sesuai
      * button), same pattern and same "never trust a disabled UI input
      * alone" rule as ProductionService::patchDraft()'s own sesuai check:
-     * sesuaiVerified=true requires fgVerified to equal the CURRENT
-     * production_actual_snapshot (the row's own "Target FG"); sesuaiPacking
-     * =true requires packed to equal this SAME line's own fgVerified
-     * (packed can never exceed fgVerified anyway, so "Sesuai" there means
-     * "pack everything verified"). reject_qty/hilang_qty are independent
-     * FG-side columns (migration 0014) — never merged into Actual/Verified,
-     * never confused with Production's own reject. Keterangan is required
+     * for a Per Produk line, sesuaiVerified=true requires fgVerified to
+     * equal the CURRENT production_actual_snapshot; for a store row,
+     * sesuaiVerified=true requires that STORE's own fgVerified to equal
+     * its OWN live PO target (FgTargetService::storeBreakdownForProduct(),
+     * PO Awal + latest Revisi, PB ignored — reused, never reformulated).
+     * Either way sesuaiPacking=true requires packed to equal that SAME
+     * line's own fgVerified. reject_qty/hilang_qty are independent FG-side
+     * columns (migration 0014) — never merged into Actual/Verified, never
+     * confused with Production's own reject. Keterangan is required
      * whenever Verified or Packing was marked Tidak Sesuai, or Reject>0, or
      * Hilang>0 (task's own explicit rule) — checked server-side, not just
-     * a client hint.
+     * a client hint, for BOTH Per Produk lines and individual store rows.
      */
-    public function patchDraft(int $batchId, int $expectedVersion, array $items, bool $refreshSource, int $userId, ?string $requestId): array
-    {
+    public function patchDraft(
+        int $batchId,
+        int $expectedVersion,
+        array $items,
+        bool $refreshSource,
+        int $userId,
+        ?string $requestId,
+        array $storeItems = [],
+        array $collapseProductIds = []
+    ): array {
         $batch = $this->repo->lockBatchById($this->pdo, $batchId);
         if ($batch === null) {
             throw new ApiException(404, 'NOT_FOUND', 'FG document not found');
         }
         $this->assertEditable($batch);
         $factory = $this->requireFactory((int) $batch['factory_id']);
+        $tanggal = (string) $batch['tanggal'];
+        $factoryId = (int) $batch['factory_id'];
 
         if ($refreshSource) {
-            $this->refreshSource($batchId, (string) $batch['tanggal'], (int) $batch['factory_id']);
+            $this->refreshSource($batchId, $tanggal, $factoryId);
+        }
+
+        foreach ($collapseProductIds as $productId) {
+            $this->collapseToProduct($batchId, (int) $productId);
         }
 
         $existingItems = $this->repo->findItems($this->pdo, $batchId);
@@ -188,6 +228,9 @@ final class FgService
                 throw new ApiException(400, 'UNKNOWN_PRODUCT_FOR_BATCH', "Product {$productId} is not part of this FG document — use refreshSource to pull in newly-submitted production first");
             }
             $item = $existingItems[$productId];
+            if ($item['mode'] === 'breakdownToko') {
+                throw new ApiException(409, 'PRODUCT_IN_BREAKDOWN_MODE', "Produk {$item['product_name']}: sudah dipecah per Toko (Breakdown Toko) — edit via input per-Toko, atau gunakan 'Kembali ke Per Produk' untuk menggabungkan kembali");
+            }
             $snapshot = (float) $item['production_actual_snapshot'];
             $fgVerified = (float) ($line['fgVerified'] ?? 0);
             $packed = (float) ($line['packed'] ?? 0);
@@ -225,16 +268,196 @@ final class FgService
             $touched++;
         }
 
+        $storeRowsTouched = 0;
+        foreach ($storeItems as $entry) {
+            $productId = (int) ($entry['productId'] ?? 0);
+            $rows = (array) ($entry['rows'] ?? []);
+            if ($productId <= 0 || !isset($existingItems[$productId])) {
+                throw new ApiException(400, 'UNKNOWN_PRODUCT_FOR_BATCH', "Product {$productId} is not part of this FG document — use refreshSource to pull in newly-submitted production first");
+            }
+            $product = $existingItems[$productId];
+            $snapshot = (float) $product['production_actual_snapshot'];
+
+            if ($product['mode'] === 'perProduk') {
+                $this->explodeToStores($batchId, $productId, $tanggal, $factoryId, $product);
+            } else {
+                // Already exploded — still sync in any store that appeared
+                // in the live PO target since the last explode/refresh (a
+                // PO revision adding a new store never removes a row an
+                // operator already entered — see refreshSource()'s own
+                // docblock, same rule applied here for a store edit made
+                // without an explicit Refresh Produksi Terbaru first).
+                $this->syncStoreRows($batchId, $productId, $tanggal, $factoryId, $snapshot);
+            }
+
+            $targetRows = $this->targets->storeBreakdownForProduct($this->pdo, $tanggal, $factoryId, $productId);
+            $targetByStore = [];
+            foreach ($targetRows as $t) {
+                $targetByStore[$t['storeId']] = $t;
+            }
+            $rawRows = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
+            $rawByStore = [];
+            foreach ($rawRows as $r) {
+                $rawByStore[(int) $r['store_id']] = $r;
+            }
+
+            foreach ($rows as $row) {
+                $storeId = (int) ($row['storeId'] ?? 0);
+                if (!isset($targetByStore[$storeId]) || !isset($rawByStore[$storeId])) {
+                    throw new ApiException(400, 'UNKNOWN_STORE_FOR_PRODUCT', "Toko {$storeId} bukan bagian dari target PO produk {$product['product_name']} pada tanggal/pabrik ini");
+                }
+                $target = (float) $targetByStore[$storeId]['target'];
+                $storeName = $targetByStore[$storeId]['storeName'];
+                $raw = $rawByStore[$storeId];
+
+                $fgVerified = (float) ($row['fgVerified'] ?? 0);
+                $packed = (float) ($row['packed'] ?? 0);
+                $reject = isset($row['reject']) ? (float) $row['reject'] : (float) ($raw['reject_qty'] ?? 0);
+                $hilang = isset($row['hilang']) ? (float) $row['hilang'] : (float) ($raw['hilang_qty'] ?? 0);
+                if ($fgVerified < 0 || $packed < 0 || $reject < 0 || $hilang < 0) {
+                    throw new ApiException(400, 'INVALID_QTY', 'fgVerified/packed/reject/hilang cannot be negative');
+                }
+                if ($packed > $fgVerified) {
+                    throw new ApiException(400, 'PACKED_EXCEEDS_VERIFIED', "Produk {$product['product_name']} / Toko {$storeName}: packed ({$packed}) cannot exceed FG verified ({$fgVerified})");
+                }
+                if ($fgVerified > $target + 0.0001) {
+                    throw new ApiException(400, 'STORE_FG_EXCEEDS_TARGET', "Produk {$product['product_name']} / Toko {$storeName}: FG verified ({$fgVerified}) cannot exceed store target ({$target})");
+                }
+                $sesuaiVerified = $row['sesuaiVerified'] ?? null;
+                $sesuaiPacking = $row['sesuaiPacking'] ?? null;
+                if ($sesuaiVerified === true && abs($fgVerified - $target) > 0.01) {
+                    throw new ApiException(400, 'SESUAI_VERIFIED_MISMATCH', "Produk {$product['product_name']} / Toko {$storeName}: status Sesuai requires FG Verified ({$fgVerified}) to equal Target Toko ({$target})");
+                }
+                if ($sesuaiPacking === true && abs($packed - $fgVerified) > 0.01) {
+                    throw new ApiException(400, 'SESUAI_PACKING_MISMATCH', "Produk {$product['product_name']} / Toko {$storeName}: status Sesuai requires Packed ({$packed}) to equal FG Verified ({$fgVerified})");
+                }
+                $notes = isset($row['notes']) ? trim((string) $row['notes']) : trim((string) ($raw['keterangan'] ?? ''));
+                if (($notes === '') && ($sesuaiVerified === false || $sesuaiPacking === false || $reject > 0.0001 || $hilang > 0.0001)) {
+                    throw new ApiException(400, 'NOTES_REQUIRED', "Produk {$product['product_name']} / Toko {$storeName}: Keterangan wajib diisi jika Verified/Packing Tidak Sesuai, atau Reject/Hilang > 0");
+                }
+                $this->repo->updateItemValues($this->pdo, (int) $raw['fg_item_id'], $fgVerified, $packed, $reject, $hilang, $notes !== '' ? $notes : null);
+                $storeRowsTouched++;
+            }
+
+            // Global ceiling, re-checked against the FULL set of this
+            // product's rows (not just the ones touched this call) — the
+            // same FG_EXCEEDS_PRODUCTION rule Per Produk enforces, now
+            // applied to SUM(store rows) instead of a single row's value.
+            $afterRows = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
+            $totalVerified = array_sum(array_map(static fn ($r) => (float) $r['qty'], $afterRows));
+            if ($totalVerified > $snapshot + 0.0001) {
+                throw new ApiException(400, 'FG_EXCEEDS_PRODUCTION', "Product {$productId}: total FG verified across stores ({$totalVerified}) cannot exceed production actual ({$snapshot})");
+            }
+        }
+
         $bumped = $this->repo->bumpVersion($this->pdo, $batchId, $expectedVersion, 'status = status', []);
         $this->assertVersionBumpSucceeded($batchId, $expectedVersion, $bumped);
 
         \Amor\Api\Audit::write(
             $this->pdo, $requestId, $userId, 'fg.draft.edit', 'fg_batch', (string) $batchId,
-            'ok', $expectedVersion, $expectedVersion + 1, ['itemsTouched' => $touched, 'refreshSource' => $refreshSource]
+            'ok', $expectedVersion, $expectedVersion + 1, [
+                'itemsTouched' => $touched,
+                'storeRowsTouched' => $storeRowsTouched,
+                'collapsed' => array_values(array_map('intval', $collapseProductIds)),
+                'refreshSource' => $refreshSource,
+            ]
         );
 
         $batch = $this->repo->findBatchById($this->pdo, $batchId);
         return $this->buildBatchDto($batch, $factory);
+    }
+
+    /**
+     * Explodes a Per Produk product into real per-store fg_item rows, one
+     * per store in its LIVE PO target (FgTargetService::
+     * storeBreakdownForProduct(), reused — never a new formula). Only
+     * allowed while the placeholder row is still all-zero: there is no
+     * safe way to infer how an already-entered aggregate number should be
+     * split across stores, so this deliberately refuses to guess (task's
+     * own "do not invent a new business formula" rule) rather than
+     * silently assigning the whole total to one store or dividing it
+     * evenly. The placeholder row is deleted and replaced by the new
+     * store rows — never left behind as a stray extra row, which is what
+     * keeps "product total = SUM(store rows)" true by construction from
+     * this point on.
+     */
+    private function explodeToStores(int $batchId, int $productId, string $tanggal, int $factoryId, array $product): void
+    {
+        $qty = (float) $product['qty'];
+        $packed = (float) $product['packed_qty'];
+        $reject = (float) $product['reject_qty'];
+        $hilang = (float) $product['hilang_qty'];
+        if ($qty > 0.0001 || $packed > 0.0001 || $reject > 0.0001 || $hilang > 0.0001) {
+            throw new ApiException(409, 'MODE_SWITCH_REQUIRES_ZERO_PER_PRODUK', "Produk {$product['product_name']}: pindah ke mode Breakdown Toko hanya bisa dilakukan sebelum FG Verified/Packing/Reject/Hilang diisi pada mode Per Produk. Kosongkan (reset ke 0) dahulu, atau lanjutkan di mode Per Produk.");
+        }
+        $targetRows = $this->targets->storeBreakdownForProduct($this->pdo, $tanggal, $factoryId, $productId);
+        if ($targetRows === []) {
+            throw new ApiException(400, 'NO_STORE_TARGET_FOR_PRODUCT', "Produk {$product['product_name']}: tidak memiliki target per-Toko dari PO pada tanggal/pabrik ini — tidak bisa dipindah ke mode Breakdown Toko.");
+        }
+        $snapshot = (float) $product['production_actual_snapshot'];
+        $this->repo->deleteItem($this->pdo, (int) $product['fg_item_id']);
+        foreach ($targetRows as $t) {
+            $this->repo->insertItem($this->pdo, $batchId, $productId, $t['storeId'], $snapshot);
+        }
+    }
+
+    /** Inserts a zero row for any store present in the live PO target but not yet represented among this product's fg_item rows. */
+    private function syncStoreRows(int $batchId, int $productId, string $tanggal, int $factoryId, float $snapshot): void
+    {
+        $targetRows = $this->targets->storeBreakdownForProduct($this->pdo, $tanggal, $factoryId, $productId);
+        $existingRaw = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
+        $existingStoreIds = array_map(static fn ($r) => (int) $r['store_id'], $existingRaw);
+        foreach ($targetRows as $t) {
+            if (!in_array($t['storeId'], $existingStoreIds, true)) {
+                $this->repo->insertItem($this->pdo, $batchId, $productId, $t['storeId'], $snapshot);
+            }
+        }
+    }
+
+    /**
+     * Explicit "Kembali ke Per Produk" action — merges every store row
+     * this product currently has back into ONE placeholder row against
+     * the synthetic unallocated store. qty/packed_qty/reject_qty/
+     * hilang_qty are the exact SUM of the rows being merged (never
+     * re-derived or rounded), so a collapse can never change a product's
+     * totals — only a Per Produk resubmit can be a no-op is guaranteed:
+     * collapse-then-immediately-recompute always equals what
+     * findItems()'s aggregate already reported before the collapse.
+     * A no-op if the product is already Per Produk.
+     */
+    private function collapseToProduct(int $batchId, int $productId): void
+    {
+        $rows = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
+        if (count($rows) <= 1) {
+            $unallocatedStoreId = $this->repo->unallocatedStoreId($this->pdo);
+            if ($rows === [] || (int) $rows[0]['store_id'] === $unallocatedStoreId) {
+                return;
+            }
+        }
+        $qty = 0.0;
+        $packed = 0.0;
+        $reject = 0.0;
+        $hilang = 0.0;
+        $snapshot = 0.0;
+        $notesParts = [];
+        foreach ($rows as $r) {
+            $qty += (float) $r['qty'];
+            $packed += (float) $r['packed_qty'];
+            $reject += (float) $r['reject_qty'];
+            $hilang += (float) $r['hilang_qty'];
+            $snapshot = (float) $r['production_actual_snapshot'];
+            $note = trim((string) ($r['keterangan'] ?? ''));
+            if ($note !== '' && !in_array($note, $notesParts, true)) {
+                $notesParts[] = $note;
+            }
+            $this->repo->deleteItem($this->pdo, (int) $r['fg_item_id']);
+        }
+        $unallocatedStoreId = $this->repo->unallocatedStoreId($this->pdo);
+        $this->repo->insertItem($this->pdo, $batchId, $productId, $unallocatedStoreId, $snapshot);
+        $newItems = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
+        $newFgItemId = (int) $newItems[0]['fg_item_id'];
+        $notes = $notesParts !== [] ? implode('; ', $notesParts) : null;
+        $this->repo->updateItemValues($this->pdo, $newFgItemId, $qty, $packed, $reject, $hilang, $notes);
     }
 
     /**
@@ -279,7 +502,14 @@ final class FgService
 
         $deltas = [];
         foreach ($items as $productId => $item) {
-            $posted = $this->repo->postedQtyForItem($this->pdo, (int) $item['fg_item_id']);
+            // $item is the AGGREGATE view (FgRepository::findItems()) — for
+            // a Breakdown Toko product this sums packed_qty across every
+            // store row, and postedQtyForProduct() sums stock_ledger
+            // across every one of those rows' fg_item_ids, so the delta
+            // below is computed against the product's WHOLE posting
+            // history regardless of how many store rows it currently has,
+            // or had at any earlier submit/reopen/resubmit cycle.
+            $posted = $this->repo->postedQtyForProduct($this->pdo, $item['fg_item_ids']);
             $deltas[$productId] = (float) $item['packed_qty'] - $posted;
         }
 
@@ -408,6 +638,68 @@ final class FgService
     }
 
     /**
+     * GET /api/fg/{id}/items/{productId}/stores — the WRITABLE Breakdown
+     * Toko table's data source for an existing FG batch. Unlike
+     * storeBreakdown() above (a target-only preview, independent of any
+     * batch — used before a batch exists, or just for reference), this
+     * merges the same live PO target with whatever has ACTUALLY been
+     * entered so far for this product in THIS batch: 0s across every
+     * store (fgItemId null, exploded=false) before the product is ever
+     * exploded, and each store row's own persisted fgVerified/packed/
+     * reject/hilang/notes/status once it has been. Never writes anything.
+     */
+    public function batchProductStores(int $batchId, int $productId): array
+    {
+        $batch = $this->repo->findBatchById($this->pdo, $batchId);
+        if ($batch === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'FG document not found');
+        }
+        $this->requireFactory((int) $batch['factory_id']);
+
+        $targetRows = $this->targets->storeBreakdownForProduct($this->pdo, (string) $batch['tanggal'], (int) $batch['factory_id'], $productId);
+        $existingRaw = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
+        $byStore = [];
+        foreach ($existingRaw as $r) {
+            $byStore[(int) $r['store_id']] = $r;
+        }
+        $unallocatedStoreId = $this->repo->unallocatedStoreId($this->pdo);
+        $exploded = false;
+        foreach ($existingRaw as $r) {
+            if ((int) $r['store_id'] !== $unallocatedStoreId) {
+                $exploded = true;
+                break;
+            }
+        }
+
+        $rows = [];
+        foreach ($targetRows as $t) {
+            $existing = $byStore[$t['storeId']] ?? null;
+            $rows[] = [
+                'storeId' => $t['storeId'],
+                'storeName' => $t['storeName'],
+                'target' => $t['target'],
+                'fgItemId' => $existing !== null ? (int) $existing['fg_item_id'] : null,
+                'fgVerified' => $existing !== null ? (float) $existing['qty'] : 0.0,
+                'packed' => $existing !== null ? (float) $existing['packed_qty'] : 0.0,
+                'reject' => $existing !== null ? (float) $existing['reject_qty'] : 0.0,
+                'hilang' => $existing !== null ? (float) $existing['hilang_qty'] : 0.0,
+                'notes' => $existing !== null ? $existing['keterangan'] : null,
+                'status' => $existing !== null ? $existing['status'] : 'belum_dicek',
+            ];
+        }
+
+        return [
+            'fgBatchId' => $batchId,
+            'productId' => $productId,
+            'exploded' => $exploded,
+            'stores' => $rows,
+            'totalTarget' => array_sum(array_column($rows, 'target')),
+            'totalVerified' => array_sum(array_column($rows, 'fgVerified')),
+            'totalPacked' => array_sum(array_column($rows, 'packed')),
+        ];
+    }
+
+    /**
      * GET /api/fg/availability — factory/product balance (never trapped to
      * one business date, one fg_batch, or one store — see
      * docs/mysql-schema-v1.md §5.1: `location` is deliberately its own
@@ -497,13 +789,30 @@ final class FgService
 
         $actuals = $this->targets->productionActualByProduct($this->pdo, $tanggal, $factoryId);
         $existingItems = $this->repo->findItems($this->pdo, $batchId);
-        $storeId = $this->repo->unallocatedStoreId($this->pdo);
+        $unallocatedStoreId = $this->repo->unallocatedStoreId($this->pdo);
         foreach ($actuals as $productId => $a) {
-            if (isset($existingItems[$productId])) {
-                $this->repo->updateItemSnapshot($this->pdo, (int) $existingItems[$productId]['fg_item_id'], $a['actual']);
-            } else {
-                $this->repo->insertItem($this->pdo, $batchId, $productId, $storeId, $a['actual']);
+            if (!isset($existingItems[$productId])) {
+                $this->repo->insertItem($this->pdo, $batchId, $productId, $unallocatedStoreId, $a['actual']);
+                continue;
             }
+            $product = $existingItems[$productId];
+            if ($product['mode'] === 'perProduk') {
+                $this->repo->updateItemSnapshot($this->pdo, (int) $product['fg_item_id'], $a['actual']);
+                continue;
+            }
+            // Breakdown Toko: the snapshot is a ceiling on the SUM across
+            // this product's store rows, never a per-store allocation —
+            // so the SAME refreshed value is written to every one of this
+            // product's rows (never divided). New stores that appeared in
+            // the live PO target since the last explode/refresh are synced
+            // in as fresh zero rows; an existing store row is NEVER
+            // removed even if it later drops out of target, matching the
+            // "never retroactively invalidate operator work" rule already
+            // governing production_actual_snapshot itself.
+            foreach ($product['fg_item_ids'] as $fgItemId) {
+                $this->repo->updateItemSnapshot($this->pdo, $fgItemId, $a['actual']);
+            }
+            $this->syncStoreRows($batchId, $productId, $tanggal, $factoryId, $a['actual']);
         }
     }
 
@@ -721,6 +1030,12 @@ final class FgService
             'fgStatusLabel' => $fgStatus['label'],
             'packingStatusCode' => $packingStatus['code'],
             'packingStatusLabel' => $packingStatus['label'],
+            // 'mode'/'storeCount' expose FgRepository::findItems()'s own
+            // aggregation state — 'breakdownToko' the moment ANY row for
+            // this product belongs to a real store, never a separately
+            // persisted flag (see that method's own docblock).
+            'mode' => $item['mode'] ?? 'perProduk',
+            'storeCount' => $item['row_count'] ?? 1,
         ];
     }
 

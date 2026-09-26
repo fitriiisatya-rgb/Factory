@@ -82,6 +82,7 @@ final class App
         $router->get('/api/fg/target', [FgController::class, 'target']);
         $router->get('/api/fg/availability', [FgController::class, 'availability']);
         $router->get('/api/fg/store-breakdown', [FgController::class, 'storeBreakdown']);
+        $router->get('/api/fg/{id}/items/{productId}/stores', [FgController::class, 'productStores']);
         $router->get('/api/fg/history', [FgController::class, 'history']);
         $router->get('/api/fg', [FgController::class, 'index']);
         $router->post('/api/fg', [FgController::class, 'create']);

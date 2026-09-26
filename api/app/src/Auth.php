@@ -130,16 +130,28 @@ final class Auth
     }
 
     /**
-     * Division-level access gate for the Production module. Opt-in scoping:
-     * user_division_access existed in the schema since migration 0001 as
-     * unused "future scope" — wiring it in now must not silently lock out
-     * every existing PRODUCTION-role user who has never been assigned a
-     * division (a real regression risk, since every current such user has
-     * zero rows in that table and today freely edits any division). So a
-     * user with NO assignment rows keeps today's unrestricted role-based
-     * behavior; only once an admin assigns them to specific divisions does
-     * this become a real allowlist. ADMIN/PPIC always bypass (task section
-     * "Admin: sees all... manages assignment").
+     * Division-level access gate for the Production module. DEFAULT-DENY:
+     * a non-ADMIN/PPIC user MUST have at least one user_division_access row
+     * to reach ANY division worksheet — this is the approved business rule
+     * ("Production users log in for their assigned division(s)... A
+     * production user must ONLY see and edit divisions explicitly assigned
+     * to them"). A user with zero assignment rows is denied outright with a
+     * clear NO_DIVISION_ASSIGNMENT error, never silently given unrestricted
+     * access. ADMIN/PPIC always bypass (task's own "Admin: sees all...
+     * PPIC: all divisions if this is existing approved behavior" —
+     * documented as-is; PPIC has always been treated identically to ADMIN
+     * for every existing role gate in this codebase, e.g.
+     * ProductionController::EDITOR_ROLES/REOPEN_ROLES, so this preserves
+     * that established behavior rather than introducing a new PPIC-specific
+     * rule).
+     *
+     * This intentionally replaced an earlier opt-in version of this method
+     * (zero assignments = unrestricted) — that version was a deliberate,
+     * disclosed backward-compatibility bridge for the initial RBAC-wiring
+     * pass; the business has since confirmed default-deny is the actually
+     * approved rule, so every pre-existing PRODUCTION-role test fixture was
+     * updated with explicit assignments rather than left to rely on the
+     * old bypass.
      */
     public static function requireDivisionAccess(int $divisionId): void
     {
@@ -150,14 +162,21 @@ final class Auth
         }
         $assigned = self::currentDivisionIds();
         if ($assigned === []) {
-            return;
+            throw new ApiException(403, 'NO_DIVISION_ASSIGNMENT', 'User belum memiliki assignment divisi produksi.');
         }
         if (!in_array($divisionId, $assigned, true)) {
             throw new ApiException(403, 'DIVISION_ACCESS_DENIED', 'You are not assigned to this division');
         }
     }
 
-    /** Factory-level access gate for the FG & Packing module. Same opt-in semantics as requireDivisionAccess(). */
+    /**
+     * Factory-level access gate for the FG & Packing module. Same
+     * DEFAULT-DENY semantics as requireDivisionAccess(), applied for
+     * consistency: leaving FG_PACKING/PRODUCTION opt-in while Production
+     * divisions were made default-deny would be an inconsistent access
+     * policy across the two modules the business explicitly compared in
+     * the same request. ADMIN/PPIC always bypass.
+     */
     public static function requireFactoryAccess(int $factoryId): void
     {
         self::requireAuth();
@@ -167,7 +186,7 @@ final class Auth
         }
         $assigned = self::currentFactoryIds();
         if ($assigned === []) {
-            return;
+            throw new ApiException(403, 'NO_FACTORY_ASSIGNMENT', 'User belum memiliki assignment pabrik FG & Packing.');
         }
         if (!in_array($factoryId, $assigned, true)) {
             throw new ApiException(403, 'FACTORY_ACCESS_DENIED', 'You are not assigned to this factory');

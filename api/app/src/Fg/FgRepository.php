@@ -188,22 +188,87 @@ final class FgRepository
         $stmt->execute([$batchId, $productionRunId, $sourceVersion]);
     }
 
-    /** @return array<int,array> keyed by product_id */
+    /**
+     * AGGREGATE view, keyed by product_id — one product can now back
+     * MULTIPLE fg_item rows (one per store, once "Breakdown Toko" mode is
+     * exploded for that product; see FgService::explodeToStores()).
+     * qty/packed_qty/reject_qty/hilang_qty here are the SUM across every
+     * row belonging to this product — this is the single authoritative
+     * "product total = SUM(store rows)" aggregation point every existing
+     * caller (patchDraft's ceiling check, submit()'s posting, buildItemDto)
+     * already relies on, so none of them need to know or care whether a
+     * product is currently split across stores. 'fg_item_id' is the ANCHOR
+     * (lowest id among this product's rows) — the single id submit() posts
+     * its one aggregated stock_ledger row against. 'mode' is 'perProduk'
+     * when every row still belongs to the synthetic unallocated store
+     * (FgRepository::unallocatedStoreId), 'breakdownToko' the moment ANY
+     * row belongs to a real store — this is the sole source of truth for
+     * which UI mode a product is in, never a separately persisted flag.
+     * @return array<int,array>
+     */
     public function findItems(PDO $pdo, int $batchId): array
     {
+        $unallocatedStoreId = $this->unallocatedStoreId($pdo);
         $stmt = $pdo->prepare(
             'SELECT fi.*, p.name AS product_name
              FROM fg_item fi
              INNER JOIN product p ON p.product_id = fi.product_id
              WHERE fi.fg_batch_id = ?
-             ORDER BY p.name'
+             ORDER BY p.name, fi.fg_item_id'
         );
         $stmt->execute([$batchId]);
         $out = [];
         foreach ($stmt->fetchAll() as $r) {
-            $out[(int) $r['product_id']] = $r;
+            $productId = (int) $r['product_id'];
+            if (!isset($out[$productId])) {
+                $out[$productId] = [
+                    'fg_item_id' => (int) $r['fg_item_id'],
+                    'fg_batch_id' => (int) $r['fg_batch_id'],
+                    'product_id' => $productId,
+                    'product_name' => $r['product_name'],
+                    'store_id' => (int) $r['store_id'],
+                    'production_actual_snapshot' => (float) $r['production_actual_snapshot'],
+                    'qty' => 0.0,
+                    'packed_qty' => 0.0,
+                    'reject_qty' => 0.0,
+                    'hilang_qty' => 0.0,
+                    'status' => $r['status'],
+                    'keterangan' => $r['keterangan'],
+                    'row_count' => 0,
+                    'fg_item_ids' => [],
+                    'mode' => 'perProduk',
+                ];
+            }
+            $out[$productId]['qty'] += (float) $r['qty'];
+            $out[$productId]['packed_qty'] += (float) $r['packed_qty'];
+            $out[$productId]['reject_qty'] += (float) $r['reject_qty'];
+            $out[$productId]['hilang_qty'] += (float) $r['hilang_qty'];
+            $out[$productId]['row_count']++;
+            $out[$productId]['fg_item_ids'][] = (int) $r['fg_item_id'];
+            if ((int) $r['store_id'] !== $unallocatedStoreId) {
+                $out[$productId]['mode'] = 'breakdownToko';
+            }
         }
         return $out;
+    }
+
+    /**
+     * Raw, per-store fg_item rows for ONE product in this batch — the data
+     * source for the writable Breakdown Toko table. Ordered by store name
+     * for a stable UI listing.
+     * @return array<int,array>
+     */
+    public function findItemRowsForProduct(PDO $pdo, int $batchId, int $productId): array
+    {
+        $stmt = $pdo->prepare(
+            'SELECT fi.*, s.canonical_name AS store_name
+             FROM fg_item fi
+             INNER JOIN store s ON s.store_id = fi.store_id
+             WHERE fi.fg_batch_id = ? AND fi.product_id = ?
+             ORDER BY s.canonical_name'
+        );
+        $stmt->execute([$batchId, $productId]);
+        return $stmt->fetchAll();
     }
 
     public function insertItem(PDO $pdo, int $batchId, int $productId, int $storeId, float $productionActualSnapshot): void
@@ -213,6 +278,19 @@ final class FgRepository
              VALUES (?, ?, ?, 0, 0, ?, 'belum_dicek', NULL)"
         );
         $stmt->execute([$batchId, $productId, $storeId, $productionActualSnapshot]);
+    }
+
+    /**
+     * Used only by explode/collapse (mode switching) — deletes ONE
+     * fg_item row outright. Never called on a row that has already posted
+     * stock (FgService guards this — mode switching is a draft/reopened-
+     * only operation, same as every other patchDraft edit, and submit()
+     * is the only writer of stock_ledger).
+     */
+    public function deleteItem(PDO $pdo, int $fgItemId): void
+    {
+        $stmt = $pdo->prepare('DELETE FROM fg_item WHERE fg_item_id = ?');
+        $stmt->execute([$fgItemId]);
     }
 
     public function updateItemSnapshot(PDO $pdo, int $fgItemId, float $productionActualSnapshot): void
@@ -263,6 +341,32 @@ final class FgRepository
             "SELECT COALESCE(SUM(qty_delta), 0) FROM stock_ledger WHERE source_type = 'fg_item' AND source_id = ?"
         );
         $stmt->execute([$fgItemId]);
+        return (float) $stmt->fetchColumn();
+    }
+
+    /**
+     * Same as postedQtyForItem() but summed across EVERY fg_item_id
+     * belonging to one product (a Breakdown Toko product posts under
+     * several store-level fg_item rows, but must still post to
+     * stock_ledger exactly ONCE per product per submit — see
+     * FgService::submit()'s own docblock). Anchoring the single posted
+     * row to the LOWEST fg_item_id among them (the "anchor") is what makes
+     * this re-derivable: postedQtyForProduct() always sums whatever is
+     * already there, so a resubmit after reopen still posts only the
+     * delta, whether the product was Per Produk or Breakdown Toko at
+     * either point in time.
+     * @param int[] $fgItemIds
+     */
+    public function postedQtyForProduct(PDO $pdo, array $fgItemIds): float
+    {
+        if ($fgItemIds === []) {
+            return 0.0;
+        }
+        $placeholders = implode(',', array_fill(0, count($fgItemIds), '?'));
+        $stmt = $pdo->prepare(
+            "SELECT COALESCE(SUM(qty_delta), 0) FROM stock_ledger WHERE source_type = 'fg_item' AND source_id IN ({$placeholders})"
+        );
+        $stmt->execute($fgItemIds);
         return (float) $stmt->fetchColumn();
     }
 

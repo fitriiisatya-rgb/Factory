@@ -17,15 +17,30 @@ $divisions->execute([$uiFactoryId]);
 $divisionRows = $divisions->fetchAll();
 
 // Division-scoped users (see Auth::requireDivisionAccess()'s own docblock —
-// opt-in: a user with zero user_division_access rows is unrestricted, same
-// as before this rework) only see the divisions they're assigned to in
-// this picker. This is UI-level filtering, not a second access-control
-// layer — the real enforcement is server-side in ProductionService's own
+// DEFAULT-DENY: a non-ADMIN/PPIC user with zero user_division_access rows
+// has NO division access at all) only see the divisions they're assigned
+// to in this picker — zero assignments means an EMPTY picker, never "all
+// divisions" (that was the prior, since-corrected opt-in behavior). This
+// is UI-level filtering, not a second access-control layer — the real
+// enforcement is server-side in ProductionService's own
 // requireProductionScopedDivision(), called on every read/write this page
 // drives.
+$isUnscopedRole = array_intersect(['ADMIN', 'PPIC'], Auth::currentRoles()) !== [];
 $scopedDivisionIds = Auth::currentDivisionIds();
-if ($scopedDivisionIds !== [] && array_intersect(['ADMIN', 'PPIC'], Auth::currentRoles()) === []) {
-    $divisionRows = array_values(array_filter($divisionRows, static fn ($d) => in_array((int) $d['division_id'], $scopedDivisionIds, true)));
+$noDivisionAssignment = false;
+if (!$isUnscopedRole) {
+    if ($scopedDivisionIds === []) {
+        $noDivisionAssignment = true;
+        $divisionRows = [];
+    } else {
+        $divisionRows = array_values(array_filter($divisionRows, static fn ($d) => in_array((int) $d['division_id'], $scopedDivisionIds, true)));
+        // Task's own explicit UI rule: "If only one assigned division: you
+        // may auto-select it" — only when the operator hasn't already
+        // picked a division themselves via the query string.
+        if ($divisionIdParam === null && count($divisionRows) === 1) {
+            $divisionIdParam = (int) $divisionRows[0]['division_id'];
+        }
+    }
 }
 
 $service = new ProductionService($pdo);
@@ -198,6 +213,9 @@ if ($runIdParam !== null) {
 }
 ?>
 <?= ui_produksi_tabs('produksi', $uiTanggal, $uiFactoryId) ?>
+<?php if ($noDivisionAssignment): ?>
+<div class="alert alert-danger">User belum memiliki assignment divisi produksi. Hubungi Admin untuk mendapatkan akses ke divisi produksi Anda.</div>
+<?php endif; ?>
 <div class="filter-bar">
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;">
     <input type="hidden" name="page" value="produksi">

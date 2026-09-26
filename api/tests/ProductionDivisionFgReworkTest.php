@@ -199,14 +199,66 @@ function productsInDivision(PDO $pdo, int $divisionId, int $limit): array
     $stmt->execute([$divisionId]);
     return $stmt->fetchAll();
 }
-$rotiProducts = productsInDivision($pdo, $rotiBollenDivId, 2);
-expect(count($rotiProducts) >= 2, 'expected enough katalog products after bootstrap');
-[$prodA, $prodB] = $rotiProducts;
+$rotiProducts = productsInDivision($pdo, $rotiBollenDivId, 4);
+expect(count($rotiProducts) >= 4, 'expected enough katalog products after bootstrap');
+[$prodA, $prodB, $prodC, $prodD] = $rotiProducts;
 
 $storeStmt = $pdo->prepare("SELECT store_id FROM store WHERE canonical_name = 'P2 TEST STORE A'");
 $storeStmt->execute();
 $storeAId = (int) $storeStmt->fetchColumn();
 expect($storeAId > 0, 'expected P2 TEST STORE A seeded');
+
+$storeStmtB = $pdo->prepare("SELECT store_id FROM store WHERE canonical_name = 'P2 TEST STORE B'");
+$storeStmtB->execute();
+$storeBId = (int) $storeStmtB->fetchColumn();
+expect($storeBId > 0, 'expected P2 TEST STORE B seeded');
+
+/** @param array<int,array{poAwal?:float,poRevisi?:float}> $storeAmounts store_id => amounts — writes ONE po_item split across MULTIPLE po_store_item rows (unlike seedPo(), which writes only one store per product). po_item.pb is left at 0 unless a caller upserts it separately (see FG-STORE-12's PB-zero-contribution check). */
+function seedPoStoreSplit(PDO $pdo, string $tanggal, int $factoryId, int $productId, array $storeAmounts): void
+{
+    $find = $pdo->prepare('SELECT po_batch_id FROM po_batch WHERE tanggal = ? AND factory_id = ?');
+    $find->execute([$tanggal, $factoryId]);
+    $batchId = $find->fetchColumn();
+    if ($batchId === false) {
+        $pdo->prepare('INSERT INTO po_batch (tanggal, factory_id, version, created_at) VALUES (?, ?, 1, UTC_TIMESTAMP())')->execute([$tanggal, $factoryId]);
+        $batchId = (int) $pdo->lastInsertId();
+    } else {
+        $batchId = (int) $batchId;
+    }
+    $totalAwal = array_sum(array_column($storeAmounts, 'poAwal'));
+    $totalRevisi = array_sum(array_column($storeAmounts, 'poRevisi'));
+    $pdo->prepare(
+        'INSERT INTO po_item (po_batch_id, product_id, kategori, po_awal, po_revisi, pb) VALUES (?, ?, ?, ?, ?, 0)
+         ON DUPLICATE KEY UPDATE kategori = VALUES(kategori), po_awal = VALUES(po_awal), po_revisi = VALUES(po_revisi)'
+    )->execute([$batchId, $productId, 'TEST', $totalAwal, $totalRevisi]);
+    $findItemId = $pdo->prepare('SELECT po_item_id FROM po_item WHERE po_batch_id = ? AND product_id = ?');
+    $findItemId->execute([$batchId, $productId]);
+    $itemId = (int) $findItemId->fetchColumn();
+    $upsertStore = $pdo->prepare(
+        'INSERT INTO po_store_item (po_item_id, store_id, po_awal, po_revisi) VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE po_awal = VALUES(po_awal), po_revisi = VALUES(po_revisi)'
+    );
+    foreach ($storeAmounts as $storeId => $d) {
+        $upsertStore->execute([$itemId, $storeId, $d['poAwal'] ?? 0.0, $d['poRevisi'] ?? 0.0]);
+    }
+}
+
+/** Submits a fresh, single-product Production draft for $divisionId/$tanggal with $actual as the sole item's actualQty, and returns nothing — used purely to give FG a SUBMITTED source for a product not otherwise touched by Part B. */
+function submitProductionActual(HttpPdfg $http, string $csrf, string $tanggal, int $divisionId, int $productId, float $actual): void
+{
+    $create = $http->request('POST', '/api/production', ['tanggal' => $tanggal, 'divisionId' => $divisionId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-prod-create-' . $productId)));
+    expect($create['status'] === 200, "expected production draft create 200, got {$create['status']}: " . json_encode($create['json']));
+    $runId = (int) $create['json']['data']['productionRunId'];
+    $version = (int) $create['json']['data']['version'];
+    $patch = $http->request('PATCH', "/api/production/{$runId}", [
+        'expectedVersion' => $version,
+        'items' => [['productId' => $productId, 'actualQty' => $actual]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-prod-patch-' . $productId)));
+    expect($patch['status'] === 200, "expected production draft patch 200, got {$patch['status']}: " . json_encode($patch['json']));
+    $version = (int) $patch['json']['data']['version'];
+    $submit = $http->request('POST', "/api/production/{$runId}/submit", ['expectedVersion' => $version], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-prod-submit-' . $productId)));
+    expect($submit['status'] === 200, "expected production submit 200, got {$submit['status']}: " . json_encode($submit['json']));
+}
 
 $tanggal = '2026-10-05';
 seedPo($pdo, $tanggal, $karangtengahId, $storeAId, [
@@ -219,6 +271,17 @@ $prodOnlyUserId = createUser($pdo, 'pdfg_production_only', 'ProdOnlyPass#123', [
 $prodScopedUserId = createUser($pdo, 'pdfg_production_scoped', 'ProdScopedPass#123', ['PRODUCTION']);
 $fgOnlyUserId = createUser($pdo, 'pdfg_fg_only', 'FgOnlyPass#123', ['FG_PACKING']);
 $fgScopedUserId = createUser($pdo, 'pdfg_fg_scoped', 'FgScopedPass#123', ['FG_PACKING']);
+$ppicUserId = createUser($pdo, 'pdfg_ppic', 'PpicPass#123', ['PPIC']);
+// A SECOND user assigned to the SAME division as pdfg_production_scoped
+// (Basic), for ACCESS-04 "two users assigned same division share the
+// same run" — assigned directly here rather than via the API since it
+// only needs to exist before PDFG-13's shared-worksheet check runs.
+$prodScopedUser2Id = createUser($pdo, 'pdfg_production_scoped2', 'ProdScoped2Pass#123', ['PRODUCTION']);
+$pdo->prepare('INSERT INTO user_division_access (user_id, division_id) VALUES (?, ?)')->execute([$prodScopedUser2Id, $basicDivId]);
+// A multi-division user for ACCESS-03 "assigned two divisions, can access both".
+$prodMultiUserId = createUser($pdo, 'pdfg_production_multi', 'ProdMultiPass#123', ['PRODUCTION']);
+$pdo->prepare('INSERT INTO user_division_access (user_id, division_id) VALUES (?, ?), (?, ?)')
+    ->execute([$prodMultiUserId, $rotiBollenDivId, $prodMultiUserId, $basicDivId]);
 
 $httpProdOnly = new HttpPdfg($baseUrl);
 $csrfProdOnly = login($httpProdOnly, 'pdfg_production_only', 'ProdOnlyPass#123');
@@ -228,14 +291,20 @@ $httpFgOnly = new HttpPdfg($baseUrl);
 $csrfFgOnly = login($httpFgOnly, 'pdfg_fg_only', 'FgOnlyPass#123');
 $httpFgScoped = new HttpPdfg($baseUrl);
 $csrfFgScoped = login($httpFgScoped, 'pdfg_fg_scoped', 'FgScopedPass#123');
+$httpPpic = new HttpPdfg($baseUrl);
+$csrfPpic = login($httpPpic, 'pdfg_ppic', 'PpicPass#123');
+$httpProdScoped2 = new HttpPdfg($baseUrl);
+$csrfProdScoped2 = login($httpProdScoped2, 'pdfg_production_scoped2', 'ProdScoped2Pass#123');
+$httpProdMulti = new HttpPdfg($baseUrl);
+$csrfProdMulti = login($httpProdMulti, 'pdfg_production_multi', 'ProdMultiPass#123');
 
 // =======================================================================
 // PART A — user_division_access / user_factory_access opt-in RBAC
 // =======================================================================
 
-runTest('PDFG-01 a PRODUCTION user with ZERO division assignments keeps unrestricted access (backward compat)', function () use ($httpProdOnly, $csrfProdOnly, $tanggal, $rotiBollenDivId) {
+runTest('PDFG-01 (ACCESS-01) a PRODUCTION user with ZERO division assignments is DENIED — default-deny, never unrestricted', function () use ($httpProdOnly, $csrfProdOnly, $tanggal, $rotiBollenDivId) {
     $r = $httpProdOnly->request('GET', "/api/production/target?date={$tanggal}&divisionId={$rotiBollenDivId}", null, ['X-CSRF-Token' => $csrfProdOnly]);
-    expect($r['status'] === 200, "expected unassigned PRODUCTION user to read any division freely, got {$r['status']}: " . json_encode($r['json']));
+    expect($r['status'] === 403 && $r['json']['code'] === 'NO_DIVISION_ASSIGNMENT', "expected 403 NO_DIVISION_ASSIGNMENT for an unassigned PRODUCTION user, got {$r['status']}: " . json_encode($r['json']));
 });
 
 runTest('PDFG-02 admin assigns pdfg_production_scoped to Basic ONLY', function () use ($http, $csrf, $prodScopedUserId, $basicDivId) {
@@ -263,9 +332,9 @@ runTest('PDFG-06 ADMIN role always bypasses division scoping even with assignmen
     expect($r['status'] === 200, "expected ADMIN to always read any division, got {$r['status']}");
 });
 
-runTest('PDFG-07 a FG_PACKING user with ZERO factory assignments keeps unrestricted access (backward compat)', function () use ($httpFgOnly, $csrfFgOnly, $tanggal, $karangtengahId) {
+runTest('PDFG-07 a FG_PACKING user with ZERO factory assignments is DENIED — default-deny, never unrestricted', function () use ($httpFgOnly, $csrfFgOnly, $tanggal, $karangtengahId) {
     $r = $httpFgOnly->request('GET', "/api/fg/target?date={$tanggal}&factoryId={$karangtengahId}", null, ['X-CSRF-Token' => $csrfFgOnly]);
-    expect($r['status'] === 200, "expected unassigned FG_PACKING user to read any factory freely, got {$r['status']}: " . json_encode($r['json']));
+    expect($r['status'] === 403 && $r['json']['code'] === 'NO_FACTORY_ASSIGNMENT', "expected 403 NO_FACTORY_ASSIGNMENT for an unassigned FG_PACKING user, got {$r['status']}: " . json_encode($r['json']));
 });
 
 runTest('PDFG-08 admin assigns pdfg_fg_scoped to Cibadak ONLY, then it is denied on Karangtengah', function () use ($http, $csrf, $baseUrl, $fgScopedUserId, $cibadakId, $tanggal, $karangtengahId) {
@@ -286,13 +355,70 @@ runTest('PDFG-09 an FG (is_verification=1) division is rejected by updateDivisio
     expect($r['status'] === 400 && $r['json']['code'] === 'UNKNOWN_DIVISION', "expected 400 UNKNOWN_DIVISION for an FG division, got {$r['status']}: " . json_encode($r['json']));
 });
 
-runTest('PDFG-10 clearing division assignments (empty array) reverts the user to unrestricted access', function () use ($http, $csrf, $baseUrl, $prodScopedUserId, $tanggal, $rotiBollenDivId) {
+runTest('PDFG-10 clearing division assignments (empty array) reverts the user to FULLY DENIED (never unrestricted)', function () use ($http, $csrf, $baseUrl, $prodScopedUserId, $tanggal, $rotiBollenDivId, $basicDivId) {
     $r = $http->request('PUT', "/api/users/{$prodScopedUserId}/divisions", ['divisionIds' => []], array_merge(['X-CSRF-Token' => $csrf], idemKey('pdfg-10')));
     expect($r['status'] === 200 && $r['json']['data']['divisionIds'] === [], 'expected divisionIds cleared to []');
     $http2 = new HttpPdfg($baseUrl);
     $csrf2 = login($http2, 'pdfg_production_scoped', 'ProdScopedPass#123');
     $r2 = $http2->request('GET', "/api/production/target?date={$tanggal}&divisionId={$rotiBollenDivId}", null, ['X-CSRF-Token' => $csrf2]);
-    expect($r2['status'] === 200, "expected unrestricted access again after clearing assignments, got {$r2['status']}");
+    expect($r2['status'] === 403 && $r2['json']['code'] === 'NO_DIVISION_ASSIGNMENT', "expected 403 NO_DIVISION_ASSIGNMENT after clearing assignments (default-deny), got {$r2['status']}: " . json_encode($r2['json']));
+    $r3 = $http2->request('GET', "/api/production/target?date={$tanggal}&divisionId={$basicDivId}", null, ['X-CSRF-Token' => $csrf2]);
+    expect($r3['status'] === 403 && $r3['json']['code'] === 'NO_DIVISION_ASSIGNMENT', "expected 403 NO_DIVISION_ASSIGNMENT even on the division it WAS assigned to before clearing, got {$r3['status']}: " . json_encode($r3['json']));
+
+    // Restore the assignment so later tests (which re-login as this user) are unaffected.
+    $http->request('PUT', "/api/users/{$prodScopedUserId}/divisions", ['divisionIds' => [$basicDivId]], array_merge(['X-CSRF-Token' => $csrf], idemKey('pdfg-10-restore')));
+});
+
+runTest('PDFG-11a (ACCESS-03) a user assigned TWO divisions can access BOTH', function () use ($httpProdMulti, $csrfProdMulti, $tanggal, $rotiBollenDivId, $basicDivId) {
+    $r1 = $httpProdMulti->request('GET', "/api/production/target?date={$tanggal}&divisionId={$rotiBollenDivId}", null, ['X-CSRF-Token' => $csrfProdMulti]);
+    expect($r1['status'] === 200, "expected multi-assigned user to read Roti & Bollen, got {$r1['status']}: " . json_encode($r1['json']));
+    $r2 = $httpProdMulti->request('GET', "/api/production/target?date={$tanggal}&divisionId={$basicDivId}", null, ['X-CSRF-Token' => $csrfProdMulti]);
+    expect($r2['status'] === 200, "expected multi-assigned user to read Basic, got {$r2['status']}: " . json_encode($r2['json']));
+});
+
+runTest('PDFG-11b (ACCESS-07) PPIC bypasses division scoping exactly like ADMIN', function () use ($httpPpic, $csrfPpic, $tanggal, $rotiBollenDivId) {
+    $r = $httpPpic->request('GET', "/api/production/target?date={$tanggal}&divisionId={$rotiBollenDivId}", null, ['X-CSRF-Token' => $csrfPpic]);
+    expect($r['status'] === 200, "expected PPIC to read any division without an assignment, got {$r['status']}: " . json_encode($r['json']));
+});
+
+runTest('PDFG-11c (ACCESS-04) two users assigned the SAME division share the SAME production_run (no duplicate reports)', function () use ($baseUrl, $tanggal, $basicDivId, $pdo) {
+    $tanggalShared = '2026-10-06';
+    // Fresh logins are REQUIRED here (not the stale $httpProdScoped from
+    // fixture setup) — division_ids are cached in session at login time,
+    // and pdfg_production_scoped's assignment only happened later via the
+    // PDFG-02 API call, so its original session from fixture setup never
+    // picked it up (same reason PDFG-04/05 always re-login).
+    $httpA = new HttpPdfg($baseUrl);
+    $csrfA = login($httpA, 'pdfg_production_scoped', 'ProdScopedPass#123');
+    $httpB = new HttpPdfg($baseUrl);
+    $csrfB = login($httpB, 'pdfg_production_scoped2', 'ProdScoped2Pass#123');
+
+    $createA = $httpA->request('POST', '/api/production', ['tanggal' => $tanggalShared, 'divisionId' => $basicDivId], array_merge(['X-CSRF-Token' => $csrfA], idemKey('pdfg-11c-a')));
+    expect($createA['status'] === 200, "expected user A to create the shared draft, got {$createA['status']}: " . json_encode($createA['json']));
+    $runIdA = (int) $createA['json']['data']['productionRunId'];
+
+    $createB = $httpB->request('POST', '/api/production', ['tanggal' => $tanggalShared, 'divisionId' => $basicDivId], array_merge(['X-CSRF-Token' => $csrfB], idemKey('pdfg-11c-b')));
+    expect($createB['status'] === 200, "expected user B to see/reuse the SAME draft, got {$createB['status']}: " . json_encode($createB['json']));
+    $runIdB = (int) $createB['json']['data']['productionRunId'];
+    expect($runIdA === $runIdB, "expected both users to share the SAME production_run_id, got A={$runIdA} B={$runIdB}");
+
+    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM production_run WHERE tanggal = ? AND division_id = ?');
+    $countStmt->execute([$tanggalShared, $basicDivId]);
+    expect((int) $countStmt->fetchColumn() === 1, 'expected exactly ONE production_run row — no duplicate report was created by the second user');
+});
+
+runTest('PDFG-11d (ACCESS-08 / FG role matrix) FG_PACKING can now actually edit FG (fixes the EDITOR_ROLES gap this pass found)', function () use ($http, $csrf, $baseUrl, $fgScopedUserId, $karangtengahId, $tanggal) {
+    $assign = $http->request('PUT', "/api/users/{$fgScopedUserId}/factories", ['factoryIds' => [$karangtengahId]], array_merge(['X-CSRF-Token' => $csrf], idemKey('pdfg-11d-assign')));
+    expect($assign['status'] === 200, "expected factory assignment to succeed, got {$assign['status']}");
+    $http2 = new HttpPdfg($baseUrl);
+    $csrf2 = login($http2, 'pdfg_fg_scoped', 'FgScopedPass#123');
+    // GET /api/fg/target (a read, requires only Auth::requireAuth + the
+    // factory-access gate, not EDITOR_ROLES) confirms factory access;
+    // POST /api/fg (a write, requires EDITOR_ROLES) confirms the role fix.
+    $read = $http2->request('GET', "/api/fg/target?date={$tanggal}&factoryId={$karangtengahId}", null, ['X-CSRF-Token' => $csrf2]);
+    expect($read['status'] === 200, "expected assigned FG_PACKING user to read the factory target, got {$read['status']}: " . json_encode($read['json']));
+    $write = $http2->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf2], idemKey('pdfg-11d-write')));
+    expect($write['status'] !== 403, "expected FG_PACKING to NOT be blocked by role (EDITOR_ROLES), got {$write['status']}: " . json_encode($write['json']));
 });
 
 // =======================================================================
@@ -444,6 +570,266 @@ runTest('PDFG-24 store-breakdown never writes anything (still read-only after be
     $http->request('GET', "/api/fg/store-breakdown?date={$tanggal}&factoryId={$karangtengahId}&productId={$prodA['product_id']}", null, ['X-CSRF-Token' => $csrf]);
     $after = $http->request('GET', "/api/fg/{$fgBatchId}", null, ['X-CSRF-Token' => $csrf]);
     expect($before['json']['data'] === $after['json']['data'], 'expected the FG batch to be byte-identical before/after repeated store-breakdown reads — no double counting, no side effects, single source of truth stays the one fg_item row');
+});
+
+// =======================================================================
+// PART D — Writable FG Breakdown Toko (FG-STORE-01..12), single source of
+// truth = SUM(store rows), Option A mode switching, aggregate-once submit.
+// =======================================================================
+
+$tanggalStoreC = '2026-10-07';
+seedPoStoreSplit($pdo, $tanggalStoreC, $karangtengahId, (int) $prodC['product_id'], [
+    $storeAId => ['poAwal' => 15.0, 'poRevisi' => 0.0],
+    $storeBId => ['poAwal' => 10.0, 'poRevisi' => 0.0],
+]);
+submitProductionActual($http, $csrf, $tanggalStoreC, $rotiBollenDivId, (int) $prodC['product_id'], 25.0);
+
+$fgBatchC = null;
+$fgVersionC = null;
+runTest('FG-STORE-01 a fresh FG item starts Per Produk (unexploded); GET .../stores shows live per-store target summing to the product target, all-zero entered amounts', function () use ($http, $csrf, $tanggalStoreC, $karangtengahId, $prodC, &$fgBatchC, &$fgVersionC) {
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggalStoreC, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-01-create')));
+    expect($create['status'] === 200, "expected 200, got {$create['status']}: " . json_encode($create['json']));
+    $fgBatchC = (int) $create['json']['data']['fgBatchId'];
+    $fgVersionC = (int) $create['json']['data']['version'];
+    $itemC = null;
+    foreach ($create['json']['data']['items'] as $it) { if ($it['productId'] === (int) $prodC['product_id']) { $itemC = $it; } }
+    expect($itemC !== null && $itemC['mode'] === 'perProduk' && $itemC['storeCount'] === 1, 'expected a fresh FG item to start Per Produk with storeCount=1: ' . json_encode($itemC));
+
+    $stores = $http->request('GET', "/api/fg/{$fgBatchC}/items/{$prodC['product_id']}/stores", null, ['X-CSRF-Token' => $csrf]);
+    expect($stores['status'] === 200, "expected 200, got {$stores['status']}: " . json_encode($stores['json']));
+    $data = $stores['json']['data'];
+    expect($data['exploded'] === false, 'expected exploded=false before any store-level edit');
+    expect(numEq($data['totalTarget'], 25.0), "expected store targets to sum to the product's own PO target (15+10=25), got {$data['totalTarget']}");
+    expect(numEq($data['totalVerified'], 0.0), 'expected totalVerified=0 before explode');
+    expect(count($data['stores']) === 2, 'expected exactly 2 stores (A and B)');
+});
+
+runTest('FG-STORE-02 the FIRST storeItems edit explodes the product; all-Sesuai per store aggregates correctly to the product total (product total = SUM(store rows))', function () use ($http, $csrf, &$fgBatchC, &$fgVersionC, $prodC, $storeAId, $storeBId) {
+    $r = $http->request('PATCH', "/api/fg/{$fgBatchC}", [
+        'expectedVersion' => $fgVersionC,
+        'storeItems' => [[
+            'productId' => (int) $prodC['product_id'],
+            'rows' => [
+                ['storeId' => $storeAId, 'fgVerified' => 15.0, 'packed' => 0.0, 'sesuaiVerified' => true],
+                ['storeId' => $storeBId, 'fgVerified' => 10.0, 'packed' => 0.0, 'sesuaiVerified' => true],
+            ],
+        ]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-02')));
+    expect($r['status'] === 200, "expected 200, got {$r['status']}: " . json_encode($r['json']));
+    $fgVersionC = (int) $r['json']['data']['version'];
+    $itemC = null;
+    foreach ($r['json']['data']['items'] as $it) { if ($it['productId'] === (int) $prodC['product_id']) { $itemC = $it; } }
+    expect($itemC !== null && $itemC['mode'] === 'breakdownToko' && $itemC['storeCount'] === 2, 'expected the product to now be exploded into 2 store rows: ' . json_encode($itemC));
+    expect(numEq($itemC['fgVerified'], 25.0), "expected aggregate fgVerified = SUM(15,10) = 25, got {$itemC['fgVerified']}");
+});
+
+runTest('FG-STORE-03 Tidak Sesuai on one store row requires a numeric input and Keterangan; without notes it is rejected', function () use ($http, $csrf, &$fgBatchC, &$fgVersionC, $prodC, $storeBId) {
+    $bad = $http->request('PATCH', "/api/fg/{$fgBatchC}", [
+        'expectedVersion' => $fgVersionC,
+        'storeItems' => [['productId' => (int) $prodC['product_id'], 'rows' => [
+            ['storeId' => $storeBId, 'fgVerified' => 9.0, 'packed' => 0.0, 'sesuaiVerified' => false],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-03a')));
+    expect($bad['status'] === 400 && $bad['json']['code'] === 'NOTES_REQUIRED', "expected 400 NOTES_REQUIRED, got {$bad['status']}: " . json_encode($bad['json']));
+
+    $ok = $http->request('PATCH', "/api/fg/{$fgBatchC}", [
+        'expectedVersion' => $fgVersionC,
+        'storeItems' => [['productId' => (int) $prodC['product_id'], 'rows' => [
+            ['storeId' => $storeBId, 'fgVerified' => 9.0, 'packed' => 0.0, 'sesuaiVerified' => false, 'notes' => '1 pcs kurang di Toko B'],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-03b')));
+    expect($ok['status'] === 200, "expected 200, got {$ok['status']}: " . json_encode($ok['json']));
+    $fgVersionC = (int) $ok['json']['data']['version'];
+    $itemC = null;
+    foreach ($ok['json']['data']['items'] as $it) { if ($it['productId'] === (int) $prodC['product_id']) { $itemC = $it; } }
+    expect(numEq($itemC['fgVerified'], 24.0), "expected aggregate fgVerified = SUM(15,9) = 24, got {$itemC['fgVerified']}");
+});
+
+runTest('FG-STORE-04 store-level Sesuai enforcement is against THAT store\'s own live PO target, not the product snapshot', function () use ($http, $csrf, &$fgBatchC, &$fgVersionC, $prodC, $storeAId) {
+    $r = $http->request('PATCH', "/api/fg/{$fgBatchC}", [
+        'expectedVersion' => $fgVersionC,
+        'storeItems' => [['productId' => (int) $prodC['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 12.0, 'packed' => 0.0, 'sesuaiVerified' => true, 'notes' => 'salah klik'],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-04')));
+    expect($r['status'] === 400 && $r['json']['code'] === 'SESUAI_VERIFIED_MISMATCH', "expected 400 SESUAI_VERIFIED_MISMATCH (Toko A target is 15, not 12), got {$r['status']}: " . json_encode($r['json']));
+});
+
+runTest('FG-STORE-05 Reject/Hilang on a store row require Keterangan, independent of Verified/Packing Sesuai state', function () use ($http, $csrf, &$fgBatchC, &$fgVersionC, $prodC, $storeAId) {
+    $bad = $http->request('PATCH', "/api/fg/{$fgBatchC}", [
+        'expectedVersion' => $fgVersionC,
+        'storeItems' => [['productId' => (int) $prodC['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 15.0, 'packed' => 0.0, 'reject' => 1.0, 'sesuaiVerified' => true],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-05a')));
+    expect($bad['status'] === 400 && $bad['json']['code'] === 'NOTES_REQUIRED', "expected 400 NOTES_REQUIRED for reject>0 without notes, got {$bad['status']}: " . json_encode($bad['json']));
+
+    $ok = $http->request('PATCH', "/api/fg/{$fgBatchC}", [
+        'expectedVersion' => $fgVersionC,
+        'storeItems' => [['productId' => (int) $prodC['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 15.0, 'packed' => 0.0, 'reject' => 1.0, 'sesuaiVerified' => true, 'notes' => '1 reject saat QC di Toko A'],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-05b')));
+    expect($ok['status'] === 200, "expected 200, got {$ok['status']}: " . json_encode($ok['json']));
+    $fgVersionC = (int) $ok['json']['data']['version'];
+});
+
+runTest('FG-STORE-06 product-level totals = SUM(store rows) exactly, across ALL columns (qty/reject), not just fgVerified', function () use ($http, $csrf, &$fgBatchC, $prodC) {
+    $batch = $http->request('GET', "/api/fg/{$fgBatchC}", null, ['X-CSRF-Token' => $csrf]);
+    $itemC = null;
+    foreach ($batch['json']['data']['items'] as $it) { if ($it['productId'] === (int) $prodC['product_id']) { $itemC = $it; } }
+    expect($itemC !== null, 'expected prodC item to exist');
+    expect(numEq($itemC['fgVerified'], 24.0), "expected fgVerified = SUM(15,9) = 24, got {$itemC['fgVerified']}");
+    expect(numEq($itemC['reject'], 1.0), "expected reject = SUM(1,0) = 1, got {$itemC['reject']}");
+    expect(numEq($itemC['packed'], 0.0), "expected packed = SUM(0,0) = 0, got {$itemC['packed']}");
+});
+
+runTest('FG-STORE-07 while a product is in Breakdown Toko mode, editing it via the Per Produk items[] array is rejected (Option A: derived/read-only)', function () use ($http, $csrf, &$fgBatchC, &$fgVersionC, $prodC) {
+    $r = $http->request('PATCH', "/api/fg/{$fgBatchC}", [
+        'expectedVersion' => $fgVersionC,
+        'items' => [['productId' => (int) $prodC['product_id'], 'fgVerified' => 24.0, 'packed' => 0.0]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-07')));
+    expect($r['status'] === 409 && $r['json']['code'] === 'PRODUCT_IN_BREAKDOWN_MODE', "expected 409 PRODUCT_IN_BREAKDOWN_MODE, got {$r['status']}: " . json_encode($r['json']));
+});
+
+runTest('FG-STORE-08 switching modes never doubles: collapse back to Per Produk preserves the exact aggregate totals', function () use ($http, $csrf, &$fgBatchC, &$fgVersionC, $prodC) {
+    $r = $http->request('PATCH', "/api/fg/{$fgBatchC}", [
+        'expectedVersion' => $fgVersionC,
+        'collapseProductIds' => [(int) $prodC['product_id']],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-08')));
+    expect($r['status'] === 200, "expected 200, got {$r['status']}: " . json_encode($r['json']));
+    $fgVersionC = (int) $r['json']['data']['version'];
+    $itemC = null;
+    foreach ($r['json']['data']['items'] as $it) { if ($it['productId'] === (int) $prodC['product_id']) { $itemC = $it; } }
+    expect($itemC !== null && $itemC['mode'] === 'perProduk' && $itemC['storeCount'] === 1, 'expected the product to collapse back to ONE Per Produk row: ' . json_encode($itemC));
+    expect(numEq($itemC['fgVerified'], 24.0) && numEq($itemC['reject'], 1.0), "expected totals unchanged by the collapse (fgVerified=24, reject=1), got: " . json_encode($itemC));
+
+    // Re-exploding is blocked now that the collapsed Per Produk row is
+    // non-zero — this system never guesses how to re-split an aggregate
+    // number across stores (see explodeToStores()'s own docblock).
+    $reExplode = $http->request('PATCH', "/api/fg/{$fgBatchC}", [
+        'expectedVersion' => $fgVersionC,
+        'storeItems' => [['productId' => (int) $prodC['product_id'], 'rows' => [['storeId' => $GLOBALS['storeAId'], 'fgVerified' => 24.0, 'packed' => 0.0]]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-08-reexplode')));
+    expect($reExplode['status'] === 409 && $reExplode['json']['code'] === 'MODE_SWITCH_REQUIRES_ZERO_PER_PRODUK', "expected 409 MODE_SWITCH_REQUIRES_ZERO_PER_PRODUK, got {$reExplode['status']}: " . json_encode($reExplode['json']));
+});
+
+// A SECOND, independent product carries the submit/reopen/PO-revision
+// scenarios through to a real stock posting — kept separate from prodC
+// (now non-zero Per Produk, no longer explodable) so explode succeeds.
+$tanggalStoreD = '2026-10-08';
+seedPoStoreSplit($pdo, $tanggalStoreD, $karangtengahId, (int) $prodD['product_id'], [
+    $storeAId => ['poAwal' => 12.0, 'poRevisi' => 0.0],
+    $storeBId => ['poAwal' => 8.0, 'poRevisi' => 0.0],
+]);
+submitProductionActual($http, $csrf, $tanggalStoreD, $rotiBollenDivId, (int) $prodD['product_id'], 20.0);
+
+$fgBatchD = null;
+$fgVersionD = null;
+runTest('FG-STORE-09 submit posts stock exactly ONCE for a Breakdown Toko product (one aggregated ledger row, anchored to its lowest fg_item_id)', function () use ($http, $csrf, $pdo, $tanggalStoreD, $karangtengahId, $prodD, $storeAId, $storeBId, &$fgBatchD, &$fgVersionD) {
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggalStoreD, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-09-create')));
+    expect($create['status'] === 200, "expected 200, got {$create['status']}: " . json_encode($create['json']));
+    $fgBatchD = (int) $create['json']['data']['fgBatchId'];
+    $fgVersionD = (int) $create['json']['data']['version'];
+
+    $explode = $http->request('PATCH', "/api/fg/{$fgBatchD}", [
+        'expectedVersion' => $fgVersionD,
+        'storeItems' => [['productId' => (int) $prodD['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 12.0, 'packed' => 12.0, 'sesuaiVerified' => true, 'sesuaiPacking' => true],
+            ['storeId' => $storeBId, 'fgVerified' => 8.0, 'packed' => 5.0, 'sesuaiVerified' => true, 'sesuaiPacking' => false, 'notes' => 'baru 5 dari 8 yang sudah dipacking'],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-09-explode')));
+    expect($explode['status'] === 200, "expected explode 200, got {$explode['status']}: " . json_encode($explode['json']));
+    $fgVersionD = (int) $explode['json']['data']['version'];
+    $itemD = null;
+    foreach ($explode['json']['data']['items'] as $it) { if ($it['productId'] === (int) $prodD['product_id']) { $itemD = $it; } }
+    expect(numEq($itemD['fgVerified'], 20.0) && numEq($itemD['packed'], 17.0), "expected aggregate verified=20 packed=17 (12+5), got: " . json_encode($itemD));
+
+    $fgItemIdsStmt = $pdo->prepare('SELECT fg_item_id FROM fg_item WHERE fg_batch_id = ? AND product_id = ? ORDER BY fg_item_id');
+    $fgItemIdsStmt->execute([$fgBatchD, (int) $prodD['product_id']]);
+    $fgItemIds = array_map('intval', array_column($fgItemIdsStmt->fetchAll(), 'fg_item_id'));
+    expect(count($fgItemIds) === 2, 'expected exactly 2 fg_item rows for prodD (one per store)');
+    $anchorId = min($fgItemIds);
+
+    $submit = $http->request('POST', "/api/fg/{$fgBatchD}/submit", ['expectedVersion' => $fgVersionD], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-09-submit')));
+    expect($submit['status'] === 200, "expected submit 200, got {$submit['status']}: " . json_encode($submit['json']));
+    $fgVersionD = (int) $submit['json']['data']['version'];
+
+    $ledgerStmt = $pdo->prepare("SELECT source_id, qty_delta FROM stock_ledger WHERE source_type = 'fg_item' AND source_id IN (?, ?)");
+    $ledgerStmt->execute($fgItemIds);
+    $ledgerRows = $ledgerStmt->fetchAll();
+    expect(count($ledgerRows) === 1, 'expected EXACTLY ONE stock_ledger row across BOTH of this product\'s fg_item rows — never one per store row, never one per product AND one per store');
+    expect((int) $ledgerRows[0]['source_id'] === $anchorId, 'expected the single ledger row to be anchored to the LOWEST fg_item_id');
+    expect(numEq($ledgerRows[0]['qty_delta'], 17.0), "expected the posted delta to equal the aggregate packed total (12+5=17), got {$ledgerRows[0]['qty_delta']}");
+});
+
+runTest('FG-STORE-10 reopen + resubmit posts only the DELTA, never re-posts the whole total (no double stock)', function () use ($http, $csrf, $pdo, &$fgBatchD, &$fgVersionD, $prodD, $storeBId) {
+    $reopen = $http->request('POST', "/api/fg/{$fgBatchD}/reopen", ['expectedVersion' => $fgVersionD, 'reason' => 'Toko B belum selesai packing'], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-10-reopen')));
+    expect($reopen['status'] === 200, "expected reopen 200, got {$reopen['status']}: " . json_encode($reopen['json']));
+    $fgVersionD = (int) $reopen['json']['data']['version'];
+
+    $patch = $http->request('PATCH', "/api/fg/{$fgBatchD}", [
+        'expectedVersion' => $fgVersionD,
+        'storeItems' => [['productId' => (int) $prodD['product_id'], 'rows' => [
+            ['storeId' => $storeBId, 'fgVerified' => 8.0, 'packed' => 8.0, 'sesuaiVerified' => true, 'sesuaiPacking' => true],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-10-patch')));
+    expect($patch['status'] === 200, "expected patch 200, got {$patch['status']}: " . json_encode($patch['json']));
+    $fgVersionD = (int) $patch['json']['data']['version'];
+
+    $resubmit = $http->request('POST', "/api/fg/{$fgBatchD}/submit", ['expectedVersion' => $fgVersionD], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-10-submit')));
+    expect($resubmit['status'] === 200, "expected resubmit 200, got {$resubmit['status']}: " . json_encode($resubmit['json']));
+    $fgVersionD = (int) $resubmit['json']['data']['version'];
+
+    $fgItemIdsStmt = $pdo->prepare('SELECT fg_item_id FROM fg_item WHERE fg_batch_id = ? AND product_id = ?');
+    $fgItemIdsStmt->execute([$fgBatchD, (int) $prodD['product_id']]);
+    $fgItemIds = array_map('intval', array_column($fgItemIdsStmt->fetchAll(), 'fg_item_id'));
+    $placeholders = implode(',', array_fill(0, count($fgItemIds), '?'));
+    $ledgerStmt = $pdo->prepare("SELECT qty_delta FROM stock_ledger WHERE source_type = 'fg_item' AND source_id IN ({$placeholders}) ORDER BY stock_ledger_id");
+    $ledgerStmt->execute($fgItemIds);
+    $deltas = array_map('floatval', array_column($ledgerStmt->fetchAll(), 'qty_delta'));
+    expect(count($deltas) === 2, "expected exactly 2 ledger rows total (17 then the 3 delta), got " . count($deltas) . ': ' . json_encode($deltas));
+    expect(numEq($deltas[0], 17.0) && numEq($deltas[1], 3.0), "expected deltas [17, 3] (never re-posting the full 20), got " . json_encode($deltas));
+    expect(numEq(array_sum($deltas), 20.0), "expected total posted stock = 20 exactly (12+8), never double, got " . array_sum($deltas));
+});
+
+runTest('FG-STORE-11 a PO revision after explode updates that store\'s live target without touching already-entered store rows or double counting', function () use ($http, $csrf, $tanggalStoreD, $karangtengahId, $pdo, $prodD, $storeAId, $storeBId, &$fgBatchD, &$fgVersionD) {
+    seedPoStoreSplit($pdo, $tanggalStoreD, $karangtengahId, (int) $prodD['product_id'], [
+        $storeAId => ['poAwal' => 12.0, 'poRevisi' => 3.0],
+        $storeBId => ['poAwal' => 8.0, 'poRevisi' => 0.0],
+    ]);
+    // FG-STORE-10 left this batch 'submitted' — refresh-source (like every
+    // other patchDraft-family write) is draft/reopened only, so reopen it
+    // first (reopen itself never touches stock — see FgService::reopen()'s
+    // own docblock).
+    $reopen = $http->request('POST', "/api/fg/{$fgBatchD}/reopen", ['expectedVersion' => $fgVersionD, 'reason' => 'cek revisi PO sebelum refresh'], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-11-reopen')));
+    expect($reopen['status'] === 200, "expected reopen 200, got {$reopen['status']}: " . json_encode($reopen['json']));
+    $fgVersionD = (int) $reopen['json']['data']['version'];
+
+    $refresh = $http->request('POST', "/api/fg/{$fgBatchD}/refresh-source", ['expectedVersion' => $fgVersionD], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-11-refresh')));
+    expect($refresh['status'] === 200, "expected refresh-source 200, got {$refresh['status']}: " . json_encode($refresh['json']));
+    $fgVersionD = (int) $refresh['json']['data']['version'];
+
+    $stores = $http->request('GET', "/api/fg/{$fgBatchD}/items/{$prodD['product_id']}/stores", null, ['X-CSRF-Token' => $csrf]);
+    expect($stores['status'] === 200, "expected 200, got {$stores['status']}: " . json_encode($stores['json']));
+    $byStore = [];
+    foreach ($stores['json']['data']['stores'] as $s) { $byStore[$s['storeId']] = $s; }
+    expect(numEq($byStore[$storeAId]['target'], 15.0), "expected Toko A's live target to reflect the revision (12+3=15), got {$byStore[$storeAId]['target']}");
+    expect(numEq($byStore[$storeAId]['fgVerified'], 12.0), "expected Toko A's already-entered fgVerified to stay untouched at 12 (never auto-grown to match the new target), got {$byStore[$storeAId]['fgVerified']}");
+    expect(numEq($byStore[$storeBId]['target'], 8.0), "expected Toko B's target unaffected (8), got {$byStore[$storeBId]['target']}");
+
+    $batch = $http->request('GET', "/api/fg/{$fgBatchD}", null, ['X-CSRF-Token' => $csrf]);
+    $itemD = null;
+    foreach ($batch['json']['data']['items'] as $it) { if ($it['productId'] === (int) $prodD['product_id']) { $itemD = $it; } }
+    expect(numEq($itemD['fgVerified'], 20.0), "expected the product aggregate to stay exactly 20 (12+8) after a target-only revision, got {$itemD['fgVerified']}");
+});
+
+runTest('FG-STORE-12 PB (pra-booking) never contributes to the store target — only PO Awal + latest Revisi', function () use ($http, $csrf, $pdo, $tanggalStoreD, $karangtengahId, $prodD, &$fgBatchD) {
+    $pdo->prepare('UPDATE po_item SET pb = 999 WHERE po_batch_id = (SELECT po_batch_id FROM po_batch WHERE tanggal = ? AND factory_id = ?) AND product_id = ?')
+        ->execute([$tanggalStoreD, $karangtengahId, (int) $prodD['product_id']]);
+    $stores = $http->request('GET', "/api/fg/{$fgBatchD}/items/{$prodD['product_id']}/stores", null, ['X-CSRF-Token' => $csrf]);
+    expect($stores['status'] === 200, "expected 200, got {$stores['status']}: " . json_encode($stores['json']));
+    expect(numEq($stores['json']['data']['totalTarget'], 23.0), "expected totalTarget to stay 15+8=23 despite pb=999 (PB ignored, PO Awal+Revisi only), got {$stores['json']['data']['totalTarget']}");
 });
 
 // =======================================================================

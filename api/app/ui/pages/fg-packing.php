@@ -115,42 +115,55 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
 
   <form id="fg-form" data-batch-id="<?= (int) $batchView['fgBatchId'] ?>" data-expected-version="<?= (int) $batchView['version'] ?>" data-tanggal="<?= ui_esc($uiTanggal) ?>" data-factory-id="<?= $uiFactoryId ?>">
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Produk</th><th class="num">Target FG (Hasil Produksi)</th><th>Verified</th><th class="num">FG Terverifikasi</th><th class="num">Selisih</th><th>Packing</th><th class="num">Packed</th><th class="num">Reject</th><th class="num">Hilang</th><th class="num">Available</th><th>FG Status</th><th>Packing Status</th><th>Catatan</th><th></th></tr></thead>
+    <thead><tr><th>Produk</th><th>Mode</th><th class="num">Target FG (Hasil Produksi)</th><th>Verified</th><th class="num">FG Terverifikasi</th><th class="num">Selisih</th><th>Packing</th><th class="num">Packed</th><th class="num">Reject</th><th class="num">Hilang</th><th class="num">Available</th><th>FG Status</th><th>Packing Status</th><th>Catatan</th><th></th></tr></thead>
     <tbody>
     <?php foreach ($batchView['items'] as $it): ?>
     <?php
-      $verifiedIsSesuai = $editable && abs($it['fgVerified'] - $it['productionActualSnapshot']) < 0.01 && $it['fgVerified'] > 0;
-      $packingIsSesuai = $editable && abs($it['packed'] - $it['fgVerified']) < 0.01 && $it['packed'] > 0;
+      $isBreakdown = ($it['mode'] ?? 'perProduk') === 'breakdownToko';
+      // Per Produk cells become DERIVED/read-only the moment a product is
+      // exploded into store rows (Option A — see FgService::patchDraft()'s
+      // own docblock): the "no double counting" rule is satisfied by
+      // construction only if there is never a second place to type a
+      // number for the same product at the same time.
+      $rowEditable = $editable && !$isBreakdown;
+      $verifiedIsSesuai = $rowEditable && abs($it['fgVerified'] - $it['productionActualSnapshot']) < 0.01 && $it['fgVerified'] > 0;
+      $packingIsSesuai = $rowEditable && abs($it['packed'] - $it['fgVerified']) < 0.01 && $it['packed'] > 0;
     ?>
     <tr>
       <td><?= ui_esc($it['productName']) ?></td>
+      <td><?= ui_badge($isBreakdown ? 'Breakdown Toko (' . (int) $it['storeCount'] . ' Toko)' : 'Per Produk') ?></td>
       <td class="num"><?= ui_fmt_num($it['productionActualSnapshot']) ?></td>
       <td>
-        <?php if ($editable): ?>
+        <?php if ($rowEditable): ?>
         <div class="btn-group fg-verified-sesuai-group" data-product-id="<?= (int) $it['productId'] ?>" data-target="<?= ui_esc((string) $it['productionActualSnapshot']) ?>" data-sesuai="<?= $verifiedIsSesuai ? '1' : '0' ?>">
           <button type="button" class="btn btn-sm <?= $verifiedIsSesuai ? 'btn-primary' : 'btn-secondary' ?>" data-value="sesuai">Sesuai</button>
           <button type="button" class="btn btn-sm <?= !$verifiedIsSesuai ? 'btn-danger' : 'btn-secondary' ?>" data-value="tidak_sesuai">Tidak Sesuai</button>
         </div>
         <?php else: ?><span style="color:var(--text-faint);">-</span><?php endif; ?>
       </td>
-      <td class="num"><?php if ($editable): ?><input type="number" step="0.01" min="0" style="width:5.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="fgVerified" value="<?= ui_fmt_num($it['fgVerified']) ?>" <?= $verifiedIsSesuai ? 'disabled' : '' ?>><?php else: ?><?= ui_fmt_num($it['fgVerified']) ?><?php endif; ?></td>
+      <td class="num"><?php if ($rowEditable): ?><input type="number" step="0.01" min="0" style="width:5.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="fgVerified" value="<?= ui_fmt_num($it['fgVerified']) ?>" <?= $verifiedIsSesuai ? 'disabled' : '' ?>><?php else: ?><?= ui_fmt_num($it['fgVerified']) ?><?php endif; ?></td>
       <td class="num"><?= ui_fmt_num($it['variance']) ?></td>
       <td>
-        <?php if ($editable): ?>
+        <?php if ($rowEditable): ?>
         <div class="btn-group fg-packing-sesuai-group" data-product-id="<?= (int) $it['productId'] ?>" data-sesuai="<?= $packingIsSesuai ? '1' : '0' ?>">
           <button type="button" class="btn btn-sm <?= $packingIsSesuai ? 'btn-primary' : 'btn-secondary' ?>" data-value="sesuai">Sesuai</button>
           <button type="button" class="btn btn-sm <?= !$packingIsSesuai ? 'btn-danger' : 'btn-secondary' ?>" data-value="tidak_sesuai">Tidak Sesuai</button>
         </div>
         <?php else: ?><span style="color:var(--text-faint);">-</span><?php endif; ?>
       </td>
-      <td class="num"><?php if ($editable): ?><input type="number" step="0.01" min="0" style="width:5.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="packed" value="<?= ui_fmt_num($it['packed']) ?>" <?= $packingIsSesuai ? 'disabled' : '' ?>><?php else: ?><?= ui_fmt_num($it['packed']) ?><?php endif; ?></td>
-      <td class="num"><?php if ($editable): ?><input type="number" step="0.01" min="0" style="width:4.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_fmt_num($it['reject'] ?? 0) ?>"><?php else: ?><?= ui_fmt_num($it['reject'] ?? 0) ?><?php endif; ?></td>
-      <td class="num"><?php if ($editable): ?><input type="number" step="0.01" min="0" style="width:4.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="hilang" value="<?= ui_fmt_num($it['hilang'] ?? 0) ?>"><?php else: ?><?= ui_fmt_num($it['hilang'] ?? 0) ?><?php endif; ?></td>
+      <td class="num"><?php if ($rowEditable): ?><input type="number" step="0.01" min="0" style="width:5.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="packed" value="<?= ui_fmt_num($it['packed']) ?>" <?= $packingIsSesuai ? 'disabled' : '' ?>><?php else: ?><?= ui_fmt_num($it['packed']) ?><?php endif; ?></td>
+      <td class="num"><?php if ($rowEditable): ?><input type="number" step="0.01" min="0" style="width:4.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_fmt_num($it['reject'] ?? 0) ?>"><?php else: ?><?= ui_fmt_num($it['reject'] ?? 0) ?><?php endif; ?></td>
+      <td class="num"><?php if ($rowEditable): ?><input type="number" step="0.01" min="0" style="width:4.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="hilang" value="<?= ui_fmt_num($it['hilang'] ?? 0) ?>"><?php else: ?><?= ui_fmt_num($it['hilang'] ?? 0) ?><?php endif; ?></td>
       <td class="num"><?= ui_fmt_num($it['available']) ?></td>
       <td><?= ui_badge($it['fgStatusLabel']) ?></td>
       <td><?= ui_badge($it['packingStatusLabel']) ?></td>
-      <td><?php if ($editable): ?><input type="text" style="width:8rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="notes" value="<?= ui_esc((string) ($it['notes'] ?? '')) ?>"><?php else: ?><?= ui_esc((string) ($it['notes'] ?? '')) ?><?php endif; ?></td>
-      <td><button type="button" class="btn btn-secondary btn-sm fg-breakdown-btn" data-product-id="<?= (int) $it['productId'] ?>" data-product-name="<?= ui_esc($it['productName']) ?>">Breakdown Toko</button></td>
+      <td><?php if ($rowEditable): ?><input type="text" style="width:8rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="notes" value="<?= ui_esc((string) ($it['notes'] ?? '')) ?>"><?php else: ?><?= ui_esc((string) ($it['notes'] ?? '')) ?><?php endif; ?></td>
+      <td style="white-space:nowrap;">
+        <button type="button" class="btn btn-secondary btn-sm fg-breakdown-btn" data-product-id="<?= (int) $it['productId'] ?>" data-product-name="<?= ui_esc($it['productName']) ?>" data-mode="<?= $isBreakdown ? 'breakdownToko' : 'perProduk' ?>">Breakdown Toko</button>
+        <?php if ($editable && $isBreakdown): ?>
+        <button type="button" class="btn btn-warning btn-sm fg-collapse-btn" data-product-id="<?= (int) $it['productId'] ?>" data-product-name="<?= ui_esc($it['productName']) ?>">Kembali ke Per Produk</button>
+        <?php endif; ?>
+      </td>
     </tr>
     <?php endforeach; ?>
     </tbody>
@@ -225,27 +238,135 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       if (breakdownPanel) breakdownPanel.style.display = '';
     });
   }
+  // Writable Breakdown Toko panel — GET /api/fg/{id}/items/{productId}/stores
+  // merges the live PO target with whatever has actually been entered so
+  // far (see FgService::batchProductStores()'s own docblock); each row
+  // gets the SAME Sesuai/Tidak Sesuai convenience as Per Produk, against
+  // that STORE's own target. Saving PATCHes storeItems for just this one
+  // product — the very first save explodes it (see explodeToStores()),
+  // after which the Per Produk row above becomes read-only automatically
+  // on next reload (server-derived, never a client-side guess).
+  function renderBreakdownPanel(pid, pname, data) {
+    var editableHere = <?= $editable ? 'true' : 'false' ?>;
+    var rowsHtml = (data.stores || []).map(function (s, idx) {
+      var verifiedSesuai = editableHere && Math.abs(s.fgVerified - s.target) < 0.01 && s.fgVerified > 0;
+      var packingSesuai = editableHere && Math.abs(s.packed - s.fgVerified) < 0.01 && s.packed > 0;
+      if (!editableHere) {
+        return '<tr><td>' + (idx + 1) + '</td><td>' + s.storeName + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
+          + '<td class="num">' + s.fgVerified.toLocaleString('id-ID') + '</td><td class="num">' + s.packed.toLocaleString('id-ID') + '</td>'
+          + '<td class="num">' + s.reject.toLocaleString('id-ID') + '</td><td class="num">' + s.hilang.toLocaleString('id-ID') + '</td>'
+          + '<td>' + (s.notes || '') + '</td><td>' + (s.status || '') + '</td></tr>';
+      }
+      return '<tr data-store-id="' + s.storeId + '">'
+        + '<td>' + (idx + 1) + '</td><td>' + s.storeName + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
+        + '<td><div class="btn-group bt-verified-sesuai" data-target="' + s.target + '" data-sesuai="' + (verifiedSesuai ? '1' : '0') + '">'
+        +   '<button type="button" class="btn btn-sm ' + (verifiedSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
+        +   '<button type="button" class="btn btn-sm ' + (!verifiedSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'
+        + '</div></td>'
+        + '<td class="num"><input type="number" step="0.01" min="0" style="width:5rem;text-align:right;" data-bt-field="fgVerified" value="' + s.fgVerified + '" ' + (verifiedSesuai ? 'disabled' : '') + '></td>'
+        + '<td><div class="btn-group bt-packing-sesuai" data-sesuai="' + (packingSesuai ? '1' : '0') + '">'
+        +   '<button type="button" class="btn btn-sm ' + (packingSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
+        +   '<button type="button" class="btn btn-sm ' + (!packingSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'
+        + '</div></td>'
+        + '<td class="num"><input type="number" step="0.01" min="0" style="width:5rem;text-align:right;" data-bt-field="packed" value="' + s.packed + '" ' + (packingSesuai ? 'disabled' : '') + '></td>'
+        + '<td class="num"><input type="number" step="0.01" min="0" style="width:4rem;text-align:right;" data-bt-field="reject" value="' + s.reject + '"></td>'
+        + '<td class="num"><input type="number" step="0.01" min="0" style="width:4rem;text-align:right;" data-bt-field="hilang" value="' + s.hilang + '"></td>'
+        + '<td><input type="text" style="width:8rem;" data-bt-field="notes" value="' + (s.notes || '').replace(/"/g, '&quot;') + '"></td>'
+        + '<td>' + (s.status || '') + '</td></tr>';
+    }).join('');
+    var head = '<tr><th>No</th><th>Toko</th><th class="num">Target</th><th>Verified Result</th><th class="num">Actual Verified</th><th>Packing Result</th><th class="num">Actual Packing</th><th class="num">Reject</th><th class="num">Hilang</th><th>Keterangan</th><th>Status</th></tr>';
+    var actions = editableHere
+      ? '<div class="btn-group" style="margin-top:var(--space-2);"><button type="button" class="btn btn-primary btn-sm" id="bt-save">Simpan Breakdown Toko</button><button type="button" class="btn btn-secondary btn-sm" id="bt-cancel">Tutup</button></div>'
+      : '<div class="btn-group" style="margin-top:var(--space-2);"><button type="button" class="btn btn-secondary btn-sm" id="bt-cancel">Tutup</button></div>';
+    breakdownPanel.innerHTML = '<div class="card-head"><h3 class="card-title" style="font-size:var(--text-md);">Breakdown Toko — ' + pname + '</h3></div>'
+      + (data.exploded ? '' : '<div class="alert alert-warning" style="margin-bottom:var(--space-2);">Produk ini masih mode Per Produk — mengisi baris di bawah dan Simpan akan memecahnya ke per-Toko.</div>')
+      + '<div class="table-scroll"><table class="data-table"><thead>' + head + '</thead><tbody>' + rowsHtml + '</tbody>'
+      + '<tfoot><tr><td colspan="2">Total</td><td class="num">' + data.totalTarget.toLocaleString('id-ID') + '</td><td></td><td class="num">' + data.totalVerified.toLocaleString('id-ID') + '</td><td></td><td class="num">' + data.totalPacked.toLocaleString('id-ID') + '</td><td colspan="3"></td></tr></tfoot></table></div>'
+      + actions;
+
+    breakdownPanel.querySelectorAll('.bt-verified-sesuai').forEach(function (group) {
+      var input = group.closest('tr').querySelector('[data-bt-field="fgVerified"]');
+      wireSesuaiGroup(group, input, function () { return group.getAttribute('data-target'); });
+    });
+    breakdownPanel.querySelectorAll('.bt-packing-sesuai').forEach(function (group) {
+      var tr = group.closest('tr');
+      var packedInput = tr.querySelector('[data-bt-field="packed"]');
+      var verifiedInput = tr.querySelector('[data-bt-field="fgVerified"]');
+      wireSesuaiGroup(group, packedInput, function () { return verifiedInput.value || '0'; });
+    });
+
+    var cancelBtn = document.getElementById('bt-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', function () { breakdownPanel.style.display = 'none'; breakdownPanel.innerHTML = ''; });
+
+    var saveBtn = document.getElementById('bt-save');
+    if (saveBtn) saveBtn.addEventListener('click', async function () {
+      saveBtn.disabled = true;
+      var rowsOut = [];
+      breakdownPanel.querySelectorAll('tbody tr[data-store-id]').forEach(function (tr) {
+        var vGroup = tr.querySelector('.bt-verified-sesuai');
+        var pGroup = tr.querySelector('.bt-packing-sesuai');
+        rowsOut.push({
+          storeId: parseInt(tr.getAttribute('data-store-id'), 10),
+          fgVerified: parseFloat(tr.querySelector('[data-bt-field="fgVerified"]').value || '0'),
+          packed: parseFloat(tr.querySelector('[data-bt-field="packed"]').value || '0'),
+          reject: parseFloat(tr.querySelector('[data-bt-field="reject"]').value || '0'),
+          hilang: parseFloat(tr.querySelector('[data-bt-field="hilang"]').value || '0'),
+          notes: tr.querySelector('[data-bt-field="notes"]').value,
+          sesuaiVerified: vGroup ? vGroup.getAttribute('data-sesuai') === '1' : false,
+          sesuaiPacking: pGroup ? pGroup.getAttribute('data-sesuai') === '1' : false,
+        });
+      });
+      try {
+        var saved = await Amor.apiFetch('/api/fg/' + batchId, {
+          method: 'PATCH',
+          body: { expectedVersion: version, storeItems: [{ productId: parseInt(pid, 10), rows: rowsOut }] },
+        });
+        version = saved.version;
+        form.setAttribute('data-expected-version', version);
+        Amor.toast('Breakdown Toko disimpan.', 'success');
+        setTimeout(function () { location.reload(); }, 600);
+      } catch (e) { Amor.toast(e.message, 'danger'); saveBtn.disabled = false; }
+    });
+  }
+
+  async function loadBreakdownPanel(pid, pname) {
+    if (!breakdownPanel) return;
+    breakdownPanel.style.display = '';
+    breakdownPanel.innerHTML = '<div style="color:var(--text-muted);">Memuat breakdown toko untuk ' + pname + '...</div>';
+    try {
+      var data = await Amor.apiFetch('/api/fg/' + batchId + '/items/' + pid + '/stores');
+      renderBreakdownPanel(pid, pname, data);
+    } catch (e) {
+      breakdownPanel.innerHTML = '<div class="alert alert-danger">' + e.message + '</div>';
+    }
+  }
+
   document.querySelectorAll('.fg-breakdown-btn').forEach(function (btn) {
-    btn.addEventListener('click', async function () {
+    btn.addEventListener('click', function () {
       var pid = btn.getAttribute('data-product-id');
       var pname = btn.getAttribute('data-product-name');
       if (modeToko) modeToko.click();
-      if (!breakdownPanel) return;
-      breakdownPanel.innerHTML = '<div style="color:var(--text-muted);">Memuat breakdown toko untuk ' + pname + '...</div>';
+      loadBreakdownPanel(pid, pname);
+    });
+  });
+
+  // Explicit "Kembali ke Per Produk" — collapseProductIds merges the store
+  // rows back into ONE row (SUM preserved exactly, see
+  // FgService::collapseToProduct()'s own docblock) — never implicit, since
+  // it drops per-store detail.
+  document.querySelectorAll('.fg-collapse-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var pid = btn.getAttribute('data-product-id');
+      var pname = btn.getAttribute('data-product-name');
+      var ok = await Amor.confirmModal({ title: 'Kembali ke Per Produk?', body: 'Baris per-Toko untuk ' + pname + ' akan digabung kembali menjadi satu baris Per Produk (total tidak berubah). Detail per-Toko akan hilang.', confirmLabel: 'Ya, Gabungkan' });
+      if (!ok) return;
+      btn.disabled = true;
       try {
-        var tanggal = form.getAttribute('data-tanggal');
-        var factoryId = form.getAttribute('data-factory-id');
-        var data = await Amor.apiFetch('/api/fg/store-breakdown?date=' + encodeURIComponent(tanggal) + '&factoryId=' + factoryId + '&productId=' + pid);
-        var rows = (data.stores || []).map(function (s) {
-          return '<tr><td>' + s.storeName + '</td><td class="num">' + s.poAwal.toLocaleString('id-ID') + '</td><td class="num">' + s.poRevisi.toLocaleString('id-ID') + '</td><td class="num" style="font-weight:600;">' + s.target.toLocaleString('id-ID') + '</td></tr>';
-        }).join('');
-        breakdownPanel.innerHTML = '<div class="card-head"><h3 class="card-title" style="font-size:var(--text-md);">Breakdown Toko — ' + pname + '</h3></div>'
-          + '<div class="table-scroll"><table class="data-table"><thead><tr><th>Toko</th><th class="num">PO Awal</th><th class="num">PO Revisi</th><th class="num">Target</th></tr></thead>'
-          + '<tbody>' + (rows || '<tr><td colspan="4">Tidak ada data PO per toko untuk produk ini.</td></tr>') + '</tbody>'
-          + '<tfoot><tr><td colspan="3">Total Target (harus sama dengan Target FG di atas)</td><td class="num">' + data.totalTarget.toLocaleString('id-ID') + '</td></tr></tfoot></table></div>';
-      } catch (e) {
-        breakdownPanel.innerHTML = '<div class="alert alert-danger">' + e.message + '</div>';
-      }
+        var data = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, collapseProductIds: [parseInt(pid, 10)] } });
+        version = data.version;
+        Amor.toast('Digabung kembali ke Per Produk.', 'success');
+        setTimeout(function () { location.reload(); }, 600);
+      } catch (e) { Amor.toast(e.message, 'danger'); btn.disabled = false; }
     });
   });
 

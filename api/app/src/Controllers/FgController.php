@@ -21,7 +21,20 @@ use PDO;
  */
 final class FgController
 {
-    private const EDITOR_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION'];
+    // FG_PACKING was added here as a real bug fix (deep-check finding): the
+    // role has existed in the seed data since Phase 0/5.5 and is the
+    // dedicated role for this module, but this list never actually granted
+    // it any FG edit access — only ADMIN/PPIC/PRODUCTION could reach these
+    // endpoints, making a factory-scoped FG_PACKING assignment meaningless
+    // in practice. PRODUCTION is KEPT (not removed) — its presence here
+    // predates this pass and reflects an existing, deliberate role design
+    // (PRODUCTION historically doubles as an FG editor); removing it would
+    // be a separate, undiscussed policy change, so it is left as-is and
+    // reported rather than silently altered. Both PRODUCTION and FG_PACKING
+    // are now subject to the SAME Auth::requireFactoryAccess() default-deny
+    // gate inside FgService, so neither can reach a factory without an
+    // explicit assignment.
+    private const EDITOR_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING'];
     // Reopen is restricted, same rationale as Production Phase 3.
     private const REOPEN_ROLES = ['ADMIN', 'PPIC'];
 
@@ -52,6 +65,21 @@ final class FgController
         $productId = self::requireInt($request->query('productId'), 'productId');
         $service = new FgService(Database::pdo());
         Response::json($service->storeBreakdown($tanggal, $factoryId, $productId));
+    }
+
+    /**
+     * GET /api/fg/{id}/items/{productId}/stores — the writable Breakdown
+     * Toko table's data source for an EXISTING batch (live target merged
+     * with whatever has actually been entered so far). See
+     * FgService::batchProductStores()'s own docblock.
+     */
+    public static function productStores(Request $request): void
+    {
+        Auth::requireAuth();
+        $id = (int) $request->routeParams['id'];
+        $productId = (int) $request->routeParams['productId'];
+        $service = new FgService(Database::pdo());
+        Response::json($service->batchProductStores($id, $productId));
     }
 
     public static function index(Request $request): void
@@ -127,10 +155,12 @@ final class FgController
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
         $items = (array) $request->input('items', []);
         $refreshSource = (bool) $request->input('refreshSource', false);
+        $storeItems = (array) $request->input('storeItems', []);
+        $collapseProductIds = (array) $request->input('collapseProductIds', []);
 
-        Idempotency::handle($request, 'PATCH /api/fg/{id}', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $items, $refreshSource) {
+        Idempotency::handle($request, 'PATCH /api/fg/{id}', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $items, $refreshSource, $storeItems, $collapseProductIds) {
             $service = new FgService($pdo);
-            $dto = $service->patchDraft($id, $expectedVersion, $items, $refreshSource, $userId, $request->header('Idempotency-Key'));
+            $dto = $service->patchDraft($id, $expectedVersion, $items, $refreshSource, $userId, $request->header('Idempotency-Key'), $storeItems, $collapseProductIds);
             return [
                 'status' => 200,
                 'envelope' => ['ok' => true, 'data' => $dto],
