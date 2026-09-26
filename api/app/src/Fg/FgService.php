@@ -217,7 +217,35 @@ final class FgService
         }
 
         foreach ($collapseProductIds as $productId) {
-            $this->collapseToProduct($batchId, (int) $productId);
+            $productId = (int) $productId;
+            // Collapsing merges every store row into ONE placeholder row
+            // against the synthetic unallocated store — which would erase
+            // exactly the per-store ownership DoRepository::
+            // sumShippedForStore()/sumPackedForStore() need to keep
+            // enforcing "Store A cannot consume Store B's ready FG" (task's
+            // own "do not corrupt historical shipment ownership" rule).
+            // Refused outright the moment ANY of this product's stores has
+            // ANY already-shipped quantity — there is no safe way to
+            // un-attribute a real, already-departed shipment back to an
+            // anonymous pool.
+            $rawRows = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
+            foreach ($rawRows as $row) {
+                $storeId = (int) $row['store_id'];
+                if ($storeId === $this->repo->unallocatedStoreId($this->pdo)) {
+                    continue;
+                }
+                $shipped = $this->doRepo->sumShippedForStore($this->pdo, $storeId, $productId, $factoryId);
+                if ($shipped > 0.0001) {
+                    $store = $this->doRepo->findStore($this->pdo, $storeId);
+                    $storeName = $store['canonical_name'] ?? "Toko #{$storeId}";
+                    throw new ApiException(
+                        409,
+                        'CANNOT_COLLAPSE_STORE_ALREADY_SHIPPED',
+                        "Produk ini tidak bisa digabung kembali ke Per Produk: Toko {$storeName} sudah memiliki pengiriman ({$shipped} pcs) atas alokasi per-Toko ini."
+                    );
+                }
+            }
+            $this->collapseToProduct($batchId, $productId);
         }
 
         $existingItems = $this->repo->findItems($this->pdo, $batchId);
@@ -550,6 +578,42 @@ final class FgService
             }
         }
 
+        // STORE-SPECIFIC FG OWNERSHIP (FINAL CORE BLOCKER fix): a store
+        // row's packed_qty is allowed to be corrected DOWNWARD (e.g. after
+        // a reopen), but never below what has ALREADY been shipped to
+        // that specific store via an active Regular shipment — otherwise
+        // this submit would retroactively make a real, already-departed
+        // shipment exceed what this store ever legitimately owned.
+        // Checked for EVERY real store row this batch touches (ascending
+        // store_id/product_id lock order — FgRepository::
+        // distinctRealStoreProductPairs()'s own docblock), locking
+        // store_fg_balance SECOND, after stock_balance, per the canonical
+        // lock order documented in both migration 0014's extension and
+        // Delivery\ShipmentService's own docblock — never the reverse, so
+        // a concurrent ship() for the same store+product can never
+        // deadlock against this submit. sumPackedForStore's
+        // $includeBatchId=$batchId makes the check reflect what THIS
+        // store row's packed_qty will become the instant this submit
+        // commits, even though the batch itself is still 'draft'/
+        // 'reopened' (not yet 'submitted') at the moment this runs.
+        $storeProductPairs = $this->repo->distinctRealStoreProductPairs($this->pdo, $batchId);
+        foreach ($storeProductPairs as $pair) {
+            $this->doRepo->lockStoreFgBalance($this->pdo, $pair['storeId'], $pair['productId'], $locationId);
+            $storePacked = $this->doRepo->sumPackedForStore($this->pdo, $pair['storeId'], $pair['productId'], $factoryId, $batchId);
+            $storeShipped = $this->doRepo->sumShippedForStore($this->pdo, $pair['storeId'], $pair['productId'], $factoryId);
+            if ($storePacked < $storeShipped - 0.0001) {
+                $store = $this->doRepo->findStore($this->pdo, $pair['storeId']);
+                $storeName = $store['canonical_name'] ?? "Toko #{$pair['storeId']}";
+                $productName = $items[$pair['productId']]['product_name'] ?? "Produk #{$pair['productId']}";
+                throw new ApiException(
+                    409,
+                    'STORE_PACKED_BELOW_SHIPPED',
+                    "Produk {$productName} / Toko {$storeName}: FG Packed ({$storePacked}) tidak boleh kurang dari yang sudah dikirim ke toko ini ({$storeShipped}). "
+                    . "Minimal FG Packed untuk toko ini: {$storeShipped}."
+                );
+            }
+        }
+
         $postings = [];
         foreach ($items as $productId => $item) {
             $delta = $deltas[$productId];
@@ -560,6 +624,15 @@ final class FgService
                 $postings[] = ['productId' => $productId, 'delta' => $delta, 'ledgerId' => $ledgerId];
             }
         }
+
+        // Freezes posted_packed_qty = packed_qty for every row this batch
+        // has — AFTER the ledger postings above, so store_fg_balance's own
+        // "ready" reads (DoRepository::sumPackedForStore) start counting
+        // this batch's current numbers as real/on-the-shelf from this
+        // point forward, regardless of whether a LATER reopen puts this
+        // batch back into an in-progress editing state (see
+        // FgRepository::markAllItemsPosted()'s own docblock).
+        $this->repo->markAllItemsPosted($this->pdo, $batchId);
 
         $sourceWarning = $this->buildSourceInconsistency($batchId);
 
@@ -671,20 +744,37 @@ final class FgService
             }
         }
 
+        $factoryId = (int) $batch['factory_id'];
         $rows = [];
         foreach ($targetRows as $t) {
             $existing = $byStore[$t['storeId']] ?? null;
+            $fgVerified = $existing !== null ? (float) $existing['qty'] : 0.0;
+            // "Perlu Review Ulang" — same DERIVED, non-blocking, read-time
+            // pattern already established for Production (see
+            // produksi.php's own $needsReview): a PO revision can lower
+            // this store's target after FG was already entered/shipped
+            // against the OLD, higher target. We never silently reclaim
+            // that already-packed/already-shipped stock (task's own
+            // explicit rule) — this is purely a flag for a human to look
+            // at, computed live from the SAME canonical sources the
+            // shipment guard itself uses (never a second source of truth).
+            $shippedForStore = $t['target'] > 0 || $fgVerified > 0
+                ? $this->doRepo->sumShippedForStore($this->pdo, $t['storeId'], $productId, $factoryId)
+                : 0.0;
+            $needsReview = ($t['target'] < $shippedForStore - 0.0001) || ($t['target'] < $fgVerified - 0.0001);
             $rows[] = [
                 'storeId' => $t['storeId'],
                 'storeName' => $t['storeName'],
                 'target' => $t['target'],
                 'fgItemId' => $existing !== null ? (int) $existing['fg_item_id'] : null,
-                'fgVerified' => $existing !== null ? (float) $existing['qty'] : 0.0,
+                'fgVerified' => $fgVerified,
                 'packed' => $existing !== null ? (float) $existing['packed_qty'] : 0.0,
                 'reject' => $existing !== null ? (float) $existing['reject_qty'] : 0.0,
                 'hilang' => $existing !== null ? (float) $existing['hilang_qty'] : 0.0,
                 'notes' => $existing !== null ? $existing['keterangan'] : null,
                 'status' => $existing !== null ? $existing['status'] : 'belum_dicek',
+                'shippedQty' => $shippedForStore,
+                'needsReview' => $needsReview,
             ];
         }
 

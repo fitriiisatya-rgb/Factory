@@ -251,14 +251,20 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     var rowsHtml = (data.stores || []).map(function (s, idx) {
       var verifiedSesuai = editableHere && Math.abs(s.fgVerified - s.target) < 0.01 && s.fgVerified > 0;
       var packingSesuai = editableHere && Math.abs(s.packed - s.fgVerified) < 0.01 && s.packed > 0;
+      // "Perlu Review Ulang" — a PO revision lowered this store's target
+      // below what's already entered/shipped against the OLD target;
+      // non-blocking, purely informational (see FgService::
+      // batchProductStores()'s own docblock — never silently reclaims
+      // already-packed/already-shipped stock).
+      var reviewBadge = s.needsReview ? ' <span class="badge badge-danger">Perlu Review Ulang</span>' : '';
       if (!editableHere) {
         return '<tr><td>' + (idx + 1) + '</td><td>' + s.storeName + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
           + '<td class="num">' + s.fgVerified.toLocaleString('id-ID') + '</td><td class="num">' + s.packed.toLocaleString('id-ID') + '</td>'
           + '<td class="num">' + s.reject.toLocaleString('id-ID') + '</td><td class="num">' + s.hilang.toLocaleString('id-ID') + '</td>'
-          + '<td>' + (s.notes || '') + '</td><td>' + (s.status || '') + '</td></tr>';
+          + '<td>' + (s.notes || '') + '</td><td>' + (s.status || '') + reviewBadge + '</td></tr>';
       }
       return '<tr data-store-id="' + s.storeId + '">'
-        + '<td>' + (idx + 1) + '</td><td>' + s.storeName + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
+        + '<td>' + (idx + 1) + '</td><td>' + s.storeName + reviewBadge + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
         + '<td><div class="btn-group bt-verified-sesuai" data-target="' + s.target + '" data-sesuai="' + (verifiedSesuai ? '1' : '0') + '">'
         +   '<button type="button" class="btn btn-sm ' + (verifiedSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
         +   '<button type="button" class="btn btn-sm ' + (!verifiedSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'

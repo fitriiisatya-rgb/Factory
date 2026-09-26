@@ -281,6 +281,32 @@ final class FgRepository
     }
 
     /**
+     * Every distinct (store_id, product_id) pair with a REAL store row in
+     * this batch (the synthetic unallocatedStoreId is excluded — a Per
+     * Produk row is never store-owned, so it can never be shipped-against
+     * by a Regular store shipment and the store-ready guard would always
+     * be a no-op for it). Used by FgService::submit()'s
+     * STORE_PACKED_BELOW_SHIPPED check to know exactly which store+
+     * product combinations this submit could affect. Sorted ascending so
+     * every caller locks store_fg_balance rows in the SAME deterministic
+     * order (deadlock avoidance, same discipline as the existing
+     * ascending-product_id lock order in FgService::submit()'s special-
+     * reservation preflight).
+     * @return array<int,array{storeId:int,productId:int}>
+     */
+    public function distinctRealStoreProductPairs(PDO $pdo, int $batchId): array
+    {
+        $unallocatedStoreId = $this->unallocatedStoreId($pdo);
+        $stmt = $pdo->prepare(
+            'SELECT DISTINCT store_id, product_id FROM fg_item
+             WHERE fg_batch_id = ? AND store_id != ?
+             ORDER BY store_id, product_id'
+        );
+        $stmt->execute([$batchId, $unallocatedStoreId]);
+        return array_map(static fn ($r) => ['storeId' => (int) $r['store_id'], 'productId' => (int) $r['product_id']], $stmt->fetchAll());
+    }
+
+    /**
      * Used only by explode/collapse (mode switching) — deletes ONE
      * fg_item row outright. Never called on a row that has already posted
      * stock (FgService guards this — mode switching is a draft/reopened-
@@ -297,6 +323,21 @@ final class FgRepository
     {
         $stmt = $pdo->prepare('UPDATE fg_item SET production_actual_snapshot = ? WHERE fg_item_id = ?');
         $stmt->execute([$productionActualSnapshot, $fgItemId]);
+    }
+
+    /**
+     * Freezes posted_packed_qty = packed_qty for every row in this batch —
+     * called ONLY by FgService::submit(), AFTER stock_ledger has been
+     * posted, never by patchDraft/reopen. This is the ONLY writer of
+     * posted_packed_qty; see migration 0014's own docblock for why a
+     * store's shipment-facing "ready" total must read this frozen value,
+     * never the live packed_qty a reopened-but-not-yet-resubmitted batch
+     * might already be mid-edit on.
+     */
+    public function markAllItemsPosted(PDO $pdo, int $batchId): void
+    {
+        $stmt = $pdo->prepare('UPDATE fg_item SET posted_packed_qty = packed_qty WHERE fg_batch_id = ?');
+        $stmt->execute([$batchId]);
     }
 
     /**

@@ -40,20 +40,44 @@ use PDO;
  * uses — never a second, divergent computation). Regular PO can never ship
  * stock a special/non-regular order has already reserved.
  *
+ * STORE-SPECIFIC FG OWNERSHIP ("FINAL CORE BLOCKER" fix, migration 0014
+ * extension): even after the two checks above pass, a Regular shipment is
+ * ALSO capped by how much of that PRODUCT'S packed FG belongs to THIS
+ * shipment's destination store specifically — physical + special-reserved
+ * being fine is necessary but not sufficient; Store A must never ship
+ * Product X that was packed for Store B just because the factory-wide
+ * total happens to cover it. "Store ready" = SUM(fg_item.packed_qty for
+ * this store+product, submitted batches only) MINUS SUM(shipment_item.qty
+ * already shipped for this store+product via an ACTIVE Regular shipment)
+ * — both always live-summed from their own canonical tables
+ * (DoRepository::sumPackedForStore/sumShippedForStore), never a separate
+ * cached total. This guard applies ONLY to source_type='delivery_order'
+ * (Regular store) shipments — Special/CS/Sales/Direct/General orders
+ * never reach this class at all (they ship through
+ * SpecialOrder\SpecialOrderDoService instead), so nothing here can affect
+ * them.
+ *
  * CANONICAL LOCK ORDER (documented once, honored by every writer that
  * touches General FG for a given product+location — this class's own
- * ship(), SpecialOrder\SpecialOrderFgAllocationService::allocate(), and
- * ::consumeForDispatch()): lock the stock_balance row (SELECT ... FOR
- * UPDATE) FIRST, for the ENTIRE remainder of the read-decide-write
- * sequence, THEN read/write special_order_fg_allocation rows, THEN write
- * the shipment/ledger rows. Holding the stock_balance lock across the
- * whole sequence is what makes a concurrent Regular ship() and a
- * concurrent special allocate()/consumeForDispatch() for the SAME
- * product+location serialize correctly instead of both reading a stale
- * "free" number — the second writer always sees the first's already-
- * committed reservation or already-committed physical deduction. No
- * writer may read the active-allocation SUM or the physical balance
- * without first holding this same lock.
+ * ship(), SpecialOrder\SpecialOrderFgAllocationService::allocate(),
+ * ::consumeForDispatch(), and Fg\FgService::submit()'s own store-ready
+ * check): lock the stock_balance row (SELECT ... FOR UPDATE) FIRST, for
+ * the ENTIRE remainder of the read-decide-write sequence, THEN lock the
+ * store_fg_balance row (product+store+location) SECOND, THEN read/write
+ * special_order_fg_allocation rows, THEN write the shipment/ledger rows.
+ * Holding the stock_balance lock across the whole sequence is what makes
+ * a concurrent Regular ship() and a concurrent special allocate()/
+ * consumeForDispatch() for the SAME product+location serialize correctly
+ * instead of both reading a stale "free" number — the second writer
+ * always sees the first's already-committed reservation or already-
+ * committed physical deduction. Holding store_fg_balance across the same
+ * sequence is what makes two concurrent Regular shipments for the SAME
+ * store+product serialize instead of both reading a stale "ready"
+ * number, and what makes a concurrent FgService::submit() downward
+ * correction for that same store+product wait for (or be waited on by)
+ * an in-flight shipment rather than racing it. No writer may read the
+ * active-allocation SUM, the physical balance, or the store-ready SUM
+ * without first holding the lock(s) that precede it in this order.
  */
 final class ShipmentService
 {
@@ -81,6 +105,7 @@ final class ShipmentService
         }
         $doItems = $this->repo->findDoItems($this->pdo, $doId);
         $shippedByProduct = $this->repo->shippedQtyByProduct($this->pdo, $doId);
+        $storeId = (int) $do['store_id'];
 
         $lines = [];
         $allOk = true;
@@ -96,6 +121,10 @@ final class ShipmentService
             $shipped = $shippedByProduct[$productId] ?? 0.0;
             $remaining = max(0.0, $planned - $shipped);
             $available = $factoryId !== null ? $this->liveAvailable($productId, $factoryId) : 0.0;
+            // null = no store allocation established yet for this product
+            // (still Per Produk) — the store guard does not apply, see
+            // DoRepository::hasAnyStoreAllocation()'s own docblock.
+            $storeReady = $factoryId !== null ? $this->liveStoreReady($storeId, $productId, $factoryId) : 0.0;
 
             $errors = [];
             if ($requested < 0) {
@@ -107,6 +136,9 @@ final class ShipmentService
             if ($requested > $available + 0.0001) {
                 $errors[] = 'EXCEEDS_AVAILABLE';
             }
+            if ($storeReady !== null && $requested > $storeReady + 0.0001) {
+                $errors[] = 'EXCEEDS_STORE_READY';
+            }
             if ($errors !== []) {
                 $allOk = false;
             }
@@ -117,7 +149,8 @@ final class ShipmentService
                 'requestedQty' => $requested,
                 'remainingToShip' => $remaining,
                 'fgAvailable' => $available,
-                'maxShippable' => max(0.0, min($remaining, $available)),
+                'storeReady' => $storeReady,
+                'maxShippable' => max(0.0, min($remaining, $available, $storeReady ?? PHP_FLOAT_MAX)),
                 'errors' => $errors,
             ];
         }
@@ -210,6 +243,31 @@ final class ShipmentService
                 throw new ApiException(409, 'INSUFFICIENT_FG_AVAILABLE', "Product {$productId}: requested {$requested} exceeds FG available {$trueFree} (physical {$physical}, reserved for special/non-regular orders {$reservedForSpecial})");
             }
 
+            // STORE-SPECIFIC FG OWNERSHIP (FINAL CORE BLOCKER fix): locked
+            // SECOND, after stock_balance, per this class's own canonical
+            // lock order docblock. Passing the two checks above only proves
+            // the FACTORY has enough free/unreserved stock — it says
+            // nothing about whether THIS destination store is the one that
+            // stock was packed for. A concurrent FgService::submit()
+            // downward correction for this same store+product either
+            // already committed (we see its result) or is waiting on this
+            // same lock (it will see ours) — never a race. Gated on
+            // hasAnyStoreAllocation(): a product still entirely in Per
+            // Produk mode has no per-store data to restrict against, so
+            // this is skipped entirely for it (see DoRepository::
+            // hasAnyStoreAllocation()'s own docblock) — physical+special
+            // above remain the only guards, exactly as before this fix.
+            $unallocatedStoreId = $this->fg->unallocatedStoreId($this->pdo);
+            if ($this->repo->hasAnyStoreAllocation($this->pdo, $productId, $factoryId, $unallocatedStoreId)) {
+                $this->repo->lockStoreFgBalance($this->pdo, (int) $do['store_id'], $productId, $locationId);
+                $storePacked = $this->repo->sumPackedForStore($this->pdo, (int) $do['store_id'], $productId, $factoryId, null);
+                $storeShipped = $this->repo->sumShippedForStore($this->pdo, (int) $do['store_id'], $productId, $factoryId);
+                $storeReady = max(0.0, $storePacked - $storeShipped);
+                if ($requested > $storeReady + 0.0001) {
+                    throw new ApiException(409, 'INSUFFICIENT_STORE_READY_FG', "Product {$productId}: requested {$requested} exceeds ready FG owned by this store {$storeReady} (packed for this store {$storePacked}, already shipped to this store {$storeShipped}) — another store's packed FG cannot be substituted");
+                }
+            }
+
             if ($shipmentId === null) {
                 $shipmentId = $this->repo->createShipment(
                     $this->pdo, $doId, $factoryId, (int) $do['store_id'], (string) $do['tanggal'],
@@ -290,5 +348,25 @@ final class ShipmentService
         $physical = $balance !== null ? (float) $balance['qty_on_hand'] : $this->fg->sumLedger($this->pdo, $productId, $locationId);
         $reservedForSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
         return max(0.0, $physical - $reservedForSpecial);
+    }
+
+    /**
+     * Read-only, never locks — the SAME packed-minus-shipped formula
+     * ship() re-validates under lock (store_fg_balance). Returns null
+     * when this product+factory has no store allocation established yet
+     * (still Per Produk) — meaning "not restricted by store", never
+     * "zero ready" (see DoRepository::hasAnyStoreAllocation()'s own
+     * docblock — those are very different things a caller must not
+     * conflate).
+     */
+    private function liveStoreReady(int $storeId, int $productId, int $factoryId): ?float
+    {
+        $unallocatedStoreId = $this->fg->unallocatedStoreId($this->pdo);
+        if (!$this->repo->hasAnyStoreAllocation($this->pdo, $productId, $factoryId, $unallocatedStoreId)) {
+            return null;
+        }
+        $storePacked = $this->repo->sumPackedForStore($this->pdo, $storeId, $productId, $factoryId, null);
+        $storeShipped = $this->repo->sumShippedForStore($this->pdo, $storeId, $productId, $factoryId);
+        return max(0.0, $storePacked - $storeShipped);
     }
 }

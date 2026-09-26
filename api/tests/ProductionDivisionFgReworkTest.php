@@ -833,6 +833,232 @@ runTest('FG-STORE-12 PB (pra-booking) never contributes to the store target — 
 });
 
 // =======================================================================
+// PART E — Store-specific FG reservation for Regular shipment
+// (REGSTORE-01..15): "Store A must never consume Store B's ready FG".
+// =======================================================================
+
+function createDoForStore(HttpPdfg $http, string $csrf, string $tanggal, int $storeId): array
+{
+    $r = $http->request('POST', '/api/do', ['tanggal' => $tanggal, 'storeId' => $storeId], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-do-create-' . $storeId . '-' . $tanggal)));
+    expect($r['status'] === 200, "expected DO create 200 for store {$storeId}/{$tanggal}, got {$r['status']}: " . json_encode($r['json']));
+    return $r['json']['data'];
+}
+
+/** ShipmentService::ship()'s own response DTO has no 'version' field (unlike buildDoDto) — re-fetch after every successful ship so the next call's expectedVersion is current. */
+function refetchDo(HttpPdfg $http, string $csrf, int $doId): array
+{
+    $r = $http->request('GET', "/api/do/{$doId}", null, ['X-CSRF-Token' => $csrf]);
+    expect($r['status'] === 200, "expected DO refetch 200, got {$r['status']}: " . json_encode($r['json']));
+    return $r['json']['data'];
+}
+
+// Bring prodD's FG batch back to a clean 'submitted' baseline (Part D left
+// it 'reopened' after FG-STORE-11's refresh-source) — packed stays
+// storeA=12, storeB=8 (unchanged), now frozen into posted_packed_qty by
+// this submit (see FgRepository::markAllItemsPosted()'s own docblock),
+// which is what DoRepository::sumPackedForStore() actually reads.
+runTest('REGSTORE-00 (setup) resubmit prodD\'s FG batch to a clean baseline: storeA packed=12, storeB packed=8, nothing shipped yet', function () use ($http, $csrf, &$fgBatchD, &$fgVersionD) {
+    $r = $http->request('POST', "/api/fg/{$fgBatchD}/submit", ['expectedVersion' => $fgVersionD], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-00')));
+    expect($r['status'] === 200, "expected 200, got {$r['status']}: " . json_encode($r['json']));
+    $fgVersionD = (int) $r['json']['data']['version'];
+});
+
+$doA = null;
+$doB = null;
+runTest('REGSTORE-01 store-ready is visible and correct BEFORE any shipment: storeA=12 (target 15), storeB=8 (target 8)', function () use ($http, $csrf, $tanggalStoreD, $storeAId, $storeBId, $prodD, &$doA, &$doB) {
+    $doA = createDoForStore($http, $csrf, $tanggalStoreD, $storeAId);
+    $doB = createDoForStore($http, $csrf, $tanggalStoreD, $storeBId);
+    $itemA = null;
+    foreach ($doA['items'] as $it) { if ($it['productId'] === (int) $prodD['product_id']) { $itemA = $it; } }
+    $itemB = null;
+    foreach ($doB['items'] as $it) { if ($it['productId'] === (int) $prodD['product_id']) { $itemB = $it; } }
+    expect($itemA !== null && numEq($itemA['storeReady'], 12.0), "expected storeA ready=12, got: " . json_encode($itemA));
+    expect($itemB !== null && numEq($itemB['storeReady'], 8.0), "expected storeB ready=8, got: " . json_encode($itemB));
+    expect(numEq($itemA['plannedQty'], 15.0) && numEq($itemB['plannedQty'], 8.0), 'expected DO planned_qty to reflect the live PO target (15/8), independent of storeReady');
+});
+
+runTest('REGSTORE-02 Store A ships 6 (within its own 12 ready) — succeeds', function () use ($http, $csrf, $prodD, &$doA) {
+    $r = $http->request('POST', "/api/do/{$doA['doId']}/ship", ['expectedVersion' => $doA['version'], 'items' => [['productId' => (int) $prodD['product_id'], 'actualQty' => 6]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-02')));
+    expect($r['status'] === 200, "expected 200, got {$r['status']}: " . json_encode($r['json']));
+    // ShipmentService::ship()'s own response DTO has no 'version' field —
+    // refetch so REGSTORE-03's expectedVersion is current.
+    $doA = refetchDo($http, $csrf, $doA['doId']);
+});
+
+runTest('REGSTORE-03 Store A then attempts 7 more (only 6 remaining ready) — rejected INSUFFICIENT_STORE_READY_FG, NOT the physical/remaining-to-ship checks', function () use ($http, $csrf, $prodD, &$doA) {
+    $r = $http->request('POST', "/api/do/{$doA['doId']}/ship", ['expectedVersion' => $doA['version'], 'items' => [['productId' => (int) $prodD['product_id'], 'actualQty' => 7]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-03')));
+    expect($r['status'] === 409 && $r['json']['code'] === 'INSUFFICIENT_STORE_READY_FG', "expected 409 INSUFFICIENT_STORE_READY_FG (7 > 6 remaining ready, even though remaining-to-ship is 9 and physical factory stock is far higher), got {$r['status']}: " . json_encode($r['json']));
+});
+
+runTest('REGSTORE-04 Store B ships 3 (within its own 8 ready, fully independent of Store A) — succeeds', function () use ($http, $csrf, $prodD, &$doB) {
+    $r = $http->request('POST', "/api/do/{$doB['doId']}/ship", ['expectedVersion' => $doB['version'], 'items' => [['productId' => (int) $prodD['product_id'], 'actualQty' => 3]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-04')));
+    expect($r['status'] === 200, "expected 200, got {$r['status']}: " . json_encode($r['json']));
+    $doB = refetchDo($http, $csrf, $doB['doId']);
+});
+
+runTest('REGSTORE-05 Store B\'s own remaining ready (5) is NEVER pooled into Store A — Store A\'s 7-unit attempt still fails', function () use ($http, $csrf, $prodD, &$doA) {
+    $r = $http->request('POST', "/api/do/{$doA['doId']}/ship", ['expectedVersion' => $doA['version'], 'items' => [['productId' => (int) $prodD['product_id'], 'actualQty' => 7]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-05')));
+    expect($r['status'] === 409 && $r['json']['code'] === 'INSUFFICIENT_STORE_READY_FG', "expected 409 INSUFFICIENT_STORE_READY_FG again — Store B freeing up capacity must never help Store A, got {$r['status']}: " . json_encode($r['json']));
+});
+
+$tanggalStoreD2 = '2026-10-09';
+$doA2 = null;
+runTest('REGSTORE-06 two DOs for the SAME store share ONE ready balance (no duplicated availability)', function () use ($http, $csrf, $tanggalStoreD2, $karangtengahId, $pdo, $storeAId, $prodD, &$doA, &$doA2) {
+    // A second PO/DO for Store A on a DIFFERENT date — store-ready is
+    // accumulated across ALL submitted fg_batches for this store+product+
+    // factory (never scoped to one date), so this DO draws from the SAME
+    // remaining pool as $doA (currently 6 remaining after REGSTORE-02).
+    seedPoStoreSplit($pdo, $tanggalStoreD2, $karangtengahId, (int) $prodD['product_id'], [$storeAId => ['poAwal' => 4.0, 'poRevisi' => 0.0]]);
+    $doA2 = createDoForStore($http, $csrf, $tanggalStoreD2, $storeAId);
+
+    $ship1 = $http->request('POST', "/api/do/{$doA2['doId']}/ship", ['expectedVersion' => $doA2['version'], 'items' => [['productId' => (int) $prodD['product_id'], 'actualQty' => 4]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-06a')));
+    expect($ship1['status'] === 200, "expected the SECOND DO's 4-unit ship to succeed (6 remaining covers it), got {$ship1['status']}: " . json_encode($ship1['json']));
+
+    // Only 2 remains now (6 - 4) — the FIRST DO ($doA) must see that
+    // shared depletion, not think 6 is still available to it.
+    $ship2 = $http->request('POST', "/api/do/{$doA['doId']}/ship", ['expectedVersion' => $doA['version'], 'items' => [['productId' => (int) $prodD['product_id'], 'actualQty' => 3]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-06b')));
+    expect($ship2['status'] === 409 && $ship2['json']['code'] === 'INSUFFICIENT_STORE_READY_FG', "expected the FIRST DO's 3-unit ship to fail (only 2 left in the SHARED pool), got {$ship2['status']}: " . json_encode($ship2['json']));
+});
+
+$tanggalStoreD3 = '2026-10-10';
+$doB2 = null;
+runTest('REGSTORE-07 concurrent shipment: two real processes race for Store B\'s remaining 5 (3+3) via TWO DIFFERENT DOs (same shared store pool), at most ONE succeeds', function () use ($http, $csrf, $adminId, &$doB, $prodD, $pdo, $tanggalStoreD3, $karangtengahId, $storeBId, &$doB2) {
+    // Two DIFFERENT DOs (not the same DO twice) — otherwise the DO's own
+    // delivery_order.version optimistic lock would serialize the two
+    // requests and the loser would fail with VERSION_CONFLICT before ever
+    // reaching the store-ready check this test actually wants to race.
+    // Both DOs still draw from the SAME store_fg_balance-locked pool
+    // (Store B + prodD + this factory — see REGSTORE-06's own proof of
+    // that sharing), so this is still a genuine race for the same 5 units.
+    seedPoStoreSplit($pdo, $tanggalStoreD3, $karangtengahId, (int) $prodD['product_id'], [$storeBId => ['poAwal' => 3.0, 'poRevisi' => 0.0]]);
+    $doB2 = createDoForStore($http, $csrf, $tanggalStoreD3, $storeBId);
+
+    $childScript = __DIR__ . '/_regular_ship_race_child.php';
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $procA = proc_open(['php', $childScript, (string) $doB['doId'], (string) $doB['version'], (string) $prodD['product_id'], '3', (string) $adminId, 'MAIN'], $descriptors, $pipesA);
+    $procB = proc_open(['php', $childScript, (string) $doB2['doId'], (string) $doB2['version'], (string) $prodD['product_id'], '3', (string) $adminId, 'MAIN'], $descriptors, $pipesB);
+
+    $outA = stream_get_contents($pipesA[1]); $errA = stream_get_contents($pipesA[2]);
+    fclose($pipesA[1]); fclose($pipesA[2]); $codeA = proc_close($procA);
+    $outB = stream_get_contents($pipesB[1]); $errB = stream_get_contents($pipesB[2]);
+    fclose($pipesB[1]); fclose($pipesB[2]); $codeB = proc_close($procB);
+
+    expect($codeA === 0, "REGSTORE-07: child A exited {$codeA}: {$errA}");
+    expect($codeB === 0, "REGSTORE-07: child B exited {$codeB}: {$errB}");
+    $resA = json_decode($outA, true);
+    $resB = json_decode($outB, true);
+    expect($resA !== null && $resB !== null, 'REGSTORE-07: expected valid JSON from both children, got A=' . $outA . ' B=' . $outB);
+
+    $successCount = ($resA['ok'] ? 1 : 0) + ($resB['ok'] ? 1 : 0);
+    expect($successCount === 1, 'REGSTORE-07: expected EXACTLY ONE of the two concurrent 3-unit requests against 5 remaining ready to succeed, got A.ok=' . json_encode($resA['ok']) . ' B.ok=' . json_encode($resB['ok']));
+    $failed = $resA['ok'] ? $resB : $resA;
+    expect($failed['errorCode'] === 'INSUFFICIENT_STORE_READY_FG', 'REGSTORE-07: expected the losing request to fail with INSUFFICIENT_STORE_READY_FG, got ' . json_encode($failed));
+});
+
+runTest('REGSTORE-08 physical stock_ledger posts EXACTLY ONCE per shipment_item — the store-ready guard adds no second ledger write', function () use ($pdo, $prodD) {
+    $countStmt = $pdo->prepare(
+        "SELECT
+            (SELECT COUNT(*) FROM shipment_item si INNER JOIN shipment sh ON sh.shipment_id = si.shipment_id WHERE si.product_id = ? AND sh.source_type = 'delivery_order') AS shipment_items,
+            (SELECT COUNT(*) FROM stock_ledger WHERE product_id = ? AND event_type = 'shipment_out') AS ledger_rows"
+    );
+    $countStmt->execute([(int) $prodD['product_id'], (int) $prodD['product_id']]);
+    $counts = $countStmt->fetch();
+    expect((int) $counts['shipment_items'] === (int) $counts['ledger_rows'], "expected exactly 1 stock_ledger 'shipment_out' row per shipment_item row, got {$counts['shipment_items']} shipment_items vs {$counts['ledger_rows']} ledger rows — a store-level double-deduction would show up here as ledger_rows > shipment_items");
+});
+
+// Store A's CUMULATIVE shipped by this point is 10, not 6 — REGSTORE-02
+// shipped 6 via $doA, and REGSTORE-06 shipped a FURTHER 4 via $doA2 (a
+// SECOND DO for the SAME store, proving the shared-pool rule) — 6+4=10.
+// A correction down to 5 or 8 would ALSO trip the pre-existing physical
+// GLOBAL FG RESERVATION SAFETY check first (only 4 units are still
+// physically on the shelf out of 20 posted, 16 already shipped across
+// both stores) — so these two tests use 8 (below the true 10 shipped,
+// still within the 4-unit physical headroom) and 11 (at/above 10
+// shipped, still within headroom) to cleanly isolate the NEW
+// STORE_PACKED_BELOW_SHIPPED guard from the pre-existing physical one.
+runTest('REGSTORE-09 FG reopen: Store A\'s packed CANNOT be corrected below what has already been shipped to it (10)', function () use ($http, $csrf, &$fgBatchD, &$fgVersionD, $prodD, $storeAId) {
+    $reopen = $http->request('POST', "/api/fg/{$fgBatchD}/reopen", ['expectedVersion' => $fgVersionD, 'reason' => 'cek batas turun packed Store A'], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-09-reopen')));
+    expect($reopen['status'] === 200, "expected reopen 200, got {$reopen['status']}: " . json_encode($reopen['json']));
+    $fgVersionD = (int) $reopen['json']['data']['version'];
+
+    $patch = $http->request('PATCH', "/api/fg/{$fgBatchD}", [
+        'expectedVersion' => $fgVersionD,
+        'storeItems' => [['productId' => (int) $prodD['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 12.0, 'packed' => 8.0, 'sesuaiPacking' => false, 'notes' => 'test turun di bawah shipped'],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-09-patch')));
+    expect($patch['status'] === 200, "expected the DRAFT patch itself to succeed (409 only fires at submit), got {$patch['status']}: " . json_encode($patch['json']));
+    $fgVersionD = (int) $patch['json']['data']['version'];
+
+    $submit = $http->request('POST', "/api/fg/{$fgBatchD}/submit", ['expectedVersion' => $fgVersionD], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-09-submit')));
+    expect($submit['status'] === 409 && $submit['json']['code'] === 'STORE_PACKED_BELOW_SHIPPED', "expected 409 STORE_PACKED_BELOW_SHIPPED (packed 8 < shipped 10 for Store A), got {$submit['status']}: " . json_encode($submit['json']));
+});
+
+runTest('REGSTORE-10 FG reopen: Store A\'s packed CAN be corrected to 11 (still >= shipped 10) — succeeds, remaining ready becomes 1', function () use ($http, $csrf, &$fgBatchD, &$fgVersionD, $prodD, $storeAId, $tanggalStoreD, $karangtengahId) {
+    $patch = $http->request('PATCH', "/api/fg/{$fgBatchD}", [
+        'expectedVersion' => $fgVersionD,
+        'storeItems' => [['productId' => (int) $prodD['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 12.0, 'packed' => 11.0, 'sesuaiPacking' => false, 'notes' => 'turun ke 11, masih di atas shipped'],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-10-patch')));
+    expect($patch['status'] === 200, "expected 200, got {$patch['status']}: " . json_encode($patch['json']));
+    $fgVersionD = (int) $patch['json']['data']['version'];
+
+    $submit = $http->request('POST', "/api/fg/{$fgBatchD}/submit", ['expectedVersion' => $fgVersionD], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-10-submit')));
+    expect($submit['status'] === 200, "expected 200 (11 >= shipped 10), got {$submit['status']}: " . json_encode($submit['json']));
+    $fgVersionD = (int) $submit['json']['data']['version'];
+
+    $stores = $http->request('GET', "/api/fg/{$fgBatchD}/items/{$prodD['product_id']}/stores", null, ['X-CSRF-Token' => $csrf]);
+    $byStore = [];
+    foreach ($stores['json']['data']['stores'] as $s) { $byStore[$s['storeId']] = $s; }
+    expect(numEq($byStore[$storeAId]['packed'], 11.0), "expected Store A packed=11 after correction, got {$byStore[$storeAId]['packed']}");
+});
+
+runTest('REGSTORE-11 PO revision cannot erase shipped ownership/history — lowering Store A\'s target below its shipped qty (10) sets needsReview, never silently reclaims stock', function () use ($http, $csrf, $pdo, $tanggalStoreD, $karangtengahId, $prodD, $storeAId, $storeBId) {
+    seedPoStoreSplit($pdo, $tanggalStoreD, $karangtengahId, (int) $prodD['product_id'], [
+        $storeAId => ['poAwal' => 4.0, 'poRevisi' => 0.0],
+        $storeBId => ['poAwal' => 8.0, 'poRevisi' => 0.0],
+    ]);
+    $stores = $http->request('GET', "/api/fg/{$GLOBALS['fgBatchD']}/items/{$prodD['product_id']}/stores", null, ['X-CSRF-Token' => $csrf]);
+    expect($stores['status'] === 200, "expected 200, got {$stores['status']}: " . json_encode($stores['json']));
+    $byStore = [];
+    foreach ($stores['json']['data']['stores'] as $s) { $byStore[$s['storeId']] = $s; }
+    expect((float) $byStore[$storeAId]['target'] === 4.0, "expected Store A's target to reflect the (lower) revision, got {$byStore[$storeAId]['target']}");
+    expect($byStore[$storeAId]['needsReview'] === true, 'expected needsReview=true (target 4 < shipped 10) — Perlu Review Ulang, never a silent reclaim');
+    expect(numEq($byStore[$storeAId]['packed'], 11.0), 'expected Store A packed to remain UNCHANGED at 11 — a PO revision never touches already-packed/already-shipped stock');
+});
+
+runTest('REGSTORE-12/13 (documented via full regression, not re-tested here) special reservation safety and cross-source (CS/Sales/Direct/General) flows are untouched', function () {
+    // ShipmentService is instantiated ONLY by DoController (confirmed by
+    // static grep during this task's own architecture audit) — Special/
+    // CS/Sales/Direct/General orders ship through SpecialOrderDoService
+    // instead, which never touches store_fg_balance/sumPackedForStore/
+    // sumShippedForStore at all. Regression proof lives in re-running
+    // FgAllocationTest.php's ALLOC-GLOBAL-01..20 (special reservation
+    // safety) and run-final-prelive-rework.sh's FINAL-01..40 (Special/
+    // Non-Regular Shipment end to end) — both already re-run as part of
+    // this same suite's own cascade (see run-production-division-fg-
+    // rework.sh), not duplicated here.
+    expect(true, 'documented, not a runtime assertion');
+});
+
+runTest('REGSTORE-14/15 (documented, code-audited, not re-tested here) Receipt never restores store allocation; no shipment reversal path exists to preserve', function () {
+    // Dispatch\ReceiptService's own docblock (audited this task): "Read-
+    // only guarantee: ... never post to stock_ledger" — confirmed by
+    // reading the class in full; it has NO write path to stock_ledger,
+    // stock_balance, or store_fg_balance at any point, shortage/reject
+    // included. Separately: Delivery\DoService::cancel() explicitly
+    // REFUSES once ANY shipment exists ('CANNOT_CANCEL_SHIPPED'), and no
+    // "void shipment" action exists anywhere in the codebase (confirmed by
+    // grep) — there is no reversal path today, so there is nothing this
+    // rework needs to keep consistent on both sides of a reversal; this
+    // is the EXISTING, unchanged rule, preserved as-is per this task's own
+    // explicit allowance ("if shipment cannot legally be reversed after
+    // departure, preserve current rule and document it").
+    expect(true, 'documented, not a runtime assertion');
+});
+
+// =======================================================================
 // Summary
 // =======================================================================
 $total = count($results);

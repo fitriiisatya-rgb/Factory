@@ -449,4 +449,107 @@ final class DoRepository
 
         return $ledgerId;
     }
+
+    // ------------------------------------------------------------------
+    // store_fg_balance — the lock anchor for the "Store A cannot consume
+    // Store B's ready FG" guard (migration 0014 extension). No quantity is
+    // cached here; see that migration's own docblock for why this row
+    // exists purely to be locked, never to store a number.
+    // ------------------------------------------------------------------
+
+    /**
+     * Find-or-create then row-lock (FOR UPDATE) the (store, product,
+     * location) anchor row. Must be called AFTER lockBalance() in any
+     * caller that needs both, per the canonical lock order documented in
+     * ShipmentService's own docblock and migration 0014's extension —
+     * stock_balance first, store_fg_balance second.
+     */
+    public function lockStoreFgBalance(PDO $pdo, int $storeId, int $productId, int $locationId): void
+    {
+        $insert = $pdo->prepare(
+            'INSERT IGNORE INTO store_fg_balance (store_id, product_id, location_id, created_at) VALUES (?, ?, ?, UTC_TIMESTAMP())'
+        );
+        $insert->execute([$storeId, $productId, $locationId]);
+        $lock = $pdo->prepare(
+            'SELECT store_id FROM store_fg_balance WHERE store_id = ? AND product_id = ? AND location_id = ? FOR UPDATE'
+        );
+        $lock->execute([$storeId, $productId, $locationId]);
+    }
+
+    /**
+     * Live-summed "packed FG this store owns" — SUM(fg_item.
+     * posted_packed_qty) across EVERY fg_batch for this store+product+
+     * factory. posted_packed_qty is a frozen snapshot written ONLY by
+     * FgService::submit() (see FgRepository::markAllItemsPosted() and
+     * migration 0014's own docblock) — reading it here, rather than the
+     * live packed_qty, is what keeps a reopened-but-not-yet-resubmitted
+     * batch's ALREADY-posted stock correctly counted as store-ready
+     * (reopen never touches stock_ledger, so the physical stock never
+     * actually moved, and this must not either).
+     *
+     * $includeBatchId (used ONLY by FgService::submit()'s own preflight,
+     * never by ShipmentService) overrides that one specific batch's
+     * contribution to use its LIVE packed_qty instead — representing
+     * what the store's total will become the instant THIS submit
+     * commits, before posted_packed_qty has actually been frozen for it.
+     */
+    public function sumPackedForStore(PDO $pdo, int $storeId, int $productId, int $factoryId, ?int $includeBatchId): float
+    {
+        $column = $includeBatchId !== null
+            ? "CASE WHEN fb.fg_batch_id = ? THEN fi.packed_qty ELSE fi.posted_packed_qty END"
+            : 'fi.posted_packed_qty';
+        $sql = "SELECT COALESCE(SUM({$column}), 0) FROM fg_item fi
+                INNER JOIN fg_batch fb ON fb.fg_batch_id = fi.fg_batch_id
+                WHERE fi.store_id = ? AND fi.product_id = ? AND fb.factory_id = ?";
+        $params = $includeBatchId !== null ? [$includeBatchId, $storeId, $productId, $factoryId] : [$storeId, $productId, $factoryId];
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        return (float) $stmt->fetchColumn();
+    }
+
+    /**
+     * True once THIS product+factory has EVER had a real (non-synthetic)
+     * store row with posted_packed_qty > 0 — i.e. FG Breakdown Toko has
+     * genuinely been used at least once for it. The store-specific
+     * shipment guard is gated on this: a product still entirely in Per
+     * Produk mode (the default, and still the common case — Breakdown
+     * Toko is explicitly OPTIONAL) has no per-store ownership data at
+     * all, so restricting it by store would incorrectly make EVERY
+     * never-exploded product completely unshippable via Regular DO
+     * instead of preserving the pre-existing physical-only behavior.
+     * Once a product HAS been split by store at least once, the guard
+     * applies normally from then on (see Delivery\ShipmentService's own
+     * docblock).
+     */
+    public function hasAnyStoreAllocation(PDO $pdo, int $productId, int $factoryId, int $unallocatedStoreId): bool
+    {
+        $stmt = $pdo->prepare(
+            'SELECT 1 FROM fg_item fi
+             INNER JOIN fg_batch fb ON fb.fg_batch_id = fi.fg_batch_id
+             WHERE fi.product_id = ? AND fb.factory_id = ? AND fi.store_id != ? AND fi.posted_packed_qty > 0
+             LIMIT 1'
+        );
+        $stmt->execute([$productId, $factoryId, $unallocatedStoreId]);
+        return $stmt->fetchColumn() !== false;
+    }
+
+    /**
+     * Live-summed "already shipped for this store" — SUM(shipment_item.qty)
+     * across every ACTIVE shipment for this store+product+factory whose
+     * source_type is 'delivery_order' (Regular store demand ONLY —
+     * Special/CS/Sales/Direct/General orders ship through an entirely
+     * different allocation path, special_order_fg_allocation, and must
+     * never be counted here or this guard would wrongly restrict them).
+     */
+    public function sumShippedForStore(PDO $pdo, int $storeId, int $productId, int $factoryId): float
+    {
+        $stmt = $pdo->prepare(
+            "SELECT COALESCE(SUM(si.qty), 0) FROM shipment_item si
+             INNER JOIN shipment sh ON sh.shipment_id = si.shipment_id
+             WHERE sh.store_id = ? AND si.product_id = ? AND sh.factory_id = ?
+               AND sh.source_type = 'delivery_order' AND sh.status = 'active'"
+        );
+        $stmt->execute([$storeId, $productId, $factoryId]);
+        return (float) $stmt->fetchColumn();
+    }
 }

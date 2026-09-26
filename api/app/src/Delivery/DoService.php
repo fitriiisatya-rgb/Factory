@@ -404,6 +404,7 @@ final class DoService
             // would let an operator TYPE a qty the server then rejects,
             // even though the number on screen looked available.
             $available = null;
+            $storeReady = null;
             $factoryId = $item['factory_id'] !== null ? (int) $item['factory_id'] : null;
             if ($factoryId !== null) {
                 $factory = $this->repo->findFactory($this->pdo, $factoryId);
@@ -413,6 +414,23 @@ final class DoService
                     $physical = $balance !== null ? (float) $balance['qty_on_hand'] : $this->fg->sumLedger($this->pdo, $productId, $locationId);
                     $reservedForSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
                     $available = max(0.0, $physical - $reservedForSpecial);
+
+                    // STORE-SPECIFIC FG OWNERSHIP (FINAL CORE BLOCKER fix) —
+                    // same reasoning as $available's own comment above: the
+                    // "Kirim" form's max input hint must already account for
+                    // this store's own ready allocation, or an operator
+                    // could type a qty the server then rejects with
+                    // INSUFFICIENT_STORE_READY_FG even though this factory-
+                    // wide $available number looked sufficient. null = no
+                    // store allocation established yet for this product
+                    // (still Per Produk) — "not restricted by store", never
+                    // "zero ready" (DoRepository::hasAnyStoreAllocation()).
+                    $unallocatedStoreId = $this->fg->unallocatedStoreId($this->pdo);
+                    if ($this->repo->hasAnyStoreAllocation($this->pdo, $productId, $factoryId, $unallocatedStoreId)) {
+                        $storePacked = $this->repo->sumPackedForStore($this->pdo, (int) $do['store_id'], $productId, $factoryId, null);
+                        $storeShipped = $this->repo->sumShippedForStore($this->pdo, (int) $do['store_id'], $productId, $factoryId);
+                        $storeReady = max(0.0, $storePacked - $storeShipped);
+                    }
                 }
             }
 
@@ -426,6 +444,7 @@ final class DoService
                 'alreadyShippedQty' => $shippedQty,
                 'remainingToShip' => $remaining,
                 'fgAvailable' => $available,
+                'storeReady' => $storeReady,
                 'itemStatusCode' => $itemStatus['code'],
                 'itemStatusLabel' => $itemStatus['label'],
             ];

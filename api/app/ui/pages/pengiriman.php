@@ -44,19 +44,24 @@ if ($doIdParam !== null) {
       </div>
 
       <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Produk</th><th class="num">Sisa DO</th><th class="num">FG Available</th><th class="num">Qty Kirim</th><th>Catatan</th></tr></thead>
+        <thead><tr><th>Produk</th><th class="num">Sisa DO</th><th class="num">FG Available</th><th class="num">Ready Toko Ini</th><th class="num">Qty Kirim</th><th>Catatan</th></tr></thead>
         <tbody>
         <?php foreach ($do['items'] as $it): if ((float) $it['remainingToShip'] <= 0.0001) continue;
           $available = $it['fgAvailable'] !== null ? (float) $it['fgAvailable'] : 0.0;
-          $max = min((float) $it['remainingToShip'], $available);
-          $disabled = $available <= 0.0001;
+          // null = no store allocation established for this product yet
+          // (still Per Produk) — unrestricted by store, never "0 ready"
+          // (DoRepository::hasAnyStoreAllocation()'s own docblock).
+          $storeReady = $it['storeReady'] !== null ? (float) $it['storeReady'] : null;
+          $max = min((float) $it['remainingToShip'], $available, $storeReady ?? PHP_FLOAT_MAX);
+          $disabled = $max <= 0.0001;
         ?>
         <tr<?= $disabled ? ' style="opacity:.5;"' : '' ?>>
           <td><?= ui_esc($it['productName']) ?></td>
           <td class="num"><?= ui_fmt_num($it['remainingToShip']) ?></td>
           <td class="num"><?= ui_fmt_num($available) ?></td>
+          <td class="num"><?= $storeReady === null ? '-' : ui_fmt_num($storeReady) ?></td>
           <td class="num"><input type="number" step="0.01" min="0" max="<?= ui_fmt_num($max) ?>" style="width:6rem;text-align:right;"
-              data-product-id="<?= (int) $it['productId'] ?>" data-max="<?= ui_fmt_num($max) ?>" data-field="qty" value="0" <?= $disabled ? 'disabled title="Stok FG belum tersedia"' : '' ?>></td>
+              data-product-id="<?= (int) $it['productId'] ?>" data-max="<?= ui_fmt_num($max) ?>" data-field="qty" value="0" <?= $disabled ? 'disabled title="FG belum tersedia untuk toko ini"' : '' ?>></td>
           <td><input type="text" style="width:8rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="notes" <?= $disabled ? 'disabled' : '' ?>></td>
         </tr>
         <?php endforeach; ?>
