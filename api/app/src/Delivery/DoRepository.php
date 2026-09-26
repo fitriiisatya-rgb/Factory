@@ -492,15 +492,36 @@ final class DoRepository
      * contribution to use its LIVE packed_qty instead — representing
      * what the store's total will become the instant THIS submit
      * commits, before posted_packed_qty has actually been frozen for it.
+     *
+     * $forUpdate MUST be true for every caller that just acquired the
+     * store_fg_balance lock and is about to make a real decision from
+     * this number (ShipmentService::ship(), FgService::submit()) — a
+     * PLAIN SELECT here would be a REPEATABLE READ correctness bug: this
+     * method runs inside a transaction whose consistent snapshot was
+     * already established by an EARLIER plain read elsewhere in the same
+     * call (e.g. DoRepository::findDoItems()), so even after genuinely
+     * waiting on the store_fg_balance lock for a concurrent writer to
+     * commit, a plain SELECT here could still silently return the OLD
+     * pre-commit numbers — the lock-wait would be real, but the read
+     * that follows it would not be. FOR UPDATE forces InnoDB to read the
+     * latest committed version regardless of the transaction's snapshot
+     * (this is what actually caught a real intermittent double-ship in
+     * this task's own REGSTORE-07 concurrency test before this fix).
+     * Left false for read-only display call sites (DoService::
+     * buildDoDto(), ShipmentService::preview()) — those are advisory
+     * only and never gate a real decision; ship()/submit() always
+     * re-validate for real under their own dedicated lock regardless of
+     * whatever preview() showed moments earlier.
      */
-    public function sumPackedForStore(PDO $pdo, int $storeId, int $productId, int $factoryId, ?int $includeBatchId): float
+    public function sumPackedForStore(PDO $pdo, int $storeId, int $productId, int $factoryId, ?int $includeBatchId, bool $forUpdate = false): float
     {
         $column = $includeBatchId !== null
             ? "CASE WHEN fb.fg_batch_id = ? THEN fi.packed_qty ELSE fi.posted_packed_qty END"
             : 'fi.posted_packed_qty';
         $sql = "SELECT COALESCE(SUM({$column}), 0) FROM fg_item fi
                 INNER JOIN fg_batch fb ON fb.fg_batch_id = fi.fg_batch_id
-                WHERE fi.store_id = ? AND fi.product_id = ? AND fb.factory_id = ?";
+                WHERE fi.store_id = ? AND fi.product_id = ? AND fb.factory_id = ?"
+                . ($forUpdate ? ' FOR UPDATE' : '');
         $params = $includeBatchId !== null ? [$includeBatchId, $storeId, $productId, $factoryId] : [$storeId, $productId, $factoryId];
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
@@ -540,14 +561,19 @@ final class DoRepository
      * Special/CS/Sales/Direct/General orders ship through an entirely
      * different allocation path, special_order_fg_allocation, and must
      * never be counted here or this guard would wrongly restrict them).
+     *
+     * $forUpdate — see sumPackedForStore()'s own docblock for why this
+     * MUST be true for ship()/submit()'s own real decision, never for a
+     * read-only display/preview call site.
      */
-    public function sumShippedForStore(PDO $pdo, int $storeId, int $productId, int $factoryId): float
+    public function sumShippedForStore(PDO $pdo, int $storeId, int $productId, int $factoryId, bool $forUpdate = false): float
     {
         $stmt = $pdo->prepare(
             "SELECT COALESCE(SUM(si.qty), 0) FROM shipment_item si
              INNER JOIN shipment sh ON sh.shipment_id = si.shipment_id
              WHERE sh.store_id = ? AND si.product_id = ? AND sh.factory_id = ?
                AND sh.source_type = 'delivery_order' AND sh.status = 'active'"
+             . ($forUpdate ? ' FOR UPDATE' : '')
         );
         $stmt->execute([$storeId, $productId, $factoryId]);
         return (float) $stmt->fetchColumn();

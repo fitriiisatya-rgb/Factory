@@ -234,7 +234,10 @@ final class FgService
                 if ($storeId === $this->repo->unallocatedStoreId($this->pdo)) {
                     continue;
                 }
-                $shipped = $this->doRepo->sumShippedForStore($this->pdo, $storeId, $productId, $factoryId);
+                // forUpdate=true — see DoRepository::sumPackedForStore()'s
+                // own docblock on why a plain SELECT here could miss a
+                // concurrent shipment under REPEATABLE READ.
+                $shipped = $this->doRepo->sumShippedForStore($this->pdo, $storeId, $productId, $factoryId, true);
                 if ($shipped > 0.0001) {
                     $store = $this->doRepo->findStore($this->pdo, $storeId);
                     $storeName = $store['canonical_name'] ?? "Toko #{$storeId}";
@@ -599,8 +602,13 @@ final class FgService
         $storeProductPairs = $this->repo->distinctRealStoreProductPairs($this->pdo, $batchId);
         foreach ($storeProductPairs as $pair) {
             $this->doRepo->lockStoreFgBalance($this->pdo, $pair['storeId'], $pair['productId'], $locationId);
-            $storePacked = $this->doRepo->sumPackedForStore($this->pdo, $pair['storeId'], $pair['productId'], $factoryId, $batchId);
-            $storeShipped = $this->doRepo->sumShippedForStore($this->pdo, $pair['storeId'], $pair['productId'], $factoryId);
+            // forUpdate=true — see DoRepository::sumPackedForStore()'s own
+            // docblock: without it, a REPEATABLE READ snapshot established
+            // earlier in this transaction could still hide a concurrent
+            // ShipmentService::ship()'s already-committed shipment_item
+            // row even after genuinely waiting on the lock above.
+            $storePacked = $this->doRepo->sumPackedForStore($this->pdo, $pair['storeId'], $pair['productId'], $factoryId, $batchId, true);
+            $storeShipped = $this->doRepo->sumShippedForStore($this->pdo, $pair['storeId'], $pair['productId'], $factoryId, true);
             if ($storePacked < $storeShipped - 0.0001) {
                 $store = $this->doRepo->findStore($this->pdo, $pair['storeId']);
                 $storeName = $store['canonical_name'] ?? "Toko #{$pair['storeId']}";

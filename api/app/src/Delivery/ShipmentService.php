@@ -260,8 +260,16 @@ final class ShipmentService
             $unallocatedStoreId = $this->fg->unallocatedStoreId($this->pdo);
             if ($this->repo->hasAnyStoreAllocation($this->pdo, $productId, $factoryId, $unallocatedStoreId)) {
                 $this->repo->lockStoreFgBalance($this->pdo, (int) $do['store_id'], $productId, $locationId);
-                $storePacked = $this->repo->sumPackedForStore($this->pdo, (int) $do['store_id'], $productId, $factoryId, null);
-                $storeShipped = $this->repo->sumShippedForStore($this->pdo, (int) $do['store_id'], $productId, $factoryId);
+                // forUpdate=true on BOTH reads below — see
+                // DoRepository::sumPackedForStore()'s own docblock: a
+                // plain SELECT here would still read this transaction's
+                // OLD REPEATABLE READ snapshot (established earlier by
+                // findDoItems()'s own plain read), even though the
+                // lockStoreFgBalance() wait above was real. This is the
+                // exact fix for a genuine intermittent double-ship this
+                // task's own REGSTORE-07 concurrency test caught.
+                $storePacked = $this->repo->sumPackedForStore($this->pdo, (int) $do['store_id'], $productId, $factoryId, null, true);
+                $storeShipped = $this->repo->sumShippedForStore($this->pdo, (int) $do['store_id'], $productId, $factoryId, true);
                 $storeReady = max(0.0, $storePacked - $storeShipped);
                 if ($requested > $storeReady + 0.0001) {
                     throw new ApiException(409, 'INSUFFICIENT_STORE_READY_FG', "Product {$productId}: requested {$requested} exceeds ready FG owned by this store {$storeReady} (packed for this store {$storePacked}, already shipped to this store {$storeShipped}) — another store's packed FG cannot be substituted");
