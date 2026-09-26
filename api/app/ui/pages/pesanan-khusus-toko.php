@@ -9,14 +9,12 @@ declare(strict_types=1);
  * po_batch/po_item/po_store_item — this is a SEPARATE demand source (see
  * SpecialOrderService's own docblock on the "Core Principle").
  *
- * UI/UX rework: item entry is a list of full-width CARDS (see
- * .order-item-card in app.css), not a cramped <table> of bare inputs —
- * every control is wrapped in `.field` so it gets the app's real dark
- * styling (the missing-`.field`-wrapper was the actual root cause of the
- * "native white control" / "clipped control" UAT bugs). Division/Factory
- * are always read-only badges: routing is derived automatically from the
- * chosen item, never a manual selector (task's own approved routing rule
- * — see ProductionRoutingService).
+ * UI/UX rework: item entry is a compact, scrollable spreadsheet-like
+ * table (Amor.createOrderItemGrid(), see app.js) so a real order with
+ * 50+ items stays usable — replaces the old one-card-per-item layout.
+ * Division/Factory are always read-only badges: routing is derived
+ * automatically from the chosen item, never a manual selector (task's
+ * own approved routing rule — see ProductionRoutingService).
  *
  * The create form + list live on the SAME page (task's own "MVP RULE" /
  * "keep it simple" — a full line-item is entered once at creation time;
@@ -69,21 +67,19 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
 
     <h3 class="card-title" style="margin:var(--space-5) 0 2px;">Item Pesanan</h3>
     <p style="color:var(--text-muted);font-size:var(--text-sm);margin:0 0 var(--space-3);">Tambah item yang dipesan beserta divisi produksinya. Divisi &amp; Factory ditentukan otomatis dari item yang dipilih.</p>
-    <div class="order-item-list" id="pkt-items"></div>
+    <div id="pkt-items"></div>
     <div class="btn-group" style="margin-top:var(--space-3);">
       <button type="button" class="btn btn-secondary btn-sm" id="pkt-add-existing">+ Tambah Item Existing</button>
       <button type="button" class="btn btn-secondary btn-sm" id="pkt-add-custom">+ Tambah Item Custom</button>
     </div>
 
-    <div class="grid-2" style="margin-top:var(--space-4);">
-      <div class="subpanel">
-        <div class="subpanel-title">Ringkasan Pesanan</div>
-        <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:0;" id="pkt-summary"></div>
-      </div>
-      <div class="subpanel">
-        <div class="subpanel-title">Informasi Produksi</div>
-        <div id="pkt-routing-info"></div>
-      </div>
+    <div class="subpanel" style="margin-top:var(--space-4);">
+      <div class="subpanel-title">Ringkasan Pesanan</div>
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:0;" id="pkt-summary"></div>
+    </div>
+    <div class="subpanel" style="margin-top:var(--space-4);">
+      <div class="subpanel-title">Informasi Produksi</div>
+      <div id="pkt-routing-info"></div>
     </div>
 
     <div style="margin-top:var(--space-4);display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;">
@@ -137,157 +133,15 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
   var PRODUCTS = <?= json_encode($productsForEntry, JSON_UNESCAPED_UNICODE) ?>;
   var CATALOG = <?= json_encode($catalog, JSON_UNESCAPED_UNICODE) ?>;
 
-  var list = document.getElementById('pkt-items');
-  var cards = [];
-
   function fmtRp(n) { return Amor.fmtRupiah(n); }
 
-  function catalogOptions() {
-    return '<option value="">— Pilih Item Khusus —</option>' + CATALOG.map(function (c) {
-      return '<option value="' + c.catalogId + '">' + c.name + '</option>';
-    }).join('');
-  }
-
-  function addCard(itemType) {
-    var card = document.createElement('div');
-    card.className = 'order-item-card';
-    var typeBadge = itemType === 'existing_product'
-      ? '<span class="badge badge-success">Produk Existing</span>'
-      : '<span class="badge badge-warning">Item Khusus / Custom</span>';
-    card.innerHTML =
-      '<div class="order-item-card-head">' +
-        '<span class="order-item-index"></span>' +
-        '<button type="button" class="btn btn-secondary btn-sm order-item-remove">Hapus</button>' +
-      '</div>' +
-      '<div class="order-item-grid">' +
-        '<div class="field"><label>Item</label>' +
-          (itemType === 'existing_product'
-            ? '<input type="text" class="pkt-item-input" placeholder="Ketik nama produk...">'
-            : '<select class="pkt-item-input">' + catalogOptions() + '</select>') +
-        '</div>' +
-        '<div class="field"><label>Tipe Item</label><div class="badge-slot">' + typeBadge + '</div></div>' +
-        '<div class="field"><label>Divisi Produksi</label><div class="badge-slot pkt-division-slot"><span class="badge badge-neutral">—</span></div></div>' +
-        '<div class="field"><label>Factory</label><div class="badge-slot pkt-factory-slot"><span class="badge badge-neutral">—</span></div></div>' +
-        '<div class="field"><label>Qty</label><input type="number" class="pkt-qty" min="0.01" step="0.01" value="1"></div>' +
-        '<div class="field"><label>Harga (Rp)</label><input type="number" class="pkt-price" min="0" step="1" value="0"><span class="field-hint pkt-price-preview"></span></div>' +
-        '<div class="field"><label>Charge (Rp)</label><input type="number" class="pkt-charge" min="0" step="1" value="0"><span class="field-hint pkt-charge-preview"></span></div>' +
-        '<div class="field"><label>Extra Packaging (Rp)</label><input type="number" class="pkt-extra-packaging" min="0" step="1" value="0"><span class="field-hint pkt-extra-packaging-preview"></span></div>' +
-        '<div class="field"><label>Subtotal Item</label><div class="field-static pkt-item-subtotal">Rp0</div></div>' +
-        '<div class="field order-item-note-field"><label>Catatan Khusus</label><textarea class="pkt-note" rows="2" placeholder="Contoh: Tema Spiderman, tulisan HBD Raka, dominan warna biru..."></textarea></div>' +
-      '</div>';
-    list.appendChild(card);
-
-    var state = { itemType: itemType, card: card, divisionName: null, factoryName: null, selectedProduct: null };
-    cards.push(state);
-
-    var itemInput = card.querySelector('.pkt-item-input');
-    var divisionSlot = card.querySelector('.pkt-division-slot');
-    var factorySlot = card.querySelector('.pkt-factory-slot');
-    var priceInput = card.querySelector('.pkt-price');
-    var chargeInput = card.querySelector('.pkt-charge');
-    var extraPackagingInput = card.querySelector('.pkt-extra-packaging');
-
-    function applyRouting(divisionName, factoryName) {
-      state.divisionName = divisionName;
-      state.factoryName = factoryName;
-      divisionSlot.innerHTML = divisionName ? '<span class="badge badge-primary">' + divisionName + '</span>' : '<span class="badge badge-neutral">—</span>';
-      factorySlot.innerHTML = factoryName ? '<span class="badge badge-neutral">' + factoryName + '</span>' : '<span class="badge badge-neutral">—</span>';
-      renumber();
-      refreshSummary();
-    }
-
-    if (itemType === 'existing_product') {
-      // Real searchable dropdown, product_id authoritative — never free
-      // text (task's own B). Selection is invalidated the moment the
-      // user types again (Amor.createAutocomplete's own contract).
-      Amor.createAutocomplete(itemInput, {
-        items: PRODUCTS,
-        getLabel: function (p) { return p.name; },
-        onSelect: function (p) {
-          state.selectedProduct = p;
-          if (p) {
-            priceInput.value = p.harga;
-            applyRouting(p.divisionName, p.factoryName);
-          } else {
-            applyRouting(null, null);
-          }
-        },
-      });
-    } else {
-      itemInput.addEventListener('change', function () {
-        var c = CATALOG.filter(function (x) { return String(x.catalogId) === itemInput.value; })[0];
-        if (c) {
-          priceInput.value = c.defaultPrice || 0;
-          chargeInput.value = c.defaultCharge || 0;
-          applyRouting(c.divisionName, c.factoryName);
-        } else {
-          applyRouting(null, null);
-        }
-      });
-    }
-    priceInput.addEventListener('input', refreshSummary);
-    chargeInput.addEventListener('input', refreshSummary);
-    extraPackagingInput.addEventListener('input', refreshSummary);
-    card.querySelector('.pkt-qty').addEventListener('input', refreshSummary);
-
-    card.querySelector('.order-item-remove').addEventListener('click', function () {
-      cards = cards.filter(function (s) { return s !== state; });
-      card.remove();
-      renumber();
-      refreshSummary();
-    });
-
-    renumber();
-    refreshSummary();
-  }
-
-  function renumber() {
-    cards.forEach(function (s, i) { s.card.querySelector('.order-item-index').textContent = String(i + 1); });
-  }
-
-  function readCards() {
-    var items = [];
-    var rowError = null;
-    cards.forEach(function (s) {
-      var qty = parseFloat(s.card.querySelector('.pkt-qty').value) || 0;
-      var unitPrice = parseFloat(s.card.querySelector('.pkt-price').value) || 0;
-      var charge = parseFloat(s.card.querySelector('.pkt-charge').value) || 0;
-      var extraPackaging = parseFloat(s.card.querySelector('.pkt-extra-packaging').value) || 0;
-      var note = s.card.querySelector('.pkt-note').value.trim() || null;
-      var itemInput = s.card.querySelector('.pkt-item-input');
-      // Extra Packaging: added ONCE per line (task's own D), never
-      // multiplied by qty — unlike unitPrice, which IS multiplied by qty.
-      var subtotal = qty * unitPrice + charge + extraPackaging;
-      if (s.itemType === 'existing_product') {
-        var p = s.selectedProduct;
-        if (!p) { rowError = 'Setiap item "Produk Existing" harus memilih produk yang valid dari daftar pencarian.'; return; }
-        items.push({ itemType: 'existing_product', productId: p.productId, qty: qty, unitPrice: unitPrice, charge: charge, extraPackaging: extraPackaging, subtotal: subtotal, specialNote: note, divisionName: p.divisionName, factoryName: p.factoryName });
-      } else {
-        var catalogId = itemInput.value;
-        if (!catalogId) { rowError = 'Setiap item "Item Khusus / Custom" harus memilih item dari katalog.'; return; }
-        var c = CATALOG.filter(function (x) { return String(x.catalogId) === catalogId; })[0];
-        items.push({ itemType: 'special_catalog', specialCatalogId: parseInt(catalogId, 10), qty: qty, unitPrice: unitPrice, charge: charge, extraPackaging: extraPackaging, subtotal: subtotal, specialNote: note, divisionName: c ? c.divisionName : null, factoryName: c ? c.factoryName : null });
-      }
-    });
-    return { items: items, rowError: rowError };
-  }
-
-  function refreshCardPreviews() {
-    cards.forEach(function (s) {
-      var qty = parseFloat(s.card.querySelector('.pkt-qty').value) || 0;
-      var unitPrice = parseFloat(s.card.querySelector('.pkt-price').value) || 0;
-      var charge = parseFloat(s.card.querySelector('.pkt-charge').value) || 0;
-      var extraPackaging = parseFloat(s.card.querySelector('.pkt-extra-packaging').value) || 0;
-      s.card.querySelector('.pkt-price-preview').textContent = fmtRp(unitPrice);
-      s.card.querySelector('.pkt-charge-preview').textContent = fmtRp(charge);
-      s.card.querySelector('.pkt-extra-packaging-preview').textContent = fmtRp(extraPackaging);
-      s.card.querySelector('.pkt-item-subtotal').textContent = fmtRp(qty * unitPrice + charge + extraPackaging);
-    });
-  }
+  // grid is created inside DOMContentLoaded below (see that block's own
+  // comment for why) — declared here so refreshSummary()/submitOrder()
+  // can close over it before it is actually assigned.
+  var grid = null;
 
   function refreshSummary() {
-    refreshCardPreviews();
-    var r = readCards();
+    var r = grid.getItems();
     var items = r.items;
     var jumlahItem = items.length;
     var totalQty = items.reduce(function (s, it) { return s + it.qty; }, 0);
@@ -299,10 +153,10 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
     document.getElementById('pkt-summary').innerHTML =
       kpiTile('Jumlah Item', String(jumlahItem)) +
       kpiTile('Total Qty', String(totalQty)) +
+      kpiTile('Total Nilai Pesanan', fmtRp(estimasiTotal)) +
       kpiTile('Subtotal Produk', fmtRp(subtotalProduk)) +
       kpiTile('Total Charge', fmtRp(totalCharge)) +
-      kpiTile('Total Extra Packaging', fmtRp(totalExtraPackaging)) +
-      kpiTile('Estimasi Total', fmtRp(estimasiTotal));
+      kpiTile('Total Extra Packaging', fmtRp(totalExtraPackaging));
 
     var byFactory = {};
     var order = [];
@@ -329,15 +183,25 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
     return '<div class="kpi-card kpi-card--detail"><div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>';
   }
 
-  document.getElementById('pkt-add-existing').addEventListener('click', function () { addCard('existing_product'); });
-  document.getElementById('pkt-add-custom').addEventListener('click', function () { addCard('special_catalog'); });
   // Deferred to DOMContentLoaded: app.js (window.Amor) loads via a <script>
-  // tag placed AFTER this page's own inline script (see layout.php's
-  // ui_page_foot()) — addCard() now calls Amor.createAutocomplete()
-  // synchronously, so calling it here directly would run before Amor
-  // exists. DOMContentLoaded fires only after every synchronous <script>
-  // in the document (including that later app.js tag) has executed.
-  document.addEventListener('DOMContentLoaded', function () { addCard('existing_product'); });
+  // tag placed AFTER this page's own inline script (see layout.php's own
+  // ui_page_foot()) — Amor.createOrderItemGrid() itself (and the
+  // Amor.createAutocomplete() call it makes for the first row) must run
+  // AFTER that later script has executed, never synchronously here, or
+  // "Amor is not defined" aborts this whole script (the actual bug a real
+  // Apache/Playwright run caught: the table never rendered at all).
+  // DOMContentLoaded fires only once every synchronous <script> in the
+  // document, including that later app.js tag, has already run.
+  document.addEventListener('DOMContentLoaded', function () {
+    grid = Amor.createOrderItemGrid(document.getElementById('pkt-items'), {
+      products: PRODUCTS,
+      catalog: CATALOG,
+      onChange: refreshSummary,
+    });
+    document.getElementById('pkt-add-existing').addEventListener('click', function () { grid.addRow('existing_product'); });
+    document.getElementById('pkt-add-custom').addEventListener('click', function () { grid.addRow('special_catalog'); });
+    grid.addRow('existing_product');
+  });
 
   async function submitOrder(sendToProduction) {
     var errEl = document.getElementById('pkt-error');
@@ -345,7 +209,7 @@ $orders = $service->listOrders(array_filter(['sourceType' => 'toko_khusus', 'sta
     var storeId = document.getElementById('pkt-store').value;
     if (!storeId) { errEl.textContent = 'Toko wajib dipilih.'; return; }
 
-    var r = readCards();
+    var r = grid.getItems();
     if (r.rowError) { errEl.textContent = r.rowError; return; }
     if (r.items.length === 0) { errEl.textContent = 'Minimal 1 item pesanan.'; return; }
 

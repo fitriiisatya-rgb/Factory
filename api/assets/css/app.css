@@ -320,26 +320,54 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .field-hint { font-size: var(--text-xs); color: var(--text-muted); }
 
 /* ---------------------------------------------------------------------
-   Order item cards (Pesanan Khusus Toko / Pesanan Non-Toko item entry) —
-   replaces a cramped <table> of bare inputs with one readable card per
-   item, each field labeled and using the same dark controls as the rest
-   of the app. Division/Factory are always read-only badges (task rule:
-   routing is derived, never freely chosen by the user).
+   Order item table (Pesanan Khusus Toko / Pesanan Non-Toko item entry) —
+   a compact, scrollable spreadsheet-like grid (UI/UX rework: a one-card-
+   per-item layout does not scale to a real order with 50+ items). Bounded
+   height + its own scroll (never the whole page), sticky header, and a
+   sticky "No"/"Item" frozen-corner pair so the identifying columns stay
+   visible while scrolling right through Qty/Harga/Charge/etc. Division/
+   Factory stay read-only badges (task rule: routing is derived, never
+   freely chosen by the user) — unchanged from the old card layout.
 --------------------------------------------------------------------- */
-.order-item-list { display: flex; flex-direction: column; gap: var(--space-3); }
-.order-item-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-4); }
-.order-item-card-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
-.order-item-index {
-  width: 26px; height: 26px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: var(--text-xs); flex: none;
+.order-item-table-wrap {
+  max-height: 520px; overflow-y: auto; overflow-x: auto;
+  border: 1px solid var(--border); border-radius: var(--radius);
 }
-.order-item-card-head .order-item-remove { margin-left: auto; }
-.order-item-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
-.order-item-grid .field { min-width: 0; }
-.order-item-grid .field input, .order-item-grid .field select, .order-item-grid .field-static { min-width: 0; width: 100%; }
-.order-item-note-field { grid-column: 1 / -1; }
-.order-item-note-field textarea { width: 100%; min-width: 0; }
-.badge-slot { display: flex; align-items: center; min-height: var(--control-height); }
+table.order-item-table { width: 100%; border-collapse: collapse; min-width: 980px; }
+.order-item-table thead th {
+  position: sticky; top: 0; z-index: 20; background: var(--surface-2); text-align: left;
+  font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted);
+  padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.order-item-table td {
+  padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); vertical-align: middle;
+}
+.order-item-table tbody tr:last-child td { border-bottom: none; }
+.order-item-table tbody tr:hover { background: var(--surface-hover); }
+.order-item-table td.num, .order-item-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.order-item-table .oit-col-no { width: 40px; text-align: center; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.order-item-table .oit-col-item { min-width: 220px; }
+/* Frozen corner: No/Item stay put while the rest of the row scrolls
+   horizontally. Header cells need a higher z-index than body cells so
+   the corner also wins over the plain sticky-top header of every OTHER
+   column while both stick at once. */
+.order-item-table td.oit-col-no, .order-item-table td.oit-col-item {
+  position: sticky; background: var(--surface); z-index: 2;
+}
+.order-item-table thead th.oit-col-no, .order-item-table thead th.oit-col-item {
+  position: sticky; z-index: 21; background: var(--surface-2);
+}
+.order-item-table .oit-col-no { left: 0; }
+.order-item-table .oit-col-item { left: 40px; }
+.order-item-table tbody tr:hover td.oit-col-no, .order-item-table tbody tr:hover td.oit-col-item { background: var(--surface-hover); }
+.order-item-table .oit-num-input { width: 100px; }
+.order-item-table .oit-item-input { min-width: 200px; width: 100%; }
+.order-item-table .oit-subtotal { font-weight: 700; white-space: nowrap; }
+.order-item-table .oit-note-btn { min-width: 92px; }
+
+@media (max-width: 768px) {
+  .order-item-table-wrap { max-height: 420px; }
+}
 
 .subpanel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-4); }
 .subpanel-title { font-size: var(--text-sm); font-weight: 700; margin-bottom: var(--space-3); }
@@ -348,13 +376,6 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .routing-factory-group:last-child { margin-bottom: 0; }
 .routing-factory-name { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: var(--text-sm); margin-bottom: 6px; }
 .routing-division-badges { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 22px; }
-
-@media (max-width: 1200px) {
-  .order-item-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 640px) {
-  .order-item-grid { grid-template-columns: 1fr; }
-}
 
 /* ---------------------------------------------------------------------
    Buttons
@@ -456,6 +477,7 @@ table.data-table { width: 100%; border-collapse: collapse; min-width: 640px; }
 .alert-warning { background: var(--warning-soft); border-color: var(--warning); color: var(--text); }
 .alert-danger { background: var(--danger-soft); border-color: var(--danger); color: var(--text); }
 .alert-success { background: var(--success-soft); border-color: var(--success); color: var(--text); }
+.alert-info { background: var(--primary-soft); border-color: var(--primary); color: var(--text); }
 
 /* ---------------------------------------------------------------------
    Charts (lightweight CSS/SVG only — no chart library dependency)

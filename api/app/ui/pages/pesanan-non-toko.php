@@ -8,7 +8,7 @@ declare(strict_types=1);
  * special_order_item tables as Pesanan Khusus Toko (source_type=
  * 'non_toko'), never merged into PO. See pesanan-khusus-toko.php's own
  * docblock for the shared create/list-on-one-page design rationale and
- * the card-based item-entry UI/UX rework rationale.
+ * the compact item-entry table (Amor.createOrderItemGrid()) rationale.
  */
 
 use Amor\Api\SpecialOrder\SpecialOrderService;
@@ -65,21 +65,19 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
 
     <h3 class="card-title" style="margin:var(--space-5) 0 2px;">Item Pesanan</h3>
     <p style="color:var(--text-muted);font-size:var(--text-sm);margin:0 0 var(--space-3);">Tambah item yang dipesan beserta divisi produksinya. Divisi &amp; Factory ditentukan otomatis dari item yang dipilih.</p>
-    <div class="order-item-list" id="pnt-items"></div>
+    <div id="pnt-items"></div>
     <div class="btn-group" style="margin-top:var(--space-3);">
       <button type="button" class="btn btn-secondary btn-sm" id="pnt-add-existing">+ Tambah Item Existing</button>
       <button type="button" class="btn btn-secondary btn-sm" id="pnt-add-custom">+ Tambah Item Custom</button>
     </div>
 
-    <div class="grid-2" style="margin-top:var(--space-4);">
-      <div class="subpanel">
-        <div class="subpanel-title">Ringkasan Pesanan</div>
-        <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:0;" id="pnt-summary"></div>
-      </div>
-      <div class="subpanel">
-        <div class="subpanel-title">Informasi Produksi</div>
-        <div id="pnt-routing-info"></div>
-      </div>
+    <div class="subpanel" style="margin-top:var(--space-4);">
+      <div class="subpanel-title">Ringkasan Pesanan</div>
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:0;" id="pnt-summary"></div>
+    </div>
+    <div class="subpanel" style="margin-top:var(--space-4);">
+      <div class="subpanel-title">Informasi Produksi</div>
+      <div id="pnt-routing-info"></div>
     </div>
 
     <div style="margin-top:var(--space-4);display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;">
@@ -134,152 +132,15 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
   var PRODUCTS = <?= json_encode($productsForEntry, JSON_UNESCAPED_UNICODE) ?>;
   var CATALOG = <?= json_encode($catalog, JSON_UNESCAPED_UNICODE) ?>;
 
-  var list = document.getElementById('pnt-items');
-  var cards = [];
-
   function fmtRp(n) { return Amor.fmtRupiah(n); }
 
-  function catalogOptions() {
-    return '<option value="">— Pilih Item Khusus —</option>' + CATALOG.map(function (c) {
-      return '<option value="' + c.catalogId + '">' + c.name + '</option>';
-    }).join('');
-  }
-
-  function addCard(itemType) {
-    var card = document.createElement('div');
-    card.className = 'order-item-card';
-    var typeBadge = itemType === 'existing_product'
-      ? '<span class="badge badge-success">Produk Existing</span>'
-      : '<span class="badge badge-warning">Item Khusus / Custom</span>';
-    card.innerHTML =
-      '<div class="order-item-card-head">' +
-        '<span class="order-item-index"></span>' +
-        '<button type="button" class="btn btn-secondary btn-sm order-item-remove">Hapus</button>' +
-      '</div>' +
-      '<div class="order-item-grid">' +
-        '<div class="field"><label>Item</label>' +
-          (itemType === 'existing_product'
-            ? '<input type="text" class="pnt-item-input" placeholder="Ketik nama produk...">'
-            : '<select class="pnt-item-input">' + catalogOptions() + '</select>') +
-        '</div>' +
-        '<div class="field"><label>Tipe Item</label><div class="badge-slot">' + typeBadge + '</div></div>' +
-        '<div class="field"><label>Divisi Produksi</label><div class="badge-slot pnt-division-slot"><span class="badge badge-neutral">—</span></div></div>' +
-        '<div class="field"><label>Factory</label><div class="badge-slot pnt-factory-slot"><span class="badge badge-neutral">—</span></div></div>' +
-        '<div class="field"><label>Qty</label><input type="number" class="pnt-qty" min="0.01" step="0.01" value="1"></div>' +
-        '<div class="field"><label>Harga (Rp)</label><input type="number" class="pnt-price" min="0" step="1" value="0"><span class="field-hint pnt-price-preview"></span></div>' +
-        '<div class="field"><label>Charge (Rp)</label><input type="number" class="pnt-charge" min="0" step="1" value="0"><span class="field-hint pnt-charge-preview"></span></div>' +
-        '<div class="field"><label>Extra Packaging (Rp)</label><input type="number" class="pnt-extra-packaging" min="0" step="1" value="0"><span class="field-hint pnt-extra-packaging-preview"></span></div>' +
-        '<div class="field"><label>Subtotal Item</label><div class="field-static pnt-item-subtotal">Rp0</div></div>' +
-        '<div class="field order-item-note-field"><label>Catatan Khusus</label><textarea class="pnt-note" rows="2" placeholder="Contoh: Dominan warna biru, packing terpisah..."></textarea></div>' +
-      '</div>';
-    list.appendChild(card);
-
-    var state = { itemType: itemType, card: card, divisionName: null, factoryName: null, selectedProduct: null };
-    cards.push(state);
-
-    var itemInput = card.querySelector('.pnt-item-input');
-    var divisionSlot = card.querySelector('.pnt-division-slot');
-    var factorySlot = card.querySelector('.pnt-factory-slot');
-    var priceInput = card.querySelector('.pnt-price');
-    var chargeInput = card.querySelector('.pnt-charge');
-    var extraPackagingInput = card.querySelector('.pnt-extra-packaging');
-
-    function applyRouting(divisionName, factoryName) {
-      state.divisionName = divisionName;
-      state.factoryName = factoryName;
-      divisionSlot.innerHTML = divisionName ? '<span class="badge badge-primary">' + divisionName + '</span>' : '<span class="badge badge-neutral">—</span>';
-      factorySlot.innerHTML = factoryName ? '<span class="badge badge-neutral">' + factoryName + '</span>' : '<span class="badge badge-neutral">—</span>';
-      renumber();
-      refreshSummary();
-    }
-
-    if (itemType === 'existing_product') {
-      Amor.createAutocomplete(itemInput, {
-        items: PRODUCTS,
-        getLabel: function (p) { return p.name; },
-        onSelect: function (p) {
-          state.selectedProduct = p;
-          if (p) {
-            priceInput.value = p.harga;
-            applyRouting(p.divisionName, p.factoryName);
-          } else {
-            applyRouting(null, null);
-          }
-        },
-      });
-    } else {
-      itemInput.addEventListener('change', function () {
-        var c = CATALOG.filter(function (x) { return String(x.catalogId) === itemInput.value; })[0];
-        if (c) {
-          priceInput.value = c.defaultPrice || 0;
-          chargeInput.value = c.defaultCharge || 0;
-          applyRouting(c.divisionName, c.factoryName);
-        } else {
-          applyRouting(null, null);
-        }
-      });
-    }
-    priceInput.addEventListener('input', refreshSummary);
-    chargeInput.addEventListener('input', refreshSummary);
-    extraPackagingInput.addEventListener('input', refreshSummary);
-    card.querySelector('.pnt-qty').addEventListener('input', refreshSummary);
-
-    card.querySelector('.order-item-remove').addEventListener('click', function () {
-      cards = cards.filter(function (s) { return s !== state; });
-      card.remove();
-      renumber();
-      refreshSummary();
-    });
-
-    renumber();
-    refreshSummary();
-  }
-
-  function renumber() {
-    cards.forEach(function (s, i) { s.card.querySelector('.order-item-index').textContent = String(i + 1); });
-  }
-
-  function readCards() {
-    var items = [];
-    var rowError = null;
-    cards.forEach(function (s) {
-      var qty = parseFloat(s.card.querySelector('.pnt-qty').value) || 0;
-      var unitPrice = parseFloat(s.card.querySelector('.pnt-price').value) || 0;
-      var charge = parseFloat(s.card.querySelector('.pnt-charge').value) || 0;
-      var extraPackaging = parseFloat(s.card.querySelector('.pnt-extra-packaging').value) || 0;
-      var note = s.card.querySelector('.pnt-note').value.trim() || null;
-      var itemInput = s.card.querySelector('.pnt-item-input');
-      var subtotal = qty * unitPrice + charge + extraPackaging;
-      if (s.itemType === 'existing_product') {
-        var p = s.selectedProduct;
-        if (!p) { rowError = 'Setiap item "Produk Existing" harus memilih produk yang valid dari daftar pencarian.'; return; }
-        items.push({ itemType: 'existing_product', productId: p.productId, qty: qty, unitPrice: unitPrice, charge: charge, extraPackaging: extraPackaging, subtotal: subtotal, specialNote: note, divisionName: p.divisionName, factoryName: p.factoryName });
-      } else {
-        var catalogId = itemInput.value;
-        if (!catalogId) { rowError = 'Setiap item "Item Khusus / Custom" harus memilih item dari katalog.'; return; }
-        var c = CATALOG.filter(function (x) { return String(x.catalogId) === catalogId; })[0];
-        items.push({ itemType: 'special_catalog', specialCatalogId: parseInt(catalogId, 10), qty: qty, unitPrice: unitPrice, charge: charge, extraPackaging: extraPackaging, subtotal: subtotal, specialNote: note, divisionName: c ? c.divisionName : null, factoryName: c ? c.factoryName : null });
-      }
-    });
-    return { items: items, rowError: rowError };
-  }
-
-  function refreshCardPreviews() {
-    cards.forEach(function (s) {
-      var qty = parseFloat(s.card.querySelector('.pnt-qty').value) || 0;
-      var unitPrice = parseFloat(s.card.querySelector('.pnt-price').value) || 0;
-      var charge = parseFloat(s.card.querySelector('.pnt-charge').value) || 0;
-      var extraPackaging = parseFloat(s.card.querySelector('.pnt-extra-packaging').value) || 0;
-      s.card.querySelector('.pnt-price-preview').textContent = fmtRp(unitPrice);
-      s.card.querySelector('.pnt-charge-preview').textContent = fmtRp(charge);
-      s.card.querySelector('.pnt-extra-packaging-preview').textContent = fmtRp(extraPackaging);
-      s.card.querySelector('.pnt-item-subtotal').textContent = fmtRp(qty * unitPrice + charge + extraPackaging);
-    });
-  }
+  // grid is created inside DOMContentLoaded below (see that block's own
+  // comment for why) — declared here so refreshSummary()/submitOrder()
+  // can close over it before it is actually assigned.
+  var grid = null;
 
   function refreshSummary() {
-    refreshCardPreviews();
-    var r = readCards();
+    var r = grid.getItems();
     var items = r.items;
     var jumlahItem = items.length;
     var totalQty = items.reduce(function (s, it) { return s + it.qty; }, 0);
@@ -291,10 +152,10 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
     document.getElementById('pnt-summary').innerHTML =
       kpiTile('Jumlah Item', String(jumlahItem)) +
       kpiTile('Total Qty', String(totalQty)) +
+      kpiTile('Total Nilai Pesanan', fmtRp(estimasiTotal)) +
       kpiTile('Subtotal Produk', fmtRp(subtotalProduk)) +
       kpiTile('Total Charge', fmtRp(totalCharge)) +
-      kpiTile('Total Extra Packaging', fmtRp(totalExtraPackaging)) +
-      kpiTile('Estimasi Total', fmtRp(estimasiTotal));
+      kpiTile('Total Extra Packaging', fmtRp(totalExtraPackaging));
 
     var byFactory = {};
     var order = [];
@@ -321,12 +182,19 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
     return '<div class="kpi-card kpi-card--detail"><div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>';
   }
 
-  document.getElementById('pnt-add-existing').addEventListener('click', function () { addCard('existing_product'); });
-  document.getElementById('pnt-add-custom').addEventListener('click', function () { addCard('special_catalog'); });
   // Deferred to DOMContentLoaded — see pesanan-khusus-toko.php's own
-  // comment on this exact same fix (app.js/window.Amor loads via a
-  // <script> tag placed AFTER this page's own inline script).
-  document.addEventListener('DOMContentLoaded', function () { addCard('existing_product'); });
+  // comment on this exact same fix (Amor.createOrderItemGrid() itself
+  // must never run before app.js/window.Amor has loaded).
+  document.addEventListener('DOMContentLoaded', function () {
+    grid = Amor.createOrderItemGrid(document.getElementById('pnt-items'), {
+      products: PRODUCTS,
+      catalog: CATALOG,
+      onChange: refreshSummary,
+    });
+    document.getElementById('pnt-add-existing').addEventListener('click', function () { grid.addRow('existing_product'); });
+    document.getElementById('pnt-add-custom').addEventListener('click', function () { grid.addRow('special_catalog'); });
+    grid.addRow('existing_product');
+  });
 
   async function submitOrder(sendToProduction) {
     var errEl = document.getElementById('pnt-error');
@@ -336,7 +204,7 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
     if (!source) { errEl.textContent = 'Sumber Pesanan wajib dipilih.'; return; }
     if (!customerName) { errEl.textContent = 'Nama Customer wajib diisi.'; return; }
 
-    var r = readCards();
+    var r = grid.getItems();
     if (r.rowError) { errEl.textContent = r.rowError; return; }
     if (r.items.length === 0) { errEl.textContent = 'Minimal 1 item pesanan.'; return; }
 

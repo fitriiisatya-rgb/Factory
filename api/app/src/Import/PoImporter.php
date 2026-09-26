@@ -179,6 +179,15 @@ final class PoImporter
             'mergeSummary' => $plan['mergePreview']['summary'],
             'duplicateOfImportId' => $plan['duplicateOf']['po_import_id'] ?? null,
             'skippedProductRows' => $plan['skippedProductRows'],
+            // Additive display-only fields (UI/UX rework's "PO berhasil
+            // disimpan" success summary) — already computed by buildPlan()
+            // above for the preview step; surfaced here too so the wizard
+            // can show the same numbers on the post-commit success screen
+            // without a second preview() call. Never consumed by any
+            // business rule — pure read.
+            'committedPoAwal' => $plan['committedPoAwal'],
+            'committedPoRevisi' => $plan['committedPoRevisi'],
+            'storesMapped' => $plan['storeResolution']['uniqueMapped'],
         ]];
     }
 

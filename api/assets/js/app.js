@@ -263,10 +263,35 @@
     input.parentNode.insertBefore(wrap, input);
     wrap.appendChild(input);
 
+    // Portaled to <body> (never a child of .ac-wrap) with viewport-fixed
+    // positioning, computed from the input's own getBoundingClientRect()
+    // each time it opens/repositions. This is REQUIRED for the compact
+    // order-item table (Pesanan Khusus Toko / Pesanan Non-Toko UI/UX
+    // rework): an autocomplete menu nested inside a bounded, scrollable
+    // table container (.order-item-table-wrap, overflow-y/x:auto for
+    // 50+ row scalability) would otherwise be clipped/misplaced by that
+    // ancestor's own overflow box if it stayed absolutely-positioned
+    // inside .ac-wrap. Harmless for every other existing caller (a plain
+    // page body has no competing scroll container, so this is visually
+    // identical there).
     var menu = document.createElement('div');
     menu.className = 'ac-menu';
     menu.hidden = true;
-    wrap.appendChild(menu);
+    document.body.appendChild(menu);
+
+    function positionMenu() {
+      var r = input.getBoundingClientRect();
+      menu.style.position = 'fixed';
+      menu.style.left = r.left + 'px';
+      menu.style.top = (r.bottom + 4) + 'px';
+      menu.style.width = r.width + 'px';
+    }
+    function repositionIfOpen() { if (!menu.hidden) positionMenu(); }
+    // capture:true so a scroll on ANY nested scrollable ancestor (e.g.
+    // .order-item-table-wrap) is caught too — 'scroll' does not bubble,
+    // but a capture-phase window listener still sees it on the way down.
+    window.addEventListener('scroll', repositionIfOpen, true);
+    window.addEventListener('resize', repositionIfOpen);
 
     var selected = null;
     var filtered = [];
@@ -299,6 +324,7 @@
           return '<div class="ac-option" data-index="' + i + '">' + getLabel(it).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</div>';
         }).join('');
       }
+      positionMenu();
       menu.hidden = false;
     }
 
@@ -342,7 +368,315 @@
       setItems: function (list) { items = list; },
       getSelected: function () { return selected; },
       clear: function () { input.value = ''; setSelected(null); },
+      // Removes the body-portaled menu + its window listeners — required
+      // whenever the input itself is removed from the DOM (e.g. deleting
+      // a row from the order-item table), since the menu is no longer a
+      // descendant of the input and so is never cleaned up automatically.
+      destroy: function () {
+        window.removeEventListener('scroll', repositionIfOpen, true);
+        window.removeEventListener('resize', repositionIfOpen);
+        menu.remove();
+      },
     };
+  }
+
+  // -----------------------------------------------------------------
+  // createOrderItemGrid — compact, scrollable spreadsheet-like table for
+  // Pesanan Khusus Toko / Pesanan Non-Toko item entry (UI/UX rework:
+  // replaces the old one-card-per-item layout, which does not scale to a
+  // real order with 50+ items). Columns: No / Item / Tipe / Divisi /
+  // Factory / Qty / Harga / Charge / Extra Packaging / Subtotal /
+  // Catatan / Aksi — the same fields and payload semantics the card
+  // layout had; only the presentation changed. product_id safety is
+  // UNCHANGED: an existing-product row still goes through
+  // createAutocomplete() above, which already invalidates the selected
+  // product the instant its text is edited again — this never
+  // introduces a second, less-safe text-matching path.
+  //
+  // container: an empty element already in the DOM.
+  // opts: {
+  //   products: Array<{productId, name, harga, divisionName, factoryName}>,
+  //   catalog: Array<{catalogId, name, defaultPrice, defaultCharge, divisionName, factoryName}>,
+  //   onChange: fn() — called after any row is added/edited/removed, so
+  //     the caller can refresh its own order-level summary/routing panel.
+  // }
+  // Returns { addRow(itemType), getItems() } — getItems() returns
+  // { items, rowError } exactly like the old readCards() did.
+  // -----------------------------------------------------------------
+  function createOrderItemGrid(container, opts) {
+    opts = opts || {};
+    var products = opts.products || [];
+    var catalog = opts.catalog || [];
+    var onChange = opts.onChange || function () {};
+
+    var wrap = document.createElement('div');
+    wrap.className = 'order-item-table-wrap';
+    wrap.innerHTML =
+      '<table class="order-item-table">' +
+        '<thead><tr>' +
+          '<th class="oit-col-no">No</th>' +
+          '<th class="oit-col-item">Item</th>' +
+          '<th>Tipe</th>' +
+          '<th>Divisi</th>' +
+          '<th>Factory</th>' +
+          '<th class="num">Qty</th>' +
+          '<th class="num">Harga</th>' +
+          '<th class="num">Charge</th>' +
+          '<th class="num">Extra Packaging</th>' +
+          '<th class="num">Subtotal</th>' +
+          '<th>Catatan</th>' +
+          '<th>Aksi</th>' +
+        '</tr></thead>' +
+        '<tbody></tbody>' +
+      '</table>';
+    container.innerHTML = '';
+    container.appendChild(wrap);
+    var tbody = wrap.querySelector('tbody');
+
+    var rows = [];
+
+    function fmtRp(n) { return fmtRupiah(n); }
+
+    function catalogOptions() {
+      return '<option value="">— Pilih —</option>' + catalog.map(function (c) {
+        return '<option value="' + c.catalogId + '">' + String(c.name).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</option>';
+      }).join('');
+    }
+
+    function renumber() {
+      rows.forEach(function (s, i) { s.noCell.textContent = String(i + 1); });
+    }
+
+    function refreshRowSubtotal(state) {
+      var qty = parseFloat(state.qtyInput.value) || 0;
+      var unitPrice = parseFloat(state.priceInput.value) || 0;
+      var charge = parseFloat(state.chargeInput.value) || 0;
+      var extraPackaging = parseFloat(state.extraInput.value) || 0;
+      state.subtotalCell.textContent = fmtRp(qty * unitPrice + charge + extraPackaging);
+    }
+
+    function updateNoteButton(state) {
+      state.noteBtn.textContent = state.note ? 'Catatan ✓' : '+ Catatan';
+      state.noteBtn.title = state.note || '';
+    }
+
+    // Compact Catatan field: a short note fits directly, a long one opens
+    // this small popover/editor (task's own "if a long note is needed,
+    // allow modal/popover or expandable editor") — reuses the same
+    // .modal-backdrop/.modal classes confirmModal() uses, for visual
+    // consistency, but is its own lightweight free-text editor (never a
+    // yes/no confirm).
+    function openNotePopover(state) {
+      var backdrop = document.createElement('div');
+      backdrop.className = 'modal-backdrop open';
+      backdrop.innerHTML =
+        '<div class="modal" role="dialog" aria-modal="true">' +
+          '<div class="modal-title">Catatan Khusus</div>' +
+          '<div class="modal-body"><textarea rows="6" style="width:100%;"></textarea></div>' +
+          '<div class="modal-actions">' +
+            '<button type="button" class="btn btn-secondary" data-act="cancel">Batal</button>' +
+            '<button type="button" class="btn btn-primary" data-act="save">Simpan</button>' +
+          '</div>' +
+        '</div>';
+      var ta = backdrop.querySelector('textarea');
+      ta.value = state.note || '';
+      ta.placeholder = 'Contoh: Tema Spiderman, tulisan HBD Raka, dominan warna biru...';
+      function close() { backdrop.remove(); }
+      backdrop.querySelector('[data-act="cancel"]').addEventListener('click', close);
+      backdrop.addEventListener('click', function (e) { if (e.target === backdrop) close(); });
+      backdrop.querySelector('[data-act="save"]').addEventListener('click', function () {
+        state.note = ta.value.trim();
+        updateNoteButton(state);
+        close();
+        onChange();
+      });
+      document.body.appendChild(backdrop);
+      ta.focus();
+    }
+
+    // Enter on a numeric cell advances to the same cell on the next row,
+    // adding one (of the same item type) if this is the last row — task's
+    // own "Enter may advance to the next row / add row when appropriate."
+    // Never attached to the Item input itself: createAutocomplete() above
+    // already gives Enter its own native meaning there (confirm the
+    // highlighted suggestion), and this must never fight that.
+    function focusNextRowQty(currentState) {
+      var idx = rows.indexOf(currentState);
+      var next = rows[idx + 1];
+      if (next) {
+        next.qtyInput.focus();
+        next.qtyInput.select();
+        return;
+      }
+      addRow(currentState.itemType);
+      var added = rows[rows.length - 1];
+      if (added) { added.itemInput.focus(); }
+    }
+
+    function addRow(itemType) {
+      var tr = document.createElement('tr');
+      tr.className = 'order-item-row';
+
+      var noTd = document.createElement('td'); noTd.className = 'oit-col-no';
+      var itemTd = document.createElement('td'); itemTd.className = 'oit-col-item';
+      var typeTd = document.createElement('td');
+      var divTd = document.createElement('td');
+      var facTd = document.createElement('td');
+      var qtyTd = document.createElement('td'); qtyTd.className = 'num';
+      var priceTd = document.createElement('td'); priceTd.className = 'num';
+      var chargeTd = document.createElement('td'); chargeTd.className = 'num';
+      var extraTd = document.createElement('td'); extraTd.className = 'num';
+      var subtotalTd = document.createElement('td'); subtotalTd.className = 'num oit-subtotal';
+      var noteTd = document.createElement('td');
+      var actionTd = document.createElement('td');
+
+      typeTd.innerHTML = itemType === 'existing_product'
+        ? '<span class="badge badge-success">Produk Existing</span>'
+        : '<span class="badge badge-warning">Item Khusus</span>';
+      divTd.innerHTML = '<span class="badge badge-neutral">—</span>';
+      facTd.innerHTML = '<span class="badge badge-neutral">—</span>';
+
+      var itemInput;
+      if (itemType === 'existing_product') {
+        itemInput = document.createElement('input');
+        itemInput.type = 'text';
+        itemInput.className = 'oit-item-input';
+        itemInput.placeholder = 'Ketik nama produk...';
+      } else {
+        itemInput = document.createElement('select');
+        itemInput.className = 'oit-item-input';
+        itemInput.innerHTML = catalogOptions();
+      }
+      itemTd.appendChild(itemInput);
+
+      var qtyInput = document.createElement('input');
+      qtyInput.type = 'number'; qtyInput.className = 'oit-num-input'; qtyInput.min = '0.01'; qtyInput.step = '0.01'; qtyInput.value = '1';
+      qtyTd.appendChild(qtyInput);
+
+      var priceInput = document.createElement('input');
+      priceInput.type = 'number'; priceInput.className = 'oit-num-input'; priceInput.min = '0'; priceInput.step = '1'; priceInput.value = '0';
+      priceTd.appendChild(priceInput);
+
+      var chargeInput = document.createElement('input');
+      chargeInput.type = 'number'; chargeInput.className = 'oit-num-input'; chargeInput.min = '0'; chargeInput.step = '1'; chargeInput.value = '0';
+      chargeTd.appendChild(chargeInput);
+
+      var extraInput = document.createElement('input');
+      extraInput.type = 'number'; extraInput.className = 'oit-num-input'; extraInput.min = '0'; extraInput.step = '1'; extraInput.value = '0';
+      extraTd.appendChild(extraInput);
+
+      subtotalTd.textContent = 'Rp0';
+
+      var noteBtn = document.createElement('button');
+      noteBtn.type = 'button';
+      noteBtn.className = 'btn btn-secondary btn-sm oit-note-btn';
+      noteTd.appendChild(noteBtn);
+
+      var removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'btn btn-secondary btn-sm';
+      removeBtn.textContent = 'Hapus';
+      actionTd.appendChild(removeBtn);
+
+      tr.appendChild(noTd); tr.appendChild(itemTd); tr.appendChild(typeTd); tr.appendChild(divTd);
+      tr.appendChild(facTd); tr.appendChild(qtyTd); tr.appendChild(priceTd); tr.appendChild(chargeTd);
+      tr.appendChild(extraTd); tr.appendChild(subtotalTd); tr.appendChild(noteTd); tr.appendChild(actionTd);
+      tbody.appendChild(tr);
+
+      var state = {
+        itemType: itemType, tr: tr, noCell: noTd, itemInput: itemInput,
+        qtyInput: qtyInput, priceInput: priceInput, chargeInput: chargeInput, extraInput: extraInput,
+        subtotalCell: subtotalTd, noteBtn: noteBtn, note: '',
+        divisionName: null, factoryName: null, selectedProduct: null, autocomplete: null,
+      };
+      rows.push(state);
+      updateNoteButton(state);
+
+      function applyRouting(divisionName, factoryName) {
+        state.divisionName = divisionName;
+        state.factoryName = factoryName;
+        divTd.innerHTML = divisionName ? '<span class="badge badge-primary">' + divisionName + '</span>' : '<span class="badge badge-neutral">—</span>';
+        facTd.innerHTML = factoryName ? '<span class="badge badge-neutral">' + factoryName + '</span>' : '<span class="badge badge-neutral">—</span>';
+        refreshRowSubtotal(state);
+        onChange();
+      }
+
+      if (itemType === 'existing_product') {
+        state.autocomplete = createAutocomplete(itemInput, {
+          items: products,
+          getLabel: function (p) { return p.name; },
+          onSelect: function (p) {
+            state.selectedProduct = p;
+            if (p) {
+              priceInput.value = p.harga;
+              applyRouting(p.divisionName, p.factoryName);
+            } else {
+              applyRouting(null, null);
+            }
+          },
+        });
+      } else {
+        itemInput.addEventListener('change', function () {
+          var c = catalog.filter(function (x) { return String(x.catalogId) === itemInput.value; })[0];
+          if (c) {
+            priceInput.value = c.defaultPrice || 0;
+            chargeInput.value = c.defaultCharge || 0;
+            applyRouting(c.divisionName, c.factoryName);
+          } else {
+            applyRouting(null, null);
+          }
+        });
+      }
+
+      [qtyInput, priceInput, chargeInput, extraInput].forEach(function (inp) {
+        inp.addEventListener('input', function () { refreshRowSubtotal(state); onChange(); });
+        inp.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); focusNextRowQty(state); }
+        });
+      });
+
+      noteBtn.addEventListener('click', function () { openNotePopover(state); });
+
+      removeBtn.addEventListener('click', function () {
+        if (state.autocomplete) state.autocomplete.destroy();
+        rows = rows.filter(function (s) { return s !== state; });
+        tr.remove();
+        renumber();
+        onChange();
+      });
+
+      renumber();
+      refreshRowSubtotal(state);
+      onChange();
+    }
+
+    function getItems() {
+      var items = [];
+      var rowError = null;
+      rows.forEach(function (s) {
+        var qty = parseFloat(s.qtyInput.value) || 0;
+        var unitPrice = parseFloat(s.priceInput.value) || 0;
+        var charge = parseFloat(s.chargeInput.value) || 0;
+        var extraPackaging = parseFloat(s.extraInput.value) || 0;
+        var note = s.note || null;
+        // Extra Packaging: added ONCE per line, never multiplied by qty —
+        // unlike unitPrice, which IS multiplied by qty.
+        var subtotal = qty * unitPrice + charge + extraPackaging;
+        if (s.itemType === 'existing_product') {
+          var p = s.selectedProduct;
+          if (!p) { rowError = 'Setiap item "Produk Existing" harus memilih produk yang valid dari daftar pencarian.'; return; }
+          items.push({ itemType: 'existing_product', productId: p.productId, qty: qty, unitPrice: unitPrice, charge: charge, extraPackaging: extraPackaging, subtotal: subtotal, specialNote: note, divisionName: p.divisionName, factoryName: p.factoryName });
+        } else {
+          var catalogId = s.itemInput.value;
+          if (!catalogId) { rowError = 'Setiap item "Item Khusus" harus memilih item dari katalog.'; return; }
+          var c = catalog.filter(function (x) { return String(x.catalogId) === catalogId; })[0];
+          items.push({ itemType: 'special_catalog', specialCatalogId: parseInt(catalogId, 10), qty: qty, unitPrice: unitPrice, charge: charge, extraPackaging: extraPackaging, subtotal: subtotal, specialNote: note, divisionName: c ? c.divisionName : null, factoryName: c ? c.factoryName : null });
+        }
+      });
+      return { items: items, rowError: rowError };
+    }
+
+    return { addRow: addRow, getItems: getItems };
   }
 
   // -----------------------------------------------------------------
@@ -432,6 +766,7 @@
     toggleSidebar: toggleSidebar,
     toggleTheme: toggleTheme,
     createAutocomplete: createAutocomplete,
+    createOrderItemGrid: createOrderItemGrid,
     fmtRupiah: fmtRupiah,
   };
 
