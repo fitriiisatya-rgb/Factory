@@ -91,6 +91,11 @@ grep -q "sumPackedForStore" "$STAGE/api/app/src/Delivery/DoRepository.php" || { 
 grep -q "sumShippedForStore" "$STAGE/api/app/src/Delivery/DoRepository.php" || { echo "REFUSING TO BUILD: DoRepository::sumShippedForStore is missing."; exit 1; }
 grep -qE "sumPackedForStore\(.*,\s*true\)" "$STAGE/api/app/src/Delivery/ShipmentService.php" || { echo "REFUSING TO BUILD: ShipmentService's REPEATABLE READ race fix (forUpdate=true on the store-ready reads) is missing."; exit 1; }
 
+echo "--- sanity: FINAL ATOMICITY PATCH — the mode-transition-vs-shipment race is closed ---"
+grep -qE "hasAnyStoreAllocation\(.*,\s*true\)" "$STAGE/api/app/src/Delivery/ShipmentService.php" || { echo "REFUSING TO BUILD: ShipmentService no longer calls hasAnyStoreAllocation with forUpdate=true — the mode-transition race would reopen."; exit 1; }
+grep -q "allProductIds = array_keys(\$items)" "$STAGE/api/app/src/Fg/FgService.php" || { echo "REFUSING TO BUILD: FgService::submit() no longer locks stock_balance for EVERY product (only negative-delta ones) — the mode-transition race would reopen."; exit 1; }
+grep -q "bool \$forUpdate = false" "$STAGE/api/app/src/Delivery/DoRepository.php" || { echo "REFUSING TO BUILD: DoRepository's hasAnyStoreAllocation/sumPackedForStore/sumShippedForStore forUpdate parameter is missing."; exit 1; }
+
 echo "--- sanity: source_type routing — the store guard must NEVER reach Special/CS/Sales/Direct/General orders ---"
 if grep -rl "sumPackedForStore\|sumShippedForStore\|store_fg_balance" "$STAGE/api/app/src/SpecialOrder/" > /dev/null 2>&1; then
   echo "REFUSING TO BUILD: the store-specific guard leaked into the SpecialOrder module — it must stay Regular-DO-only (source_type='delivery_order')." >&2
@@ -184,12 +189,32 @@ Migration 0014 is EXTENDED (still 0014, no 0015):
   fix does not add one; if a reversal capability is wanted, it is a
   separate, larger undertaking, reported rather than silently added.
 
-15 new REGSTORE tests (REGSTORE-01..15), including two real concurrent-
-process races, plus the full existing regression suite (PDFG-01..24,
-FG-STORE-01..12, ALLOC-GLOBAL-01..20, ALLOC-01..15, FINAL-01..40, and
-every earlier Phase 0-5.5 suite), all green.
+## FINAL ATOMICITY PATCH (this build)
 
-## Known architecture limit (reported, not solved by this fix)
+A follow-up fix closes the one architecture risk the first version of
+this guard disclosed: hasAnyStoreAllocation() (deciding whether a
+product is restricted by store) was an unlocked existence check, so a
+Regular shipment could race a concurrent FgService::submit() that was
+establishing a product's FIRST store allocation and observe a stale
+"no allocation yet" answer.
+
+Fix: FgService::submit() now locks stock_balance(product, location) FOR
+UPDATE for EVERY product it touches (not just negative-delta ones),
+reusing the SAME lock ShipmentService::ship() already holds first — no
+new table/column was needed, 0014 is unchanged from the prior build.
+hasAnyStoreAllocation() itself also takes a locking-read flag, used only
+on ship()'s real-decision path. Four new real concurrency tests
+(REGSTORE-16..19, including the exact mode-transition-vs-shipment race
+in both spawn orders, a no-false-block check for pure Per Produk
+products, and a 3-way FG-submit/shipment/special-allocation contention
+test) plus the full existing regression suite, all green.
+
+19 new REGSTORE tests total (REGSTORE-01..19), including four real
+concurrent-process races, plus the full existing regression suite
+(PDFG-01..24, FG-STORE-01..12, ALLOC-GLOBAL-01..20, ALLOC-01..15,
+FINAL-01..40, and every earlier Phase 0-5.5 suite), all green.
+
+## Known architecture limits (reported, not solved by this fix)
 
 Nothing in this system currently allows a genuine RESERVATION of FG for
 a store ahead of packing (only after packing is store ownership
