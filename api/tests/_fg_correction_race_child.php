@@ -29,6 +29,20 @@ $batchId = (int) ($argv[1] ?? 0);
 $expectedVersion = (int) ($argv[2] ?? 0);
 $userId = (int) ($argv[3] ?? 0);
 
+// FgService::submit() calls Auth::requireFactoryAccess(), which reads
+// $_SESSION directly (no cookies/session_start() needed for that read —
+// this is a bare CLI process, never an HTTP request). Populating it
+// here as an ADMIN (always bypasses division/factory scoping — see
+// Auth::requireFactoryAccess()'s own docblock) is what makes this child
+// actually reach FgService::submit()'s real logic instead of always
+// failing UNAUTHENTICATED before ever exercising the race this script
+// exists to test. $userId is always a real ADMIN user id in every
+// caller of this script.
+$_SESSION['user_id'] = $userId;
+$_SESSION['roles'] = ['ADMIN'];
+$_SESSION['division_ids'] = [];
+$_SESSION['factory_ids'] = [];
+
 try {
     $dto = Database::transaction(function (\PDO $pdo) use ($batchId, $expectedVersion, $userId) {
         $service = new FgService($pdo);

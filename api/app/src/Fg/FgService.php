@@ -39,7 +39,7 @@ use PDO;
  *   - GLOBAL FG RESERVATION SAFETY (cross-flow deep-check fix): a
  *     downward correction (delta < 0) can never drop physical
  *     stock_balance below what special_order_fg_allocation actively
- *     reserves for that product+factory — preflighted for every
+ *     reserves for that product+factory — validated for every
  *     negative-delta item, in deterministic product_id order, BEFORE any
  *     ledger row is written, so a blocked correction on one product line
  *     never leaves the rest of the batch partially posted. See
@@ -47,6 +47,19 @@ use PDO;
  *     lock order (stock_balance row FIRST, then a locking read of the
  *     active reservation sum) every General-FG-decreasing writer in this
  *     codebase now follows.
+ *   - FINAL ATOMICITY PATCH: stock_balance is locked (SELECT ... FOR
+ *     UPDATE) for EVERY product this submit touches — not just
+ *     negative-delta ones. This is what makes this class's own
+ *     establishment of a product's FIRST store allocation (via
+ *     posted_packed_qty, see markAllItemsPosted()) atomic with
+ *     Delivery\ShipmentService::ship()'s hasAnyStoreAllocation() check —
+ *     ship() cannot observe a hybrid "some of this submit committed"
+ *     state, because both writers serialize on the SAME stock_balance
+ *     row for the SAME product+location before either may proceed to
+ *     read or establish store-allocation state. No new schema was
+ *     needed for this — stock_balance already existed as the outermost
+ *     lock in the canonical order for every product that has ever
+ *     posted FG before.
  */
 final class FgService
 {
@@ -550,34 +563,54 @@ final class FgService
         // SpecialOrderFgAllocationService::consumeForDispatch() are
         // already gated on — physical stock may never drop below what a
         // special/non-regular order has ACTIVELY reserved. Preflighted
-        // for EVERY negative-delta item, in deterministic (ascending
-        // product_id) lock order, BEFORE any stock_ledger row is written
-        // for this submit — so a blocked correction on one product can
-        // never leave a partially-applied FG batch (some products posted,
-        // others not). Positive/zero deltas never conflict with a
-        // reservation (they only ever grow physical stock) and skip this
-        // check entirely, per the canonical lock order every General-FG
-        // writer in this codebase now shares: lock stock_balance row
-        // FIRST, then locking-read the active reservation sum, then
-        // validate, then write.
-        $negativeProductIds = array_keys(array_filter($deltas, static fn ($d) => $d < -0.0001));
-        sort($negativeProductIds);
-        foreach ($negativeProductIds as $productId) {
+        // in deterministic (ascending product_id) lock order, BEFORE any
+        // stock_ledger row is written for this submit — so a blocked
+        // correction on one product can never leave a partially-applied
+        // FG batch (some products posted, others not). Per the canonical
+        // lock order every General-FG writer in this codebase now
+        // shares: lock stock_balance row FIRST, then locking-read the
+        // active reservation sum, then validate, then write.
+        //
+        // FINAL ATOMICITY PATCH: stock_balance is now locked for EVERY
+        // product this submit touches — not just negative-delta ones.
+        // This is the deliberate, minimal change that closes the mode-
+        // transition race the prior pass's own delivery report disclosed
+        // as an architecture risk: stock_balance(product, location) is
+        // already the FIRST lock in the canonical order and already
+        // exists (or is safely lockable-as-absent) for any product that
+        // has ever posted FG before — reusing it as the SAME mutex that
+        // also governs "is this product's store-allocation state being
+        // established right now" means Delivery\ShipmentService::ship()'s
+        // hasAnyStoreAllocation() check (also FOR UPDATE-gated, see that
+        // method's own docblock) can never observe a hybrid state: either
+        // this submit has fully committed before ship() ever reads that
+        // flag, or ship() holds the lock first and submit() waits behind
+        // it. No new table or column was needed — only reusing an
+        // existing lock more consistently. The actual RESERVATION-SAFETY
+        // validation itself is unchanged and still applies to
+        // negative-delta products only (positive/zero deltas never
+        // conflict with a reservation — they only ever grow physical
+        // stock).
+        $allProductIds = array_keys($items);
+        sort($allProductIds);
+        foreach ($allProductIds as $productId) {
             $delta = $deltas[$productId];
             $balanceRow = $this->doRepo->lockBalance($this->pdo, $productId, $locationId);
-            $physical = $balanceRow !== null ? (float) $balanceRow['qty_on_hand'] : 0.0;
-            $reservedSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
-            $newPhysical = $physical + $delta;
-            if ($newPhysical < $reservedSpecial - 0.0001) {
-                $maxDown = max(0.0, $physical - $reservedSpecial);
-                $productName = $items[$productId]['product_name'];
-                throw new ApiException(
-                    409,
-                    'FG_CORRECTION_BELOW_RESERVED',
-                    "Tidak dapat mengurangi FG {$productName} sebanyak " . abs($delta) . " pcs. "
-                    . "Stok fisik: {$physical} pcs. Sudah dialokasikan: {$reservedSpecial} pcs. "
-                    . "Maksimal koreksi turun: {$maxDown} pcs."
-                );
+            if ($delta < -0.0001) {
+                $physical = $balanceRow !== null ? (float) $balanceRow['qty_on_hand'] : 0.0;
+                $reservedSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
+                $newPhysical = $physical + $delta;
+                if ($newPhysical < $reservedSpecial - 0.0001) {
+                    $maxDown = max(0.0, $physical - $reservedSpecial);
+                    $productName = $items[$productId]['product_name'];
+                    throw new ApiException(
+                        409,
+                        'FG_CORRECTION_BELOW_RESERVED',
+                        "Tidak dapat mengurangi FG {$productName} sebanyak " . abs($delta) . " pcs. "
+                        . "Stok fisik: {$physical} pcs. Sudah dialokasikan: {$reservedSpecial} pcs. "
+                        . "Maksimal koreksi turun: {$maxDown} pcs."
+                    );
+                }
             }
         }
 

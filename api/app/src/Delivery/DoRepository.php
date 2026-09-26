@@ -541,14 +541,34 @@ final class DoRepository
      * Once a product HAS been split by store at least once, the guard
      * applies normally from then on (see Delivery\ShipmentService's own
      * docblock).
+     *
+     * $forUpdate MUST be true when called from ship()'s real decision
+     * path (see FINAL ATOMICITY PATCH — this is the exact fix for the
+     * mode-transition race the prior pass's own delivery report
+     * disclosed as an architecture risk). Without it, this plain SELECT
+     * could return a stale "no allocation yet" answer under REPEATABLE
+     * READ even while a concurrent FgService::submit() has ALREADY
+     * committed the product's first real store allocation — NOT because
+     * this read failed to wait for a lock (it isn't itself locked
+     * against anything), but because by the time ship() reaches this
+     * call it has ALREADY locked stock_balance for this product+location
+     * (the same row submit() must ALSO lock before it may commit that
+     * transition — see FgService::submit()'s own docblock), so ship()'s
+     * transaction is only ever released to run this query AFTER any
+     * racing submit() has either fully committed or not yet started.
+     * FOR UPDATE here then guarantees the read itself sees that
+     * just-committed state rather than an earlier snapshot, closing the
+     * race completely: ship() can only ever observe the mode-transition
+     * as fully-before or fully-after, never a hybrid.
      */
-    public function hasAnyStoreAllocation(PDO $pdo, int $productId, int $factoryId, int $unallocatedStoreId): bool
+    public function hasAnyStoreAllocation(PDO $pdo, int $productId, int $factoryId, int $unallocatedStoreId, bool $forUpdate = false): bool
     {
         $stmt = $pdo->prepare(
             'SELECT 1 FROM fg_item fi
              INNER JOIN fg_batch fb ON fb.fg_batch_id = fi.fg_batch_id
              WHERE fi.product_id = ? AND fb.factory_id = ? AND fi.store_id != ? AND fi.posted_packed_qty > 0
              LIMIT 1'
+             . ($forUpdate ? ' FOR UPDATE' : '')
         );
         $stmt->execute([$productId, $factoryId, $unallocatedStoreId]);
         return $stmt->fetchColumn() !== false;

@@ -199,9 +199,9 @@ function productsInDivision(PDO $pdo, int $divisionId, int $limit): array
     $stmt->execute([$divisionId]);
     return $stmt->fetchAll();
 }
-$rotiProducts = productsInDivision($pdo, $rotiBollenDivId, 4);
-expect(count($rotiProducts) >= 4, 'expected enough katalog products after bootstrap');
-[$prodA, $prodB, $prodC, $prodD] = $rotiProducts;
+$rotiProducts = productsInDivision($pdo, $rotiBollenDivId, 7);
+expect(count($rotiProducts) >= 7, 'expected enough katalog products after bootstrap');
+[$prodA, $prodB, $prodC, $prodD, $prodE, $prodF, $prodG] = $rotiProducts;
 
 $storeStmt = $pdo->prepare("SELECT store_id FROM store WHERE canonical_name = 'P2 TEST STORE A'");
 $storeStmt->execute();
@@ -1056,6 +1056,333 @@ runTest('REGSTORE-14/15 (documented, code-audited, not re-tested here) Receipt n
     // explicit allowance ("if shipment cannot legally be reversed after
     // departure, preserve current rule and document it").
     expect(true, 'documented, not a runtime assertion');
+});
+
+// =======================================================================
+// PART F — FINAL ATOMICITY PATCH: mode-transition vs shipment race
+// (REGSTORE-16..19). See FgService::submit()'s and ShipmentService's own
+// docblocks for the chosen fix: stock_balance is now locked for EVERY
+// product a submit touches (not just negative-delta ones), reusing the
+// SAME lock ShipmentService::ship() already holds first — no new
+// schema/table was needed.
+// =======================================================================
+
+function createSentOrder(HttpPdfg $http, string $csrf, array $body, string $tag): int
+{
+    $r = $http->request('POST', '/api/special-orders', $body, array_merge(['X-CSRF-Token' => $csrf], idemKey($tag . 'create')));
+    expect($r['status'] === 200, "{$tag}: create failed: " . json_encode($r['json']));
+    $order = $r['json']['data'];
+    $confirm = $http->request('POST', "/api/special-orders/{$order['orderId']}/confirm", ['expectedVersion' => $order['version']], array_merge(['X-CSRF-Token' => $csrf], idemKey($tag . 'confirm')));
+    expect($confirm['status'] === 200, "{$tag}: confirm failed: " . json_encode($confirm['json']));
+    $send = $http->request('POST', "/api/special-orders/{$order['orderId']}/send-to-production", ['expectedVersion' => $confirm['json']['data']['version']], array_merge(['X-CSRF-Token' => $csrf], idemKey($tag . 'send')));
+    expect($send['status'] === 200, "{$tag}: send-to-production failed: " . json_encode($send['json']));
+    return (int) $order['items'][0]['itemId'];
+}
+
+// --- REGSTORE-16 setup: prodE, Day 1 (Per Produk, physical=15 posted) ---
+$tanggalR16a = '2026-10-11';
+$tanggalR16b = '2026-10-12';
+seedPoStoreSplit($pdo, $tanggalR16a, $karangtengahId, (int) $prodE['product_id'], [$storeAId => ['poAwal' => 15.0, 'poRevisi' => 0.0]]);
+submitProductionActual($http, $csrf, $tanggalR16a, $rotiBollenDivId, (int) $prodE['product_id'], 15.0);
+
+runTest('REGSTORE-16 (setup 1/2) prodE Day 1: Per Produk submit establishes 15 physical stock, no store allocation yet', function () use ($http, $csrf, $tanggalR16a, $karangtengahId, $prodE) {
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggalR16a, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore16a-fg-create')));
+    expect($create['status'] === 200, "expected 200, got {$create['status']}: " . json_encode($create['json']));
+    $fgId = (int) $create['json']['data']['fgBatchId'];
+    $ver = (int) $create['json']['data']['version'];
+    $patch = $http->request('PATCH', "/api/fg/{$fgId}", [
+        'expectedVersion' => $ver,
+        'items' => [['productId' => (int) $prodE['product_id'], 'fgVerified' => 15.0, 'packed' => 15.0, 'sesuaiVerified' => true, 'sesuaiPacking' => true]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore16a-fg-patch')));
+    expect($patch['status'] === 200, "expected 200, got {$patch['status']}: " . json_encode($patch['json']));
+    $ver = (int) $patch['json']['data']['version'];
+    $submit = $http->request('POST', "/api/fg/{$fgId}/submit", ['expectedVersion' => $ver], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore16a-fg-submit')));
+    expect($submit['status'] === 200, "expected 200, got {$submit['status']}: " . json_encode($submit['json']));
+});
+
+// --- REGSTORE-16 setup: prodE, Day 2 (explode into store rows, DRAFT only — not yet submitted) ---
+seedPoStoreSplit($pdo, $tanggalR16b, $karangtengahId, (int) $prodE['product_id'], [
+    // Store A's own PO target is deliberately HIGHER (15) than what gets
+    // packed for it (9) — this keeps the DO's own planned_qty/remaining-
+    // to-ship check from masking the store-ready guard this test exists
+    // to exercise (a 10-unit request must reach the STORE check, not be
+    // rejected earlier by EXCEEDS_REMAINING).
+    $storeAId => ['poAwal' => 15.0, 'poRevisi' => 0.0],
+    $storeBId => ['poAwal' => 6.0, 'poRevisi' => 0.0],
+]);
+submitProductionActual($http, $csrf, $tanggalR16b, $rotiBollenDivId, (int) $prodE['product_id'], 15.0);
+
+$fgR16b = null;
+$fgR16bVer = null;
+$doR16 = null;
+runTest('REGSTORE-16 (setup 2/2) prodE Day 2: explode into store rows (packed A=9,B=6) as a DRAFT only — hasAnyStoreAllocation still false until submit', function () use ($http, $csrf, $tanggalR16b, $karangtengahId, $prodE, $storeAId, $storeBId, &$fgR16b, &$fgR16bVer, &$doR16) {
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggalR16b, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore16b-fg-create')));
+    expect($create['status'] === 200, "expected 200, got {$create['status']}: " . json_encode($create['json']));
+    $fgR16b = (int) $create['json']['data']['fgBatchId'];
+    $fgR16bVer = (int) $create['json']['data']['version'];
+    $explode = $http->request('PATCH', "/api/fg/{$fgR16b}", [
+        'expectedVersion' => $fgR16bVer,
+        'storeItems' => [['productId' => (int) $prodE['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 9.0, 'packed' => 9.0, 'sesuaiVerified' => false, 'sesuaiPacking' => true, 'notes' => 'target PO 15, baru siap 9'],
+            ['storeId' => $storeBId, 'fgVerified' => 6.0, 'packed' => 6.0, 'sesuaiVerified' => true, 'sesuaiPacking' => true],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore16b-explode')));
+    expect($explode['status'] === 200, "expected explode 200, got {$explode['status']}: " . json_encode($explode['json']));
+    $fgR16bVer = (int) $explode['json']['data']['version'];
+
+    $doR16 = createDoForStore($http, $csrf, $tanggalR16b, $storeAId);
+});
+
+runTest('REGSTORE-16 MODE TRANSITION VS SHIPMENT: submit (establishing Store A=9 allocation) races a 10-unit Store A shipment — never both succeed inconsistently', function () use ($adminId, $prodE, &$fgR16b, &$fgR16bVer, &$doR16) {
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $procSubmit = proc_open(['php', __DIR__ . '/_fg_correction_race_child.php', (string) $fgR16b, (string) $fgR16bVer, (string) $adminId], $descriptors, $pipesSubmit);
+    $procShip = proc_open(['php', __DIR__ . '/_regular_ship_race_child.php', (string) $doR16['doId'], (string) $doR16['version'], (string) $prodE['product_id'], '10', (string) $adminId, 'MAIN'], $descriptors, $pipesShip);
+
+    $outSubmit = stream_get_contents($pipesSubmit[1]); $errSubmit = stream_get_contents($pipesSubmit[2]);
+    fclose($pipesSubmit[1]); fclose($pipesSubmit[2]); $codeSubmit = proc_close($procSubmit);
+    $outShip = stream_get_contents($pipesShip[1]); $errShip = stream_get_contents($pipesShip[2]);
+    fclose($pipesShip[1]); fclose($pipesShip[2]); $codeShip = proc_close($procShip);
+
+    expect($codeSubmit === 0, "REGSTORE-16: submit child exited {$codeSubmit}: {$errSubmit}");
+    expect($codeShip === 0, "REGSTORE-16: ship child exited {$codeShip}: {$errShip}");
+    $resSubmit = json_decode($outSubmit, true);
+    $resShip = json_decode($outShip, true);
+    expect($resSubmit !== null && $resShip !== null, 'REGSTORE-16: expected valid JSON from both children, got submit=' . $outSubmit . ' ship=' . $outShip);
+
+    $bothOk = ($resSubmit['ok'] ?? false) && ($resShip['ok'] ?? false);
+    expect(!$bothOk, 'REGSTORE-16: submit and ship must NEVER both succeed here (submit establishes Store A=9 ready, ship requests 10) — got: ' . json_encode(['submit' => $resSubmit, 'ship' => $resShip]));
+
+    if ($resShip['ok'] ?? false) {
+        // Ship won the race BEFORE store allocation existed — correctly
+        // used the OLD state (no store ownership yet, pure physical rule).
+        // The submit must then correctly REFUSE to establish Store A=9
+        // while Store A has already been shipped 10 — never silently
+        // finalizing an inconsistent allocation.
+        expect(($resSubmit['ok'] ?? true) === false && ($resSubmit['errorCode'] ?? null) === 'STORE_PACKED_BELOW_SHIPPED',
+            'REGSTORE-16: ship won first — expected the submit to then fail STORE_PACKED_BELOW_SHIPPED, got ' . json_encode($resSubmit));
+    } else {
+        // Submit won the race — store allocation is now authoritative.
+        // Ship must then correctly see and enforce Store A's real 9-unit
+        // ready quantity, rejecting the 10-unit request. It must NEVER
+        // have skipped the guard just because it started checking before
+        // the transition (this is the exact bug the atomicity patch closes).
+        expect(($resSubmit['ok'] ?? false) === true, 'REGSTORE-16: expected submit to succeed when ship did not, got ' . json_encode($resSubmit));
+        expect(($resShip['errorCode'] ?? null) === 'INSUFFICIENT_STORE_READY_FG',
+            'REGSTORE-16: submit won first — expected ship to fail INSUFFICIENT_STORE_READY_FG (never EXCEEDS_AVAILABLE/EXCEEDS_REMAINING, which would mean the store guard was skipped), got ' . json_encode($resShip));
+    }
+});
+
+// --- REGSTORE-17 setup: prodF, same shape as REGSTORE-16 but the ship
+// child is spawned FIRST (reverse race order) ---
+$tanggalR17a = '2026-10-13';
+$tanggalR17b = '2026-10-14';
+seedPoStoreSplit($pdo, $tanggalR17a, $karangtengahId, (int) $prodF['product_id'], [$storeAId => ['poAwal' => 15.0, 'poRevisi' => 0.0]]);
+submitProductionActual($http, $csrf, $tanggalR17a, $rotiBollenDivId, (int) $prodF['product_id'], 15.0);
+
+runTest('REGSTORE-17 (setup 1/2) prodF Day 1: Per Produk submit establishes 15 physical stock', function () use ($http, $csrf, $tanggalR17a, $karangtengahId, $prodF) {
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggalR17a, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore17a-fg-create')));
+    expect($create['status'] === 200, "expected 200, got {$create['status']}: " . json_encode($create['json']));
+    $fgId = (int) $create['json']['data']['fgBatchId'];
+    $ver = (int) $create['json']['data']['version'];
+    $patch = $http->request('PATCH', "/api/fg/{$fgId}", [
+        'expectedVersion' => $ver,
+        'items' => [['productId' => (int) $prodF['product_id'], 'fgVerified' => 15.0, 'packed' => 15.0, 'sesuaiVerified' => true, 'sesuaiPacking' => true]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore17a-fg-patch')));
+    expect($patch['status'] === 200, "expected 200, got {$patch['status']}: " . json_encode($patch['json']));
+    $ver = (int) $patch['json']['data']['version'];
+    $submit = $http->request('POST', "/api/fg/{$fgId}/submit", ['expectedVersion' => $ver], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore17a-fg-submit')));
+    expect($submit['status'] === 200, "expected 200, got {$submit['status']}: " . json_encode($submit['json']));
+});
+
+seedPoStoreSplit($pdo, $tanggalR17b, $karangtengahId, (int) $prodF['product_id'], [
+    // Same reasoning as REGSTORE-16's own setup — Store A's PO target
+    // (15) stays higher than what gets packed for it (9).
+    $storeAId => ['poAwal' => 15.0, 'poRevisi' => 0.0],
+    $storeBId => ['poAwal' => 6.0, 'poRevisi' => 0.0],
+]);
+submitProductionActual($http, $csrf, $tanggalR17b, $rotiBollenDivId, (int) $prodF['product_id'], 15.0);
+
+$fgR17b = null;
+$fgR17bVer = null;
+$doR17 = null;
+runTest('REGSTORE-17 (setup 2/2) prodF Day 2: explode into store rows (packed A=9,B=6) as a DRAFT only', function () use ($http, $csrf, $tanggalR17b, $karangtengahId, $prodF, $storeAId, $storeBId, &$fgR17b, &$fgR17bVer, &$doR17) {
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggalR17b, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore17b-fg-create')));
+    expect($create['status'] === 200, "expected 200, got {$create['status']}: " . json_encode($create['json']));
+    $fgR17b = (int) $create['json']['data']['fgBatchId'];
+    $fgR17bVer = (int) $create['json']['data']['version'];
+    $explode = $http->request('PATCH', "/api/fg/{$fgR17b}", [
+        'expectedVersion' => $fgR17bVer,
+        'storeItems' => [['productId' => (int) $prodF['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 9.0, 'packed' => 9.0, 'sesuaiVerified' => false, 'sesuaiPacking' => true, 'notes' => 'target PO 15, baru siap 9'],
+            ['storeId' => $storeBId, 'fgVerified' => 6.0, 'packed' => 6.0, 'sesuaiVerified' => true, 'sesuaiPacking' => true],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore17b-explode')));
+    expect($explode['status'] === 200, "expected explode 200, got {$explode['status']}: " . json_encode($explode['json']));
+    $fgR17bVer = (int) $explode['json']['data']['version'];
+
+    $doR17 = createDoForStore($http, $csrf, $tanggalR17b, $storeAId);
+});
+
+runTest('REGSTORE-17 REVERSE RACE ORDER: ship spawned FIRST, submit spawned second — same safety invariant holds regardless of spawn order', function () use ($adminId, $prodF, &$fgR17b, &$fgR17bVer, &$doR17) {
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    // Reverse of REGSTORE-16's spawn order.
+    $procShip = proc_open(['php', __DIR__ . '/_regular_ship_race_child.php', (string) $doR17['doId'], (string) $doR17['version'], (string) $prodF['product_id'], '10', (string) $adminId, 'MAIN'], $descriptors, $pipesShip);
+    $procSubmit = proc_open(['php', __DIR__ . '/_fg_correction_race_child.php', (string) $fgR17b, (string) $fgR17bVer, (string) $adminId], $descriptors, $pipesSubmit);
+
+    $outShip = stream_get_contents($pipesShip[1]); $errShip = stream_get_contents($pipesShip[2]);
+    fclose($pipesShip[1]); fclose($pipesShip[2]); $codeShip = proc_close($procShip);
+    $outSubmit = stream_get_contents($pipesSubmit[1]); $errSubmit = stream_get_contents($pipesSubmit[2]);
+    fclose($pipesSubmit[1]); fclose($pipesSubmit[2]); $codeSubmit = proc_close($procSubmit);
+
+    expect($codeShip === 0, "REGSTORE-17: ship child exited {$codeShip}: {$errShip}");
+    expect($codeSubmit === 0, "REGSTORE-17: submit child exited {$codeSubmit}: {$errSubmit}");
+    $resShip = json_decode($outShip, true);
+    $resSubmit = json_decode($outSubmit, true);
+    expect($resSubmit !== null && $resShip !== null, 'REGSTORE-17: expected valid JSON from both children, got ship=' . $outShip . ' submit=' . $outSubmit);
+
+    $bothOk = ($resSubmit['ok'] ?? false) && ($resShip['ok'] ?? false);
+    expect(!$bothOk, 'REGSTORE-17: submit and ship must NEVER both succeed here — got: ' . json_encode(['submit' => $resSubmit, 'ship' => $resShip]));
+
+    if ($resShip['ok'] ?? false) {
+        expect(($resSubmit['ok'] ?? true) === false && ($resSubmit['errorCode'] ?? null) === 'STORE_PACKED_BELOW_SHIPPED',
+            'REGSTORE-17: ship won — expected submit to then fail STORE_PACKED_BELOW_SHIPPED, got ' . json_encode($resSubmit));
+    } else {
+        expect(($resSubmit['ok'] ?? false) === true, 'REGSTORE-17: expected submit to succeed when ship did not, got ' . json_encode($resSubmit));
+        expect(($resShip['errorCode'] ?? null) === 'INSUFFICIENT_STORE_READY_FG',
+            'REGSTORE-17: submit won — expected ship to fail INSUFFICIENT_STORE_READY_FG, got ' . json_encode($resShip));
+    }
+});
+
+// --- REGSTORE-18: a product that NEVER enters Breakdown Toko ships
+// normally under the pre-existing physical-only rule — the atomicity
+// patch must not accidentally require store allocation for everyone.
+// Part C's own FG batch (prodA/prodB) is patched but NEVER submitted
+// (only reads/PATCHes exercise it there), so no real physical stock
+// exists yet for prodB — this test establishes its own, self-contained
+// Per Produk submit first. ---
+$tanggalR18 = '2026-10-15';
+seedPoStoreSplit($pdo, $tanggalR18, $karangtengahId, (int) $prodB['product_id'], [$storeAId => ['poAwal' => 3.0, 'poRevisi' => 0.0]]);
+submitProductionActual($http, $csrf, $tanggalR18, $rotiBollenDivId, (int) $prodB['product_id'], 5.0);
+
+runTest('REGSTORE-18 NO FALSE BLOCK FOR PURE PER-PRODUCT MODE: prodB (never exploded) ships normally', function () use ($http, $csrf, $tanggalR18, $karangtengahId, $storeAId, $prodB) {
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggalR18, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore18-fg-create')));
+    expect($create['status'] === 200, "expected 200, got {$create['status']}: " . json_encode($create['json']));
+    $fgId = (int) $create['json']['data']['fgBatchId'];
+    $ver = (int) $create['json']['data']['version'];
+    $patch = $http->request('PATCH', "/api/fg/{$fgId}", [
+        'expectedVersion' => $ver,
+        'items' => [['productId' => (int) $prodB['product_id'], 'fgVerified' => 5.0, 'packed' => 5.0, 'sesuaiVerified' => true, 'sesuaiPacking' => true]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore18-fg-patch')));
+    expect($patch['status'] === 200, "expected 200, got {$patch['status']}: " . json_encode($patch['json']));
+    $ver = (int) $patch['json']['data']['version'];
+    $submit = $http->request('POST', "/api/fg/{$fgId}/submit", ['expectedVersion' => $ver], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore18-fg-submit')));
+    expect($submit['status'] === 200, "expected 200, got {$submit['status']}: " . json_encode($submit['json']));
+
+    $do = createDoForStore($http, $csrf, $tanggalR18, $storeAId);
+    $r = $http->request('POST', "/api/do/{$do['doId']}/ship", ['expectedVersion' => $do['version'], 'items' => [['productId' => (int) $prodB['product_id'], 'actualQty' => 3]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore18-ship')));
+    expect($r['status'] === 200, "expected 200 (Per Produk products remain unrestricted by store), got {$r['status']}: " . json_encode($r['json']));
+});
+
+// --- REGSTORE-19: 3-way contention — FG submit + Regular shipment +
+// Special allocation racing for overlapping product/location. Expects
+// no deadlock, no negative stock, no duplicate ledger, no store
+// ownership leak. Reuses prodG, a fresh product exploded once
+// (storeA=12, storeB=8, physical=20) then reopened (no value change,
+// just to put it back in a submittable state for the race). ---
+$tanggalR19 = '2026-10-16';
+seedPoStoreSplit($pdo, $tanggalR19, $karangtengahId, (int) $prodG['product_id'], [
+    $storeAId => ['poAwal' => 12.0, 'poRevisi' => 0.0],
+    $storeBId => ['poAwal' => 8.0, 'poRevisi' => 0.0],
+]);
+submitProductionActual($http, $csrf, $tanggalR19, $rotiBollenDivId, (int) $prodG['product_id'], 20.0);
+
+$fgR19 = null;
+$fgR19Ver = null;
+$doR19 = null;
+$specialItemR19 = null;
+runTest('REGSTORE-19 (setup) prodG: explode+submit (storeA=12,storeB=8), then reopen for the race, plus one DO and one special order for the SAME product/factory', function () use ($http, $csrf, $tanggalR19, $karangtengahId, $prodG, $storeAId, $storeBId, &$fgR19, &$fgR19Ver, &$doR19, &$specialItemR19) {
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggalR19, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore19-fg-create')));
+    expect($create['status'] === 200, "expected 200, got {$create['status']}: " . json_encode($create['json']));
+    $fgR19 = (int) $create['json']['data']['fgBatchId'];
+    $fgR19Ver = (int) $create['json']['data']['version'];
+    $explode = $http->request('PATCH', "/api/fg/{$fgR19}", [
+        'expectedVersion' => $fgR19Ver,
+        'storeItems' => [['productId' => (int) $prodG['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 12.0, 'packed' => 12.0, 'sesuaiVerified' => true, 'sesuaiPacking' => true],
+            ['storeId' => $storeBId, 'fgVerified' => 8.0, 'packed' => 8.0, 'sesuaiVerified' => true, 'sesuaiPacking' => true],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore19-explode')));
+    expect($explode['status'] === 200, "expected explode 200, got {$explode['status']}: " . json_encode($explode['json']));
+    $fgR19Ver = (int) $explode['json']['data']['version'];
+    $submit = $http->request('POST', "/api/fg/{$fgR19}/submit", ['expectedVersion' => $fgR19Ver], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore19-submit')));
+    expect($submit['status'] === 200, "expected submit 200, got {$submit['status']}: " . json_encode($submit['json']));
+    $fgR19Ver = (int) $submit['json']['data']['version'];
+
+    $reopen = $http->request('POST', "/api/fg/{$fgR19}/reopen", ['expectedVersion' => $fgR19Ver, 'reason' => 'siapkan race REGSTORE-19'], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore19-reopen')));
+    expect($reopen['status'] === 200, "expected reopen 200, got {$reopen['status']}: " . json_encode($reopen['json']));
+    $fgR19Ver = (int) $reopen['json']['data']['version'];
+
+    $doR19 = createDoForStore($http, $csrf, $tanggalR19, $storeAId);
+
+    $specialItemR19 = createSentOrder($http, $csrf, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeBId,
+        'orderDate' => $tanggalR19, 'requiredDate' => $tanggalR19,
+        'items' => [['itemType' => 'existing_product', 'productId' => (int) $prodG['product_id'], 'qty' => 1]],
+    ], 'regstore19-');
+});
+
+runTest('REGSTORE-19 CONTENTION/DEADLOCK: FG submit + Regular shipment + Special allocation race for the SAME product/factory — no deadlock, no negative stock, no duplicate ledger, no ownership leak', function () use ($adminId, $prodG, $pdo, &$fgR19, &$fgR19Ver, &$doR19, &$specialItemR19, $karangtengahId, $storeBId) {
+    $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $procSubmit = proc_open(['php', __DIR__ . '/_fg_correction_race_child.php', (string) $fgR19, (string) $fgR19Ver, (string) $adminId], $descriptors, $pipesSubmit);
+    $procShip = proc_open(['php', __DIR__ . '/_regular_ship_race_child.php', (string) $doR19['doId'], (string) $doR19['version'], (string) $prodG['product_id'], '1', (string) $adminId, 'MAIN'], $descriptors, $pipesShip);
+    $procAlloc = proc_open(['php', __DIR__ . '/_fg_allocate_race_child.php', (string) $specialItemR19, '1', (string) $adminId], $descriptors, $pipesAlloc);
+
+    $outSubmit = stream_get_contents($pipesSubmit[1]); $errSubmit = stream_get_contents($pipesSubmit[2]);
+    fclose($pipesSubmit[1]); fclose($pipesSubmit[2]); $codeSubmit = proc_close($procSubmit);
+    $outShip = stream_get_contents($pipesShip[1]); $errShip = stream_get_contents($pipesShip[2]);
+    fclose($pipesShip[1]); fclose($pipesShip[2]); $codeShip = proc_close($procShip);
+    $outAlloc = stream_get_contents($pipesAlloc[1]); $errAlloc = stream_get_contents($pipesAlloc[2]);
+    fclose($pipesAlloc[1]); fclose($pipesAlloc[2]); $codeAlloc = proc_close($procAlloc);
+
+    // No hang/deadlock: every child process must exit cleanly (a real
+    // InnoDB deadlock would surface as a thrown exception inside the
+    // child, still caught and reported as JSON — never a hang, since
+    // MariaDB's own deadlock detector kills one side automatically; a
+    // process that never returns at all would make proc_close block
+    // forever, which this test's own completion already disproves).
+    expect($codeSubmit === 0, "REGSTORE-19: submit child exited {$codeSubmit}: {$errSubmit}");
+    expect($codeShip === 0, "REGSTORE-19: ship child exited {$codeShip}: {$errShip}");
+    expect($codeAlloc === 0, "REGSTORE-19: alloc child exited {$codeAlloc}: {$errAlloc}");
+    $resSubmit = json_decode($outSubmit, true);
+    $resShip = json_decode($outShip, true);
+    $resAlloc = json_decode($outAlloc, true);
+    expect($resSubmit !== null && $resShip !== null && $resAlloc !== null, 'REGSTORE-19: expected valid JSON from all three children, got submit=' . $outSubmit . ' ship=' . $outShip . ' alloc=' . $outAlloc);
+
+    $locationId = (int) $pdo->query("SELECT location_id FROM location WHERE factory_id = {$karangtengahId}")->fetchColumn();
+    $balanceStmt = $pdo->prepare('SELECT qty_on_hand FROM stock_balance WHERE product_id = ? AND location_id = ?');
+    $balanceStmt->execute([(int) $prodG['product_id'], $locationId]);
+    $qtyOnHand = (float) $balanceStmt->fetchColumn();
+    expect($qtyOnHand >= -0.0001, "REGSTORE-19: stock_balance must never go negative, got {$qtyOnHand}");
+
+    $ledgerStmt = $pdo->prepare("SELECT COUNT(*) FROM stock_ledger WHERE product_id = ? AND event_type = 'shipment_out'");
+    $ledgerStmt->execute([(int) $prodG['product_id']]);
+    $ledgerCount = (int) $ledgerStmt->fetchColumn();
+    $shipItemStmt = $pdo->prepare("SELECT COUNT(*) FROM shipment_item si INNER JOIN shipment sh ON sh.shipment_id = si.shipment_id WHERE si.product_id = ? AND sh.source_type = 'delivery_order'");
+    $shipItemStmt->execute([(int) $prodG['product_id']]);
+    $shipmentItemCount = (int) $shipItemStmt->fetchColumn();
+    expect($ledgerCount === $shipmentItemCount, "REGSTORE-19: expected exactly one 'shipment_out' ledger row per shipment_item row (no duplicate ledger), got {$ledgerCount} ledger rows vs {$shipmentItemCount} shipment_item rows");
+
+    // No ownership leak: Store B was never touched by this race (only
+    // Store A shipped, and the special allocation is a completely
+    // separate reservation, never a store_fg_balance consumer) — its
+    // own packed/shipped bookkeeping must be untouched.
+    $storeBShippedStmt = $pdo->prepare(
+        "SELECT COALESCE(SUM(si.qty),0) FROM shipment_item si INNER JOIN shipment sh ON sh.shipment_id = si.shipment_id
+         WHERE sh.store_id = ? AND si.product_id = ? AND sh.factory_id = ? AND sh.source_type = 'delivery_order'"
+    );
+    $storeBShippedStmt->execute([$storeBId, (int) $prodG['product_id'], $karangtengahId]);
+    $storeBShippedQty = (float) $storeBShippedStmt->fetchColumn();
+    expect(numEq($storeBShippedQty, 0.0), "REGSTORE-19: expected Store B to have zero shipped qty for this product (no ownership leak from Store A's shipment or the special allocation), got {$storeBShippedQty}");
 });
 
 // =======================================================================

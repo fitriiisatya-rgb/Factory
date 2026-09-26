@@ -60,11 +60,27 @@ use PDO;
  * CANONICAL LOCK ORDER (documented once, honored by every writer that
  * touches General FG for a given product+location — this class's own
  * ship(), SpecialOrder\SpecialOrderFgAllocationService::allocate(),
- * ::consumeForDispatch(), and Fg\FgService::submit()'s own store-ready
- * check): lock the stock_balance row (SELECT ... FOR UPDATE) FIRST, for
- * the ENTIRE remainder of the read-decide-write sequence, THEN lock the
- * store_fg_balance row (product+store+location) SECOND, THEN read/write
- * special_order_fg_allocation rows, THEN write the shipment/ledger rows.
+ * ::consumeForDispatch(), and Fg\FgService::submit()):
+ *   1. stock_balance row (SELECT ... FOR UPDATE) — held for the ENTIRE
+ *      remainder of the read-decide-write sequence. FINAL ATOMICITY
+ *      PATCH: Fg\FgService::submit() now acquires this for EVERY
+ *      product it touches, not just ones with a negative delta — this
+ *      is the single change that makes "is this product's store
+ *      allocation being established right now" atomic with everything
+ *      below, using existing infrastructure (no new table/column).
+ *   2. hasAnyStoreAllocation() — a FOR UPDATE-gated decision of whether
+ *      the store-specific guard even applies to this product (see that
+ *      method's own docblock). Because #1 already serializes against a
+ *      concurrent submit() that might be establishing this product's
+ *      FIRST store allocation, this can only ever observe the fully-
+ *      old or fully-new state, never a hybrid.
+ *   3. store_fg_balance row (product+store+location, SELECT ... FOR
+ *      UPDATE) — only when #2 says the guard applies.
+ *   4. special_order_fg_allocation rows (read/write) and the
+ *      store-ready SUMs (sumPackedForStore/sumShippedForStore, both
+ *      FOR UPDATE-gated — see their own docblocks).
+ *   5. shipment/ledger writes (or, for submit(), the posted_packed_qty
+ *      freeze and stock_ledger posting).
  * Holding the stock_balance lock across the whole sequence is what makes
  * a concurrent Regular ship() and a concurrent special allocate()/
  * consumeForDispatch() for the SAME product+location serialize correctly
@@ -76,8 +92,10 @@ use PDO;
  * number, and what makes a concurrent FgService::submit() downward
  * correction for that same store+product wait for (or be waited on by)
  * an in-flight shipment rather than racing it. No writer may read the
- * active-allocation SUM, the physical balance, or the store-ready SUM
- * without first holding the lock(s) that precede it in this order.
+ * active-allocation SUM, the physical balance, the mode-transition
+ * state, or the store-ready SUM without first holding the lock(s) that
+ * precede it in this order — this ordering is acyclic across every
+ * writer in this codebase, so no deadlock is possible.
  */
 final class ShipmentService
 {
@@ -257,8 +275,22 @@ final class ShipmentService
             // this is skipped entirely for it (see DoRepository::
             // hasAnyStoreAllocation()'s own docblock) — physical+special
             // above remain the only guards, exactly as before this fix.
+            //
+            // FINAL ATOMICITY PATCH — forUpdate=true here is what closes
+            // the mode-transition race: this call happens AFTER
+            // $this->repo->lockBalance() above already acquired
+            // stock_balance(productId, locationId) FOR UPDATE, and
+            // FgService::submit() now ALWAYS acquires that SAME row FOR
+            // UPDATE for every product it touches (not just negative-
+            // delta ones — see submit()'s own docblock), even when it is
+            // establishing a product's FIRST store allocation. So a
+            // concurrent mode-transition submit() is either fully
+            // committed (this read then correctly sees the NEW state) or
+            // still queued behind THIS transaction's own hold on the lock
+            // (this read correctly sees the OLD state, and submit() will
+            // see ship()'s result once it runs) — never a hybrid.
             $unallocatedStoreId = $this->fg->unallocatedStoreId($this->pdo);
-            if ($this->repo->hasAnyStoreAllocation($this->pdo, $productId, $factoryId, $unallocatedStoreId)) {
+            if ($this->repo->hasAnyStoreAllocation($this->pdo, $productId, $factoryId, $unallocatedStoreId, true)) {
                 $this->repo->lockStoreFgBalance($this->pdo, (int) $do['store_id'], $productId, $locationId);
                 // forUpdate=true on BOTH reads below — see
                 // DoRepository::sumPackedForStore()'s own docblock: a
