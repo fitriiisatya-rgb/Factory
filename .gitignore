@@ -11,6 +11,14 @@ api/tests/.tmp/
 *.sqlite
 *.sqlite3
 
+# Runtime-uploaded receipt evidence photos (Phase 5.5 Driver/Bakery
+# receipt UAT flows write real files here against the live api/ tree,
+# same as a real deployment's writable uploads dir would) — only the
+# .htaccess protecting this directory is source-controlled, never the
+# uploaded content itself.
+api/uploads/receipt-evidence/*
+!api/uploads/receipt-evidence/.htaccess
+
 # dist/amor-factory-api-preprod.zip IS committed deliberately (contains no
 # secrets — verified by build-cpanel-package.sh's own sanity check — and a
 # non-technical operator needs to download it directly, not run a build
