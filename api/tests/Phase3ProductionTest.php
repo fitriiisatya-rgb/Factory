@@ -90,6 +90,11 @@ function expect(bool $cond, string $message): void
     }
 }
 
+function numEq(mixed $actual, float $expected, float $eps = 0.001): bool
+{
+    return is_numeric($actual) && abs((float) $actual - $expected) < $eps;
+}
+
 function idemKey(string $tag): array
 {
     return ['Idempotency-Key' => $tag . '-' . uniqid('', true)];
@@ -754,6 +759,106 @@ runTest('P3-UX06 no schema/API business-contract regression (internal status kep
     );
     $dbStatus->execute([$runId, $prodC['product_id']]);
     expect((string) $dbStatus->fetchColumn() === 'tidak_sesuai', 'expected DB status column unchanged by this patch (4 < 10 -> tidak_sesuai)');
+});
+
+// ---------------------------------------------------------------------
+// LIVE-01..10 (real 2026-09-26 UAT bugfix): PO demand must be visible on
+// Produksi -> Ceklis Produksi BEFORE any production_run exists. Target is
+// always the LIVE PO target (ProductionTargetService — po_awal+po_revisi,
+// PB excluded), never derived only from production_run/production_item.
+// ---------------------------------------------------------------------
+$liveTanggal1 = '2026-09-26';
+$liveTanggal2 = '2026-09-27';
+
+runTest('LIVE-01 no PO for this date -> Target Produksi stays 0, division row shows numeric 0 (never a stale value)', function () use ($http, $karangtengahId, $rotiBollenDivId) {
+    $noPoTanggal = '2026-08-01';
+    $page = $http->request('GET', "/_ui-preview/?page=produksi&tanggal={$noPoTanggal}&factoryId={$karangtengahId}");
+    expect($page['status'] === 200, 'expected 200: ' . substr($page['body'], 0, 300));
+    expect(preg_match('/Target Produksi[\s\S]{0,200}kpi-value">0</', $page['body']) === 1, 'expected Target Produksi = 0 when no PO exists for this date');
+});
+
+runTest('LIVE-02 PO exists, NO production draft created yet -> target IS visible on the overview (the actual bug)', function () use ($pdo, $http, $karangtengahId, $rotiBollenDivId, $prodA, $prodB, $liveTanggal1) {
+    seedPo($pdo, $liveTanggal1, $karangtengahId, [
+        (int) $prodA['product_id'] => ['poAwal' => 25, 'kategori' => 'ROTI'],
+        (int) $prodB['product_id'] => ['poAwal' => 14, 'kategori' => 'ROTI'],
+    ]);
+    $noRun = $pdo->prepare('SELECT COUNT(*) FROM production_run WHERE tanggal = ? AND division_id = ?');
+    $noRun->execute([$liveTanggal1, $rotiBollenDivId]);
+    expect((int) $noRun->fetchColumn() === 0, 'test setup invariant: no production_run must exist yet for this fixture');
+
+    $page = $http->request('GET', "/_ui-preview/?page=produksi&tanggal={$liveTanggal1}&factoryId={$karangtengahId}");
+    expect($page['status'] === 200, 'expected 200: ' . substr($page['body'], 0, 300));
+    expect(preg_match('/Target Produksi[\s\S]{0,200}kpi-value">39</', $page['body']) === 1, 'expected top KPI Target Produksi = 39 (25+14) even with no draft: ' . substr($page['body'], 0, 2000));
+    expect(!preg_match('/Roti[\s\S]{0,10}Bollen[\s\S]{0,300}<td class="num">-<\/td>/', $page['body']), 'expected the Roti & Bollen row to show a NUMBER, never "-", for Target/Actual/Sisa');
+    expect(preg_match('/Roti[\s\S]{0,10}Bollen[\s\S]{0,120}<td class="num">39<\/td>[\s\S]{0,60}<td class="num">0<\/td>[\s\S]{0,60}<td class="num">39<\/td>/', $page['body']) === 1, 'expected the Roti & Bollen row to show Target=39, Actual=0, Sisa=39: ' . substr($page['body'], 0, 3000));
+    expect(str_contains($page['body'], 'Belum Dimulai'), 'expected the status badge to still read "Belum Dimulai" (unchanged) even though Target is now visible');
+    expect(str_contains($page['body'], 'data-action="create-run" data-division-id="' . $rotiBollenDivId . '"'), 'expected the "Buat/Buka Draft" action to still be offered for this division');
+});
+
+runTest('LIVE-03 creating the draft now shows the EXACT SAME target as the overview did (no mismatch)', function () use ($http, $csrf, $rotiBollenDivId, $liveTanggal1) {
+    $create = $http->request('POST', '/api/production', ['tanggal' => $liveTanggal1, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('live03create')));
+    expect($create['status'] === 200, 'expected create 200: ' . json_encode($create['json']));
+    $run = $create['json']['data'];
+    expect(numEq((float) $run['summary']['targetProduksi'], 39.0), 'expected the newly-created draft\'s own target to be exactly 39 (matching the overview before it existed), got ' . json_encode($run['summary']));
+});
+
+runTest('LIVE-04 with the draft now existing, the overview STILL shows Target=39 (identical, unaffected by draft creation)', function () use ($http, $karangtengahId, $rotiBollenDivId, $liveTanggal1) {
+    $page = $http->request('GET', "/_ui-preview/?page=produksi&tanggal={$liveTanggal1}&factoryId={$karangtengahId}");
+    expect($page['status'] === 200, 'expected 200');
+    expect(preg_match('/Target Produksi[\s\S]{0,200}kpi-value">39</', $page['body']) === 1, 'expected Target Produksi to remain 39 after the draft exists');
+    expect(str_contains($page['body'], '>Draft<'), 'expected the status badge to now read "Draft"');
+});
+
+runTest('LIVE-05 a PO revision updates the LIVE target on the overview WITHOUT reopening/recreating anything', function () use ($pdo, $http, $karangtengahId, $rotiBollenDivId, $prodA, $prodB, $liveTanggal1) {
+    seedPo($pdo, $liveTanggal1, $karangtengahId, [
+        (int) $prodA['product_id'] => ['poAwal' => 25, 'poRevisi' => 10, 'kategori' => 'ROTI'],
+        (int) $prodB['product_id'] => ['poAwal' => 14, 'kategori' => 'ROTI'],
+    ]);
+    $page = $http->request('GET', "/_ui-preview/?page=produksi&tanggal={$liveTanggal1}&factoryId={$karangtengahId}");
+    expect(preg_match('/Target Produksi[\s\S]{0,200}kpi-value">49</', $page['body']) === 1, 'expected the revised target 49 (35+14) to show immediately, before any draft refresh action: ' . substr($page['body'], 0, 2000));
+});
+
+runTest('LIVE-06 PB is still fully ignored by the live target (Sisa 3.2 real UAT rule)', function () use ($pdo, $http, $karangtengahId, $rotiBollenDivId, $prodA, $prodB, $liveTanggal2) {
+    seedPo($pdo, $liveTanggal2, $karangtengahId, [
+        (int) $prodA['product_id'] => ['poAwal' => 20, 'pb' => 999, 'kategori' => 'ROTI'],
+    ]);
+    $page = $http->request('GET', "/_ui-preview/?page=produksi&tanggal={$liveTanggal2}&factoryId={$karangtengahId}&divisionId={$rotiBollenDivId}");
+    expect(preg_match('/Target Produksi[\s\S]{0,200}kpi-value">20</', $page['body']) === 1, 'expected PB (999) to be fully excluded from the live target — only the 20 po_awal should count: ' . substr($page['body'], 0, 2000));
+});
+
+runTest('LIVE-07 submitted production keeps correct actual/remaining (regression: this fix never touches execution-state reads)', function () use ($http, $csrf, $rotiBollenDivId, $prodA, $prodB, $liveTanggal2) {
+    $create = $http->request('POST', '/api/production', ['tanggal' => $liveTanggal2, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('live07create')));
+    expect($create['status'] === 200, 'expected create 200: ' . json_encode($create['json']));
+    $run = $create['json']['data'];
+    $patch = $http->request('PATCH', "/api/production/{$run['productionRunId']}", ['expectedVersion' => $run['version'], 'items' => [['productId' => (int) $prodA['product_id'], 'actualQty' => 12, 'rejectQty' => 0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('live07patch')));
+    expect($patch['status'] === 200, 'expected patch 200: ' . json_encode($patch['json']));
+    expect(numEq((float) $patch['json']['data']['summary']['actualProduksi'], 12.0), 'expected actualProduksi=12 after patch');
+    expect(numEq((float) $patch['json']['data']['summary']['sisaProduksi'], 8.0), 'expected sisaProduksi=8 (20-12) after patch');
+});
+
+runTest('LIVE-08 Cibadak/Bolu shows the same live-target-before-draft behavior as Karangtengah', function () use ($pdo, $http, $cibadakId, $boluDivId, $boluProducts, $liveTanggal1) {
+    seedPo($pdo, $liveTanggal1, $cibadakId, [(int) $boluProducts[0]['product_id'] => ['poAwal' => 18, 'kategori' => 'BOLU']]);
+    $noRun = $pdo->prepare('SELECT COUNT(*) FROM production_run WHERE tanggal = ? AND division_id = ?');
+    $noRun->execute([$liveTanggal1, $boluDivId]);
+    expect((int) $noRun->fetchColumn() === 0, 'test setup invariant: no Bolu production_run yet for this fixture');
+
+    $page = $http->request('GET', "/_ui-preview/?page=produksi&tanggal={$liveTanggal1}&factoryId={$cibadakId}&divisionId={$boluDivId}");
+    expect($page['status'] === 200, 'expected 200: ' . substr($page['body'], 0, 300));
+    expect(preg_match('/Target Produksi[\s\S]{0,200}kpi-value">18</', $page['body']) === 1, 'expected Cibadak/Bolu Target Produksi=18 with no draft: ' . substr($page['body'], 0, 2000));
+});
+
+runTest('LIVE-09 division filter shows ONLY that division\'s live target, not the whole factory\'s', function () use ($http, $karangtengahId, $rotiBollenDivId, $liveTanggal1) {
+    $page = $http->request('GET', "/_ui-preview/?page=produksi&tanggal={$liveTanggal1}&factoryId={$karangtengahId}&divisionId={$rotiBollenDivId}");
+    expect(preg_match('/Target Produksi[\s\S]{0,200}kpi-value">49</', $page['body']) === 1, 'expected the Roti & Bollen-filtered Target Produksi to be 49 (matching only that division\'s live PO target)');
+});
+
+runTest('LIVE-10 no double counting: creating ANOTHER draft for a different division never inflates a division\'s own target', function () use ($pdo, $http, $csrf, $karangtengahId, $rotiBollenDivId, $basicDivId, $basicProducts, $liveTanggal1) {
+    seedPo($pdo, $liveTanggal1, $karangtengahId, [(int) $basicProducts[0]['product_id'] => ['poAwal' => 7, 'kategori' => 'BASIC']]);
+    $create = $http->request('POST', '/api/production', ['tanggal' => $liveTanggal1, 'divisionId' => $basicDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('live10create')));
+    expect($create['status'] === 200, 'expected create 200: ' . json_encode($create['json']));
+
+    $page = $http->request('GET', "/_ui-preview/?page=produksi&tanggal={$liveTanggal1}&factoryId={$karangtengahId}&divisionId={$rotiBollenDivId}");
+    expect(preg_match('/Target Produksi[\s\S]{0,200}kpi-value">49</', $page['body']) === 1, 'expected Roti & Bollen\'s own target to remain exactly 49 — creating a Basic division draft must never bleed into it (no double counting across divisions)');
 });
 
 $failed = array_filter($results, fn ($ok) => !$ok);

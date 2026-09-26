@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Amor\Api\Production\ProductionService;
+use Amor\Api\Production\ProductionTargetService;
 
 $divisionIdParam = isset($_GET['divisionId']) && $_GET['divisionId'] !== '' ? (int) $_GET['divisionId'] : null;
 $statusParam = isset($_GET['status']) && $_GET['status'] !== '' ? (string) $_GET['status'] : null;
@@ -13,63 +14,101 @@ $divisions->execute([$uiFactoryId]);
 $divisionRows = $divisions->fetchAll();
 
 $service = new ProductionService($pdo);
+$targetService = new ProductionTargetService();
 
-// Aggregate KPIs across every item matching the current filters (tanggal+factory[+division][+status]).
-$sql = 'SELECT pi.target, pi.aktual FROM production_item pi
-        INNER JOIN production_run r ON r.production_run_id = pi.production_run_id
-        INNER JOIN division d ON d.division_id = r.division_id
-        WHERE r.tanggal = ? AND d.factory_id = ?';
-$params = [$uiTanggal, $uiFactoryId];
+// ---------------------------------------------------------------------
+// BUGFIX (real 2026-09-26 UAT): PO demand must be visible on this page
+// BEFORE any production_run/production_item exists — a Production Draft
+// is the execution/realisasi document, PO is the demand source, and the
+// operator must never have to create a draft just to SEE the target.
+// Target is therefore always the LIVE PO target (ProductionTargetService
+// — po_awal + po_revisi, PB already excluded there), grouped by division;
+// this is the SAME live-target formula ProductionService::buildRunDto()
+// already uses for a single run's own detail view, applied here to the
+// whole-factory overview so the two never disagree and no PO revision
+// requires the page to be reopened to "unfreeze" — never a second target
+// source, and production_item is read ONLY for actual/execution state.
+// ---------------------------------------------------------------------
+$liveProducts = $targetService->targetsByProduct($pdo, $uiTanggal, $uiFactoryId, $divisionIdParam);
+$liveTargetByDivision = [];
+foreach ($liveProducts as $p) {
+    if ($p['divisionId'] === null) {
+        continue;
+    }
+    $liveTargetByDivision[$p['divisionId']] = ($liveTargetByDivision[$p['divisionId']] ?? 0.0) + $p['target'];
+}
+
+// Actual/status per division — execution state only (never a target
+// source): at most one production_run per (tanggal, division_id) per the
+// schema's own unique key, so this is a simple per-division lookup.
+$actualSql = 'SELECT r.production_run_id, r.division_id, r.status, COALESCE(SUM(pi.aktual), 0) AS actual_sum
+              FROM production_run r
+              INNER JOIN division d ON d.division_id = r.division_id
+              LEFT JOIN production_item pi ON pi.production_run_id = r.production_run_id
+              WHERE r.tanggal = ? AND d.factory_id = ?';
+$actualParams = [$uiTanggal, $uiFactoryId];
 if ($divisionIdParam !== null) {
-    $sql .= ' AND r.division_id = ?';
-    $params[] = $divisionIdParam;
+    $actualSql .= ' AND r.division_id = ?';
+    $actualParams[] = $divisionIdParam;
 }
 if ($statusParam !== null) {
-    $sql .= ' AND r.status = ?';
-    $params[] = $statusParam;
+    $actualSql .= ' AND r.status = ?';
+    $actualParams[] = $statusParam;
 }
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
+$actualSql .= ' GROUP BY r.production_run_id, r.division_id, r.status';
+$actualStmt = $pdo->prepare($actualSql);
+$actualStmt->execute($actualParams);
+$runByDivision = [];
+foreach ($actualStmt->fetchAll() as $row) {
+    $runByDivision[(int) $row['division_id']] = [
+        'runId' => (int) $row['production_run_id'],
+        'status' => $row['status'],
+        'actual' => (float) $row['actual_sum'],
+    ];
+}
+
+// Divisions actually shown in the summary table: every division for this
+// factory (or just the one selected), EXCEPT — when a status filter is
+// active — a division with no run at all never matches any explicit
+// status choice (draft/submitted/reopened), so it is excluded exactly as
+// before (a status filter's meaning is unchanged by this fix).
+$displayDivisions = $divisionIdParam !== null
+    ? array_values(array_filter($divisionRows, static fn ($d) => (int) $d['division_id'] === $divisionIdParam))
+    : $divisionRows;
+if ($statusParam !== null) {
+    $displayDivisions = array_values(array_filter($displayDivisions, static fn ($d) => isset($runByDivision[(int) $d['division_id']])));
+}
+
 $kpi = ['target' => 0.0, 'actual' => 0.0, 'notProduced' => 0, 'belowTarget' => 0, 'onTarget' => 0, 'over' => 0];
-foreach ($stmt->fetchAll() as $row) {
-    $target = (float) $row['target'];
-    $actual = (float) $row['aktual'];
-    $kpi['target'] += $target;
-    $kpi['actual'] += $actual;
+$divisionSummaryRows = [];
+foreach ($displayDivisions as $d) {
+    $divId = (int) $d['division_id'];
+    $target = $liveTargetByDivision[$divId] ?? 0.0;
+    $run = $runByDivision[$divId] ?? null;
+    $actual = $run['actual'] ?? 0.0;
     $remaining = max(0.0, $target - $actual);
     $over = max(0.0, $actual - $target);
-    if ($actual <= 0.0001) {
-        $kpi['notProduced']++;
-    } elseif ($over > 0.0001) {
-        $kpi['over']++;
-    } elseif ($remaining > 0.0001) {
-        $kpi['belowTarget']++;
-    } else {
-        $kpi['onTarget']++;
-    }
+    $displayStatus = ProductionService::classifyDisplayStatus($actual, $remaining, $over);
+
+    $kpi['target'] += $target;
+    $kpi['actual'] += $actual;
+    // classifyDisplayStatus() always returns not_produced when actual<=0
+    // (which includes the "no production_run at all yet" case, actual=0),
+    // so no special-case branch is needed here.
+    $kpiKey = ['not_produced' => 'notProduced', 'below_target' => 'belowTarget', 'on_target' => 'onTarget', 'overproduction' => 'over'][$displayStatus['code']];
+    $kpi[$kpiKey]++;
+
+    $divisionSummaryRows[] = [
+        'divisionId' => $divId,
+        'divisionName' => $d['name'],
+        'target' => $target,
+        'actual' => $actual,
+        'remaining' => $remaining,
+        'runId' => $run['runId'] ?? null,
+        'statusLabel' => $run !== null ? ui_doc_status_label($run['status']) : 'Belum Dimulai',
+    ];
 }
 $kpi['remaining'] = max(0.0, $kpi['target'] - $kpi['actual']);
-
-// Run list (one row per division/day) matching filters.
-$runsSql = "SELECT r.*, d.name AS division_name FROM production_run r
-            INNER JOIN division d ON d.division_id = r.division_id
-            WHERE r.tanggal = ? AND d.factory_id = ?";
-$runsParams = [$uiTanggal, $uiFactoryId];
-if ($divisionIdParam !== null) {
-    $runsSql .= ' AND r.division_id = ?';
-    $runsParams[] = $divisionIdParam;
-}
-if ($statusParam !== null) {
-    $runsSql .= ' AND r.status = ?';
-    $runsParams[] = $statusParam;
-}
-$runsSql .= ' ORDER BY d.name';
-$runsStmt = $pdo->prepare($runsSql);
-$runsStmt->execute($runsParams);
-$runRows = $runsStmt->fetchAll();
-
-$divisionsWithRun = array_column($runRows, 'division_id');
-$divisionsWithoutRun = array_filter($divisionRows, static fn ($d) => !in_array((int) $d['division_id'], array_map('intval', $divisionsWithRun), true));
 
 $runDetail = null;
 $runDetailError = null;
@@ -127,31 +166,22 @@ if ($runIdParam !== null) {
   <div class="table-scroll"><table class="data-table">
     <thead><tr><th>Divisi</th><th class="num">Target</th><th class="num">Actual</th><th class="num">Sisa</th><th>Status</th><th>Aksi</th></tr></thead>
     <tbody>
-    <?php if ($runRows === [] && $divisionsWithoutRun === []): ?>
+    <?php if ($divisionSummaryRows === []): ?>
     <tr><td colspan="6"><?= ui_empty_state('Tidak ada divisi produksi', 'Pabrik ini belum punya divisi produksi.') ?></td></tr>
     <?php endif; ?>
-    <?php foreach ($runRows as $r):
-      $itemsSum = $pdo->prepare('SELECT COALESCE(SUM(target),0) t, COALESCE(SUM(aktual),0) a FROM production_item WHERE production_run_id = ?');
-      $itemsSum->execute([$r['production_run_id']]);
-      $sums = $itemsSum->fetch();
-      $target = (float) $sums['t']; $actual = (float) $sums['a'];
-    ?>
+    <?php foreach ($divisionSummaryRows as $row): ?>
     <tr>
-      <td><?= ui_esc($r['division_name']) ?></td>
-      <td class="num"><?= ui_fmt_num($target) ?></td>
-      <td class="num"><?= ui_fmt_num($actual) ?></td>
-      <td class="num"><?= ui_fmt_num(max(0.0, $target - $actual)) ?></td>
-      <td><?= ui_badge(ui_doc_status_label($r['status'])) ?></td>
-      <td><a class="btn btn-primary btn-sm" href="/api/_ui-preview/?page=produksi&tanggal=<?= urlencode($uiTanggal) ?>&factoryId=<?= $uiFactoryId ?>&runId=<?= (int) $r['production_run_id'] ?>">Buka</a></td>
-    </tr>
-    <?php endforeach; ?>
-    <?php foreach ($divisionsWithoutRun as $d): ?>
-    <tr>
-      <td><?= ui_esc($d['name']) ?></td>
-      <td class="num">-</td><td class="num">-</td><td class="num">-</td>
-      <td><?= ui_badge('Belum Dimulai') ?></td>
+      <td><?= ui_esc($row['divisionName']) ?></td>
+      <td class="num"><?= ui_fmt_num($row['target']) ?></td>
+      <td class="num"><?= ui_fmt_num($row['actual']) ?></td>
+      <td class="num"><?= ui_fmt_num($row['remaining']) ?></td>
+      <td><?= ui_badge($row['statusLabel']) ?></td>
       <td>
-        <button type="button" class="btn btn-secondary btn-sm" data-action="create-run" data-division-id="<?= (int) $d['division_id'] ?>">Buat/Buka Draft</button>
+      <?php if ($row['runId'] !== null): ?>
+        <a class="btn btn-primary btn-sm" href="/api/_ui-preview/?page=produksi&tanggal=<?= urlencode($uiTanggal) ?>&factoryId=<?= $uiFactoryId ?>&runId=<?= $row['runId'] ?>">Buka</a>
+      <?php else: ?>
+        <button type="button" class="btn btn-secondary btn-sm" data-action="create-run" data-division-id="<?= $row['divisionId'] ?>">Buat/Buka Draft</button>
+      <?php endif; ?>
       </td>
     </tr>
     <?php endforeach; ?>

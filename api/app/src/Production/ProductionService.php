@@ -457,7 +457,7 @@ final class ProductionService
      *
      * @return array{code:string,label:string}
      */
-    private static function classifyDisplayStatus(float $actual, float $remaining, float $overproduction): array
+    public static function classifyDisplayStatus(float $actual, float $remaining, float $overproduction): array
     {
         $eps = 0.0001;
         if ($actual <= $eps) {
