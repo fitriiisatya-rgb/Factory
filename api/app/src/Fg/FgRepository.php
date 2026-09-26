@@ -221,12 +221,19 @@ final class FgRepository
         $stmt->execute([$productionActualSnapshot, $fgItemId]);
     }
 
-    /** Snapshot semantics: $fgVerified/$packed REPLACE the stored values, never added to them. */
-    public function updateItemValues(PDO $pdo, int $fgItemId, float $fgVerified, float $packed, ?string $notes): void
+    /**
+     * Snapshot semantics: $fgVerified/$packed/$reject/$hilang REPLACE the
+     * stored values, never added to them. $reject (FG-side reject) and
+     * $hilang (physically lost/missing during FG/packing handling) are
+     * migration 0014's own additive columns — independent from each other
+     * and from Production's own reject (production_item.reject /
+     * special_order_item.reject_produksi), never merged into Actual.
+     */
+    public function updateItemValues(PDO $pdo, int $fgItemId, float $fgVerified, float $packed, float $reject, float $hilang, ?string $notes): void
     {
         $status = $fgVerified > 0 ? 'dicek' : 'belum_dicek';
-        $stmt = $pdo->prepare('UPDATE fg_item SET qty = ?, packed_qty = ?, keterangan = ?, status = ? WHERE fg_item_id = ?');
-        $stmt->execute([$fgVerified, $packed, $notes, $status, $fgItemId]);
+        $stmt = $pdo->prepare('UPDATE fg_item SET qty = ?, packed_qty = ?, reject_qty = ?, hilang_qty = ?, keterangan = ?, status = ? WHERE fg_item_id = ?');
+        $stmt->execute([$fgVerified, $packed, $reject, $hilang, $notes, $status, $fgItemId]);
     }
 
     /** @return bool true if a row was actually updated (expectedVersion matched), false on a version conflict */

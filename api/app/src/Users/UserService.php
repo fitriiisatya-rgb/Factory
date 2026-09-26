@@ -48,6 +48,18 @@ final class UserService
         return $this->repo->allRoles($this->pdo);
     }
 
+    /** @return array<int,array{divisionId:int,name:string,factoryId:int,factoryName:string}> */
+    public function listDivisions(): array
+    {
+        return $this->repo->allDivisions($this->pdo);
+    }
+
+    /** @return array<int,array{factoryId:int,name:string}> */
+    public function listFactories(): array
+    {
+        return $this->repo->allFactories($this->pdo);
+    }
+
     /** @param string[] $roleCodes */
     public function createUser(string $username, string $fullName, string $password, string $passwordConfirm, array $roleCodes, int $actorUserId, ?string $requestId): array
     {
@@ -112,6 +124,60 @@ final class UserService
         $dto = $this->repo->findById($this->pdo, $userId);
         Audit::write($this->pdo, $requestId, $actorUserId, 'user.role_changed', 'user', (string) $userId, 'ok', null, null, ['roles' => array_keys($roleIds)]);
         return $this->toDto($dto);
+    }
+
+    /**
+     * PRODUCTION-role division scoping (task: "User <-> Production Division
+     * access"). Opt-in: an empty $divisionIds set means this user reverts to
+     * today's unrestricted role-based access (Auth::requireDivisionAccess()
+     * treats zero assignment rows as "not opted into scoping") — never an
+     * accidental full lockout. is_verification=1 (FG) divisions are
+     * rejected here; FG access is granted via updateFactoryAccess() instead.
+     * @param int[] $divisionIds
+     */
+    public function updateDivisionAccess(int $userId, array $divisionIds, int $actorUserId, ?string $requestId): array
+    {
+        $user = $this->repo->lockById($this->pdo, $userId);
+        if ($user === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'User tidak ditemukan');
+        }
+        $divisionIds = array_values(array_unique(array_map('intval', $divisionIds)));
+        $valid = $this->repo->validDivisionIds($this->pdo, $divisionIds);
+        $unknown = array_diff($divisionIds, $valid);
+        if ($unknown !== []) {
+            throw new ApiException(400, 'UNKNOWN_DIVISION', 'Divisi tidak dikenal atau bukan divisi produksi: ' . implode(', ', $unknown));
+        }
+
+        $this->repo->replaceDivisionAccess($this->pdo, $userId, $valid);
+
+        Audit::write($this->pdo, $requestId, $actorUserId, 'user.division_access_changed', 'user', (string) $userId, 'ok', null, null, ['divisionIds' => $valid]);
+        return $this->toDto($this->repo->findById($this->pdo, $userId));
+    }
+
+    /**
+     * FG_PACKING-role factory scoping — same opt-in semantics as
+     * updateDivisionAccess(). FG operates per-factory (fg_batch has no
+     * division_id), so this uses user_factory_access, not
+     * user_division_access.
+     * @param int[] $factoryIds
+     */
+    public function updateFactoryAccess(int $userId, array $factoryIds, int $actorUserId, ?string $requestId): array
+    {
+        $user = $this->repo->lockById($this->pdo, $userId);
+        if ($user === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'User tidak ditemukan');
+        }
+        $factoryIds = array_values(array_unique(array_map('intval', $factoryIds)));
+        $valid = $this->repo->validFactoryIds($this->pdo, $factoryIds);
+        $unknown = array_diff($factoryIds, $valid);
+        if ($unknown !== []) {
+            throw new ApiException(400, 'UNKNOWN_FACTORY', 'Pabrik tidak dikenal: ' . implode(', ', $unknown));
+        }
+
+        $this->repo->replaceFactoryAccess($this->pdo, $userId, $valid);
+
+        Audit::write($this->pdo, $requestId, $actorUserId, 'user.factory_access_changed', 'user', (string) $userId, 'ok', null, null, ['factoryIds' => $valid]);
+        return $this->toDto($this->repo->findById($this->pdo, $userId));
     }
 
     public function resetPassword(int $userId, string $newPassword, string $confirmPassword, int $actorUserId, ?string $requestId): array
@@ -194,6 +260,8 @@ final class UserService
             'fullName' => (string) $row['full_name'],
             'active' => (int) $row['active'] === 1,
             'roles' => $row['roles'],
+            'divisionIds' => $row['division_ids'] ?? [],
+            'factoryIds' => $row['factory_ids'] ?? [],
             'createdAt' => (string) $row['created_at'],
             'updatedAt' => $row['updated_at'] !== null ? (string) $row['updated_at'] : null,
         ];

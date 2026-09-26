@@ -44,6 +44,16 @@ final class FgController
         Response::json($service->availability($factoryId, $productId));
     }
 
+    public static function storeBreakdown(Request $request): void
+    {
+        Auth::requireAuth();
+        $tanggal = self::requireDate($request->query('date'));
+        $factoryId = self::requireInt($request->query('factoryId'), 'factoryId');
+        $productId = self::requireInt($request->query('productId'), 'productId');
+        $service = new FgService(Database::pdo());
+        Response::json($service->storeBreakdown($tanggal, $factoryId, $productId));
+    }
+
     public static function index(Request $request): void
     {
         Auth::requireAuth();

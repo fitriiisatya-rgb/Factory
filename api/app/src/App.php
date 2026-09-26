@@ -81,6 +81,7 @@ final class App
 
         $router->get('/api/fg/target', [FgController::class, 'target']);
         $router->get('/api/fg/availability', [FgController::class, 'availability']);
+        $router->get('/api/fg/store-breakdown', [FgController::class, 'storeBreakdown']);
         $router->get('/api/fg/history', [FgController::class, 'history']);
         $router->get('/api/fg', [FgController::class, 'index']);
         $router->post('/api/fg', [FgController::class, 'create']);
@@ -183,6 +184,8 @@ final class App
         $router->post('/api/users', [UserController::class, 'create']);
         $router->put('/api/users/{id}', [UserController::class, 'update']);
         $router->put('/api/users/{id}/roles', [UserController::class, 'updateRoles']);
+        $router->put('/api/users/{id}/divisions', [UserController::class, 'updateDivisionAccess']);
+        $router->put('/api/users/{id}/factories', [UserController::class, 'updateFactoryAccess']);
         $router->post('/api/users/{id}/reset-password', [UserController::class, 'resetPassword']);
         $router->post('/api/users/{id}/activate', [UserController::class, 'activate']);
         $router->post('/api/users/{id}/deactivate', [UserController::class, 'deactivate']);

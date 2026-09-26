@@ -18,6 +18,10 @@
   var rolesRoot = document.getElementById('user-modal-root');
   var ROLES = [];
   try { ROLES = JSON.parse((rolesRoot && rolesRoot.getAttribute('data-roles')) || '[]'); } catch (e) { ROLES = []; }
+  var DIVISIONS = [];
+  try { DIVISIONS = JSON.parse((rolesRoot && rolesRoot.getAttribute('data-divisions')) || '[]'); } catch (e) { DIVISIONS = []; }
+  var FACTORIES = [];
+  try { FACTORIES = JSON.parse((rolesRoot && rolesRoot.getAttribute('data-factories')) || '[]'); } catch (e) { FACTORIES = []; }
 
   function esc(s) {
     var d = document.createElement('div');
@@ -33,6 +37,40 @@
         + '<input type="checkbox" name="roles" value="' + esc(r.code) + '" ' + checked + '>'
         + '<span>' + esc(r.name) + ' <span style="color:var(--text-faint);">(' + esc(r.code) + ')</span></span>'
         + '</label>';
+    }).join('');
+  }
+
+  // Division access (PRODUCTION role scoping) and factory access
+  // (FG_PACKING role scoping) are OPT-IN restrictions — leaving every box
+  // unchecked keeps that user's current unrestricted role-based access
+  // (see Auth::requireDivisionAccess()'s own docblock server-side), never
+  // an accidental full lockout. Divisions are grouped by factory since
+  // that's how the assignment reads in the task ("Karangtengah -> Roti &
+  // Bollen").
+  function divisionCheckboxesHtml(checkedIds) {
+    checkedIds = checkedIds || [];
+    var byFactory = {};
+    DIVISIONS.forEach(function (d) {
+      (byFactory[d.factoryName] = byFactory[d.factoryName] || []).push(d);
+    });
+    return Object.keys(byFactory).map(function (factoryName) {
+      var rows = byFactory[factoryName].map(function (d) {
+        var checked = checkedIds.indexOf(d.divisionId) !== -1 ? 'checked' : '';
+        return '<label style="display:flex;align-items:center;gap:8px;padding:2px 0 2px 12px;">'
+          + '<input type="checkbox" name="divisionIds" value="' + d.divisionId + '" ' + checked + '>'
+          + '<span>' + esc(d.name) + '</span></label>';
+      }).join('');
+      return '<div style="margin-bottom:4px;"><div style="font-weight:600;font-size:var(--text-sm);">' + esc(factoryName) + '</div>' + rows + '</div>';
+    }).join('');
+  }
+
+  function factoryCheckboxesHtml(checkedIds) {
+    checkedIds = checkedIds || [];
+    return FACTORIES.map(function (f) {
+      var checked = checkedIds.indexOf(f.factoryId) !== -1 ? 'checked' : '';
+      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;">'
+        + '<input type="checkbox" name="factoryIds" value="' + f.factoryId + '" ' + checked + '>'
+        + '<span>' + esc(f.name) + '</span></label>';
     }).join('');
   }
 
@@ -71,6 +109,10 @@
           + fieldHtml('Konfirmasi Password', '<input type="password" id="uf-password-confirm" required autocomplete="new-password">'))
       + '<div style="margin-bottom:12px;"><label style="display:block;margin-bottom:6px;">Peran</label>'
       + '<div id="uf-roles">' + roleCheckboxesHtml(isEdit ? existing.roles.split(',').filter(Boolean) : []) + '</div></div>'
+      + '<div style="margin-bottom:12px;"><label style="display:block;margin-bottom:6px;">Divisi Produksi (opsional — kosong = akses semua divisi sesuai peran)</label>'
+      + '<div id="uf-divisions" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;">' + divisionCheckboxesHtml(isEdit ? existing.divisionIds : []) + '</div></div>'
+      + '<div style="margin-bottom:12px;"><label style="display:block;margin-bottom:6px;">Pabrik FG &amp; Packing (opsional — kosong = akses semua pabrik sesuai peran)</label>'
+      + '<div id="uf-factories">' + factoryCheckboxesHtml(isEdit ? existing.factoryIds : []) + '</div></div>'
       + '<div id="uf-error" style="color:var(--danger);font-size:var(--text-sm);margin-bottom:8px;display:none;"></div>'
       + '<div class="modal-actions">'
       + '<button type="button" class="btn btn-secondary" id="uf-cancel">Batal</button>'
@@ -87,6 +129,12 @@
       var selectedRoles = Array.prototype.map.call(
         modal.root.querySelectorAll('#uf-roles input[type=checkbox]:checked'), function (cb) { return cb.value; }
       );
+      var selectedDivisionIds = Array.prototype.map.call(
+        modal.root.querySelectorAll('#uf-divisions input[type=checkbox]:checked'), function (cb) { return parseInt(cb.value, 10); }
+      );
+      var selectedFactoryIds = Array.prototype.map.call(
+        modal.root.querySelectorAll('#uf-factories input[type=checkbox]:checked'), function (cb) { return parseInt(cb.value, 10); }
+      );
       if (fullName === '') { errEl.textContent = 'Nama wajib diisi.'; errEl.style.display = 'block'; return; }
       if (selectedRoles.length === 0) { errEl.textContent = 'Pilih minimal satu peran.'; errEl.style.display = 'block'; return; }
 
@@ -96,6 +144,8 @@
         if (isEdit) {
           await Amor.apiFetch('/api/users/' + existing.id, { method: 'PUT', body: { fullName: fullName } });
           await Amor.apiFetch('/api/users/' + existing.id + '/roles', { method: 'PUT', body: { roles: selectedRoles } });
+          await Amor.apiFetch('/api/users/' + existing.id + '/divisions', { method: 'PUT', body: { divisionIds: selectedDivisionIds } });
+          await Amor.apiFetch('/api/users/' + existing.id + '/factories', { method: 'PUT', body: { factoryIds: selectedFactoryIds } });
           Amor.toast('User diperbarui', 'success');
         } else {
           var username = modal.root.querySelector('#uf-username').value.trim();
@@ -103,10 +153,15 @@
           var passwordConfirm = modal.root.querySelector('#uf-password-confirm').value;
           if (username === '') { throw { message: 'Username wajib diisi.' }; }
           if (password !== passwordConfirm) { throw { message: 'Konfirmasi password tidak cocok.' }; }
-          await Amor.apiFetch('/api/users', {
+          var created = await Amor.apiFetch('/api/users', {
             method: 'POST',
             body: { username: username, fullName: fullName, password: password, passwordConfirm: passwordConfirm, roles: selectedRoles },
           });
+          var newUserId = created && created.userId;
+          if (newUserId && (selectedDivisionIds.length || selectedFactoryIds.length)) {
+            await Amor.apiFetch('/api/users/' + newUserId + '/divisions', { method: 'PUT', body: { divisionIds: selectedDivisionIds } });
+            await Amor.apiFetch('/api/users/' + newUserId + '/factories', { method: 'PUT', body: { factoryIds: selectedFactoryIds } });
+          }
           Amor.toast('User dibuat', 'success');
         }
         modal.close();
@@ -168,6 +223,8 @@
           username: btn.getAttribute('data-username'),
           fullname: btn.getAttribute('data-fullname'),
           roles: btn.getAttribute('data-roles') || '',
+          divisionIds: (btn.getAttribute('data-division-ids') || '').split(',').filter(Boolean).map(function (s) { return parseInt(s, 10); }),
+          factoryIds: (btn.getAttribute('data-factory-ids') || '').split(',').filter(Boolean).map(function (s) { return parseInt(s, 10); }),
         });
       });
     });

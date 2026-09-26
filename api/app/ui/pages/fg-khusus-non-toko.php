@@ -96,8 +96,13 @@ foreach ($items as $it) {
       <td class="num"><?= ui_fmt_num($it['shippedQty']) ?></td>
       <td class="num fg-available-cell"><?= ui_fmt_num($it['availableToVerify']) ?></td>
       <td>
-        <div style="display:flex;gap:var(--space-2);align-items:center;">
-          <input type="number" class="fg-verify-input" min="0" step="0.01" max="<?= ui_esc((string) $it['aktualProduksi']) ?>" value="<?= ui_esc((string) $it['fgVerifiedQty']) ?>" style="width:100px;">
+        <?php $itemIsSesuai = abs($it['fgVerifiedQty'] - $it['aktualProduksi']) < 0.01 && $it['fgVerifiedQty'] > 0; ?>
+        <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;">
+          <div class="btn-group fg-khusus-sesuai-group" data-target="<?= ui_esc((string) $it['aktualProduksi']) ?>">
+            <button type="button" class="btn btn-sm <?= $itemIsSesuai ? 'btn-primary' : 'btn-secondary' ?>" data-value="sesuai">Sesuai</button>
+            <button type="button" class="btn btn-sm <?= !$itemIsSesuai ? 'btn-danger' : 'btn-secondary' ?>" data-value="tidak_sesuai">Tidak Sesuai</button>
+          </div>
+          <input type="number" class="fg-verify-input" min="0" step="0.01" max="<?= ui_esc((string) $it['aktualProduksi']) ?>" value="<?= ui_esc((string) $it['fgVerifiedQty']) ?>" style="width:100px;" <?= $itemIsSesuai ? 'disabled' : '' ?>>
           <button type="button" class="btn btn-primary btn-sm fg-verify-btn">Simpan</button>
         </div>
       </td>
@@ -109,6 +114,26 @@ foreach ($items as $it) {
 
 <script>
 (function () {
+  // Sesuai/Tidak Sesuai for this page's own Verifikasi FG step — same
+  // auto-fill/lock convenience as Ceklis Produksi and FG & Packing
+  // (Reguler)'s own sesuai buttons. This page has no separate Packing
+  // step (special-order FG has never had one — see this page's own
+  // docblock), so only Verified gets the button pair.
+  document.querySelectorAll('.fg-khusus-sesuai-group').forEach(function (group) {
+    var input = group.parentElement.querySelector('.fg-verify-input');
+    if (!input) return;
+    group.querySelectorAll('button').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var isSesuai = btn.getAttribute('data-value') === 'sesuai';
+        group.querySelectorAll('button').forEach(function (b) {
+          b.className = 'btn btn-sm ' + (b === btn ? (isSesuai ? 'btn-primary' : 'btn-danger') : 'btn-secondary');
+        });
+        if (isSesuai) { input.value = group.getAttribute('data-target'); input.disabled = true; }
+        else { input.disabled = false; }
+      });
+    });
+  });
+
   document.querySelectorAll('.fg-verify-btn').forEach(function (btn) {
     btn.addEventListener('click', async function () {
       var row = btn.closest('tr');

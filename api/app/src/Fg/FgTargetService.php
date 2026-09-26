@@ -92,4 +92,47 @@ final class FgTargetService
         $row = $stmt->fetch();
         return $row ?: null;
     }
+
+    /**
+     * "Breakdown Toko" (FG Mode B) — READ-ONLY reference showing how one
+     * product's authoritative PO target (PO Awal + latest Revisi, PB
+     * ignored — same formula as ProductionTargetService/DoTargetService)
+     * decomposes across stores. This is display-only: fg_item's own
+     * qty/packed_qty/reject_qty/hilang_qty stay a SINGLE row per product
+     * (Per Produk), entered once via the existing Sesuai/Tidak Sesuai
+     * flow. Breakdown Toko never writes anything and never becomes a
+     * second, independently-editable quantity — the task's own explicit
+     * "Product total = store breakdown total... no double count" is
+     * satisfied by construction: there is nothing here to double, only a
+     * read of the SAME po_store_item rows DoTargetService already reads
+     * for DO, grouped the other way around (by product, across stores,
+     * instead of by store, across products).
+     * @return array<int,array{storeId:int,storeName:string,poAwal:float,poRevisi:float,target:float}>
+     */
+    public function storeBreakdownForProduct(PDO $pdo, string $tanggal, int $factoryId, int $productId): array
+    {
+        $stmt = $pdo->prepare(
+            'SELECT si.store_id, s.canonical_name AS store_name, si.po_awal, si.po_revisi
+             FROM po_store_item si
+             INNER JOIN po_item i ON i.po_item_id = si.po_item_id
+             INNER JOIN po_batch b ON b.po_batch_id = i.po_batch_id
+             INNER JOIN store s ON s.store_id = si.store_id
+             WHERE b.tanggal = ? AND b.factory_id = ? AND i.product_id = ?
+             ORDER BY s.canonical_name'
+        );
+        $stmt->execute([$tanggal, $factoryId, $productId]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $r) {
+            $poAwal = (float) $r['po_awal'];
+            $poRevisi = (float) $r['po_revisi'];
+            $out[] = [
+                'storeId' => (int) $r['store_id'],
+                'storeName' => $r['store_name'],
+                'poAwal' => $poAwal,
+                'poRevisi' => $poRevisi,
+                'target' => $poAwal + $poRevisi,
+            ];
+        }
+        return $out;
+    }
 }

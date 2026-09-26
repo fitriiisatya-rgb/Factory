@@ -146,11 +146,26 @@ final class FgService
 
     /**
      * PATCH /api/fg/{id} — draft/reopened only. $items is a list of
-     * {productId, fgVerified, packed, notes?}; every write REPLACES that
-     * product's stored qty/packed_qty (never additive). $refreshSource
+     * {productId, fgVerified, packed, reject?, hilang?, sesuaiVerified?,
+     * sesuaiPacking?, notes?}; every write REPLACES that product's stored
+     * qty/packed_qty/reject_qty/hilang_qty (never additive). $refreshSource
      * pulls newly-submitted divisions' products into the batch; it never
      * touches an item that already has fgVerified>0 (see class docblock —
      * never retroactively invalidates operator work already entered).
+     *
+     * sesuaiVerified/sesuaiPacking are client-declared INTENT (the Sesuai
+     * button), same pattern and same "never trust a disabled UI input
+     * alone" rule as ProductionService::patchDraft()'s own sesuai check:
+     * sesuaiVerified=true requires fgVerified to equal the CURRENT
+     * production_actual_snapshot (the row's own "Target FG"); sesuaiPacking
+     * =true requires packed to equal this SAME line's own fgVerified
+     * (packed can never exceed fgVerified anyway, so "Sesuai" there means
+     * "pack everything verified"). reject_qty/hilang_qty are independent
+     * FG-side columns (migration 0014) — never merged into Actual/Verified,
+     * never confused with Production's own reject. Keterangan is required
+     * whenever Verified or Packing was marked Tidak Sesuai, or Reject>0, or
+     * Hilang>0 (task's own explicit rule) — checked server-side, not just
+     * a client hint.
      */
     public function patchDraft(int $batchId, int $expectedVersion, array $items, bool $refreshSource, int $userId, ?string $requestId): array
     {
@@ -176,8 +191,10 @@ final class FgService
             $snapshot = (float) $item['production_actual_snapshot'];
             $fgVerified = (float) ($line['fgVerified'] ?? 0);
             $packed = (float) ($line['packed'] ?? 0);
-            if ($fgVerified < 0 || $packed < 0) {
-                throw new ApiException(400, 'INVALID_QTY', 'fgVerified/packed cannot be negative');
+            $reject = isset($line['reject']) ? (float) $line['reject'] : (float) ($item['reject_qty'] ?? 0);
+            $hilang = isset($line['hilang']) ? (float) $line['hilang'] : (float) ($item['hilang_qty'] ?? 0);
+            if ($fgVerified < 0 || $packed < 0 || $reject < 0 || $hilang < 0) {
+                throw new ApiException(400, 'INVALID_QTY', 'fgVerified/packed/reject/hilang cannot be negative');
             }
             if ($packed > $fgVerified) {
                 throw new ApiException(400, 'PACKED_EXCEEDS_VERIFIED', "Product {$productId}: packed ({$packed}) cannot exceed FG verified ({$fgVerified})");
@@ -185,8 +202,26 @@ final class FgService
             if ($fgVerified > $snapshot) {
                 throw new ApiException(400, 'FG_EXCEEDS_PRODUCTION', "Product {$productId}: FG verified ({$fgVerified}) cannot exceed production actual ({$snapshot})");
             }
-            $notes = isset($line['notes']) ? (string) $line['notes'] : null;
-            $this->repo->updateItemValues($this->pdo, (int) $item['fg_item_id'], $fgVerified, $packed, $notes);
+            // sesuaiVerified/sesuaiPacking are THREE-STATE: absent (a
+            // caller that never participates in the Sesuai/Tidak Sesuai UX
+            // at all — every pre-existing caller/test, which must keep
+            // working exactly as before this task) vs explicit true
+            // (Sesuai — validated below) vs explicit false (the operator
+            // actively clicked Tidak Sesuai — only THIS state, not merely
+            // "flag absent", triggers the Keterangan-required rule below).
+            $sesuaiVerified = $line['sesuaiVerified'] ?? null;
+            $sesuaiPacking = $line['sesuaiPacking'] ?? null;
+            if ($sesuaiVerified === true && abs($fgVerified - $snapshot) > 0.01) {
+                throw new ApiException(400, 'SESUAI_VERIFIED_MISMATCH', "Product {$productId}: status Sesuai requires FG Verified ({$fgVerified}) to equal Target FG / Hasil Produksi ({$snapshot})");
+            }
+            if ($sesuaiPacking === true && abs($packed - $fgVerified) > 0.01) {
+                throw new ApiException(400, 'SESUAI_PACKING_MISMATCH', "Product {$productId}: status Sesuai requires Packed ({$packed}) to equal FG Verified ({$fgVerified})");
+            }
+            $notes = isset($line['notes']) ? trim((string) $line['notes']) : trim((string) ($item['keterangan'] ?? ''));
+            if (($notes === '') && ($sesuaiVerified === false || $sesuaiPacking === false || $reject > 0.0001 || $hilang > 0.0001)) {
+                throw new ApiException(400, 'NOTES_REQUIRED', "Product {$productId}: Keterangan wajib diisi jika Verified/Packing Tidak Sesuai, atau Reject/Hilang > 0");
+            }
+            $this->repo->updateItemValues($this->pdo, (int) $item['fg_item_id'], $fgVerified, $packed, $reject, $hilang, $notes !== '' ? $notes : null);
             $touched++;
         }
 
@@ -350,6 +385,26 @@ final class FgService
 
         $batch = $this->repo->findBatchById($this->pdo, $batchId);
         return $this->buildBatchDto($batch, $factory);
+    }
+
+    /**
+     * GET /api/fg/store-breakdown — "Breakdown Toko" (FG Mode B), read-only.
+     * See FgTargetService::storeBreakdownForProduct()'s own docblock for
+     * why this never writes anything and can never double-count against
+     * the single Per Produk fg_item row.
+     */
+    public function storeBreakdown(string $tanggal, int $factoryId, int $productId): array
+    {
+        $factory = $this->requireFactory($factoryId);
+        $rows = $this->targets->storeBreakdownForProduct($this->pdo, $tanggal, $factoryId, $productId);
+        return [
+            'tanggal' => $tanggal,
+            'factoryId' => $factoryId,
+            'factoryName' => $factory['name'],
+            'productId' => $productId,
+            'stores' => $rows,
+            'totalTarget' => array_sum(array_column($rows, 'target')),
+        ];
     }
 
     /**
@@ -565,6 +620,7 @@ final class FgService
         if ($factory === null) {
             throw new ApiException(404, 'FACTORY_NOT_FOUND', 'Factory not found');
         }
+        \Amor\Api\Auth::requireFactoryAccess($factoryId);
         return $factory;
     }
 
@@ -635,6 +691,8 @@ final class FgService
         $snapshot = (float) $item['production_actual_snapshot'];
         $fgVerified = (float) $item['qty'];
         $packed = (float) $item['packed_qty'];
+        $reject = (float) ($item['reject_qty'] ?? 0);
+        $hilang = (float) ($item['hilang_qty'] ?? 0);
         // variance_fg = production_actual - fg_verified (agreed Phase 4
         // definition): positive means "this much Production is not yet
         // verified into FG". FG_EXCEEDS_PRODUCTION already blocks
@@ -655,6 +713,8 @@ final class FgService
             'fgVerified' => $fgVerified,
             'variance' => $variance,
             'packed' => $packed,
+            'reject' => $reject,
+            'hilang' => $hilang,
             'available' => $available,
             'notes' => $item['keterangan'],
             'fgStatusCode' => $fgStatus['code'],

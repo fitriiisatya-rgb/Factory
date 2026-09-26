@@ -26,6 +26,15 @@ PHP_PORT=8100
 PHP_PID=""
 MIGRATION_0005="$API_ROOT/app/migrations/0005_fg_packing_phase4.php"
 MIGRATION_0005_PARKED="$WORKDIR/0005_fg_packing_phase4.php.parked"
+# Migration 0014 (Production Division + FG rework) ALTERs fg_item with
+# "AFTER packed_qty" — a real, direct dependency on migration 0005's own
+# column. It must be parked/restored in lockstep with 0005 here, otherwise
+# the MigrationRunner's plain filename glob+sort would apply 0014 in the
+# SAME batch as 0001-0004 (while 0005 is still deliberately parked below),
+# failing with "Unknown column 'packed_qty'". Harmless if migration 0014
+# does not exist in this checkout (e.g. testing an older revision).
+MIGRATION_0014="$API_ROOT/app/migrations/0014_production_fg_division_rework.php"
+MIGRATION_0014_PARKED="$WORKDIR/0014_production_fg_division_rework.php.parked"
 
 cleanup() {
   echo "--- tearing down (disposable, local-only — nothing persistent touched) ---"
@@ -38,6 +47,9 @@ cleanup() {
   fi
   if [ -f "$MIGRATION_0005_PARKED" ] && [ ! -f "$MIGRATION_0005" ]; then
     mv "$MIGRATION_0005_PARKED" "$MIGRATION_0005"
+  fi
+  if [ -f "$MIGRATION_0014_PARKED" ] && [ ! -f "$MIGRATION_0014" ]; then
+    mv "$MIGRATION_0014_PARKED" "$MIGRATION_0014"
   fi
   rm -f "$API_ROOT/app/config/config.php"
   rm -rf "$WORKDIR"
@@ -74,8 +86,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ${DB_NAME}.* TO 'p4_runtime_user'@'local
 FLUSH PRIVILEGES;
 "
 
-echo "--- 4/10: parking migration 0005 so bootstrap only applies 0001-0004 (0005 must be genuinely PENDING) ---"
+echo "--- 4/10: parking migrations 0005 and 0014 so bootstrap only applies 0001-0004 (0005 must be genuinely PENDING; 0014 depends on 0005's own column so it must stay parked alongside it) ---"
 mv "$MIGRATION_0005" "$MIGRATION_0005_PARKED"
+[ -f "$MIGRATION_0014" ] && mv "$MIGRATION_0014" "$MIGRATION_0014_PARKED"
 
 echo "--- 5/10: bootstrap config.php using the MIGRATION user (needs DDL) ---"
 cat > "$API_ROOT/app/config/config.php" <<PHPCONFIG
@@ -101,8 +114,9 @@ ADMIN_PASSWORD="$TEST_ADMIN_PASS" php "$API_ROOT/bin/create_admin.php" p4_stagin
 echo "--- 7/10: bootstrap realistic Phase 1 master data (8 divisions + 472 products + BAKERY CIKOLE) ---"
 php "$API_ROOT/tests/_phase2_bootstrap_master.php" || { echo "master bootstrap FAILED"; exit 1; }
 
-echo "--- 8/10: restoring migration 0005 (now genuinely pending) ---"
+echo "--- 8/10: restoring migrations 0005 and 0014 (now genuinely pending, applied together via the _upgrade/ wizard in P4-00) ---"
 mv "$MIGRATION_0005_PARKED" "$MIGRATION_0005"
+[ -f "$MIGRATION_0014_PARKED" ] && mv "$MIGRATION_0014_PARKED" "$MIGRATION_0014"
 
 echo "--- 9/10: rewriting config.php to the REALISTIC post-deployment shape (DB_USER=runtime, MIGRATION_DB_*=migration) ---"
 cat > "$API_ROOT/app/config/config.php" <<PHPCONFIG

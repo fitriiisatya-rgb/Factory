@@ -44,6 +44,16 @@ $activeParam = $_GET['active'] ?? '';
 $active = $activeParam === '1' ? true : ($activeParam === '0' ? false : null);
 $users = $service->listUsers($q !== '' ? $q : null, $active);
 $roles = $service->listRoles();
+$divisions = $service->listDivisions();
+$factories = $service->listFactories();
+$divisionNameById = [];
+foreach ($divisions as $d) {
+    $divisionNameById[$d['divisionId']] = $d['name'] . ' (' . $d['factoryName'] . ')';
+}
+$factoryNameById = [];
+foreach ($factories as $f) {
+    $factoryNameById[$f['factoryId']] = $f['name'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -88,7 +98,7 @@ $roles = $service->listRoles();
   <div class="card section">
     <div class="table-scroll"><table class="data-table">
       <thead><tr>
-        <th>Username</th><th>Nama</th><th>Peran</th><th>Status</th><th>Dibuat</th><th>Aksi</th>
+        <th>Username</th><th>Nama</th><th>Peran</th><th>Divisi/Pabrik Ditugaskan</th><th>Status</th><th>Dibuat</th><th>Aksi</th>
       </tr></thead>
       <tbody>
       <?php foreach ($users as $u): ?>
@@ -96,6 +106,15 @@ $roles = $service->listRoles();
         <td><?= ui_esc($u['username']) ?></td>
         <td><?= ui_esc($u['fullName']) ?></td>
         <td><?= $u['roles'] === [] ? '<span style="color:var(--text-faint);">-</span>' : ui_esc(implode(', ', $u['roles'])) ?></td>
+        <td style="font-size:var(--text-sm);color:var(--text-muted);">
+          <?php
+            $assignedNames = array_merge(
+                array_map(static fn ($id) => $divisionNameById[$id] ?? "#{$id}", $u['divisionIds']),
+                array_map(static fn ($id) => 'Pabrik: ' . ($factoryNameById[$id] ?? "#{$id}"), $u['factoryIds'])
+            );
+          ?>
+          <?= $assignedNames === [] ? '<span style="color:var(--text-faint);">Semua (belum ditugaskan)</span>' : ui_esc(implode(', ', $assignedNames)) ?>
+        </td>
         <td><?= ui_badge($u['active'] ? 'Aktif' : 'Nonaktif') ?></td>
         <td><?= ui_esc(substr($u['createdAt'], 0, 10)) ?></td>
         <td style="white-space:nowrap;">
@@ -103,7 +122,9 @@ $roles = $service->listRoles();
             data-edit-user="<?= (int) $u['userId'] ?>"
             data-username="<?= ui_esc($u['username']) ?>"
             data-fullname="<?= ui_esc($u['fullName']) ?>"
-            data-roles="<?= ui_esc(implode(',', $u['roles'])) ?>">Edit</button>
+            data-roles="<?= ui_esc(implode(',', $u['roles'])) ?>"
+            data-division-ids="<?= ui_esc(implode(',', $u['divisionIds'])) ?>"
+            data-factory-ids="<?= ui_esc(implode(',', $u['factoryIds'])) ?>">Edit</button>
           <button type="button" class="btn btn-secondary btn-sm" data-reset-password="<?= (int) $u['userId'] ?>" data-username="<?= ui_esc($u['username']) ?>">Reset Password</button>
           <?php if ($u['active']): ?>
           <button type="button" class="btn btn-danger btn-sm" data-confirm-action data-danger
@@ -129,7 +150,9 @@ $roles = $service->listRoles();
 </div>
 
 <div id="user-modal-root"
-     data-roles='<?= json_encode($roles, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>'></div>
+     data-roles='<?= json_encode($roles, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>'
+     data-divisions='<?= json_encode($divisions, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>'
+     data-factories='<?= json_encode($factories, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>'></div>
 
 <script>window.AMOR = <?= json_encode(['csrfToken' => $ui['csrfToken'], 'userId' => $ui['userId'], 'username' => $ui['username']], JSON_UNESCAPED_SLASHES) ?>;</script>
 <script src="/api/assets/js/app.js"></script>

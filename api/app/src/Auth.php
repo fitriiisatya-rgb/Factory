@@ -54,6 +54,8 @@ final class Auth
         }
 
         $roles = self::loadRoles($pdo, (int) $row['user_id']);
+        $divisionIds = self::loadDivisionIds($pdo, (int) $row['user_id']);
+        $factoryIds = self::loadFactoryIds($pdo, (int) $row['user_id']);
 
         // Defeats session fixation — a new session id is issued on every successful login.
         session_regenerate_id(true);
@@ -61,6 +63,8 @@ final class Auth
         $_SESSION['username'] = $row['username'];
         $_SESSION['full_name'] = $row['full_name'];
         $_SESSION['roles'] = $roles;
+        $_SESSION['division_ids'] = $divisionIds;
+        $_SESSION['factory_ids'] = $factoryIds;
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
         $_SESSION['login_at'] = time();
 
@@ -113,6 +117,63 @@ final class Auth
         return $userId;
     }
 
+    /** @return int[] division_ids this user is assigned to via user_division_access (empty = not opted into division scoping) */
+    public static function currentDivisionIds(): array
+    {
+        return $_SESSION['division_ids'] ?? [];
+    }
+
+    /** @return int[] factory_ids this user is assigned to via user_factory_access (empty = not opted into factory scoping) */
+    public static function currentFactoryIds(): array
+    {
+        return $_SESSION['factory_ids'] ?? [];
+    }
+
+    /**
+     * Division-level access gate for the Production module. Opt-in scoping:
+     * user_division_access existed in the schema since migration 0001 as
+     * unused "future scope" — wiring it in now must not silently lock out
+     * every existing PRODUCTION-role user who has never been assigned a
+     * division (a real regression risk, since every current such user has
+     * zero rows in that table and today freely edits any division). So a
+     * user with NO assignment rows keeps today's unrestricted role-based
+     * behavior; only once an admin assigns them to specific divisions does
+     * this become a real allowlist. ADMIN/PPIC always bypass (task section
+     * "Admin: sees all... manages assignment").
+     */
+    public static function requireDivisionAccess(int $divisionId): void
+    {
+        self::requireAuth();
+        $roles = self::currentRoles();
+        if (array_intersect(['ADMIN', 'PPIC'], $roles) !== []) {
+            return;
+        }
+        $assigned = self::currentDivisionIds();
+        if ($assigned === []) {
+            return;
+        }
+        if (!in_array($divisionId, $assigned, true)) {
+            throw new ApiException(403, 'DIVISION_ACCESS_DENIED', 'You are not assigned to this division');
+        }
+    }
+
+    /** Factory-level access gate for the FG & Packing module. Same opt-in semantics as requireDivisionAccess(). */
+    public static function requireFactoryAccess(int $factoryId): void
+    {
+        self::requireAuth();
+        $roles = self::currentRoles();
+        if (array_intersect(['ADMIN', 'PPIC'], $roles) !== []) {
+            return;
+        }
+        $assigned = self::currentFactoryIds();
+        if ($assigned === []) {
+            return;
+        }
+        if (!in_array($factoryId, $assigned, true)) {
+            throw new ApiException(403, 'FACTORY_ACCESS_DENIED', 'You are not assigned to this factory');
+        }
+    }
+
     public static function me(): array
     {
         self::requireAuth();
@@ -135,5 +196,21 @@ final class Auth
         );
         $stmt->execute([$userId]);
         return array_column($stmt->fetchAll(), 'code');
+    }
+
+    /** @return int[] */
+    private static function loadDivisionIds(PDO $pdo, int $userId): array
+    {
+        $stmt = $pdo->prepare('SELECT division_id FROM user_division_access WHERE user_id = ?');
+        $stmt->execute([$userId]);
+        return array_map('intval', array_column($stmt->fetchAll(), 'division_id'));
+    }
+
+    /** @return int[] */
+    private static function loadFactoryIds(PDO $pdo, int $userId): array
+    {
+        $stmt = $pdo->prepare('SELECT factory_id FROM user_factory_access WHERE user_id = ?');
+        $stmt->execute([$userId]);
+        return array_map('intval', array_column($stmt->fetchAll(), 'factory_id'));
     }
 }

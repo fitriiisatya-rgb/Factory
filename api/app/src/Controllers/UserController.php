@@ -31,6 +31,8 @@ final class UserController
         Response::json([
             'users' => $service->listUsers($q, $active),
             'roles' => $service->listRoles(),
+            'divisions' => $service->listDivisions(),
+            'factories' => $service->listFactories(),
         ]);
     }
 
@@ -83,6 +85,38 @@ final class UserController
         Idempotency::handle($request, 'PUT /api/users/{id}/roles', function (PDO $pdo) use ($request, $actorId, $id, $roles) {
             $service = new UserService($pdo);
             $dto = $service->updateRoles($id, $roles, $actorId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'user', 'recordKey' => (string) $id];
+        });
+    }
+
+    public static function updateDivisionAccess(Request $request): void
+    {
+        $actorId = Auth::requireRole('ADMIN');
+        $id = (int) $request->routeParams['id'];
+        $divisionIds = $request->input('divisionIds', []);
+        if (!is_array($divisionIds)) {
+            throw new ApiException(400, 'INVALID_DIVISION_IDS', 'divisionIds must be an array');
+        }
+
+        Idempotency::handle($request, 'PUT /api/users/{id}/divisions', function (PDO $pdo) use ($request, $actorId, $id, $divisionIds) {
+            $service = new UserService($pdo);
+            $dto = $service->updateDivisionAccess($id, $divisionIds, $actorId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'user', 'recordKey' => (string) $id];
+        });
+    }
+
+    public static function updateFactoryAccess(Request $request): void
+    {
+        $actorId = Auth::requireRole('ADMIN');
+        $id = (int) $request->routeParams['id'];
+        $factoryIds = $request->input('factoryIds', []);
+        if (!is_array($factoryIds)) {
+            throw new ApiException(400, 'INVALID_FACTORY_IDS', 'factoryIds must be an array');
+        }
+
+        Idempotency::handle($request, 'PUT /api/users/{id}/factories', function (PDO $pdo) use ($request, $actorId, $id, $factoryIds) {
+            $service = new UserService($pdo);
+            $dto = $service->updateFactoryAccess($id, $factoryIds, $actorId, $request->header('Idempotency-Key'));
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'user', 'recordKey' => (string) $id];
         });
     }

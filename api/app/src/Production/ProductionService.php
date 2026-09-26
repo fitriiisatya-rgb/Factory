@@ -138,6 +138,11 @@ final class ProductionService
         }
 
         $existingItems = $this->repo->findItems($this->pdo, $runId);
+        // Only fetched when at least one line claims sesuai=true (the
+        // common case is nobody uses it, or the client already computed
+        // actualQty=liveTarget itself) — avoids an unconditional extra
+        // target query on every draft save.
+        $liveTargetsForSesuaiCheck = null;
         $touched = 0;
         foreach ($items as $line) {
             $productId = (int) ($line['productId'] ?? 0);
@@ -151,6 +156,21 @@ final class ProductionService
             $actualQty = (float) ($line['actualQty'] ?? 0);
             if ($actualQty < 0) {
                 throw new ApiException(400, 'INVALID_ACTUAL_QTY', 'actualQty cannot be negative');
+            }
+            // "Sesuai" is a client-declared INTENT (the operator clicked the
+            // Sesuai button), never trusted on its own — the server always
+            // re-derives the live target itself and rejects a mismatched
+            // payload, so a disabled/auto-filled UI input can never smuggle
+            // a stale or tampered actualQty through as "Sesuai" (task's own
+            // explicit "Do not trust disabled UI input only").
+            if (($line['sesuai'] ?? null) === true) {
+                if ($liveTargetsForSesuaiCheck === null) {
+                    $liveTargetsForSesuaiCheck = $this->targets->targetsByProduct($this->pdo, (string) $run['tanggal'], $factoryId, (int) $run['division_id']);
+                }
+                $liveTarget = (float) ($liveTargetsForSesuaiCheck[$productId]['target'] ?? 0.0);
+                if (abs($actualQty - $liveTarget) > 0.01) {
+                    throw new ApiException(400, 'SESUAI_ACTUAL_MISMATCH', "Product {$productId}: status Sesuai requires Actual ({$actualQty}) to equal the current live Target ({$liveTarget})");
+                }
             }
             $item = $existingItems[$productId];
             // rejectQty is OPTIONAL per line — if a caller doesn't send it
@@ -328,6 +348,7 @@ final class ProductionService
         if ((int) $division['is_verification'] === 1) {
             throw new ApiException(400, 'DIVISION_OUT_OF_SCOPE', "'{$division['name']}' is a Finishgood & Packing verification division — not part of Phase 3 production actual (that belongs to the future FG/Packing module)");
         }
+        \Amor\Api\Auth::requireDivisionAccess($divisionId);
         return $division;
     }
 
