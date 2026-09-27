@@ -2295,6 +2295,176 @@ fwrite(STDOUT, "PACK_SUBMIT_FACTORY_ID={$karangtengahId}\n");
 fwrite(STDOUT, "PACK_SUBMIT_TANGGAL={$packSubmitTanggal}\n");
 
 // =======================================================================
+// Part N — LIVE UAT UX FIX: lock Packing after submit + explicit Edit/
+// Resubmit flow (PACK-EDIT-01..16). PACK-EDIT-01..06/09/12/15 are real
+// headless-browser checks (_ui_smoke_pack_edit.mjs, run right after this
+// file exits 0) against Store A, driven through the ACTUAL "Submit
+// Packing" -> "Edit Packing" (with confirmation) -> "Batal Edit" ->
+// "Edit Packing" again -> real change -> "Simpan Perubahan" -> "Submit
+// Ulang Packing" flow, exactly as an operator would. PACK-EDIT-07/08/10/
+// 11/13 (the exact server-side guarantees behind that same flow: a
+// no-op correction save never fabricates a stale state, a real one
+// always does, resubmitting restores submitted with the correct
+// authenticated submitted_by, and none of this ever posts stock) and
+// PACK-EDIT-14/16 (authorization, concurrency) are proven here, directly
+// at the API/DB level, against a THIRD store (Store C) the browser
+// script never touches, plus a dedicated unauthorized DRIVER session.
+// PACK-EDIT-12 (Store B stays completely unaffected) is checked from
+// both sides.
+// =======================================================================
+$packEditTanggal = '2026-11-01';
+$peProdA = $prodA;
+$peProdB = $prodB;
+$peProdC = $prodC;
+
+runTest('PACK-EDIT-00 (setup) three stores/products, all Sesuai-verified to target=10, nothing packed/submitted yet — Store A for the real browser Edit/Resubmit flow, Store B left untouched everywhere as the "unaffected" control, Store C for the direct server-level correction-lifecycle proof', function () use (
+    $http, $csrf, $pdo, $packEditTanggal, $karangtengahId, $rotiBollenDivId, $peProdA, $peProdB, $peProdC, $storeAId, $storeBId, $storeCId
+) {
+    seedPoStoreSplit($pdo, $packEditTanggal, $karangtengahId, (int) $peProdA['product_id'], [$storeAId => ['poAwal' => 10, 'poRevisi' => 0]]);
+    seedPoStoreSplit($pdo, $packEditTanggal, $karangtengahId, (int) $peProdB['product_id'], [$storeBId => ['poAwal' => 10, 'poRevisi' => 0]]);
+    seedPoStoreSplit($pdo, $packEditTanggal, $karangtengahId, (int) $peProdC['product_id'], [$storeCId => ['poAwal' => 10, 'poRevisi' => 0]]);
+
+    $createProd = $http->request('POST', '/api/production', ['tanggal' => $packEditTanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('packedit-prod-create')));
+    expect($createProd['status'] === 200, 'PACK-EDIT-00: expected production draft create 200, got ' . $createProd['status'] . ': ' . json_encode($createProd['json']));
+    $prodRunId = (int) $createProd['json']['data']['productionRunId'];
+    $prodVersion = (int) $createProd['json']['data']['version'];
+    $patchProd = $http->request('PATCH', "/api/production/{$prodRunId}", [
+        'expectedVersion' => $prodVersion,
+        'items' => [
+            ['productId' => (int) $peProdA['product_id'], 'actualQty' => 10],
+            ['productId' => (int) $peProdB['product_id'], 'actualQty' => 10],
+            ['productId' => (int) $peProdC['product_id'], 'actualQty' => 10],
+        ],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('packedit-prod-patch')));
+    expect($patchProd['status'] === 200, 'PACK-EDIT-00: expected production draft patch 200, got ' . $patchProd['status'] . ': ' . json_encode($patchProd['json']));
+    $prodVersion = (int) $patchProd['json']['data']['version'];
+    $submitProd = $http->request('POST', "/api/production/{$prodRunId}/submit", ['expectedVersion' => $prodVersion], array_merge(['X-CSRF-Token' => $csrf], idemKey('packedit-prod-submit')));
+    expect($submitProd['status'] === 200, 'PACK-EDIT-00: expected production draft submit 200, got ' . $submitProd['status'] . ': ' . json_encode($submitProd['json']));
+
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $packEditTanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('packedit-fgcreate')));
+    expect($create['status'] === 200, 'PACK-EDIT-00: expected FG create 200, got ' . $create['status'] . ': ' . json_encode($create['json']));
+    $batchId = (int) $create['json']['data']['fgBatchId'];
+    $version = (int) $create['json']['data']['version'];
+
+    $explode = $http->request('PATCH', "/api/fg/{$batchId}", [
+        'expectedVersion' => $version,
+        'storeItems' => [
+            ['productId' => (int) $peProdA['product_id'], 'rows' => [['storeId' => $storeAId, 'fgVerified' => 10, 'packed' => 0, 'sesuaiVerified' => true]]],
+            ['productId' => (int) $peProdB['product_id'], 'rows' => [['storeId' => $storeBId, 'fgVerified' => 10, 'packed' => 0, 'sesuaiVerified' => true]]],
+            ['productId' => (int) $peProdC['product_id'], 'rows' => [['storeId' => $storeCId, 'fgVerified' => 10, 'packed' => 0, 'sesuaiVerified' => true]]],
+        ],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('packedit-explode')));
+    expect($explode['status'] === 200, 'PACK-EDIT-00: expected explode 200, got ' . json_encode($explode['json']));
+
+    global $packEditBatchId, $packEditVersion;
+    $packEditBatchId = $batchId;
+    $packEditVersion = (int) $explode['json']['data']['version'];
+});
+
+runTest('PACK-EDIT-07/08/10/11/13 (server-level) full correction lifecycle on Store C: real submit -> a no-op correction save NEVER fabricates a stale state -> a REAL correction save always flips to stale -> resubmitting restores submitted with the correct authenticated submitted_by -> none of this ever posts stock', function () use ($http, $csrf, $pdo, $storeCId, $peProdC, $stagingAdminId) {
+    global $packEditBatchId, $packEditVersion;
+    $productId = (int) $peProdC['product_id'];
+    $subStmt = $pdo->prepare('SELECT status, submitted_by FROM fg_store_packing_submission WHERE fg_batch_id = ? AND store_id = ?');
+
+    $submit = $http->request('POST', "/api/fg/{$packEditBatchId}/packing-submit", [
+        'expectedVersion' => $packEditVersion, 'storeId' => $storeCId,
+        'rows' => [['productId' => $productId, 'storeId' => $storeCId, 'fgVerified' => 10, 'packed' => 10, 'reject' => 0, 'hilang' => 0, 'notes' => '', 'sesuaiPacking' => true]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('packedit-storeC-submit')));
+    expect($submit['status'] === 200, 'PACK-EDIT: expected Store C real submit 200, got ' . json_encode($submit['json']));
+    $packEditVersion = (int) $submit['json']['data']['version'];
+    $subStmt->execute([$packEditBatchId, $storeCId]);
+    $sub1 = $subStmt->fetch();
+    expect($sub1 !== false && $sub1['status'] === 'submitted', 'PACK-EDIT: expected submitted after the real submit, got ' . json_encode($sub1));
+
+    // PACK-EDIT-07: "Simpan Perubahan" reuses the generic storeItems PATCH
+    // (never a new endpoint) — here with values IDENTICAL to what is
+    // already persisted.
+    $noopPatch = $http->request('PATCH', "/api/fg/{$packEditBatchId}", [
+        'expectedVersion' => $packEditVersion,
+        'storeItems' => [['productId' => $productId, 'rows' => [['storeId' => $storeCId, 'fgVerified' => 10, 'packed' => 10, 'reject' => 0, 'hilang' => 0, 'notes' => '', 'sesuaiPacking' => true]]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('packedit-storeC-noop')));
+    expect($noopPatch['status'] === 200, 'PACK-EDIT-07: expected the no-op correction save 200, got ' . json_encode($noopPatch['json']));
+    $versionAfterNoop = (int) $noopPatch['json']['data']['version'];
+    $subStmt->execute([$packEditBatchId, $storeCId]);
+    $sub2 = $subStmt->fetch();
+    expect($sub2 !== false && $sub2['status'] === 'submitted', 'PACK-EDIT-07: expected status to STAY submitted after a no-op correction save (never a false stale state), got ' . json_encode($sub2));
+
+    // PACK-EDIT-08: a REAL change (Reject 0 -> 1, with the required note).
+    $realPatch = $http->request('PATCH', "/api/fg/{$packEditBatchId}", [
+        'expectedVersion' => $versionAfterNoop,
+        'storeItems' => [['productId' => $productId, 'rows' => [['storeId' => $storeCId, 'fgVerified' => 10, 'packed' => 10, 'reject' => 1, 'hilang' => 0, 'notes' => 'Ada 1 pcs reject ditemukan setelah submit', 'sesuaiPacking' => true]]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('packedit-storeC-real')));
+    expect($realPatch['status'] === 200, 'PACK-EDIT-08: expected the real correction save 200, got ' . json_encode($realPatch['json']));
+    $packEditVersion = (int) $realPatch['json']['data']['version'];
+    $subStmt->execute([$packEditBatchId, $storeCId]);
+    $sub3 = $subStmt->fetch();
+    expect($sub3 !== false && $sub3['status'] === 'stale', 'PACK-EDIT-08: expected status to become stale after a REAL correction save, got ' . json_encode($sub3));
+
+    // PACK-EDIT-16 (concurrency): retrying the SAME correction call with
+    // the now-STALE (pre-real-change) expectedVersion must be rejected,
+    // never silently applied on top — the existing, unchanged optimistic
+    // concurrency guard (expectedVersion/bumpVersion) already covers this
+    // new flow automatically, since it is the exact same PATCH endpoint.
+    $conflict = $http->request('PATCH', "/api/fg/{$packEditBatchId}", [
+        'expectedVersion' => $versionAfterNoop,
+        'storeItems' => [['productId' => $productId, 'rows' => [['storeId' => $storeCId, 'fgVerified' => 10, 'packed' => 9, 'reject' => 0, 'hilang' => 0, 'notes' => 'percobaan konflik', 'sesuaiPacking' => false]]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('packedit-storeC-conflict')));
+    expect($conflict['status'] === 409 && ($conflict['json']['code'] ?? null) === 'VERSION_CONFLICT', 'PACK-EDIT-16: expected a concurrent/stale-version correction attempt to be rejected with 409 VERSION_CONFLICT, never silently applied, got ' . $conflict['status'] . ': ' . json_encode($conflict['json']));
+
+    // PACK-EDIT-10/11: resubmit with the CURRENT version.
+    $resubmit = $http->request('POST', "/api/fg/{$packEditBatchId}/packing-submit", [
+        'expectedVersion' => $packEditVersion, 'storeId' => $storeCId,
+        'rows' => [['productId' => $productId, 'storeId' => $storeCId, 'fgVerified' => 10, 'packed' => 10, 'reject' => 1, 'hilang' => 0, 'notes' => 'Ada 1 pcs reject ditemukan setelah submit', 'sesuaiPacking' => true]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('packedit-storeC-resubmit')));
+    expect($resubmit['status'] === 200, 'PACK-EDIT-10: expected resubmit 200, got ' . json_encode($resubmit['json']));
+    $packEditVersion = (int) $resubmit['json']['data']['version'];
+    $subStmt->execute([$packEditBatchId, $storeCId]);
+    $sub4 = $subStmt->fetch();
+    expect($sub4 !== false && $sub4['status'] === 'submitted', 'PACK-EDIT-10: expected submitted again after resubmit, got ' . json_encode($sub4));
+    expect($sub4 !== false && (int) $sub4['submitted_by'] === $stagingAdminId, 'PACK-EDIT-11: expected submitted_by to be the AUTHENTICATED session user after resubmit, got ' . json_encode($sub4));
+
+    // PACK-EDIT-13: none of the above (submit, no-op save, real save,
+    // resubmit) ever posted to stock_ledger — this whole lifecycle stays
+    // draft-level; only the separate, whole-document "Submit FG" ever
+    // posts stock.
+    $itemStmt = $pdo->prepare('SELECT fg_item_id FROM fg_item WHERE fg_batch_id = ? AND product_id = ? AND store_id = ?');
+    $itemStmt->execute([$packEditBatchId, $productId, $storeCId]);
+    $fgItemId = (int) $itemStmt->fetchColumn();
+    $ledgerStmt = $pdo->prepare("SELECT COUNT(*) AS c FROM stock_ledger WHERE source_type = 'fg_item' AND source_id = ?");
+    $ledgerStmt->execute([$fgItemId]);
+    expect((int) $ledgerStmt->fetch()['c'] === 0, 'PACK-EDIT-13: expected ZERO stock_ledger rows across the whole submit/edit/resubmit lifecycle (still DRAFT — no stock posted)');
+});
+
+runTest('PACK-EDIT-12 Store B (never touched by any of Store A/C\'s submit/edit/resubmit activity) has no submission record at all', function () use ($pdo, $storeBId) {
+    global $packEditBatchId;
+    $subStmt = $pdo->prepare('SELECT * FROM fg_store_packing_submission WHERE fg_batch_id = ? AND store_id = ?');
+    $subStmt->execute([$packEditBatchId, $storeBId]);
+    expect($subStmt->fetch() === false, 'PACK-EDIT-12: expected Store B to have NO submission row at all — completely unaffected by Store A/C\'s own activity');
+});
+
+$driverPass = 'PackEditDriverPass#123';
+createUser($pdo, 'pdfg_pack_edit_driver', $driverPass, ['DRIVER']);
+$httpDriver = new HttpPdfg($baseUrl);
+runTest('PACK-EDIT-14 an unauthorized (DRIVER) role cannot submit or correct Packing — neither the dedicated packing-submit endpoint nor the generic correction PATCH', function () use ($httpDriver, $driverPass, $storeAId, $peProdA) {
+    global $packEditBatchId, $packEditVersion;
+    $csrfDriver = login($httpDriver, 'pdfg_pack_edit_driver', $driverPass);
+    $submitAttempt = $httpDriver->request('POST', "/api/fg/{$packEditBatchId}/packing-submit", [
+        'expectedVersion' => $packEditVersion, 'storeId' => $storeAId,
+        'rows' => [['productId' => (int) $peProdA['product_id'], 'storeId' => $storeAId, 'fgVerified' => 10, 'packed' => 10, 'reject' => 0, 'hilang' => 0, 'notes' => '', 'sesuaiPacking' => true]],
+    ], ['X-CSRF-Token' => $csrfDriver]);
+    expect($submitAttempt['status'] === 403, 'PACK-EDIT-14: expected an unauthorized DRIVER packing-submit attempt to be rejected 403, got ' . $submitAttempt['status'] . ': ' . json_encode($submitAttempt['json']));
+
+    $correctAttempt = $httpDriver->request('PATCH', "/api/fg/{$packEditBatchId}", [
+        'expectedVersion' => $packEditVersion,
+        'storeItems' => [['productId' => (int) $peProdA['product_id'], 'rows' => [['storeId' => $storeAId, 'fgVerified' => 10, 'packed' => 5, 'reject' => 0, 'hilang' => 0, 'notes' => '', 'sesuaiPacking' => false]]]],
+    ], ['X-CSRF-Token' => $csrfDriver]);
+    expect($correctAttempt['status'] === 403, 'PACK-EDIT-14: expected an unauthorized DRIVER correction-PATCH attempt to be rejected 403, got ' . $correctAttempt['status'] . ': ' . json_encode($correctAttempt['json']));
+});
+
+fwrite(STDOUT, "PACK_EDIT_FACTORY_ID={$karangtengahId}\n");
+fwrite(STDOUT, "PACK_EDIT_TANGGAL={$packEditTanggal}\n");
+
+// =======================================================================
 // Summary
 // =======================================================================
 $total = count($results);

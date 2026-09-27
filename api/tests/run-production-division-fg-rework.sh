@@ -251,11 +251,32 @@ TANGGAL="$PACK_SUBMIT_TANGGAL" FACTORY_ID="$PACK_SUBMIT_FACTORY_ID" \
 node "$API_ROOT/tests/_ui_smoke_pack_submit.mjs"
 PACK_SUBMIT_SMOKE_RESULT=$?
 
+if [ $PACK_SUBMIT_SMOKE_RESULT -ne 0 ]; then
+  kill "$PHP_PID" 2>/dev/null || true
+  PHP_PID=""
+  echo "_ui_smoke_pack_submit.mjs FAILED — stopping before the full regression cascade"
+  exit 1
+fi
+
+echo "--- 8.10/9: real headless-browser smoke check — LIVE UAT UX FIX lock Packing after submit + Edit/Resubmit flow (PACK-EDIT-01..16) ---"
+PACK_EDIT_FACTORY_ID=$(grep -oP 'PACK_EDIT_FACTORY_ID=\K[0-9]+' "$WORKDIR/pdfg-output.log" | tail -1)
+PACK_EDIT_TANGGAL=$(grep -oP 'PACK_EDIT_TANGGAL=\K[0-9-]+' "$WORKDIR/pdfg-output.log" | tail -1)
+if [ -z "$PACK_EDIT_FACTORY_ID" ] || [ -z "$PACK_EDIT_TANGGAL" ]; then
+  kill "$PHP_PID" 2>/dev/null || true
+  PHP_PID=""
+  echo "Could not find PACK_EDIT_* markers in PDFG test output — cannot run the packing lock/edit smoke check"
+  exit 1
+fi
+BASE_URL="http://127.0.0.1:$PHP_PORT" ADMIN_USER="pdfg_staging_admin" ADMIN_PASS="$TEST_ADMIN_PASS" \
+TANGGAL="$PACK_EDIT_TANGGAL" FACTORY_ID="$PACK_EDIT_FACTORY_ID" \
+node "$API_ROOT/tests/_ui_smoke_pack_edit.mjs"
+PACK_EDIT_SMOKE_RESULT=$?
+
 kill "$PHP_PID" 2>/dev/null || true
 PHP_PID=""
 
-if [ $PACK_SUBMIT_SMOKE_RESULT -ne 0 ]; then
-  echo "_ui_smoke_pack_submit.mjs FAILED — stopping before the full regression cascade"
+if [ $PACK_EDIT_SMOKE_RESULT -ne 0 ]; then
+  echo "_ui_smoke_pack_edit.mjs FAILED — stopping before the full regression cascade"
   exit 1
 fi
 

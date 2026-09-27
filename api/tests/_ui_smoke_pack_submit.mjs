@@ -189,7 +189,12 @@ try {
   // with a fresh submission event.
   // -------------------------------------------------------------------
   await openStore(page, 'P2 TEST STORE A');
-  const resubmitBtn = page.locator('#fg-submit-packing-store');
+  // LIVE UAT UX FIX (a later pass): the locked/stale view's own resubmit
+  // action now has its OWN id, #fg-resubmit-packing-store, distinct from
+  // the plain first-time #fg-submit-packing-store — see
+  // _ui_smoke_pack_edit.mjs for the full lock/Edit Packing flow this
+  // pass introduced.
+  const resubmitBtn = page.locator('#fg-resubmit-packing-store');
   check(await resubmitBtn.count() === 1, 'PACK-SUBMIT-08: an active resubmit button ("Submit Ulang Packing ...") is present for a Perlu Submit Ulang store');
   check((await resubmitBtn.innerText()).includes('Submit Ulang'), 'PACK-SUBMIT-08: the resubmit button is explicitly labeled as a re-submit, not a fresh one');
   await resubmitBtn.click();

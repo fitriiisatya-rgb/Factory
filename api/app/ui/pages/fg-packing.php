@@ -543,6 +543,16 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   // ---------------------------------------------------------------------
   var storeGroups = [];
   var currentStoreId = null;
+  // LIVE UAT UX FIX — a store whose Packing already has a real
+  // submission record (submitted OR stale) renders its fields LOCKED
+  // (read-only) by default; packingEditMode is the ONLY thing that ever
+  // unlocks them, and only for the currently open store, and only after
+  // the operator explicitly confirms "Edit Packing". It is reset to
+  // false every time fresh server data is loaded for a store (initial
+  // render, chip switch, after a successful save/submit/resubmit) —
+  // never carried over to a different store, never left on after a
+  // completed action.
+  var packingEditMode = false;
 
   function groupByStore(results) {
     var byStore = {};
@@ -657,7 +667,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       chip.innerHTML = '<div class="fg-store-chip-name">' + escHtml(g.storeName) + '</div>'
         + '<div class="fg-store-chip-meta">' + g.rows.length + ' produk &bull; ' + st.targetTotal.toLocaleString('id-ID') + ' pcs</div>'
         + '<div class="fg-store-chip-meta">' + escHtml(st.label) + '</div>';
-      chip.addEventListener('click', function () { currentStoreId = g.storeId; renderChips(); renderDetail(); });
+      chip.addEventListener('click', function () { currentStoreId = g.storeId; packingEditMode = false; renderChips(); renderDetail(); });
       row.appendChild(chip);
     });
   }
@@ -666,6 +676,18 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     var detail = document.getElementById('fg-packing-detail');
     var group = storeGroups.filter(function (g) { return g.storeId === currentStoreId; })[0];
     if (!group) { detail.innerHTML = ''; return; }
+    var status = storeStatus(group);
+    // LIVE UAT UX FIX — a store that already has a real submission
+    // record (submitted OR stale) renders LOCKED (read-only) by default,
+    // exactly like the !editableHere (submitted whole-document) case
+    // below — the only way to unlock it is the explicit "Edit Packing"
+    // confirmation flow (see packingActionsHtml()/wirePackingActions()).
+    // A store that was never submitted (belum_mulai/sedang_dikerjakan/
+    // sebagian) stays directly editable, unchanged from before this pass.
+    var isSubmittedState = status.code === 'sudah_disubmit' || status.code === 'perlu_submit_ulang';
+    var locked = editableHere && isSubmittedState && !packingEditMode;
+    var editingCorrection = editableHere && isSubmittedState && packingEditMode;
+
     var cardsHtml = group.rows.map(function (r) {
       var packingSesuai = editableHere && Math.abs(r.packed - r.fgVerified) < 0.01 && r.packed > 0;
       var body = '<div class="fg-card fg-packing-row" data-product-id="' + r.productId + '" data-exploded="' + (r.exploded ? '1' : '0') + '">'
@@ -683,7 +705,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
           + '<div class="alert alert-warning" style="margin:var(--space-2) 0;">Belum di-Breakdown Toko — verifikasi per Toko dulu di FG Verifikasi sebelum bisa dipacking di sini.</div>'
           + '</div>';
       }
-      if (!editableHere) {
+      if (!editableHere || locked) {
         body += '<div class="fg-card-row"><span class="fg-card-row-label">Actual Packing</span><span>' + r.packed.toLocaleString('id-ID') + '</span></div>'
           + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><span>' + r.reject.toLocaleString('id-ID') + '</span></div>'
           + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><span>' + r.hilang.toLocaleString('id-ID') + '</span></div>'
@@ -712,20 +734,25 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         + '</div>';
       return body;
     }).join('');
-    var status = storeStatus(group);
+    var editBanner = editingCorrection
+      ? '<div class="alert alert-warning" style="margin-bottom:var(--space-3);font-weight:700;">MODE EDIT — Sedang Dikoreksi</div>'
+      : '';
     detail.innerHTML = '<h3 class="card-title" style="font-size:var(--text-md);margin-bottom:var(--space-2);">Packing — ' + escHtml(group.storeName) + '</h3>'
       + packingSubmissionMetaHtml(group, status)
+      + editBanner
       + '<div class="fg-card-list">' + cardsHtml + '</div>'
-      + '<div id="fg-packing-actions">' + packingActionsHtml(group, status) + '</div>';
+      + '<div id="fg-packing-actions">' + packingActionsHtml(group, status, locked, editingCorrection) + '</div>';
 
-    detail.querySelectorAll('.pk-sesuai').forEach(function (group2) {
-      var card = group2.closest('.fg-packing-row');
-      var packedInput = card.querySelector('[data-pk-field="packed"]');
-      var readyInput = card.querySelector('[data-pk-field="fgVerified"]');
-      wireSesuaiGroup(group2, packedInput, function () { return readyInput.value || '0'; });
-    });
+    if (!locked) {
+      detail.querySelectorAll('.pk-sesuai').forEach(function (group2) {
+        var card = group2.closest('.fg-packing-row');
+        var packedInput = card.querySelector('[data-pk-field="packed"]');
+        var readyInput = card.querySelector('[data-pk-field="fgVerified"]');
+        wireSesuaiGroup(group2, packedInput, function () { return readyInput.value || '0'; });
+      });
+    }
 
-    wireSubmitButton(group, detail);
+    wirePackingActions(group, detail, status, locked, editingCorrection);
   }
 
   // Small "Disubmit oleh: X · Waktu Submit: T" line, shown only once this
@@ -741,73 +768,196 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   }
 
   // Builds the per-store action area from the server's OWN persisted
-  // submission status (storeStatus(), never a client-side inference) —
-  // an unmistakable, disabled "Sudah Disubmit" indicator when this
-  // store's Packing has genuinely been submitted and nothing has changed
-  // since; an explicit "Perlu Submit Ulang" (Reject/Hilang/Keterangan
-  // was edited elsewhere, e.g. Breakdown Toko, after this store was
-  // already submitted) still lets the operator resubmit; every other
-  // state shows the normal active "Submit Packing [Store]" button.
-  function packingActionsHtml(group, status) {
+  // submission status (storeStatus(), never a client-side inference) AND
+  // the local packingEditMode UI state:
+  //   - LOCKED (submitted/stale, not editing): an unmistakable badge
+  //     (green "Sudah Disubmit" / amber "Perlu Submit Ulang") plus an
+  //     "Edit Packing" button (always available so a mistake can be
+  //     corrected) and, for the stale case, an active "Submit Ulang
+  //     Packing" button that resubmits the ALREADY-persisted values
+  //     directly (no DOM read needed — nothing here is editable).
+  //   - EDITING (explicit Edit Packing confirmed): "Batal Edit" +
+  //     "Simpan Perubahan", plus a client-only "Perubahan belum
+  //     disimpan" hint once something is actually touched.
+  //   - Never submitted at all: the original, unchanged "Submit Packing
+  //     [Store]" button.
+  function packingActionsHtml(group, status, locked, editingCorrection) {
     if (!editableHere) return '';
-    if (status.code === 'sudah_disubmit') {
-      return '<div class="fg-card-actions" style="margin-top:var(--space-3);">'
-        + '<button type="button" class="btn btn-success" disabled>✓ Sudah Disubmit</button>'
+    if (locked) {
+      var badgeHtml = status.code === 'perlu_submit_ulang'
+        ? '<span class="badge badge-warning">Perlu Submit Ulang</span>'
+        : '<span class="badge badge-success">✓ Sudah Disubmit</span>';
+      var resubmitBtn = status.code === 'perlu_submit_ulang'
+        ? '<button type="button" class="btn btn-primary" id="fg-resubmit-packing-store">Submit Ulang Packing ' + escHtml(group.storeName) + '</button>'
+        : '';
+      return '<div class="fg-card-actions" style="margin-top:var(--space-3);flex-wrap:wrap;align-items:center;gap:var(--space-2);">'
+        + badgeHtml + resubmitBtn
+        + '<button type="button" class="btn btn-secondary" id="fg-edit-packing-store">Edit Packing</button>'
         + '</div>';
     }
-    var label = status.code === 'perlu_submit_ulang'
-      ? 'Submit Ulang Packing ' + escHtml(group.storeName)
-      : 'Submit Packing ' + escHtml(group.storeName);
+    if (editingCorrection) {
+      return '<div class="fg-card-actions" style="margin-top:var(--space-3);flex-wrap:wrap;align-items:center;gap:var(--space-2);">'
+        + '<button type="button" class="btn btn-secondary" id="fg-cancel-edit-packing">Batal Edit</button>'
+        + '<button type="button" class="btn btn-primary" id="fg-save-packing-correction">Simpan Perubahan</button>'
+        + '<span id="fg-packing-dirty-indicator" style="display:none;color:var(--warning);font-size:var(--text-sm);">Perubahan belum disimpan</span>'
+        + '</div>';
+    }
     return '<div class="fg-card-actions" style="margin-top:var(--space-3);">'
-      + '<button type="button" class="btn btn-primary" id="fg-submit-packing-store">' + label + '</button>'
+      + '<button type="button" class="btn btn-primary" id="fg-submit-packing-store">Submit Packing ' + escHtml(group.storeName) + '</button>'
       + '</div>';
   }
 
-  function wireSubmitButton(group, detail) {
-    var submitStoreBtn = document.getElementById('fg-submit-packing-store');
-    if (!submitStoreBtn) return; // already "Sudah Disubmit" — non-actionable by design
-    submitStoreBtn.addEventListener('click', async function () {
-      submitStoreBtn.disabled = true;
-      var rows = [];
-      // A still-unexploded product (data-exploded="0") is deliberately
-      // left OUT of this store's own submit payload entirely — see this
-      // card's own rendering above for why.
-      detail.querySelectorAll('.fg-packing-row[data-exploded="1"]').forEach(function (card) {
-        var pid = card.getAttribute('data-product-id');
-        var field = function (name) { var el = card.querySelector('[data-pk-field="' + name + '"]'); return el ? el.value : ''; };
-        var sesuaiGroup = card.querySelector('.pk-sesuai');
-        rows.push({
-          productId: parseInt(pid, 10),
-          storeId: currentStoreId,
-          fgVerified: parseFloat(field('fgVerified') || '0'),
-          packed: parseFloat(field('packed') || '0'),
-          reject: parseFloat(field('reject') || '0'),
-          hilang: parseFloat(field('hilang') || '0'),
-          notes: field('notes'),
-          sesuaiPacking: sesuaiGroup ? sesuaiGroup.getAttribute('data-sesuai') === '1' : false,
-        });
+  // Reads CURRENT DOM input values — used only when fields are actually
+  // editable on screen (first-time submit, or Simpan Perubahan in Edit
+  // mode), since the operator may have just typed something.
+  function collectPackingRowsFromDom(detail) {
+    var rows = [];
+    // A still-unexploded product (data-exploded="0") is deliberately
+    // left OUT of this store's own payload entirely — see the card's
+    // own rendering above for why.
+    detail.querySelectorAll('.fg-packing-row[data-exploded="1"]').forEach(function (card) {
+      var pid = card.getAttribute('data-product-id');
+      var field = function (name) { var el = card.querySelector('[data-pk-field="' + name + '"]'); return el ? el.value : ''; };
+      var sesuaiGroup = card.querySelector('.pk-sesuai');
+      rows.push({
+        productId: parseInt(pid, 10),
+        storeId: currentStoreId,
+        fgVerified: parseFloat(field('fgVerified') || '0'),
+        packed: parseFloat(field('packed') || '0'),
+        reject: parseFloat(field('reject') || '0'),
+        hilang: parseFloat(field('hilang') || '0'),
+        notes: field('notes'),
+        sesuaiPacking: sesuaiGroup ? sesuaiGroup.getAttribute('data-sesuai') === '1' : false,
       });
+    });
+    return rows;
+  }
+
+  // Reads the LAST-FETCHED, already-persisted values straight from the
+  // JS data model — used for "Submit Ulang Packing" clicked directly
+  // from the LOCKED (stale) view, where nothing is an editable DOM
+  // input to read from; this simply reaffirms the numbers a prior
+  // "Simpan Perubahan" already saved.
+  function collectPackingRowsFromGroup(group) {
+    return group.rows.filter(function (r) { return r.exploded; }).map(function (r) {
+      var packingSesuai = editableHere && Math.abs(r.packed - r.fgVerified) < 0.01 && r.packed > 0;
+      return {
+        productId: r.productId, storeId: currentStoreId,
+        fgVerified: r.fgVerified, packed: r.packed, reject: r.reject, hilang: r.hilang,
+        notes: r.notes, sesuaiPacking: packingSesuai,
+      };
+    });
+  }
+
+  function wirePackingActions(group, detail, status, locked, editingCorrection) {
+    // "Submit Packing [Store]" — first-time submit only (never-submitted
+    // state, fields directly editable). Calls the DEDICATED packing-
+    // submit endpoint: in ONE server-side transaction it both saves
+    // these rows AND records this store's real, persisted submission
+    // event (migration 0015's fg_store_packing_submission) — never
+    // marked submitted unless every row validates AND the save itself
+    // succeeds (FgService::submitStorePacking()'s own docblock). Never
+    // posts stock — that stays the separate, once-per-document "Submit
+    // FG (Semua Toko)" action below.
+    var submitStoreBtn = document.getElementById('fg-submit-packing-store');
+    if (submitStoreBtn) submitStoreBtn.addEventListener('click', async function () {
+      submitStoreBtn.disabled = true;
       try {
-        // FINAL FIX — "Submit Packing [Store]" now calls the DEDICATED
-        // packing-submit endpoint (never the generic storeItems PATCH):
-        // in ONE server-side transaction it both saves these rows AND
-        // records this store's real, persisted submission event
-        // (migration 0015's fg_store_packing_submission) — never marked
-        // submitted unless every row validates AND the save itself
-        // succeeds (FgService::submitStorePacking()'s own docblock). A
-        // retried/duplicate click is still idempotent (same values
-        // re-saved, submission timestamp simply refreshed) and never
-        // posts stock — that stays the separate, once-per-document
-        // "Submit FG (Semua Toko)" action below. Submitting ONE store
-        // still never touches another (scoped to storeId server-side,
-        // not merely by omission client-side).
-        var saved = await Amor.apiFetch('/api/fg/' + batchId + '/packing-submit', { method: 'POST', body: { expectedVersion: version, storeId: currentStoreId, rows: rows } });
+        var saved = await Amor.apiFetch('/api/fg/' + batchId + '/packing-submit', { method: 'POST', body: { expectedVersion: version, storeId: currentStoreId, rows: collectPackingRowsFromDom(detail) } });
         version = saved.version;
         Amor.toast('Packing ' + group.storeName + ' disubmit.', 'success');
+        packingEditMode = false;
         await reloadStoreGroups();
         renderHeader(); renderChips(); renderDetail();
       } catch (e) { Amor.toast(e.message, 'danger'); submitStoreBtn.disabled = false; }
     });
+
+    // "Submit Ulang Packing [Store]" — resubmits from the LOCKED
+    // (Perlu Submit Ulang) view, reaffirming the already-persisted
+    // values a prior "Simpan Perubahan" saved. Same endpoint, same
+    // atomic write+submission-record guarantee as above.
+    var resubmitBtn = document.getElementById('fg-resubmit-packing-store');
+    if (resubmitBtn) resubmitBtn.addEventListener('click', async function () {
+      resubmitBtn.disabled = true;
+      try {
+        var saved = await Amor.apiFetch('/api/fg/' + batchId + '/packing-submit', { method: 'POST', body: { expectedVersion: version, storeId: currentStoreId, rows: collectPackingRowsFromGroup(group) } });
+        version = saved.version;
+        Amor.toast('Packing ' + group.storeName + ' disubmit ulang.', 'success');
+        packingEditMode = false;
+        await reloadStoreGroups();
+        renderHeader(); renderChips(); renderDetail();
+      } catch (e) { Amor.toast(e.message, 'danger'); resubmitBtn.disabled = false; }
+    });
+
+    // "Edit Packing" — from the LOCKED view only. An explicit
+    // confirmation is required before anything unlocks; merely clicking
+    // this (even confirming it) NEVER touches persisted submission
+    // state by itself — only a REAL saved change does (see "Simpan
+    // Perubahan" below and FgService::applyStoreRow()'s own change-
+    // detection). Cancelling the confirmation leaves everything exactly
+    // as it was.
+    var editBtn = document.getElementById('fg-edit-packing-store');
+    if (editBtn) editBtn.addEventListener('click', async function () {
+      var ok = await Amor.confirmModal({
+        title: 'Edit Packing?',
+        body: 'Packing toko ini sudah disubmit. Apakah Anda ingin melakukan koreksi?',
+        confirmLabel: 'Ya, Edit Packing',
+      });
+      if (!ok) return;
+      packingEditMode = true;
+      renderDetail();
+    });
+
+    // "Batal Edit" — discards nothing (nothing was ever saved to the
+    // server just by entering Edit mode), simply re-renders LOCKED from
+    // the same, still-current, still-"Sudah Disubmit" group.rows.
+    var cancelEditBtn = document.getElementById('fg-cancel-edit-packing');
+    if (cancelEditBtn) cancelEditBtn.addEventListener('click', function () {
+      packingEditMode = false;
+      renderDetail();
+    });
+
+    // "Simpan Perubahan" — the deliberate correction save. Reuses the
+    // SAME generic storeItems PATCH Breakdown Toko's own save in FG
+    // Verifikasi already uses — its own change-detection (FgService::
+    // applyStoreRow(), shared by both paths) only flips this store's
+    // submission to 'stale' when a value ACTUALLY differs from what is
+    // currently persisted, so saving unchanged values here correctly
+    // leaves "Sudah Disubmit" as-is (task's own "do not create a false
+    // stale state" rule) — never a second, looser copy of that rule.
+    // This is what makes the server-side protection real rather than
+    // UI-only: a submitted store's data can ONLY ever change through
+    // this exact same, single, audited write+invalidate path, no matter
+    // which button or caller triggers it.
+    var saveCorrectionBtn = document.getElementById('fg-save-packing-correction');
+    if (saveCorrectionBtn) saveCorrectionBtn.addEventListener('click', async function () {
+      saveCorrectionBtn.disabled = true;
+      var rows = collectPackingRowsFromDom(detail);
+      var storeItems = rows.map(function (r) {
+        return { productId: r.productId, rows: [{ storeId: r.storeId, fgVerified: r.fgVerified, packed: r.packed, reject: r.reject, hilang: r.hilang, notes: r.notes, sesuaiPacking: r.sesuaiPacking }] };
+      });
+      try {
+        var saved = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, storeItems: storeItems } });
+        version = saved.version;
+        Amor.toast('Perubahan Packing ' + group.storeName + ' disimpan.', 'success');
+        packingEditMode = false;
+        await reloadStoreGroups();
+        renderHeader(); renderChips(); renderDetail();
+      } catch (e) { Amor.toast(e.message, 'danger'); saveCorrectionBtn.disabled = false; }
+    });
+
+    // Client-only "Perubahan belum disimpan" hint while in Edit mode —
+    // purely cosmetic, never touches persisted state itself (that only
+    // ever happens inside "Simpan Perubahan" above, and only when the
+    // server confirms a real change).
+    if (editingCorrection) {
+      var dirtyEl = document.getElementById('fg-packing-dirty-indicator');
+      detail.querySelectorAll('.fg-packing-row[data-exploded="1"] input, .fg-packing-row[data-exploded="1"] .pk-sesuai button').forEach(function (el) {
+        el.addEventListener(el.tagName === 'BUTTON' ? 'click' : 'input', function () {
+          if (dirtyEl) dirtyEl.style.display = '';
+        });
+      });
+    }
   }
 
   async function reloadStoreGroups() {
