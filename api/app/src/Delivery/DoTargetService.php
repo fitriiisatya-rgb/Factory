@@ -31,18 +31,34 @@ final class DoTargetService
      */
     public function storeDemandByProduct(PDO $pdo, string $tanggal, int $storeId): array
     {
-        // Zero-demand rows (LIVE UAT hotfix): a store's po_store_item rows
-        // exist for every product in that day's PO template regardless of
-        // whether this particular store actually has any of it (po_awal/
-        // po_revisi both default to 0) — same "template row exists,
-        // nothing real for it" shape FgTargetService's own HAVING filter
-        // fixed for FG. Filtered here so createDraft()/generateBulk() never
-        // insertDoItem() a real, persisted zero-planned row for a NEW DO in
-        // the first place — matches the filter storesWithPo()/
-        // allStoreDemandForFactory() already apply, just previously missing
-        // here. An ALREADY-CREATED DO's own existing zero rows (from before
-        // this fix) are handled separately, at render time, in
-        // DoService::buildDoDto() — this filter alone does not touch them.
+        // Zero-FINAL-demand rows (LIVE UAT hotfix, later corrected by a
+        // source deep-check): a store's po_store_item rows exist for
+        // every product in that day's PO template regardless of whether
+        // this particular store actually has any of it (po_awal/po_revisi
+        // both default to 0) — same "template row exists, nothing real
+        // for it" shape FgTargetService's own HAVING filter fixed for FG.
+        // Filtered here so createDraft()/generateBulk() never
+        // insertDoItem() a real, persisted zero-planned row for a NEW DO
+        // in the first place.
+        //
+        // The filter MUST test the FINAL demand formula, (po_awal +
+        // po_revisi) > 0 — NOT "po_awal > 0 OR po_revisi > 0" (the first
+        // version of this hotfix's own mistake). po_revisi REPLACES the
+        // prior revision as a full snapshot on every revision upload
+        // (PoMerger::mergeRevision()'s own docblock: "a revision
+        // corrected DOWN is reflected immediately, including back to
+        // 0") and PoFileParser::parseAngka() parses a genuinely negative
+        // cell value unclamped (its own regexes all accept a leading
+        // "-?") — so po_awal=5/po_revisi=-5 (final demand exactly 0) is
+        // a real, reachable stored state, e.g. a store's order revised
+        // DOWN by more than its own original PO Awal. The OR-of-
+        // components version would have wrongly kept that store's row
+        // (po_awal=5 alone satisfies "po_awal > 0") even though its true
+        // final demand is 0 — reintroducing exactly the bug this hotfix
+        // exists to fix. An ALREADY-CREATED DO's own existing zero rows
+        // (from before either version of this fix) are handled
+        // separately, at render time, in DoService::buildDoDto() — this
+        // filter alone does not touch them.
         $stmt = $pdo->prepare(
             'SELECT p.product_id, p.name AS product_name, p.division_id, d.name AS division_name,
                     b.factory_id, f.name AS factory_name, si.po_awal, si.po_revisi
@@ -52,7 +68,7 @@ final class DoTargetService
              INNER JOIN product p ON p.product_id = i.product_id
              LEFT JOIN division d ON d.division_id = p.division_id
              INNER JOIN factory f ON f.factory_id = b.factory_id
-             WHERE b.tanggal = ? AND si.store_id = ? AND (si.po_awal > 0 OR si.po_revisi > 0)
+             WHERE b.tanggal = ? AND si.store_id = ? AND (si.po_awal + si.po_revisi) > 0
              ORDER BY p.name'
         );
         $stmt->execute([$tanggal, $storeId]);
@@ -92,7 +108,7 @@ final class DoTargetService
              INNER JOIN po_item i ON i.po_item_id = si.po_item_id
              INNER JOIN po_batch b ON b.po_batch_id = i.po_batch_id
              INNER JOIN store s ON s.store_id = si.store_id
-             WHERE b.tanggal = ? AND b.factory_id = ? AND (si.po_awal > 0 OR si.po_revisi > 0)
+             WHERE b.tanggal = ? AND b.factory_id = ? AND (si.po_awal + si.po_revisi) > 0
              ORDER BY s.canonical_name'
         );
         $stmt->execute([$tanggal, $factoryId]);
@@ -116,7 +132,7 @@ final class DoTargetService
              INNER JOIN po_item i ON i.po_item_id = si.po_item_id
              INNER JOIN po_batch b ON b.po_batch_id = i.po_batch_id
              INNER JOIN product p ON p.product_id = i.product_id
-             WHERE b.tanggal = ? AND b.factory_id = ? AND (si.po_awal > 0 OR si.po_revisi > 0)'
+             WHERE b.tanggal = ? AND b.factory_id = ? AND (si.po_awal + si.po_revisi) > 0'
         );
         $stmt->execute([$tanggal, $factoryId]);
 

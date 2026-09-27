@@ -402,6 +402,9 @@ table.order-item-table { width: 100%; border-collapse: collapse; min-width: 980p
 .fg-store-chip-submitted { border-color: var(--success); background: var(--success-soft); }
 .fg-store-chip-submitted.active { box-shadow: 0 0 0 2px var(--success) inset; }
 .fg-store-chip-submitted .fg-store-chip-meta:last-child { color: var(--success); font-weight: 700; }
+.fg-store-chip-stale { border-color: var(--warning); background: var(--warning-soft); }
+.fg-store-chip-stale.active { box-shadow: 0 0 0 2px var(--warning) inset; }
+.fg-store-chip-stale .fg-store-chip-meta:last-child { color: var(--warning); font-weight: 700; }
 
 .fg-progress-track { background: var(--surface-2); border-radius: var(--radius-sm); height: 8px; overflow: hidden; margin-top: var(--space-2); }
 .fg-progress-fill { background: var(--success); height: 100%; }

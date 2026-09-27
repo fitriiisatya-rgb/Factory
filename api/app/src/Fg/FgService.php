@@ -313,6 +313,7 @@ final class FgService
         }
 
         $storeRowsTouched = 0;
+        $storesChanged = [];
         foreach ($storeItems as $entry) {
             $productId = (int) ($entry['productId'] ?? 0);
             $rows = (array) ($entry['rows'] ?? []);
@@ -347,39 +348,10 @@ final class FgService
 
             foreach ($rows as $row) {
                 $storeId = (int) ($row['storeId'] ?? 0);
-                if (!isset($targetByStore[$storeId]) || !isset($rawByStore[$storeId])) {
-                    throw new ApiException(400, 'UNKNOWN_STORE_FOR_PRODUCT', "Toko {$storeId} bukan bagian dari target PO produk {$product['product_name']} pada tanggal/pabrik ini");
+                $changed = $this->applyStoreRow($product, $targetByStore, $rawByStore, $storeId, $row);
+                if ($changed) {
+                    $storesChanged[$storeId] = true;
                 }
-                $target = (float) $targetByStore[$storeId]['target'];
-                $storeName = $targetByStore[$storeId]['storeName'];
-                $raw = $rawByStore[$storeId];
-
-                $fgVerified = (float) ($row['fgVerified'] ?? 0);
-                $packed = (float) ($row['packed'] ?? 0);
-                $reject = isset($row['reject']) ? (float) $row['reject'] : (float) ($raw['reject_qty'] ?? 0);
-                $hilang = isset($row['hilang']) ? (float) $row['hilang'] : (float) ($raw['hilang_qty'] ?? 0);
-                if ($fgVerified < 0 || $packed < 0 || $reject < 0 || $hilang < 0) {
-                    throw new ApiException(400, 'INVALID_QTY', 'fgVerified/packed/reject/hilang cannot be negative');
-                }
-                if ($packed > $fgVerified) {
-                    throw new ApiException(400, 'PACKED_EXCEEDS_VERIFIED', "Produk {$product['product_name']} / Toko {$storeName}: packed ({$packed}) cannot exceed FG verified ({$fgVerified})");
-                }
-                if ($fgVerified > $target + 0.0001) {
-                    throw new ApiException(400, 'STORE_FG_EXCEEDS_TARGET', "Produk {$product['product_name']} / Toko {$storeName}: FG verified ({$fgVerified}) cannot exceed store target ({$target})");
-                }
-                $sesuaiVerified = $row['sesuaiVerified'] ?? null;
-                $sesuaiPacking = $row['sesuaiPacking'] ?? null;
-                if ($sesuaiVerified === true && abs($fgVerified - $target) > 0.01) {
-                    throw new ApiException(400, 'SESUAI_VERIFIED_MISMATCH', "Produk {$product['product_name']} / Toko {$storeName}: status Sesuai requires FG Verified ({$fgVerified}) to equal Target Toko ({$target})");
-                }
-                if ($sesuaiPacking === true && abs($packed - $fgVerified) > 0.01) {
-                    throw new ApiException(400, 'SESUAI_PACKING_MISMATCH', "Produk {$product['product_name']} / Toko {$storeName}: status Sesuai requires Packed ({$packed}) to equal FG Verified ({$fgVerified})");
-                }
-                $notes = isset($row['notes']) ? trim((string) $row['notes']) : trim((string) ($raw['keterangan'] ?? ''));
-                if (($notes === '') && ($sesuaiVerified === false || $sesuaiPacking === false || $reject > 0.0001 || $hilang > 0.0001)) {
-                    throw new ApiException(400, 'NOTES_REQUIRED', "Produk {$product['product_name']} / Toko {$storeName}: Keterangan wajib diisi jika Verified/Packing Tidak Sesuai, atau Reject/Hilang > 0");
-                }
-                $this->repo->updateItemValues($this->pdo, (int) $raw['fg_item_id'], $fgVerified, $packed, $reject, $hilang, $notes !== '' ? $notes : null);
                 $storeRowsTouched++;
             }
 
@@ -394,6 +366,20 @@ final class FgService
             }
         }
 
+        // A store's Packing submission is scoped to (batch, store), never
+        // to any one product — the instant ANY row belonging to that
+        // store actually changes (via THIS generic path, e.g. Breakdown
+        // Toko's own Reject/Hilang/Keterangan save in FG Verifikasi — the
+        // only fields it lets an operator edit; packed_qty itself is only
+        // ever echoed back unchanged there), a prior "Sudah Disubmit" for
+        // that store must no longer claim to reflect the numbers the
+        // server actually has now (task's own "edit after submit ->
+        // Perlu Submit Ulang" rule). A no-op resave (identical values)
+        // never invalidates anything.
+        foreach (array_keys($storesChanged) as $storeId) {
+            $this->repo->invalidatePackingSubmission($this->pdo, $batchId, $storeId);
+        }
+
         $bumped = $this->repo->bumpVersion($this->pdo, $batchId, $expectedVersion, 'status = status', []);
         $this->assertVersionBumpSucceeded($batchId, $expectedVersion, $bumped);
 
@@ -405,6 +391,168 @@ final class FgService
                 'collapsed' => array_values(array_map('intval', $collapseProductIds)),
                 'refreshSource' => $refreshSource,
             ]
+        );
+
+        $batch = $this->repo->findBatchById($this->pdo, $batchId);
+        return $this->buildBatchDto($batch, $factory);
+    }
+
+    /**
+     * Validates and writes ONE (productId, storeId) row within an active
+     * store-level PATCH — shared by patchDraft()'s generic storeItems
+     * path (Breakdown Toko's own save) and submitStorePacking()'s
+     * dedicated "Submit Packing [Store]" action, so both enforce EXACTLY
+     * the same rules (PACKED_EXCEEDS_VERIFIED, STORE_FG_EXCEEDS_TARGET,
+     * SESUAI_*_MISMATCH, NOTES_REQUIRED) — never two slightly different
+     * copies of this validation to drift apart.
+     *
+     * @return bool true if this row's own persisted values actually
+     *   changed (used to decide whether to invalidate a store's Packing
+     *   submission state — a same-value resave never does).
+     */
+    private function applyStoreRow(array $product, array $targetByStore, array $rawByStore, int $storeId, array $row): bool
+    {
+        if (!isset($targetByStore[$storeId]) || !isset($rawByStore[$storeId])) {
+            throw new ApiException(400, 'UNKNOWN_STORE_FOR_PRODUCT', "Toko {$storeId} bukan bagian dari target PO produk {$product['product_name']} pada tanggal/pabrik ini");
+        }
+        $target = (float) $targetByStore[$storeId]['target'];
+        $storeName = $targetByStore[$storeId]['storeName'];
+        $raw = $rawByStore[$storeId];
+
+        $fgVerified = (float) ($row['fgVerified'] ?? 0);
+        $packed = (float) ($row['packed'] ?? 0);
+        $reject = isset($row['reject']) ? (float) $row['reject'] : (float) ($raw['reject_qty'] ?? 0);
+        $hilang = isset($row['hilang']) ? (float) $row['hilang'] : (float) ($raw['hilang_qty'] ?? 0);
+        if ($fgVerified < 0 || $packed < 0 || $reject < 0 || $hilang < 0) {
+            throw new ApiException(400, 'INVALID_QTY', 'fgVerified/packed/reject/hilang cannot be negative');
+        }
+        if ($packed > $fgVerified) {
+            throw new ApiException(400, 'PACKED_EXCEEDS_VERIFIED', "Produk {$product['product_name']} / Toko {$storeName}: packed ({$packed}) cannot exceed FG verified ({$fgVerified})");
+        }
+        if ($fgVerified > $target + 0.0001) {
+            throw new ApiException(400, 'STORE_FG_EXCEEDS_TARGET', "Produk {$product['product_name']} / Toko {$storeName}: FG verified ({$fgVerified}) cannot exceed store target ({$target})");
+        }
+        $sesuaiVerified = $row['sesuaiVerified'] ?? null;
+        $sesuaiPacking = $row['sesuaiPacking'] ?? null;
+        if ($sesuaiVerified === true && abs($fgVerified - $target) > 0.01) {
+            throw new ApiException(400, 'SESUAI_VERIFIED_MISMATCH', "Produk {$product['product_name']} / Toko {$storeName}: status Sesuai requires FG Verified ({$fgVerified}) to equal Target Toko ({$target})");
+        }
+        if ($sesuaiPacking === true && abs($packed - $fgVerified) > 0.01) {
+            throw new ApiException(400, 'SESUAI_PACKING_MISMATCH', "Produk {$product['product_name']} / Toko {$storeName}: status Sesuai requires Packed ({$packed}) to equal FG Verified ({$fgVerified})");
+        }
+        $notes = isset($row['notes']) ? trim((string) $row['notes']) : trim((string) ($raw['keterangan'] ?? ''));
+        if (($notes === '') && ($sesuaiVerified === false || $sesuaiPacking === false || $reject > 0.0001 || $hilang > 0.0001)) {
+            throw new ApiException(400, 'NOTES_REQUIRED', "Produk {$product['product_name']} / Toko {$storeName}: Keterangan wajib diisi jika Verified/Packing Tidak Sesuai, atau Reject/Hilang > 0");
+        }
+
+        $changed = abs($fgVerified - (float) $raw['qty']) > 0.0001
+            || abs($packed - (float) $raw['packed_qty']) > 0.0001
+            || abs($reject - (float) $raw['reject_qty']) > 0.0001
+            || abs($hilang - (float) $raw['hilang_qty']) > 0.0001
+            || trim((string) ($raw['keterangan'] ?? '')) !== $notes;
+
+        $this->repo->updateItemValues($this->pdo, (int) $raw['fg_item_id'], $fgVerified, $packed, $reject, $hilang, $notes !== '' ? $notes : null);
+        return $changed;
+    }
+
+    /**
+     * POST /api/fg/{id}/packing-submit — "Submit Packing [Store]", the
+     * ONE action that both writes a store's Packing rows AND, in the
+     * SAME transaction (Idempotency::handle() already wraps this whole
+     * call in one — see its own docblock: a thrown exception rolls back
+     * everything, so nothing here is ever partially committed), records
+     * that store's real, persisted submission event —
+     * fg_store_packing_submission (migration 0015). This is what
+     * PACK-SUBMIT-01..10 require: submission is about the ACTION
+     * completing, never about packed_qty happening to equal target (a
+     * store may legitimately submit Tidak Sesuai with packed < target,
+     * or packed = 0 with a valid discrepancy note — both pass through
+     * applyStoreRow()'s own unchanged validation and both still count as
+     * a real, complete submission).
+     *
+     * Never marks submitted before validation succeeds: every row is
+     * validated (and the same FG_EXCEEDS_PRODUCTION ceiling re-checked)
+     * BEFORE upsertPackingSubmission() is ever called, and if ANY row
+     * throws, the whole request rolls back before that point is reached.
+     *
+     * Distinct from patchDraft()'s generic storeItems path: this is the
+     * ONLY place a Packing submission is ever created, scoped to exactly
+     * one store per call — Breakdown Toko's own "Simpan Breakdown Toko"
+     * (FG Verifikasi) keeps using the generic PATCH, which can
+     * INVALIDATE an existing submission (via applyStoreRow()'s own
+     * "changed" signal, see patchDraft()'s own storesChanged loop) but
+     * never creates one.
+     */
+    public function submitStorePacking(int $batchId, int $expectedVersion, int $storeId, array $rows, int $userId, ?string $requestId): array
+    {
+        $batch = $this->repo->lockBatchById($this->pdo, $batchId);
+        if ($batch === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'FG document not found');
+        }
+        $this->assertEditable($batch);
+        $factory = $this->requireFactory((int) $batch['factory_id']);
+        $tanggal = (string) $batch['tanggal'];
+        $factoryId = (int) $batch['factory_id'];
+
+        if ($rows === []) {
+            throw new ApiException(400, 'NO_ROWS', 'Tidak ada baris produk untuk disubmit pada Toko ini');
+        }
+
+        $existingItems = $this->repo->findItems($this->pdo, $batchId);
+        $storeRowsTouched = 0;
+        foreach ($rows as $row) {
+            $productId = (int) ($row['productId'] ?? 0);
+            if ($productId <= 0 || !isset($existingItems[$productId])) {
+                throw new ApiException(400, 'UNKNOWN_PRODUCT_FOR_BATCH', "Product {$productId} is not part of this FG document");
+            }
+            $product = $existingItems[$productId];
+            if ($product['mode'] !== 'breakdownToko') {
+                // A product still entirely in default Per Produk mode has
+                // no real per-store fgVerified yet — see fg-packing.php's
+                // own "Belum di-Breakdown Toko" read-only row docblock.
+                // The client already excludes such rows from this
+                // payload; re-validated here too, never trusted client-
+                // side alone.
+                throw new ApiException(409, 'PRODUCT_NOT_EXPLODED', "Produk {$product['product_name']}: belum di-Breakdown Toko — tidak bisa disubmit per Toko");
+            }
+            $rowStoreId = (int) ($row['storeId'] ?? $storeId);
+            if ($rowStoreId !== $storeId) {
+                throw new ApiException(400, 'STORE_MISMATCH', "Baris untuk produk {$product['product_name']} tidak cocok dengan Toko yang sedang disubmit");
+            }
+
+            $targetRows = $this->targets->storeBreakdownForProduct($this->pdo, $tanggal, $factoryId, $productId);
+            $targetByStore = [];
+            foreach ($targetRows as $t) {
+                $targetByStore[$t['storeId']] = $t;
+            }
+            $rawRows = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
+            $rawByStore = [];
+            foreach ($rawRows as $r) {
+                $rawByStore[(int) $r['store_id']] = $r;
+            }
+
+            $this->applyStoreRow($product, $targetByStore, $rawByStore, $storeId, $row);
+            $storeRowsTouched++;
+
+            $afterRows = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
+            $totalVerified = array_sum(array_map(static fn ($r) => (float) $r['qty'], $afterRows));
+            $snapshot = (float) $product['production_actual_snapshot'];
+            if ($totalVerified > $snapshot + 0.0001) {
+                throw new ApiException(400, 'FG_EXCEEDS_PRODUCTION', "Product {$productId}: total FG verified across stores ({$totalVerified}) cannot exceed production actual ({$snapshot})");
+            }
+        }
+
+        $bumped = $this->repo->bumpVersion($this->pdo, $batchId, $expectedVersion, 'status = status', []);
+        $this->assertVersionBumpSucceeded($batchId, $expectedVersion, $bumped);
+
+        // Reachable only once EVERY row above validated and wrote
+        // successfully, and the version bump itself succeeded — the
+        // submission record is the LAST thing this call does.
+        $this->repo->upsertPackingSubmission($this->pdo, $batchId, $storeId, $userId);
+
+        \Amor\Api\Audit::write(
+            $this->pdo, $requestId, $userId, 'fg.packing.submit_store', 'fg_batch', (string) $batchId,
+            'ok', $expectedVersion, $expectedVersion + 1, ['storeId' => $storeId, 'rowsTouched' => $storeRowsTouched]
         );
 
         $batch = $this->repo->findBatchById($this->pdo, $batchId);
@@ -793,6 +941,15 @@ final class FgService
         }
 
         $factoryId = (int) $batch['factory_id'];
+        // Migration 0015 — Packing's own real, persisted submission truth
+        // (never inferred from packed_qty vs target, which cannot tell
+        // "never submitted" apart from "submitted with a low/zero
+        // number" — see FgService::submitStorePacking()'s own docblock).
+        // Scoped to (batch, store), so the SAME value is attached to
+        // every one of this product's store rows for a given store — the
+        // client groups rows by store anyway (fg-packing.php's
+        // groupByStore()) and reads this once per store group.
+        $submissionsByStore = $this->repo->findPackingSubmissionsForBatch($this->pdo, $batchId);
         $rows = [];
         foreach ($targetRows as $t) {
             $existing = $byStore[$t['storeId']] ?? null;
@@ -840,6 +997,7 @@ final class FgService
                 ? $this->doRepo->sumShippedForStore($this->pdo, $t['storeId'], $productId, $factoryId)
                 : 0.0;
             $needsReview = ($t['target'] < $shippedForStore - 0.0001) || ($t['target'] < $fgVerified - 0.0001);
+            $submission = $submissionsByStore[$t['storeId']] ?? null;
             $rows[] = [
                 'storeId' => $t['storeId'],
                 'storeName' => $t['storeName'],
@@ -853,6 +1011,15 @@ final class FgService
                 'status' => $existing !== null ? $existing['status'] : 'belum_dicek',
                 'shippedQty' => $shippedForStore,
                 'needsReview' => $needsReview,
+                // null = this store's Packing has NEVER been submitted at
+                // all (not even once). 'submitted' = the real, persisted
+                // event completed and nothing has changed since.
+                // 'stale' = it WAS submitted, but a later edit changed
+                // this store's own data — submittedAt/By are kept as
+                // "last known submission" history even while stale.
+                'packingSubmittedStatus' => $submission['status'] ?? null,
+                'packingSubmittedAt' => $submission['submitted_at'] ?? null,
+                'packingSubmittedBy' => $submission['submitted_by_name'] ?? null,
             ];
         }
 

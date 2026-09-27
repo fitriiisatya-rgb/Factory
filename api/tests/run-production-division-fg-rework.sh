@@ -3,8 +3,8 @@
 # (PDFG-01..PDFG-24), followed by the full existing regression suite.
 #
 # Spins up a DISPOSABLE, local-only MariaDB instance (never the real
-# u7566812_factory host), applies ALL migrations 0001-0014 for real
-# (nothing parked — this module's own migration 0014 has no ordering
+# u7566812_factory host), applies ALL migrations 0001-0015 for real
+# (nothing parked — this pass's own migration 0015 has no ordering
 # dependency issue here since 0005 is never held back), bootstraps
 # realistic master data, then runs ProductionDivisionFgReworkTest.php
 # against a live `php -S` server, and finally re-runs the fg-allocation
@@ -84,7 +84,7 @@ return [
 ];
 PHPCONFIG
 
-echo "--- 5/9: migrate (0001-0014, ALL phases) + seed + create ADMIN ---"
+echo "--- 5/9: migrate (0001-0015, ALL phases) + seed + create ADMIN ---"
 php "$API_ROOT/bin/migrate.php" --yes || { echo "migrate.php FAILED"; exit 1; }
 php "$API_ROOT/bin/seed.php" || { echo "seed.php FAILED"; exit 1; }
 ADMIN_PASSWORD="$TEST_ADMIN_PASS" php "$API_ROOT/bin/create_admin.php" pdfg_staging_admin "PDFG Staging Admin" || { echo "create_admin.php FAILED"; exit 1; }
@@ -237,25 +237,25 @@ if [ $DO_SMOKE_RESULT -ne 0 ]; then
   exit 1
 fi
 
-echo "--- 8.9/9: real headless-browser smoke check — LIVE UAT HOTFIX Packing submit status (PACK-STATUS-01..07) ---"
-PACK_STATUS_FACTORY_ID=$(grep -oP 'PACK_STATUS_FACTORY_ID=\K[0-9]+' "$WORKDIR/pdfg-output.log" | tail -1)
-PACK_STATUS_TANGGAL=$(grep -oP 'PACK_STATUS_TANGGAL=\K[0-9-]+' "$WORKDIR/pdfg-output.log" | tail -1)
-if [ -z "$PACK_STATUS_FACTORY_ID" ] || [ -z "$PACK_STATUS_TANGGAL" ]; then
+echo "--- 8.9/9: real headless-browser smoke check — FINAL FIX real persisted Packing submission state (PACK-SUBMIT-01..08) ---"
+PACK_SUBMIT_FACTORY_ID=$(grep -oP 'PACK_SUBMIT_FACTORY_ID=\K[0-9]+' "$WORKDIR/pdfg-output.log" | tail -1)
+PACK_SUBMIT_TANGGAL=$(grep -oP 'PACK_SUBMIT_TANGGAL=\K[0-9-]+' "$WORKDIR/pdfg-output.log" | tail -1)
+if [ -z "$PACK_SUBMIT_FACTORY_ID" ] || [ -z "$PACK_SUBMIT_TANGGAL" ]; then
   kill "$PHP_PID" 2>/dev/null || true
   PHP_PID=""
-  echo "Could not find PACK_STATUS_* markers in PDFG test output — cannot run the packing submit-status smoke check"
+  echo "Could not find PACK_SUBMIT_* markers in PDFG test output — cannot run the packing submission-state smoke check"
   exit 1
 fi
 BASE_URL="http://127.0.0.1:$PHP_PORT" ADMIN_USER="pdfg_staging_admin" ADMIN_PASS="$TEST_ADMIN_PASS" \
-TANGGAL="$PACK_STATUS_TANGGAL" FACTORY_ID="$PACK_STATUS_FACTORY_ID" \
-node "$API_ROOT/tests/_ui_smoke_pack_status.mjs"
-PACK_STATUS_SMOKE_RESULT=$?
+TANGGAL="$PACK_SUBMIT_TANGGAL" FACTORY_ID="$PACK_SUBMIT_FACTORY_ID" \
+node "$API_ROOT/tests/_ui_smoke_pack_submit.mjs"
+PACK_SUBMIT_SMOKE_RESULT=$?
 
 kill "$PHP_PID" 2>/dev/null || true
 PHP_PID=""
 
-if [ $PACK_STATUS_SMOKE_RESULT -ne 0 ]; then
-  echo "_ui_smoke_pack_status.mjs FAILED — stopping before the full regression cascade"
+if [ $PACK_SUBMIT_SMOKE_RESULT -ne 0 ]; then
+  echo "_ui_smoke_pack_submit.mjs FAILED — stopping before the full regression cascade"
   exit 1
 fi
 

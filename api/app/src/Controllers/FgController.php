@@ -171,6 +171,40 @@ final class FgController
     }
 
     /**
+     * POST /api/fg/{id}/packing-submit — "Submit Packing [Store]", the
+     * ONE dedicated action that both saves a store's Packing rows AND
+     * records that store's real, persisted submission event (migration
+     * 0015's fg_store_packing_submission — see FgService::
+     * submitStorePacking()'s own docblock for why packed_qty alone can
+     * never stand in for this). Distinct from the generic PATCH /api/fg/
+     * {id} storeItems path (Breakdown Toko's own save), which can
+     * invalidate an existing submission but never create one.
+     *
+     * $userId is Auth::requireRole()'s own return value — the
+     * authenticated session's user id — and is the ONLY source for
+     * submitted_by; nothing from the request body is ever used for it.
+     */
+    public static function packingSubmitStore(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::EDITOR_ROLES);
+        $id = (int) $request->routeParams['id'];
+        $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
+        $storeId = self::requireInt($request->input('storeId'), 'storeId');
+        $rows = (array) $request->input('rows', []);
+
+        Idempotency::handle($request, 'POST /api/fg/{id}/packing-submit', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $storeId, $rows) {
+            $service = new FgService($pdo);
+            $dto = $service->submitStorePacking($id, $expectedVersion, $storeId, $rows, $userId, $request->header('Idempotency-Key'));
+            return [
+                'status' => 200,
+                'envelope' => ['ok' => true, 'data' => $dto],
+                'recordType' => 'fg_batch',
+                'recordKey' => (string) $id,
+            ];
+        });
+    }
+
+    /**
      * POST /api/fg/{id}/refresh-source — explicit "Refresh Produksi
      * Terbaru" action for an EXISTING draft/reopened batch. See
      * FgService::refreshProductionSource()'s own docblock: only updates

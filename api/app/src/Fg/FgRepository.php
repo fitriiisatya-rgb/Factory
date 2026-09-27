@@ -355,6 +355,61 @@ final class FgRepository
         $stmt->execute([$fgVerified, $packed, $reject, $hilang, $notes, $status, $fgItemId]);
     }
 
+    /**
+     * Migration 0015 — real persisted Packing submission state per (FG
+     * batch, store). ONE row per (fg_batch_id, store_id): 'submitted'
+     * right after a successful "Submit Packing [Store]" call
+     * (Fg\FgService::submitStorePacking()), flipped to 'stale' (never
+     * deleted — submitted_at/submitted_by remain visible as "last known
+     * submission" history) the moment a later write actually changes
+     * that store's own fg_item data via ANY path.
+     */
+    public function findPackingSubmission(PDO $pdo, int $batchId, int $storeId): ?array
+    {
+        $stmt = $pdo->prepare('SELECT * FROM fg_store_packing_submission WHERE fg_batch_id = ? AND store_id = ?');
+        $stmt->execute([$batchId, $storeId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    /** @return array<int,array> keyed by store_id — every store this batch has EVER had a Packing submission for (currently 'submitted' or since-invalidated to 'stale'), joined to the submitting user's display name. A store with no row at all has never been submitted. */
+    public function findPackingSubmissionsForBatch(PDO $pdo, int $batchId): array
+    {
+        $stmt = $pdo->prepare(
+            'SELECT sp.*, u.full_name AS submitted_by_name
+             FROM fg_store_packing_submission sp
+             INNER JOIN users u ON u.user_id = sp.submitted_by
+             WHERE sp.fg_batch_id = ?'
+        );
+        $stmt->execute([$batchId]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $r) {
+            $out[(int) $r['store_id']] = $r;
+        }
+        return $out;
+    }
+
+    /** Creates or refreshes this store's submission record to 'submitted', with a FRESH submitted_at/submitted_by — always wins over any prior 'stale' state (a resubmit is exactly that: a brand-new submission event, not a resurrection of the old one). $userId must come from the authenticated session (Auth::requireRole()'s own return value), never from request payload — enforced by every caller in FgService/FgController. */
+    public function upsertPackingSubmission(PDO $pdo, int $batchId, int $storeId, int $userId): void
+    {
+        $stmt = $pdo->prepare(
+            "INSERT INTO fg_store_packing_submission (fg_batch_id, store_id, status, submitted_at, submitted_by, invalidated_at, updated_at)
+             VALUES (?, ?, 'submitted', UTC_TIMESTAMP(), ?, NULL, UTC_TIMESTAMP())
+             ON DUPLICATE KEY UPDATE status = 'submitted', submitted_at = VALUES(submitted_at), submitted_by = VALUES(submitted_by), invalidated_at = NULL, updated_at = VALUES(updated_at)"
+        );
+        $stmt->execute([$batchId, $storeId, $userId]);
+    }
+
+    /** Flips this store's EXISTING 'submitted' record to 'stale' — a no-op if none exists yet (never submitted) or if it is already 'stale' (nothing to re-invalidate). Never deletes the row. */
+    public function invalidatePackingSubmission(PDO $pdo, int $batchId, int $storeId): void
+    {
+        $stmt = $pdo->prepare(
+            "UPDATE fg_store_packing_submission SET status = 'stale', invalidated_at = UTC_TIMESTAMP(), updated_at = UTC_TIMESTAMP()
+             WHERE fg_batch_id = ? AND store_id = ? AND status = 'submitted'"
+        );
+        $stmt->execute([$batchId, $storeId]);
+    }
+
     /** @return bool true if a row was actually updated (expectedVersion matched), false on a version conflict */
     public function bumpVersion(PDO $pdo, int $batchId, int $expectedVersion, string $setClause, array $setParams): bool
     {
