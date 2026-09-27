@@ -107,12 +107,18 @@ try {
   check(verifiedSesuaiGroups === 4, `Verified Sesuai/Tidak Sesuai controls render per store row, got ${verifiedSesuaiGroups}`);
   check(await page.locator('#fg-breakdown-panel .bt-packing-sesuai').count() === 0, 'Breakdown Toko in FG Verifikasi has NO packing controls at all — Packing moved entirely to the separate FG Packing step');
 
-  // FG-UI-09: actual input enables only when Tidak Sesuai.
-  const firstRow = page.locator('#fg-breakdown-panel [data-store-id]').filter({ has: page.locator('.bt-verified-sesuai') }).first();
-  const fgVerifiedInput = firstRow.locator('[data-bt-field="fgVerified"]');
-  await firstRow.locator('.bt-verified-sesuai button[data-value="sesuai"]').click();
+  // FG-UI-09: actual input enables only when Tidak Sesuai. The Sesuai
+  // group and the Actual Verified input live in SEPARATE sibling row divs
+  // that share the same [data-store-id] (never nested one inside the
+  // other), so the input must be looked up by that shared id, not as a
+  // descendant of the row the Sesuai group itself is in.
+  const firstProductBlock = page.locator('#fg-breakdown-panel .fg-card[data-product-id]').first();
+  const firstSesuaiRow = firstProductBlock.locator('[data-store-id]').filter({ has: page.locator('.bt-verified-sesuai') }).first();
+  const firstStoreId = await firstSesuaiRow.getAttribute('data-store-id');
+  const fgVerifiedInput = firstProductBlock.locator('[data-store-id="' + firstStoreId + '"] [data-bt-field="fgVerified"]').first();
+  await firstSesuaiRow.locator('.bt-verified-sesuai button[data-value="sesuai"]').click();
   check(await fgVerifiedInput.isDisabled(), 'Actual Verified input disables when "Sesuai" is clicked (FG-UI-09)');
-  await firstRow.locator('.bt-verified-sesuai button[data-value="tidak_sesuai"]').click();
+  await firstSesuaiRow.locator('.bt-verified-sesuai button[data-value="tidak_sesuai"]').click();
   check(!(await fgVerifiedInput.isDisabled()), 'Actual Verified input re-enables when "Tidak Sesuai" is clicked (FG-UI-09)');
 
   const rejectCount = await page.locator('#fg-breakdown-panel [data-bt-field="reject"]').count();
