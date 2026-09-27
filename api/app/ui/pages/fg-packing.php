@@ -693,7 +693,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     if (currentStoreId === null && storeGroups.length > 0) currentStoreId = storeGroups[0].storeId;
   }
 
-  (async function initPacking() {
+  async function initPacking() {
     try {
       await reloadStoreGroups();
       renderHeader();
@@ -702,7 +702,18 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     } catch (e) {
       document.getElementById('fg-packing-header').innerHTML = '<div class="alert alert-danger">' + e.message + '</div>';
     }
-  })();
+  }
+  // window.Amor is defined by assets/js/app.js, whose <script> tag is
+  // rendered by ui_page_foot() AFTER this page's own inline <script> in
+  // the HTML — a plain non-deferred <script src> still blocks the parser
+  // until it loads, but only for what comes AFTER it, so calling
+  // Amor.apiFetch immediately here (a plain top-level call, unlike
+  // Verifikasi's own Amor calls, which only ever run inside a LATER click
+  // handler) would run before app.js has ever been requested. The Packing
+  // step's very first fetch is deferred to 'load' (fires once every
+  // resource, including that later script, has finished) for exactly
+  // this reason.
+  window.addEventListener('load', initPacking);
 
   var submitAllBtn = document.getElementById('btn-submit-fg-packing');
   if (submitAllBtn) submitAllBtn.addEventListener('click', async function () {
