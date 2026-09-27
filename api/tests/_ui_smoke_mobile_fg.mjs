@@ -51,9 +51,10 @@ async function login(page) {
   ]);
 }
 
+let page = null;
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  const page = await context.newPage();
+  page = await context.newPage();
   page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
   page.on('pageerror', (err) => { pageErrors.push(String(err)); });
 
@@ -205,6 +206,14 @@ try {
   console.error('EXCEPTION during smoke check: ' + (e && e.stack ? e.stack : e));
   console.error('console errors so far: ' + JSON.stringify(consoleErrors));
   console.error('page errors so far: ' + JSON.stringify(pageErrors));
+  if (page) {
+    try {
+      console.error('#fg-packing-header at failure: ' + (await page.locator('#fg-packing-header').innerHTML()));
+      console.error('#fg-store-chip-row at failure: ' + (await page.locator('#fg-store-chip-row').innerHTML()));
+    } catch (e2) {
+      console.error('(could not read packing debug panels: ' + e2 + ')');
+    }
+  }
   failures.push('unhandled exception: ' + e);
 } finally {
   await browser.close();
