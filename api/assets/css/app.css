@@ -371,6 +371,43 @@ table.order-item-table { width: 100%; border-collapse: collapse; min-width: 980p
 
 .subpanel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-4); }
 .subpanel-title { font-size: var(--text-sm); font-weight: 700; margin-bottom: var(--space-3); }
+
+/* ---------------------------------------------------------------------
+   Mobile-first FG cards (FG Verifikasi + FG Packing per Toko) — stacked
+   cards instead of a wide table, so the primary mobile input never needs
+   horizontal scroll (only .table-scroll ever does, and none of these use
+   it). Additive only — no existing .data-table/.card rule is touched.
+--------------------------------------------------------------------- */
+.fg-card-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.fg-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); padding: var(--space-4); }
+.fg-card-title { font-weight: 700; font-size: var(--text-base); }
+.fg-card-sub { font-size: var(--text-xs); color: var(--text-muted); margin-top: 2px; margin-bottom: var(--space-3); }
+.fg-card-row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.fg-card-row:last-of-type { border-bottom: none; }
+.fg-card-row-label { font-size: var(--text-sm); color: var(--text-muted); flex: 1 1 auto; min-width: 90px; }
+.fg-card-row .btn-group { flex: 0 0 auto; }
+.fg-card-input { width: 100%; max-width: 9rem; text-align: right; }
+.fg-card-input[type="text"] { max-width: none; text-align: left; }
+.fg-card-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); flex-wrap: wrap; }
+.fg-card-actions .btn { flex: 1 1 auto; }
+
+/* Store selector chips (FG Packing) — the ONE place horizontal scroll is
+   intentionally allowed, since it's a small chip strip, never the
+   primary input surface. */
+.fg-store-chip-row { display: flex; gap: var(--space-3); overflow-x: auto; padding: 2px 2px var(--space-2); -webkit-overflow-scrolling: touch; }
+.fg-store-chip { flex: 0 0 auto; min-width: 168px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3); cursor: pointer; text-align: left; }
+.fg-store-chip.active { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary) inset; }
+.fg-store-chip-name { font-weight: 700; font-size: var(--text-sm); }
+.fg-store-chip-meta { font-size: var(--text-xs); color: var(--text-muted); margin-top: 2px; }
+
+.fg-progress-track { background: var(--surface-2); border-radius: var(--radius-sm); height: 8px; overflow: hidden; margin-top: var(--space-2); }
+.fg-progress-fill { background: var(--success); height: 100%; }
+
+/* Desktop gets a 2-column card grid — same components/logic, more
+   density; mobile (the primary target) stays single-column above. */
+@media (min-width: 900px) {
+  .fg-card-list.fg-card-list-2col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+}
 .routing-info-intro { font-size: var(--text-sm); color: var(--text-muted); margin-bottom: var(--space-3); }
 .routing-factory-group { margin-bottom: var(--space-3); }
 .routing-factory-group:last-child { margin-bottom: 0; }

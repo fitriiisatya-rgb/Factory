@@ -1784,6 +1784,131 @@ runTest('RECON-07 Per Produk -> Breakdown Toko -> Per Produk preserves the same 
 // =======================================================================
 // Summary
 // =======================================================================
+// Part I — MOBILE-FIRST FG VERIFIKASI + PACKING PER TOKO (setup only).
+//
+// Real headless-browser mobile checks (MOBILE-FG-01..18) run separately
+// (run-ui-smoke-mobile-fg.mjs, invoked by run-production-division-fg-
+// rework.sh right after this file exits 0) against a DEDICATED fixture,
+// exclusive tanggal (never Part G's own 2026-09-26 batch, which its own
+// smoke check still inspects in an unexploded shape):
+//   - prodMobileA: verified in DEFAULT Per Produk mode (actual=20, never
+//     exploded) — exercises FG Verifikasi's own Sesuai/Tidak Sesuai/
+//     Reject/Hilang cards (MOBILE-FG-03/04/05).
+//   - BOLLEN LILIT COKLAT (actual=25) + CHOCO CUBE 12 (actual=14) — the
+//     task's own named realistic fixture — EXPLODED into Breakdown Toko
+//     with REAL per-store numbers (Store A's Verified DELIBERATELY BELOW
+//     its own PO target for BOLLEN, so Packing's "Sesuai auto-fills to
+//     Ready Verified, never the raw Target" rule (MOBILE-FG-10) is
+//     actually exercised, not just coincidentally true because the two
+//     numbers happen to match).
+//
+// This explode requirement is itself a real, load-bearing architectural
+// fact worth stating plainly (see the delivery report): Packing per Toko
+// needs real per-store fgVerified rows to exist, which only happens once
+// a product has been explicitly exploded via FG Verifikasi's Breakdown
+// Toko (explodeToStores() refuses to explode a Per Produk row that
+// already has a nonzero fgVerified/packed/reject/hilang — "do not invent
+// a new business formula for how to split an existing aggregate number
+// across stores" — task's own pre-existing rule, unchanged, never
+// bypassed here). A product verified in the DEFAULT Per Produk mode
+// stays Per-Produk-only and simply never appears in the Packing view —
+// exactly prodMobileA's role in this fixture, and the reason Packing's
+// own store chip list can legitimately be a subset of all visible
+// products.
+// =======================================================================
+$mobileFgTanggal = '2026-10-20';
+$prodMobileA = $prodC;
+
+runTest('MOBILE-FG-00 (setup) prodMobileA verified in DEFAULT Per Produk mode (never exploded); BOLLEN LILIT COKLAT + CHOCO CUBE 12 verified via Breakdown Toko with Store A DELIBERATELY below its own PO target (Ready Verified != Target, for MOBILE-FG-10)', function () use ($http, $csrf, $pdo, $mobileFgTanggal, $karangtengahId, $rotiBollenDivId, $pastryDivId, $prodMobileA, $uiBollen, $uiChococube, $storeAId, $storeBId, $storeCId) {
+    seedPoStoreSplit($pdo, $mobileFgTanggal, $karangtengahId, (int) $uiBollen['product_id'], [
+        $storeAId => ['poAwal' => 15, 'poRevisi' => 0],
+        $storeBId => ['poAwal' => 8, 'poRevisi' => 0],
+        $storeCId => ['poAwal' => 0, 'poRevisi' => 0],
+    ]);
+    seedPoStoreSplit($pdo, $mobileFgTanggal, $karangtengahId, (int) $uiChococube['product_id'], [
+        $storeAId => ['poAwal' => 8, 'poRevisi' => 0],
+        $storeBId => ['poAwal' => 4, 'poRevisi' => 0],
+        $storeCId => ['poAwal' => 0, 'poRevisi' => 0],
+    ]);
+    // prodMobileA also needs a PO entry — Production's own production_item
+    // rows are seeded from THIS date's PO demand at draft-creation time
+    // (ProductionTargetService), regardless of whether the product will
+    // ever be store-split for FG purposes.
+    seedPo($pdo, $mobileFgTanggal, $karangtengahId, $storeAId, [(int) $prodMobileA['product_id'] => ['poAwal' => 20, 'poRevisi' => 0]]);
+
+    $createRoti = $http->request('POST', '/api/production', ['tanggal' => $mobileFgTanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('mobilefg-roti-create')));
+    expect($createRoti['status'] === 200, 'MOBILE-FG-00: expected Roti & Bollen production draft create 200, got ' . $createRoti['status'] . ': ' . json_encode($createRoti['json']));
+    $runRoti = (int) $createRoti['json']['data']['productionRunId'];
+    $verRoti = (int) $createRoti['json']['data']['version'];
+    $patchRoti = $http->request('PATCH', "/api/production/{$runRoti}", [
+        'expectedVersion' => $verRoti,
+        'items' => [
+            ['productId' => (int) $prodMobileA['product_id'], 'actualQty' => 20],
+            ['productId' => (int) $uiBollen['product_id'], 'actualQty' => 25],
+        ],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('mobilefg-roti-patch')));
+    expect($patchRoti['status'] === 200, 'MOBILE-FG-00: expected Roti & Bollen production patch 200, got ' . $patchRoti['status'] . ': ' . json_encode($patchRoti['json']));
+    $verRoti = (int) $patchRoti['json']['data']['version'];
+    $submitRoti = $http->request('POST', "/api/production/{$runRoti}/submit", ['expectedVersion' => $verRoti], array_merge(['X-CSRF-Token' => $csrf], idemKey('mobilefg-roti-submit')));
+    expect($submitRoti['status'] === 200, 'MOBILE-FG-00: expected Roti & Bollen production submit 200, got ' . $submitRoti['status'] . ': ' . json_encode($submitRoti['json']));
+
+    $createPastry = $http->request('POST', '/api/production', ['tanggal' => $mobileFgTanggal, 'divisionId' => $pastryDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('mobilefg-pastry-create')));
+    expect($createPastry['status'] === 200, 'MOBILE-FG-00: expected Pastry production draft create 200, got ' . $createPastry['status'] . ': ' . json_encode($createPastry['json']));
+    $runPastry = (int) $createPastry['json']['data']['productionRunId'];
+    $verPastry = (int) $createPastry['json']['data']['version'];
+    $patchPastry = $http->request('PATCH', "/api/production/{$runPastry}", [
+        'expectedVersion' => $verPastry,
+        'items' => [['productId' => (int) $uiChococube['product_id'], 'actualQty' => 14]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('mobilefg-pastry-patch')));
+    expect($patchPastry['status'] === 200, 'MOBILE-FG-00: expected Pastry production patch 200, got ' . $patchPastry['status'] . ': ' . json_encode($patchPastry['json']));
+    $verPastry = (int) $patchPastry['json']['data']['version'];
+    $submitPastry = $http->request('POST', "/api/production/{$runPastry}/submit", ['expectedVersion' => $verPastry], array_merge(['X-CSRF-Token' => $csrf], idemKey('mobilefg-pastry-submit')));
+    expect($submitPastry['status'] === 200, 'MOBILE-FG-00: expected Pastry production submit 200, got ' . $submitPastry['status'] . ': ' . json_encode($submitPastry['json']));
+
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $mobileFgTanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('mobilefg-fgcreate')));
+    expect($create['status'] === 200, 'MOBILE-FG-00: expected FG create 200, got ' . $create['status'] . ': ' . json_encode($create['json']));
+    $batchId = (int) $create['json']['data']['fgBatchId'];
+    $version = (int) $create['json']['data']['version'];
+
+    // prodMobileA stays DEFAULT Per Produk — verified Sesuai (=20), never touched via storeItems.
+    $verifyA = $http->request('PATCH', "/api/fg/{$batchId}", [
+        'expectedVersion' => $version,
+        'items' => [['productId' => (int) $prodMobileA['product_id'], 'fgVerified' => 20, 'packed' => 0, 'sesuaiVerified' => true]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('mobilefg-verifya')));
+    expect($verifyA['status'] === 200, 'MOBILE-FG-00: expected prodMobileA verify 200, got ' . json_encode($verifyA['json']));
+    $version = (int) $verifyA['json']['data']['version'];
+
+    // BOLLEN LILIT COKLAT explodes into Breakdown Toko — Store A verified
+    // BELOW its own target (12 < 15, Tidak Sesuai + notes) so Ready
+    // Verified genuinely differs from Target for MOBILE-FG-10's proof;
+    // Store B verified AT its own target (8, Sesuai).
+    $explodeBollen = $http->request('PATCH', "/api/fg/{$batchId}", [
+        'expectedVersion' => $version,
+        'storeItems' => [['productId' => (int) $uiBollen['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 12, 'packed' => 0, 'sesuaiVerified' => false, 'notes' => 'baru 12 pcs siap, sisanya menyusul'],
+            ['storeId' => $storeBId, 'fgVerified' => 8, 'packed' => 0, 'sesuaiVerified' => true],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('mobilefg-explode-bollen')));
+    expect($explodeBollen['status'] === 200, 'MOBILE-FG-00: expected BOLLEN explode 200, got ' . json_encode($explodeBollen['json']));
+    $version = (int) $explodeBollen['json']['data']['version'];
+
+    $explodeChococube = $http->request('PATCH', "/api/fg/{$batchId}", [
+        'expectedVersion' => $version,
+        'storeItems' => [['productId' => (int) $uiChococube['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 8, 'packed' => 0, 'sesuaiVerified' => true],
+            ['storeId' => $storeBId, 'fgVerified' => 4, 'packed' => 0, 'sesuaiVerified' => true],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('mobilefg-explode-chococube')));
+    expect($explodeChococube['status'] === 200, 'MOBILE-FG-00: expected CHOCO CUBE 12 explode 200, got ' . json_encode($explodeChococube['json']));
+});
+
+fwrite(STDOUT, "MOBILE_FG_FACTORY_ID={$karangtengahId}\n");
+fwrite(STDOUT, "MOBILE_FG_TANGGAL={$mobileFgTanggal}\n");
+fwrite(STDOUT, "MOBILE_FG_PRODMOBILEA_NAME={$prodMobileA['name']}\n");
+
+// =======================================================================
+// Summary
+// =======================================================================
 $total = count($results);
 $failed = count(array_filter($results, static fn ($ok) => !$ok));
 fwrite(STDOUT, "\n{$total} tests run, {$failed} failed.\n");

@@ -23,6 +23,19 @@ try {
     $viewError = $e->getMessage();
 }
 
+// MOBILE-FIRST REWORK — "FG Verifikasi" (per product, default) and "FG
+// Packing" (per Toko, default) are now separate steps/views (task's own
+// explicit "Split FG into two clear operational stages" requirement),
+// switched via a plain query param (a real page navigation, not a hidden
+// client-side state machine — simplest, most robust, and each step is
+// independently bookmarkable/shareable). Packing operates on the SAME
+// canonical fg_item rows Verifikasi's own Breakdown Toko already writes
+// (GET/PATCH /api/fg/{id}/items/{productId}/stores — completely
+// unchanged backend, see FgService::batchProductStores()'s own docblock)
+// — there is still only ONE stored number per store row, so splitting the
+// UI into two steps can never double-count or duplicate data.
+$fgStep = (($_GET['step'] ?? 'verifikasi') === 'packing') ? 'packing' : 'verifikasi';
+
 $selesaiDipacking = 0;
 if ($batchView !== null) {
     foreach ($batchView['items'] as $it) {
@@ -31,11 +44,17 @@ if ($batchView !== null) {
         }
     }
 }
+
+function fgStepUrl(string $step, string $tanggal, int $factoryId): string
+{
+    return '/api/_ui-preview/?page=fg-packing&tanggal=' . urlencode($tanggal) . '&factoryId=' . $factoryId . '&step=' . $step;
+}
 ?>
 <?= ui_fg_tabs('fg-packing', $uiTanggal, $uiFactoryId) ?>
 <div class="filter-bar">
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;">
     <input type="hidden" name="page" value="fg-packing">
+    <input type="hidden" name="step" value="<?= ui_esc($fgStep) ?>">
     <div class="field"><label>Tanggal</label><input type="date" name="tanggal" value="<?= ui_esc($uiTanggal) ?>"></div>
     <div class="field"><label>Pabrik</label>
       <select name="factoryId">
@@ -74,12 +93,21 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   <?= ui_kpi_card(['label' => 'Selesai Dipacking', 'value' => (string) $selesaiDipacking, 'icon' => 'box', 'color' => 'success']) ?>
 </div>
 
+<div class="filter-bar">
+  <div class="btn-group">
+    <a class="btn btn-sm <?= $fgStep === 'verifikasi' ? 'btn-primary' : 'btn-secondary' ?>" href="<?= ui_esc(fgStepUrl('verifikasi', $uiTanggal, $uiFactoryId)) ?>">FG Verifikasi</a>
+    <a class="btn btn-sm <?= $fgStep === 'packing' ? 'btn-primary' : 'btn-secondary' ?>" href="<?= ui_esc(fgStepUrl('packing', $uiTanggal, $uiFactoryId)) ?>">FG Packing</a>
+  </div>
+</div>
+
 <div class="card section">
   <div class="card-head">
     <h2 class="card-title">Draft FG #<?= (int) $batchView['fgBatchId'] ?></h2>
     <?= ui_badge(ui_doc_status_label($batchView['status'])) ?>
   </div>
   <?php $editable = in_array($batchView['status'], ['draft', 'reopened'], true); ?>
+
+  <?php if ($fgStep === 'verifikasi'): ?>
   <?php if ($batchView['sourceInconsistency']): ?>
   <div class="alert alert-warning">
     <strong>Ketidaksesuaian Sumber Produksi</strong> — salah satu Produksi sumber sudah berubah versi/dibuka kembali sejak FG ini dibuat/disegarkan. Data FG yang sudah diisi (FG Terverifikasi/Packed) TIDAK dihapus atau diubah otomatis.
@@ -102,11 +130,11 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   <?php endif; ?>
 
   <?php if ($batchView['summary']['jumlahMelebihiProduksi'] > 0): ?>
-  <div class="alert alert-danger"><strong>Diblokir untuk Submit</strong> — <?= $batchView['summary']['jumlahMelebihiProduksi'] ?> produk punya FG Terverifikasi melebihi Production Actual terbaru (lihat baris berlabel "Melebihi Produksi" pada kolom FG Status). Turunkan FG Terverifikasi produk tersebut dulu sebelum submit — sistem tidak pernah menurunkannya secara otomatis.</div>
+  <div class="alert alert-danger"><strong>Diblokir untuk Submit</strong> — <?= $batchView['summary']['jumlahMelebihiProduksi'] ?> produk punya FG Terverifikasi melebihi Production Actual terbaru (lihat status "Melebihi Produksi"). Turunkan FG Terverifikasi produk tersebut dulu sebelum submit — sistem tidak pernah menurunkannya secara otomatis.</div>
   <?php endif; ?>
 
   <div style="display:flex;gap:var(--space-2);align-items:center;margin-bottom:var(--space-3);">
-    <span style="font-size:var(--text-sm);color:var(--text-muted);">Tampilan Data:</span>
+    <span style="font-size:var(--text-sm);color:var(--text-muted);">Tampilan:</span>
     <div class="btn-group">
       <button type="button" class="btn btn-sm btn-primary" id="fg-mode-produk">Per Produk</button>
       <button type="button" class="btn btn-sm btn-secondary" id="fg-mode-toko">Breakdown Toko</button>
@@ -114,61 +142,74 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   </div>
 
   <form id="fg-form" data-batch-id="<?= (int) $batchView['fgBatchId'] ?>" data-expected-version="<?= (int) $batchView['version'] ?>" data-tanggal="<?= ui_esc($uiTanggal) ?>" data-factory-id="<?= $uiFactoryId ?>">
-  <div class="table-scroll" id="fg-perproduk-wrap"><table class="data-table">
-    <thead><tr><th>Produk</th><th>Mode</th><th class="num">Target FG (Hasil Produksi)</th><th>Verified</th><th class="num">FG Terverifikasi</th><th class="num">Selisih</th><th>Packing</th><th class="num">Packed</th><th class="num">Reject</th><th class="num">Hilang</th><th class="num">Available</th><th>FG Status</th><th>Packing Status</th><th>Catatan</th><th></th></tr></thead>
-    <tbody>
+  <div class="fg-card-list fg-card-list-2col" id="fg-perproduk-wrap">
     <?php foreach ($batchView['items'] as $it): ?>
     <?php
       $isBreakdown = ($it['mode'] ?? 'perProduk') === 'breakdownToko';
       // Per Produk cells become DERIVED/read-only the moment a product is
       // exploded into store rows (Option A — see FgService::patchDraft()'s
-      // own docblock): the "no double counting" rule is satisfied by
-      // construction only if there is never a second place to type a
-      // number for the same product at the same time.
+      // own docblock) — "no double counting" is satisfied by construction
+      // only if there is never a second place to type a number for the
+      // same product at the same time.
       $rowEditable = $editable && !$isBreakdown;
       $verifiedIsSesuai = $rowEditable && abs($it['fgVerified'] - $it['productionActualSnapshot']) < 0.01 && $it['fgVerified'] > 0;
-      $packingIsSesuai = $rowEditable && abs($it['packed'] - $it['fgVerified']) < 0.01 && $it['packed'] > 0;
     ?>
-    <tr>
-      <td><?= ui_esc($it['productName']) ?></td>
-      <td><?= ui_badge($isBreakdown ? 'Breakdown Toko (' . (int) $it['storeCount'] . ' Toko)' : 'Per Produk') ?></td>
-      <td class="num"><?= ui_fmt_num($it['productionActualSnapshot']) ?></td>
-      <td>
+    <div class="fg-card" data-product-id="<?= (int) $it['productId'] ?>">
+      <div class="fg-card-title"><?= ui_esc($it['productName']) ?></div>
+      <div class="fg-card-sub">
+        Target FG (Hasil Produksi): <b><?= ui_fmt_num($it['productionActualSnapshot']) ?></b>
+        · Available: <?= ui_fmt_num($it['available']) ?>
+        · <?= ui_badge($isBreakdown ? 'Breakdown Toko (' . (int) $it['storeCount'] . ' Toko)' : 'Per Produk') ?>
+      </div>
+
+      <div class="fg-card-row">
+        <span class="fg-card-row-label">Verifikasi</span>
         <?php if ($rowEditable): ?>
         <div class="btn-group fg-verified-sesuai-group" data-product-id="<?= (int) $it['productId'] ?>" data-target="<?= ui_esc((string) $it['productionActualSnapshot']) ?>" data-sesuai="<?= $verifiedIsSesuai ? '1' : '0' ?>">
           <button type="button" class="btn btn-sm <?= $verifiedIsSesuai ? 'btn-primary' : 'btn-secondary' ?>" data-value="sesuai">Sesuai</button>
           <button type="button" class="btn btn-sm <?= !$verifiedIsSesuai ? 'btn-danger' : 'btn-secondary' ?>" data-value="tidak_sesuai">Tidak Sesuai</button>
         </div>
         <?php else: ?><span style="color:var(--text-faint);">-</span><?php endif; ?>
-      </td>
-      <td class="num"><?php if ($rowEditable): ?><input type="number" step="0.01" min="0" style="width:5.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="fgVerified" value="<?= ui_fmt_num($it['fgVerified']) ?>" <?= $verifiedIsSesuai ? 'disabled' : '' ?>><?php else: ?><?= ui_fmt_num($it['fgVerified']) ?><?php endif; ?></td>
-      <td class="num"><?= ui_fmt_num($it['variance']) ?></td>
-      <td>
-        <?php if ($rowEditable): ?>
-        <div class="btn-group fg-packing-sesuai-group" data-product-id="<?= (int) $it['productId'] ?>" data-sesuai="<?= $packingIsSesuai ? '1' : '0' ?>">
-          <button type="button" class="btn btn-sm <?= $packingIsSesuai ? 'btn-primary' : 'btn-secondary' ?>" data-value="sesuai">Sesuai</button>
-          <button type="button" class="btn btn-sm <?= !$packingIsSesuai ? 'btn-danger' : 'btn-secondary' ?>" data-value="tidak_sesuai">Tidak Sesuai</button>
-        </div>
-        <?php else: ?><span style="color:var(--text-faint);">-</span><?php endif; ?>
-      </td>
-      <td class="num"><?php if ($rowEditable): ?><input type="number" step="0.01" min="0" style="width:5.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="packed" value="<?= ui_fmt_num($it['packed']) ?>" <?= $packingIsSesuai ? 'disabled' : '' ?>><?php else: ?><?= ui_fmt_num($it['packed']) ?><?php endif; ?></td>
-      <td class="num"><?php if ($rowEditable): ?><input type="number" step="0.01" min="0" style="width:4.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_fmt_num($it['reject'] ?? 0) ?>"><?php else: ?><?= ui_fmt_num($it['reject'] ?? 0) ?><?php endif; ?></td>
-      <td class="num"><?php if ($rowEditable): ?><input type="number" step="0.01" min="0" style="width:4.5rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="hilang" value="<?= ui_fmt_num($it['hilang'] ?? 0) ?>"><?php else: ?><?= ui_fmt_num($it['hilang'] ?? 0) ?><?php endif; ?></td>
-      <td class="num"><?= ui_fmt_num($it['available']) ?></td>
-      <td><?= ui_badge($it['fgStatusLabel']) ?></td>
-      <td><?= ui_badge($it['packingStatusLabel']) ?></td>
-      <td><?php if ($rowEditable): ?><input type="text" style="width:8rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="notes" value="<?= ui_esc((string) ($it['notes'] ?? '')) ?>"><?php else: ?><?= ui_esc((string) ($it['notes'] ?? '')) ?><?php endif; ?></td>
-      <td style="white-space:nowrap;">
-        <button type="button" class="btn btn-secondary btn-sm fg-breakdown-btn" data-product-id="<?= (int) $it['productId'] ?>" data-product-name="<?= ui_esc($it['productName']) ?>" data-mode="<?= $isBreakdown ? 'breakdownToko' : 'perProduk' ?>">Breakdown Toko</button>
+      </div>
+      <div class="fg-card-row">
+        <span class="fg-card-row-label">FG Terverifikasi</span>
+        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="fgVerified" value="<?= ui_fmt_num($it['fgVerified']) ?>" <?= $verifiedIsSesuai ? 'disabled' : '' ?>>
+        <?php else: ?><b><?= ui_fmt_num($it['fgVerified']) ?></b><?php endif; ?>
+      </div>
+      <div class="fg-card-row"><span class="fg-card-row-label">Selisih</span><span><?= ui_fmt_num($it['variance']) ?></span></div>
+      <div class="fg-card-row">
+        <span class="fg-card-row-label">Reject</span>
+        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_fmt_num($it['reject'] ?? 0) ?>">
+        <?php else: ?><?= ui_fmt_num($it['reject'] ?? 0) ?><?php endif; ?>
+      </div>
+      <div class="fg-card-row">
+        <span class="fg-card-row-label">Hilang</span>
+        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="hilang" value="<?= ui_fmt_num($it['hilang'] ?? 0) ?>">
+        <?php else: ?><?= ui_fmt_num($it['hilang'] ?? 0) ?><?php endif; ?>
+      </div>
+      <div class="fg-card-row">
+        <span class="fg-card-row-label">Catatan</span>
+        <?php if ($rowEditable): ?><input type="text" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="notes" value="<?= ui_esc((string) ($it['notes'] ?? '')) ?>">
+        <?php else: ?><?= ui_esc((string) ($it['notes'] ?? '')) ?><?php endif; ?>
+      </div>
+      <div class="fg-card-row"><span class="fg-card-row-label">FG Status</span><?= ui_badge($it['fgStatusLabel']) ?></div>
+      <!-- "packed" is a FG PACKING concern now (see the separate "FG Packing" step/tab)
+           — hidden here so Verifikasi's own PATCH never needs to show it, but still
+           ECHOED BACK unchanged (patchDraft()'s items[] line REPLACES packed_qty,
+           defaulting to 0 if absent — see FgService::patchDraft()'s own docblock —
+           so this hidden field is what stops a Verifikasi-only save from wiping out
+           already-packed work). -->
+      <input type="hidden" data-product-id="<?= (int) $it['productId'] ?>" data-field="packed" value="<?= ui_fmt_num($it['packed']) ?>">
+      <div class="fg-card-actions">
+        <button type="button" class="btn btn-secondary btn-sm fg-breakdown-btn" data-product-id="<?= (int) $it['productId'] ?>" data-product-name="<?= ui_esc($it['productName']) ?>">Breakdown Toko</button>
         <?php if ($editable && $isBreakdown): ?>
         <button type="button" class="btn btn-warning btn-sm fg-collapse-btn" data-product-id="<?= (int) $it['productId'] ?>" data-product-name="<?= ui_esc($it['productName']) ?>">Kembali ke Per Produk</button>
         <?php endif; ?>
-      </td>
-    </tr>
+      </div>
+    </div>
     <?php endforeach; ?>
-    </tbody>
-  </table></div>
-  <div id="fg-breakdown-panel" class="subpanel" style="display:none;margin-top:var(--space-3);"></div>
+  </div>
+  <div id="fg-breakdown-panel" class="fg-card-list" style="display:none;margin-top:var(--space-3);"></div>
   <?php if ($editable): ?>
   <label style="display:flex;align-items:center;gap:8px;margin-top:var(--space-3);font-size:var(--text-sm);color:var(--text-muted);">
     <input type="checkbox" id="fg-refresh-source"> Segarkan sumber dari Produksi SUBMITTED terbaru (tidak mengubah angka yang sudah diisi)
@@ -183,14 +224,41 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   </div>
   <?php endif; ?>
   </form>
+
+  <?php else /* $fgStep === 'packing' */: ?>
+  <div id="fg-packing-header" style="margin-bottom:var(--space-3);">
+    <div style="color:var(--text-muted);font-size:var(--text-sm);">Memuat status packing per toko...</div>
+  </div>
+  <div class="fg-store-chip-row" id="fg-store-chip-row"></div>
+  <div id="fg-packing-detail" style="margin-top:var(--space-3);"></div>
+  <?php if ($editable): ?>
+  <div class="btn-group" style="margin-top:var(--space-4);">
+    <button type="button" class="btn btn-success" id="btn-submit-fg-packing">Submit FG (Semua Toko)</button>
+  </div>
+  <?php elseif ($batchView['status'] === 'submitted'): ?>
+  <div class="btn-group" style="margin-top:var(--space-4);">
+    <button type="button" class="btn btn-warning" id="btn-reopen-fg-packing">Buka Kembali / Reopen</button>
+  </div>
+  <?php endif; ?>
+  <?php endif; ?>
 </div>
 
 <script>
 (function () {
-  // Sesuai/Tidak Sesuai for Verified and Packing — same auto-fill/lock
-  // convenience and same "server always re-derives, never trusts a
-  // disabled input" rule as Ceklis Produksi's own sesuai buttons (see
-  // FgService::patchDraft()'s sesuaiVerified/sesuaiPacking check).
+  var batchId = <?= (int) $batchView['fgBatchId'] ?>;
+  var version = <?= (int) $batchView['version'] ?>;
+  var editableHere = <?= $editable ? 'true' : 'false' ?>;
+  var fgStep = <?= json_encode($fgStep) ?>;
+  // Server-filtered list (target > 0 only — see FgService::buildBatchDto()'s
+  // isVisibleItem() gate) — the single source of truth both steps fetch
+  // per-store data for.
+  var visibleProducts = <?= json_encode(array_map(static fn ($it) => ['productId' => $it['productId'], 'productName' => $it['productName']], $batchView['items'])) ?>;
+
+  // Sesuai/Tidak Sesuai — same auto-fill/lock convenience and same "server
+  // always re-derives, never trusts a disabled input" rule everywhere it's
+  // used (FG Verifikasi's own fields, Breakdown Toko's Verified, and FG
+  // Packing's Actual Packing — see FgService::patchDraft()'s own
+  // sesuaiVerified/sesuaiPacking check).
   function wireSesuaiGroup(group, valueInput, targetProvider) {
     group.querySelectorAll('button').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -208,292 +276,456 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       });
     });
   }
-  document.querySelectorAll('.fg-verified-sesuai-group').forEach(function (group) {
-    var pid = group.getAttribute('data-product-id');
-    var input = document.querySelector('#fg-form [data-field="fgVerified"][data-product-id="' + pid + '"]');
-    if (input) wireSesuaiGroup(group, input, function () { return group.getAttribute('data-target'); });
-  });
-  document.querySelectorAll('.fg-packing-sesuai-group').forEach(function (group) {
-    var pid = group.getAttribute('data-product-id');
-    var packedInput = document.querySelector('#fg-form [data-field="packed"][data-product-id="' + pid + '"]');
-    var verifiedInput = document.querySelector('#fg-form [data-field="fgVerified"][data-product-id="' + pid + '"]');
-    if (packedInput && verifiedInput) wireSesuaiGroup(group, packedInput, function () { return verifiedInput.value || '0'; });
-  });
-
-  // Per Produk / Breakdown Toko — the top-level "Tampilan Data" toggle now
-  // actually SWITCHES the table's own data source/renderer (HOTFIX —
-  // previously it only changed the two buttons' CSS classes and revealed
-  // an empty panel, since nothing ever populated it unless a per-row
-  // "Breakdown Toko" button had separately been clicked). Breakdown Toko
-  // stays a pure VIEW over the SAME underlying fg_item rows Per Produk
-  // reads (FgService::batchProductStores(), the writable data source — see
-  // its own docblock): there is still only ONE stored number per store
-  // row, so switching modes can never double-count or duplicate data
-  // (task's own explicit "switching modes must not create duplicate
-  // data"/"both modes must reflect the same canonical FG truth" rule).
-  var modeProduk = document.getElementById('fg-mode-produk');
-  var modeToko = document.getElementById('fg-mode-toko');
-  var breakdownPanel = document.getElementById('fg-breakdown-panel');
-  var perProdukWrap = document.getElementById('fg-perproduk-wrap');
-  var editableHere = <?= $editable ? 'true' : 'false' ?>;
-  // Server-filtered list (BUG 1 fix already applied to $batchView['items']
-  // itself — see FgService::buildBatchDto()) — this is exactly "every
-  // product with target > 0" the whole-table Breakdown Toko view must
-  // fetch store rows for, never a second/looser list.
-  var visibleProducts = <?= json_encode(array_map(static fn ($it) => ['productId' => $it['productId'], 'productName' => $it['productName']], $batchView['items'])) ?>;
-
-  // Builds ONE product's store-breakdown block as a detached DOM node —
-  // shared by the whole-table "Breakdown Toko" mode (one block per visible
-  // product, stacked) and the per-row quick-view button (a single block).
-  // Every element inside is scoped via closures over THIS node (never a
-  // global id/getElementById), so any number of these can be on screen at
-  // once without id collisions.
-  function buildStoreBlock(pid, pname, data) {
-    var rowsHtml = (data.stores || []).map(function (s, idx) {
-      var verifiedSesuai = editableHere && Math.abs(s.fgVerified - s.target) < 0.01 && s.fgVerified > 0;
-      var packingSesuai = editableHere && Math.abs(s.packed - s.fgVerified) < 0.01 && s.packed > 0;
-      // "Perlu Review Ulang" — a PO revision lowered this store's target
-      // below what's already entered/shipped against the OLD target;
-      // non-blocking, purely informational (see FgService::
-      // batchProductStores()'s own docblock — never silently reclaims
-      // already-packed/already-shipped stock).
-      var reviewBadge = s.needsReview ? ' <span class="badge badge-danger">Perlu Review Ulang</span>' : '';
-      if (!editableHere) {
-        return '<tr><td>' + (idx + 1) + '</td><td>' + pname + '</td><td>' + s.storeName + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
-          + '<td class="num">' + s.fgVerified.toLocaleString('id-ID') + '</td><td class="num">' + s.packed.toLocaleString('id-ID') + '</td>'
-          + '<td class="num">' + s.reject.toLocaleString('id-ID') + '</td><td class="num">' + s.hilang.toLocaleString('id-ID') + '</td>'
-          + '<td>' + (s.notes || '') + '</td><td>' + (s.status || '') + reviewBadge + '</td></tr>';
-      }
-      return '<tr data-store-id="' + s.storeId + '">'
-        + '<td>' + (idx + 1) + '</td><td>' + pname + '</td><td>' + s.storeName + reviewBadge + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
-        + '<td><div class="btn-group bt-verified-sesuai" data-target="' + s.target + '" data-sesuai="' + (verifiedSesuai ? '1' : '0') + '">'
-        +   '<button type="button" class="btn btn-sm ' + (verifiedSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
-        +   '<button type="button" class="btn btn-sm ' + (!verifiedSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'
-        + '</div></td>'
-        + '<td class="num"><input type="number" step="0.01" min="0" style="width:5rem;text-align:right;" data-bt-field="fgVerified" value="' + s.fgVerified + '" ' + (verifiedSesuai ? 'disabled' : '') + '></td>'
-        + '<td><div class="btn-group bt-packing-sesuai" data-sesuai="' + (packingSesuai ? '1' : '0') + '">'
-        +   '<button type="button" class="btn btn-sm ' + (packingSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
-        +   '<button type="button" class="btn btn-sm ' + (!packingSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'
-        + '</div></td>'
-        + '<td class="num"><input type="number" step="0.01" min="0" style="width:5rem;text-align:right;" data-bt-field="packed" value="' + s.packed + '" ' + (packingSesuai ? 'disabled' : '') + '></td>'
-        + '<td class="num"><input type="number" step="0.01" min="0" style="width:4rem;text-align:right;" data-bt-field="reject" value="' + s.reject + '"></td>'
-        + '<td class="num"><input type="number" step="0.01" min="0" style="width:4rem;text-align:right;" data-bt-field="hilang" value="' + s.hilang + '"></td>'
-        + '<td><input type="text" style="width:8rem;" data-bt-field="notes" value="' + (s.notes || '').replace(/"/g, '&quot;') + '"></td>'
-        + '<td>' + (s.status || '') + '</td></tr>';
-    }).join('');
-    var head = '<tr><th>No</th><th>Produk</th><th>Toko</th><th class="num">Target Toko</th><th>Verified Result</th><th class="num">Actual Verified</th><th>Packing Result</th><th class="num">Actual Packing</th><th class="num">Reject</th><th class="num">Hilang</th><th>Keterangan</th><th>Status</th></tr>';
-    var actions = editableHere
-      ? '<div class="btn-group" style="margin-top:var(--space-2);"><button type="button" class="btn btn-primary btn-sm bt-save">Simpan Breakdown Toko</button></div>'
-      : '';
-
-    var block = document.createElement('div');
-    block.className = 'card section';
-    block.setAttribute('data-product-id', pid);
-    block.innerHTML = '<div class="card-head"><h3 class="card-title" style="font-size:var(--text-md);">Breakdown Toko — ' + pname + '</h3></div>'
-      + (data.exploded ? '' : '<div class="alert alert-warning" style="margin-bottom:var(--space-2);">Produk ini masih mode Per Produk — mengisi baris di bawah dan Simpan akan memecahnya ke per-Toko.</div>')
-      + (data.stores.length === 0 ? '<p style="color:var(--text-muted);">Tidak ada Toko dengan target &gt; 0 untuk produk ini pada tanggal/pabrik ini.</p>' : (
-        '<div class="table-scroll"><table class="data-table"><thead>' + head + '</thead><tbody>' + rowsHtml + '</tbody>'
-        + '<tfoot><tr><td colspan="3">Total</td><td class="num">' + data.totalTarget.toLocaleString('id-ID') + '</td><td></td><td class="num">' + data.totalVerified.toLocaleString('id-ID') + '</td><td></td><td class="num">' + data.totalPacked.toLocaleString('id-ID') + '</td><td colspan="3"></td></tr></tfoot></table></div>'
-      ))
-      + actions;
-
-    block.querySelectorAll('.bt-verified-sesuai').forEach(function (group) {
-      var input = group.closest('tr').querySelector('[data-bt-field="fgVerified"]');
-      wireSesuaiGroup(group, input, function () { return group.getAttribute('data-target'); });
-    });
-    block.querySelectorAll('.bt-packing-sesuai').forEach(function (group) {
-      var tr = group.closest('tr');
-      var packedInput = tr.querySelector('[data-bt-field="packed"]');
-      var verifiedInput = tr.querySelector('[data-bt-field="fgVerified"]');
-      wireSesuaiGroup(group, packedInput, function () { return verifiedInput.value || '0'; });
-    });
-
-    var saveBtn = block.querySelector('.bt-save');
-    if (saveBtn) saveBtn.addEventListener('click', async function () {
-      saveBtn.disabled = true;
-      var rowsOut = [];
-      block.querySelectorAll('tbody tr[data-store-id]').forEach(function (tr) {
-        var vGroup = tr.querySelector('.bt-verified-sesuai');
-        var pGroup = tr.querySelector('.bt-packing-sesuai');
-        rowsOut.push({
-          storeId: parseInt(tr.getAttribute('data-store-id'), 10),
-          fgVerified: parseFloat(tr.querySelector('[data-bt-field="fgVerified"]').value || '0'),
-          packed: parseFloat(tr.querySelector('[data-bt-field="packed"]').value || '0'),
-          reject: parseFloat(tr.querySelector('[data-bt-field="reject"]').value || '0'),
-          hilang: parseFloat(tr.querySelector('[data-bt-field="hilang"]').value || '0'),
-          notes: tr.querySelector('[data-bt-field="notes"]').value,
-          sesuaiVerified: vGroup ? vGroup.getAttribute('data-sesuai') === '1' : false,
-          sesuaiPacking: pGroup ? pGroup.getAttribute('data-sesuai') === '1' : false,
-        });
-      });
-      try {
-        var saved = await Amor.apiFetch('/api/fg/' + batchId, {
-          method: 'PATCH',
-          body: { expectedVersion: version, storeItems: [{ productId: parseInt(pid, 10), rows: rowsOut }] },
-        });
-        version = saved.version;
-        form.setAttribute('data-expected-version', version);
-        Amor.toast('Breakdown Toko disimpan.', 'success');
-        setTimeout(function () { location.reload(); }, 600);
-      } catch (e) { Amor.toast(e.message, 'danger'); saveBtn.disabled = false; }
-    });
-    return block;
-  }
 
   async function fetchStoreData(pid) {
     return Amor.apiFetch('/api/fg/' + batchId + '/items/' + pid + '/stores');
   }
+  async function fetchAllStoreRows() {
+    return Promise.all(visibleProducts.map(function (p) {
+      return fetchStoreData(p.productId).then(function (data) { return { productId: p.productId, productName: p.productName, data: data }; });
+    }));
+  }
 
-  // Whole-table mode switch: fetches EVERY visible product's store rows in
-  // parallel and stacks their blocks in place of the Per Produk table —
-  // "click Breakdown Toko -> rows appear directly", no manual per-product
-  // "explode" step required first (batchProductStores() already renders
-  // 0-rows from the live PO target before a product is ever exploded).
-  async function enterBreakdownMode(focusProductId) {
-    if (!breakdownPanel) return;
-    modeToko.className = 'btn btn-sm btn-primary'; modeProduk.className = 'btn btn-sm btn-secondary';
-    if (perProdukWrap) perProdukWrap.style.display = 'none';
-    breakdownPanel.style.display = '';
-    breakdownPanel.innerHTML = '<div style="color:var(--text-muted);">Memuat Breakdown Toko...</div>';
-    if (visibleProducts.length === 0) {
-      breakdownPanel.innerHTML = '<p style="color:var(--text-muted);">Tidak ada produk dengan target &gt; 0.</p>';
+  if (fgStep === 'verifikasi') {
+    document.querySelectorAll('.fg-verified-sesuai-group').forEach(function (group) {
+      var pid = group.getAttribute('data-product-id');
+      var input = document.querySelector('#fg-form [data-field="fgVerified"][data-product-id="' + pid + '"]');
+      if (input) wireSesuaiGroup(group, input, function () { return group.getAttribute('data-target'); });
+    });
+
+    var modeProduk = document.getElementById('fg-mode-produk');
+    var modeToko = document.getElementById('fg-mode-toko');
+    var breakdownPanel = document.getElementById('fg-breakdown-panel');
+    var perProdukWrap = document.getElementById('fg-perproduk-wrap');
+
+    // Builds ONE product's store-breakdown card block — Verifikasi's
+    // Breakdown Toko is Verified/Reject/Hilang/Keterangan ONLY (Packing
+    // now lives in its own step/tab, see below); "packed" is echoed back
+    // unchanged via a hidden field for the same reason as the Per Produk
+    // card above.
+    function buildVerifikasiStoreBlock(pid, pname, data) {
+      var block = document.createElement('div');
+      block.className = 'fg-card';
+      block.setAttribute('data-product-id', pid);
+      var head = '<div class="fg-card-title">' + pname + '</div>'
+        + (data.exploded ? '' : '<div class="alert alert-warning" style="margin:var(--space-2) 0;">Produk ini masih mode Per Produk — mengisi baris di bawah dan Simpan akan memecahnya ke per-Toko.</div>');
+      var rowsHtml = (data.stores || []).map(function (s) {
+        var verifiedSesuai = editableHere && Math.abs(s.fgVerified - s.target) < 0.01 && s.fgVerified > 0;
+        var reviewBadge = s.needsReview ? ' <span class="badge badge-danger">Perlu Review Ulang</span>' : '';
+        var body = '<div class="fg-card-sub" style="margin-top:var(--space-3);margin-bottom:0;"><b>' + s.storeName + '</b>' + reviewBadge + ' &middot; Target Toko: ' + s.target.toLocaleString('id-ID') + '</div>';
+        if (!editableHere) {
+          return body
+            + '<div class="fg-card-row"><span class="fg-card-row-label">Actual Verified</span><span>' + s.fgVerified.toLocaleString('id-ID') + '</span></div>'
+            + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><span>' + s.reject.toLocaleString('id-ID') + '</span></div>'
+            + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><span>' + s.hilang.toLocaleString('id-ID') + '</span></div>'
+            + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><span>' + (s.notes || '') + '</span></div>'
+            + '<div class="fg-card-row"><span class="fg-card-row-label">Status</span><span>' + (s.status || '') + '</span></div>';
+        }
+        return body
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Verified Result</span>'
+          +   '<div class="btn-group bt-verified-sesuai" data-target="' + s.target + '" data-sesuai="' + (verifiedSesuai ? '1' : '0') + '">'
+          +     '<button type="button" class="btn btn-sm ' + (verifiedSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
+          +     '<button type="button" class="btn btn-sm ' + (!verifiedSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'
+          +   '</div></div>'
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Actual Verified</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="fgVerified" value="' + s.fgVerified + '" ' + (verifiedSesuai ? 'disabled' : '') + '></div>'
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Reject</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="reject" value="' + s.reject + '"></div>'
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Hilang</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="hilang" value="' + s.hilang + '"></div>'
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-bt-field="notes" value="' + (s.notes || '').replace(/"/g, '&quot;') + '"></div>'
+          + '<input type="hidden" data-store-id="' + s.storeId + '" data-bt-field="packed" value="' + s.packed + '">'
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Status</span><span>' + (s.status || '') + '</span></div>';
+      }).join('');
+      var actions = editableHere ? '<div class="fg-card-actions"><button type="button" class="btn btn-primary btn-sm bt-save">Simpan Breakdown Toko</button></div>' : '';
+      block.innerHTML = head
+        + (data.stores.length === 0 ? '<p style="color:var(--text-muted);">Tidak ada Toko dengan target &gt; 0 untuk produk ini.</p>' : rowsHtml)
+        + (data.stores.length === 0 ? '' : '<div class="fg-card-row"><span class="fg-card-row-label"><b>Total</b></span><span>Target ' + data.totalTarget.toLocaleString('id-ID') + ' &middot; Verified ' + data.totalVerified.toLocaleString('id-ID') + '</span></div>')
+        + actions;
+
+      block.querySelectorAll('.bt-verified-sesuai').forEach(function (group) {
+        var storeId = group.closest('[data-store-id]').getAttribute('data-store-id');
+        var input = block.querySelector('[data-store-id="' + storeId + '"] [data-bt-field="fgVerified"]');
+        wireSesuaiGroup(group, input, function () { return group.getAttribute('data-target'); });
+      });
+
+      var saveBtn = block.querySelector('.bt-save');
+      if (saveBtn) saveBtn.addEventListener('click', async function () {
+        saveBtn.disabled = true;
+        var rowsOut = [];
+        var storeIds = [];
+        block.querySelectorAll('[data-store-id]').forEach(function (el) {
+          var sid = el.getAttribute('data-store-id');
+          if (storeIds.indexOf(sid) === -1) storeIds.push(sid);
+        });
+        // A field lives either ON the matched [data-store-id] element itself
+        // (the standalone hidden "packed" echo-back input) or nested INSIDE
+        // one of the several [data-store-id] row divs for this store (every
+        // visible input) — this selector covers both without guessing which.
+        storeIds.forEach(function (sid) {
+          var field = function (name) {
+            return block.querySelector('[data-store-id="' + sid + '"][data-bt-field="' + name + '"], [data-store-id="' + sid + '"] [data-bt-field="' + name + '"]');
+          };
+          var vGroup = block.querySelector('[data-store-id="' + sid + '"] .bt-verified-sesuai');
+          rowsOut.push({
+            storeId: parseInt(sid, 10),
+            fgVerified: parseFloat((field('fgVerified') || { value: '0' }).value || '0'),
+            packed: parseFloat((field('packed') || { value: '0' }).value || '0'),
+            reject: parseFloat((field('reject') || { value: '0' }).value || '0'),
+            hilang: parseFloat((field('hilang') || { value: '0' }).value || '0'),
+            notes: (field('notes') || { value: '' }).value,
+            sesuaiVerified: vGroup ? vGroup.getAttribute('data-sesuai') === '1' : false,
+          });
+        });
+        try {
+          var saved = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, storeItems: [{ productId: parseInt(pid, 10), rows: rowsOut }] } });
+          version = saved.version;
+          Amor.toast('Breakdown Toko disimpan.', 'success');
+          setTimeout(function () { location.reload(); }, 600);
+        } catch (e) { Amor.toast(e.message, 'danger'); saveBtn.disabled = false; }
+      });
+      return block;
+    }
+
+    async function enterBreakdownMode(focusProductId) {
+      if (!breakdownPanel) return;
+      modeToko.className = 'btn btn-sm btn-primary'; modeProduk.className = 'btn btn-sm btn-secondary';
+      if (perProdukWrap) perProdukWrap.style.display = 'none';
+      breakdownPanel.style.display = '';
+      breakdownPanel.innerHTML = '<div style="color:var(--text-muted);">Memuat Breakdown Toko...</div>';
+      if (visibleProducts.length === 0) {
+        breakdownPanel.innerHTML = '<p style="color:var(--text-muted);">Tidak ada produk dengan target &gt; 0.</p>';
+        return;
+      }
+      try {
+        var results = await fetchAllStoreRows();
+        breakdownPanel.innerHTML = '';
+        results.forEach(function (r) {
+          breakdownPanel.appendChild(buildVerifikasiStoreBlock(r.productId, r.productName, r.data));
+        });
+        if (focusProductId) {
+          var target = breakdownPanel.querySelector('[data-product-id="' + focusProductId + '"]');
+          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      } catch (e) {
+        breakdownPanel.innerHTML = '<div class="alert alert-danger">' + e.message + '</div>';
+      }
+    }
+    function exitBreakdownMode() {
+      modeProduk.className = 'btn btn-sm btn-primary'; modeToko.className = 'btn btn-sm btn-secondary';
+      if (perProdukWrap) perProdukWrap.style.display = '';
+      if (breakdownPanel) { breakdownPanel.style.display = 'none'; breakdownPanel.innerHTML = ''; }
+    }
+    if (modeProduk && modeToko) {
+      modeProduk.addEventListener('click', exitBreakdownMode);
+      modeToko.addEventListener('click', function () { enterBreakdownMode(null); });
+    }
+    document.querySelectorAll('.fg-breakdown-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () { enterBreakdownMode(btn.getAttribute('data-product-id')); });
+    });
+    document.querySelectorAll('.fg-collapse-btn').forEach(function (btn) {
+      btn.addEventListener('click', async function () {
+        var pid = btn.getAttribute('data-product-id');
+        var pname = btn.getAttribute('data-product-name');
+        var ok = await Amor.confirmModal({ title: 'Kembali ke Per Produk?', body: 'Baris per-Toko untuk ' + pname + ' akan digabung kembali menjadi satu baris Per Produk (total tidak berubah). Detail per-Toko akan hilang.', confirmLabel: 'Ya, Gabungkan' });
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          var data = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, collapseProductIds: [parseInt(pid, 10)] } });
+          version = data.version;
+          Amor.toast('Digabung kembali ke Per Produk.', 'success');
+          setTimeout(function () { location.reload(); }, 600);
+        } catch (e) { Amor.toast(e.message, 'danger'); btn.disabled = false; }
+      });
+    });
+
+    function collectItems() {
+      var items = [];
+      document.querySelectorAll('#fg-form [data-field="fgVerified"]').forEach(function (input) {
+        var pid = input.getAttribute('data-product-id');
+        var packedInput = document.querySelector('#fg-form [data-field="packed"][data-product-id="' + pid + '"]');
+        var rejectInput = document.querySelector('#fg-form [data-field="reject"][data-product-id="' + pid + '"]');
+        var hilangInput = document.querySelector('#fg-form [data-field="hilang"][data-product-id="' + pid + '"]');
+        var notesInput = document.querySelector('#fg-form [data-field="notes"][data-product-id="' + pid + '"]');
+        var verifiedGroup = document.querySelector('.fg-verified-sesuai-group[data-product-id="' + pid + '"]');
+        items.push({
+          productId: parseInt(pid, 10),
+          fgVerified: parseFloat(input.value || '0'),
+          packed: packedInput ? parseFloat(packedInput.value || '0') : 0,
+          reject: rejectInput ? parseFloat(rejectInput.value || '0') : 0,
+          hilang: hilangInput ? parseFloat(hilangInput.value || '0') : 0,
+          notes: notesInput ? notesInput.value : '',
+          sesuaiVerified: verifiedGroup ? verifiedGroup.getAttribute('data-sesuai') === '1' : false,
+        });
+      });
+      return items;
+    }
+    var form = document.getElementById('fg-form');
+    var refreshBox = document.getElementById('fg-refresh-source');
+
+    var saveBtn = document.getElementById('btn-save-fg');
+    if (saveBtn) saveBtn.addEventListener('click', async function () {
+      saveBtn.disabled = true;
+      try {
+        var data = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, items: collectItems(), refreshSource: refreshBox && refreshBox.checked } });
+        Amor.toast('Draft FG disimpan.', 'success');
+        version = data.version;
+        form.setAttribute('data-expected-version', version);
+      } catch (e) { Amor.toast(e.message, 'danger'); }
+      saveBtn.disabled = false;
+    });
+
+    var submitBtn = document.getElementById('btn-submit-fg');
+    if (submitBtn) submitBtn.addEventListener('click', async function () {
+      var ok = await Amor.confirmModal({ title: 'Submit FG?', body: 'Stok FG akan bertambah sesuai angka Packed yang disubmit. Pastikan sudah benar.', confirmLabel: 'Ya, Submit' });
+      if (!ok) return;
+      submitBtn.disabled = true;
+      try {
+        var saved = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, items: collectItems(), refreshSource: refreshBox && refreshBox.checked } });
+        await Amor.apiFetch('/api/fg/' + batchId + '/submit', { method: 'POST', body: { expectedVersion: saved.version } });
+        Amor.toast('FG berhasil disubmit.', 'success');
+        setTimeout(function () { location.reload(); }, 600);
+      } catch (e) { Amor.toast(e.message, 'danger'); submitBtn.disabled = false; }
+    });
+
+    var refreshSourceBtn = document.getElementById('btn-refresh-fg-source');
+    if (refreshSourceBtn) refreshSourceBtn.addEventListener('click', async function () {
+      refreshSourceBtn.disabled = true;
+      try {
+        var data = await Amor.apiFetch('/api/fg/' + batchId + '/refresh-source', { method: 'POST', body: { expectedVersion: version } });
+        version = data.version;
+        var changed = (data.refreshChangedSnapshots || []).length;
+        var blocking = (data.verifiedExceedsProductionBlocking || []).length;
+        var msg = 'Sumber Produksi disegarkan. ' + changed + ' produk diperbarui angkanya.';
+        if (blocking > 0) msg += ' PERINGATAN: ' + blocking + ' produk sekarang punya FG Terverifikasi melebihi Production Actual terbaru.';
+        Amor.toast(msg, blocking > 0 ? 'warning' : 'success');
+        setTimeout(function () { location.reload(); }, 800);
+      } catch (e) { Amor.toast(e.message, 'danger'); refreshSourceBtn.disabled = false; }
+    });
+
+    var reopenBtn = document.getElementById('btn-reopen-fg');
+    if (reopenBtn) reopenBtn.addEventListener('click', async function () {
+      var reason = prompt('Alasan membuka kembali FG ini (wajib):');
+      if (!reason) return;
+      reopenBtn.disabled = true;
+      try {
+        await Amor.apiFetch('/api/fg/' + batchId + '/reopen', { method: 'POST', body: { expectedVersion: version, reason: reason } });
+        Amor.toast('FG dibuka kembali.', 'success');
+        setTimeout(function () { location.reload(); }, 600);
+      } catch (e) { Amor.toast(e.message, 'danger'); reopenBtn.disabled = false; }
+    });
+    return; // end Verifikasi step wiring
+  }
+
+  // ---------------------------------------------------------------------
+  // FG PACKING — per Toko (default/only packing workflow — task's own
+  // "Packing should default to PER TOKO" requirement). Reuses the EXACT
+  // SAME store-row data Verifikasi's Breakdown Toko already reads/writes
+  // (GET/PATCH /api/fg/{id}/items/{productId}/stores) — grouped by STORE
+  // here instead of by product. A product still entirely in Per Produk
+  // mode (never exploded during Verifikasi) has no store identity yet, so
+  // it cannot appear here — see this task's own delivery report for why
+  // that is a deliberate limitation, not an oversight.
+  // ---------------------------------------------------------------------
+  var storeGroups = [];
+  var currentStoreId = null;
+
+  function groupByStore(results) {
+    var byStore = {};
+    var order = [];
+    results.forEach(function (r) {
+      (r.data.stores || []).forEach(function (s) {
+        if (!byStore[s.storeId]) { byStore[s.storeId] = { storeId: s.storeId, storeName: s.storeName, rows: [] }; order.push(s.storeId); }
+        byStore[s.storeId].rows.push({
+          productId: r.productId, productName: r.productName,
+          target: s.target, fgVerified: s.fgVerified, packed: s.packed,
+          reject: s.reject, hilang: s.hilang, notes: s.notes, status: s.status,
+        });
+      });
+    });
+    return order.map(function (id) { return byStore[id]; });
+  }
+
+  // Store status — a NEW UI-only concept (no pre-existing backend rule to
+  // preserve here), documented plainly: "Selesai" once every unit of this
+  // store's OWN PO target has been packed; "Belum Mulai" if nothing has;
+  // otherwise "Sebagian" when packing has caught up to everything
+  // CURRENTLY verified-ready (capped only by verification elsewhere still
+  // being incomplete — nothing more this store can pack right now) vs
+  // "Sedang Dikerjakan" when there is more ready-to-pack quantity than
+  // what has been packed so far (still actively workable).
+  function storeStatus(group) {
+    var targetTotal = 0, readyTotal = 0, packedTotal = 0;
+    group.rows.forEach(function (r) { targetTotal += r.target; readyTotal += r.fgVerified; packedTotal += r.packed; });
+    var eps = 0.0001;
+    var code, label;
+    if (packedTotal <= eps) { code = 'belum_mulai'; label = 'Belum Mulai'; }
+    else if (packedTotal >= targetTotal - eps) { code = 'selesai'; label = 'Selesai'; }
+    else if (packedTotal >= readyTotal - eps) { code = 'sebagian'; label = 'Sebagian'; }
+    else { code = 'sedang_dikerjakan'; label = 'Sedang Dikerjakan'; }
+    return { code: code, label: label, targetTotal: targetTotal, readyTotal: readyTotal, packedTotal: packedTotal };
+  }
+
+  function renderHeader() {
+    var header = document.getElementById('fg-packing-header');
+    var totalStores = storeGroups.length;
+    var doneStores = 0, packedSum = 0, targetSum = 0;
+    storeGroups.forEach(function (g) {
+      var st = storeStatus(g);
+      if (st.code === 'selesai') doneStores++;
+      packedSum += st.packedTotal; targetSum += st.targetTotal;
+    });
+    var pct = targetSum > 0 ? Math.min(100, Math.round((packedSum / targetSum) * 100)) : 0;
+    header.innerHTML = '<div class="fg-card-row"><span class="fg-card-row-label">Toko Selesai</span><b>' + doneStores + ' / ' + totalStores + ' toko</b></div>'
+      + '<div class="fg-card-row"><span class="fg-card-row-label">Packed pcs</span><b>' + packedSum.toLocaleString('id-ID') + ' / ' + targetSum.toLocaleString('id-ID') + ' pcs</b></div>'
+      + '<div class="fg-progress-track"><div class="fg-progress-fill" style="width:' + pct + '%;"></div></div>';
+  }
+
+  function renderChips() {
+    var row = document.getElementById('fg-store-chip-row');
+    if (storeGroups.length === 0) {
+      row.innerHTML = '<p style="color:var(--text-muted);">Belum ada Toko dengan target &gt; 0 untuk produk manapun (jalankan Breakdown Toko di FG Verifikasi dulu).</p>';
       return;
     }
-    try {
-      var results = await Promise.all(visibleProducts.map(function (p) {
-        return fetchStoreData(p.productId).then(function (data) { return { p: p, data: data }; });
-      }));
-      breakdownPanel.innerHTML = '';
-      results.forEach(function (r) {
-        breakdownPanel.appendChild(buildStoreBlock(r.p.productId, r.p.productName, r.data));
-      });
-      if (focusProductId) {
-        var target = breakdownPanel.querySelector('[data-product-id="' + focusProductId + '"]');
-        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    row.innerHTML = '';
+    storeGroups.forEach(function (g) {
+      var st = storeStatus(g);
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'fg-store-chip' + (g.storeId === currentStoreId ? ' active' : '');
+      chip.setAttribute('data-store-id', g.storeId);
+      chip.innerHTML = '<div class="fg-store-chip-name">' + g.storeName + '</div>'
+        + '<div class="fg-store-chip-meta">' + g.rows.length + ' produk &bull; ' + st.targetTotal.toLocaleString('id-ID') + ' pcs</div>'
+        + '<div class="fg-store-chip-meta">' + st.label + '</div>';
+      chip.addEventListener('click', function () { currentStoreId = g.storeId; renderChips(); renderDetail(); });
+      row.appendChild(chip);
+    });
+  }
+
+  function renderDetail() {
+    var detail = document.getElementById('fg-packing-detail');
+    var group = storeGroups.filter(function (g) { return g.storeId === currentStoreId; })[0];
+    if (!group) { detail.innerHTML = ''; return; }
+    var cardsHtml = group.rows.map(function (r) {
+      var packingSesuai = editableHere && Math.abs(r.packed - r.fgVerified) < 0.01 && r.packed > 0;
+      var body = '<div class="fg-card fg-packing-row" data-product-id="' + r.productId + '">'
+        + '<div class="fg-card-title">' + r.productName + '</div>'
+        + '<div class="fg-card-sub">Target Toko: ' + r.target.toLocaleString('id-ID') + ' &middot; Ready Verified: ' + r.fgVerified.toLocaleString('id-ID') + '</div>';
+      if (!editableHere) {
+        body += '<div class="fg-card-row"><span class="fg-card-row-label">Actual Packing</span><span>' + r.packed.toLocaleString('id-ID') + '</span></div>'
+          + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><span>' + r.reject.toLocaleString('id-ID') + '</span></div>'
+          + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><span>' + r.hilang.toLocaleString('id-ID') + '</span></div>'
+          + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><span>' + (r.notes || '') + '</span></div>'
+          + '<div class="fg-card-row"><span class="fg-card-row-label">Status</span><span>' + (r.status || '') + '</span></div>'
+          + '<input type="hidden" data-pk-field="fgVerified" value="' + r.fgVerified + '">'
+          + '</div>';
+        return body;
       }
-    } catch (e) {
-      breakdownPanel.innerHTML = '<div class="alert alert-danger">' + e.message + '</div>';
-    }
-  }
+      // CRITICAL PACKING RULE: Sesuai auto-fills to Ready Verified (r.fgVerified —
+      // what THIS store actually has ready), never the raw Target — the
+      // server's own PACKED_EXCEEDS_VERIFIED check (packed <= fgVerified,
+      // unchanged, pre-existing rule) is what actually enforces this; the
+      // auto-fill below simply mirrors it so a real over-target tap can never
+      // even be typed by clicking "Sesuai".
+      body += '<div class="fg-card-row"><span class="fg-card-row-label">Packing Result</span>'
+        + '<div class="btn-group pk-sesuai" data-sesuai="' + (packingSesuai ? '1' : '0') + '">'
+        +   '<button type="button" class="btn btn-sm ' + (packingSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
+        +   '<button type="button" class="btn btn-sm ' + (!packingSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'
+        + '</div></div>'
+        + '<div class="fg-card-row"><span class="fg-card-row-label">Actual Packing</span><input type="number" step="0.01" min="0" max="' + r.fgVerified + '" class="fg-card-input" data-pk-field="packed" value="' + r.packed + '" ' + (packingSesuai ? 'disabled' : '') + '></div>'
+        + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><input type="number" step="0.01" min="0" class="fg-card-input" data-pk-field="reject" value="' + r.reject + '"></div>'
+        + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><input type="number" step="0.01" min="0" class="fg-card-input" data-pk-field="hilang" value="' + r.hilang + '"></div>'
+        + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-pk-field="notes" value="' + (r.notes || '').replace(/"/g, '&quot;') + '"></div>'
+        + '<input type="hidden" data-pk-field="fgVerified" value="' + r.fgVerified + '">'
+        + '</div>';
+      return body;
+    }).join('');
+    var actions = editableHere
+      ? '<div class="fg-card-actions" style="margin-top:var(--space-3);"><button type="button" class="btn btn-primary" id="fg-submit-packing-store">Submit Packing ' + group.storeName + '</button></div>'
+      : '';
+    detail.innerHTML = '<h3 class="card-title" style="font-size:var(--text-md);margin-bottom:var(--space-2);">Packing — ' + group.storeName + '</h3>'
+      + '<div class="fg-card-list">' + cardsHtml + '</div>' + actions;
 
-  function exitBreakdownMode() {
-    modeProduk.className = 'btn btn-sm btn-primary'; modeToko.className = 'btn btn-sm btn-secondary';
-    if (perProdukWrap) perProdukWrap.style.display = '';
-    if (breakdownPanel) { breakdownPanel.style.display = 'none'; breakdownPanel.innerHTML = ''; }
-  }
-
-  if (modeProduk && modeToko) {
-    modeProduk.addEventListener('click', exitBreakdownMode);
-    modeToko.addEventListener('click', function () { enterBreakdownMode(null); });
-  }
-
-  document.querySelectorAll('.fg-breakdown-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var pid = btn.getAttribute('data-product-id');
-      enterBreakdownMode(pid);
+    detail.querySelectorAll('.pk-sesuai').forEach(function (group2) {
+      var card = group2.closest('.fg-packing-row');
+      var packedInput = card.querySelector('[data-pk-field="packed"]');
+      var readyInput = card.querySelector('[data-pk-field="fgVerified"]');
+      wireSesuaiGroup(group2, packedInput, function () { return readyInput.value || '0'; });
     });
-  });
 
-  // Explicit "Kembali ke Per Produk" — collapseProductIds merges the store
-  // rows back into ONE row (SUM preserved exactly, see
-  // FgService::collapseToProduct()'s own docblock) — never implicit, since
-  // it drops per-store detail.
-  document.querySelectorAll('.fg-collapse-btn').forEach(function (btn) {
-    btn.addEventListener('click', async function () {
-      var pid = btn.getAttribute('data-product-id');
-      var pname = btn.getAttribute('data-product-name');
-      var ok = await Amor.confirmModal({ title: 'Kembali ke Per Produk?', body: 'Baris per-Toko untuk ' + pname + ' akan digabung kembali menjadi satu baris Per Produk (total tidak berubah). Detail per-Toko akan hilang.', confirmLabel: 'Ya, Gabungkan' });
-      if (!ok) return;
-      btn.disabled = true;
-      try {
-        var data = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, collapseProductIds: [parseInt(pid, 10)] } });
-        version = data.version;
-        Amor.toast('Digabung kembali ke Per Produk.', 'success');
-        setTimeout(function () { location.reload(); }, 600);
-      } catch (e) { Amor.toast(e.message, 'danger'); btn.disabled = false; }
-    });
-  });
-
-  function collectItems() {
-    var items = [];
-    document.querySelectorAll('#fg-form [data-field="fgVerified"]').forEach(function (input) {
-      var pid = input.getAttribute('data-product-id');
-      var packedInput = document.querySelector('#fg-form [data-field="packed"][data-product-id="' + pid + '"]');
-      var rejectInput = document.querySelector('#fg-form [data-field="reject"][data-product-id="' + pid + '"]');
-      var hilangInput = document.querySelector('#fg-form [data-field="hilang"][data-product-id="' + pid + '"]');
-      var notesInput = document.querySelector('#fg-form [data-field="notes"][data-product-id="' + pid + '"]');
-      var verifiedGroup = document.querySelector('.fg-verified-sesuai-group[data-product-id="' + pid + '"]');
-      var packingGroup = document.querySelector('.fg-packing-sesuai-group[data-product-id="' + pid + '"]');
-      items.push({
-        productId: parseInt(pid, 10),
-        fgVerified: parseFloat(input.value || '0'),
-        packed: packedInput ? parseFloat(packedInput.value || '0') : 0,
-        reject: rejectInput ? parseFloat(rejectInput.value || '0') : 0,
-        hilang: hilangInput ? parseFloat(hilangInput.value || '0') : 0,
-        notes: notesInput ? notesInput.value : '',
-        sesuaiVerified: verifiedGroup ? verifiedGroup.getAttribute('data-sesuai') === '1' : false,
-        sesuaiPacking: packingGroup ? packingGroup.getAttribute('data-sesuai') === '1' : false,
+    var submitStoreBtn = document.getElementById('fg-submit-packing-store');
+    if (submitStoreBtn) submitStoreBtn.addEventListener('click', async function () {
+      submitStoreBtn.disabled = true;
+      var storeItems = [];
+      detail.querySelectorAll('.fg-packing-row').forEach(function (card) {
+        var pid = card.getAttribute('data-product-id');
+        var field = function (name) { var el = card.querySelector('[data-pk-field="' + name + '"]'); return el ? el.value : ''; };
+        var sesuaiGroup = card.querySelector('.pk-sesuai');
+        storeItems.push({
+          productId: parseInt(pid, 10),
+          rows: [{
+            storeId: currentStoreId,
+            fgVerified: parseFloat(field('fgVerified') || '0'),
+            packed: parseFloat(field('packed') || '0'),
+            reject: parseFloat(field('reject') || '0'),
+            hilang: parseFloat(field('hilang') || '0'),
+            notes: field('notes'),
+            sesuaiPacking: sesuaiGroup ? sesuaiGroup.getAttribute('data-sesuai') === '1' : false,
+          }],
+        });
       });
+      try {
+        // Submitting ONE store's packing PATCHes only THAT store's rows —
+        // every other store's own storeItems entry is left out of this
+        // call entirely, so it is never touched (task's own explicit
+        // "Submitting one store must not automatically submit another
+        // store" rule).
+        var saved = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, storeItems: storeItems } });
+        version = saved.version;
+        Amor.toast('Packing ' + group.storeName + ' disimpan.', 'success');
+        await reloadStoreGroups();
+        renderHeader(); renderChips(); renderDetail();
+        submitStoreBtn.disabled = false;
+      } catch (e) { Amor.toast(e.message, 'danger'); submitStoreBtn.disabled = false; }
     });
-    return items;
   }
-  var form = document.getElementById('fg-form');
-  if (!form) return;
-  var batchId = form.getAttribute('data-batch-id');
-  var version = parseInt(form.getAttribute('data-expected-version'), 10);
-  var refreshBox = document.getElementById('fg-refresh-source');
 
-  var saveBtn = document.getElementById('btn-save-fg');
-  if (saveBtn) saveBtn.addEventListener('click', async function () {
-    saveBtn.disabled = true;
+  async function reloadStoreGroups() {
+    var results = await fetchAllStoreRows();
+    storeGroups = groupByStore(results);
+    if (currentStoreId === null && storeGroups.length > 0) currentStoreId = storeGroups[0].storeId;
+  }
+
+  (async function initPacking() {
     try {
-      var data = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, items: collectItems(), refreshSource: refreshBox && refreshBox.checked } });
-      Amor.toast('Draft FG disimpan.', 'success');
-      version = data.version;
-      form.setAttribute('data-expected-version', version);
-    } catch (e) { Amor.toast(e.message, 'danger'); }
-    saveBtn.disabled = false;
-  });
+      await reloadStoreGroups();
+      renderHeader();
+      renderChips();
+      renderDetail();
+    } catch (e) {
+      document.getElementById('fg-packing-header').innerHTML = '<div class="alert alert-danger">' + e.message + '</div>';
+    }
+  })();
 
-  var submitBtn = document.getElementById('btn-submit-fg');
-  if (submitBtn) submitBtn.addEventListener('click', async function () {
-    var ok = await Amor.confirmModal({ title: 'Submit FG?', body: 'Stok FG akan bertambah sesuai angka Packed yang disubmit. Pastikan sudah benar.', confirmLabel: 'Ya, Submit' });
+  var submitAllBtn = document.getElementById('btn-submit-fg-packing');
+  if (submitAllBtn) submitAllBtn.addEventListener('click', async function () {
+    var ok = await Amor.confirmModal({ title: 'Submit FG?', body: 'Stok FG akan bertambah sesuai angka Packed yang sudah disimpan per Toko. Pastikan semua Toko sudah benar.', confirmLabel: 'Ya, Submit' });
     if (!ok) return;
-    submitBtn.disabled = true;
+    submitAllBtn.disabled = true;
     try {
-      var saved = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, items: collectItems(), refreshSource: refreshBox && refreshBox.checked } });
-      await Amor.apiFetch('/api/fg/' + batchId + '/submit', { method: 'POST', body: { expectedVersion: saved.version } });
+      await Amor.apiFetch('/api/fg/' + batchId + '/submit', { method: 'POST', body: { expectedVersion: version } });
       Amor.toast('FG berhasil disubmit.', 'success');
       setTimeout(function () { location.reload(); }, 600);
-    } catch (e) { Amor.toast(e.message, 'danger'); submitBtn.disabled = false; }
+    } catch (e) { Amor.toast(e.message, 'danger'); submitAllBtn.disabled = false; }
   });
 
-  var refreshSourceBtn = document.getElementById('btn-refresh-fg-source');
-  if (refreshSourceBtn) refreshSourceBtn.addEventListener('click', async function () {
-    refreshSourceBtn.disabled = true;
-    try {
-      var data = await Amor.apiFetch('/api/fg/' + batchId + '/refresh-source', { method: 'POST', body: { expectedVersion: version } });
-      version = data.version;
-      form.setAttribute('data-expected-version', version);
-      var changed = (data.refreshChangedSnapshots || []).length;
-      var blocking = (data.verifiedExceedsProductionBlocking || []).length;
-      var msg = 'Sumber Produksi disegarkan. ' + changed + ' produk diperbarui angkanya.';
-      if (blocking > 0) msg += ' PERINGATAN: ' + blocking + ' produk sekarang punya FG Terverifikasi melebihi Production Actual terbaru.';
-      Amor.toast(msg, blocking > 0 ? 'warning' : 'success');
-      setTimeout(function () { location.reload(); }, 800);
-    } catch (e) { Amor.toast(e.message, 'danger'); refreshSourceBtn.disabled = false; }
-  });
-
-  var reopenBtn = document.getElementById('btn-reopen-fg');
-  if (reopenBtn) reopenBtn.addEventListener('click', async function () {
+  var reopenBtn2 = document.getElementById('btn-reopen-fg-packing');
+  if (reopenBtn2) reopenBtn2.addEventListener('click', async function () {
     var reason = prompt('Alasan membuka kembali FG ini (wajib):');
     if (!reason) return;
-    reopenBtn.disabled = true;
+    reopenBtn2.disabled = true;
     try {
       await Amor.apiFetch('/api/fg/' + batchId + '/reopen', { method: 'POST', body: { expectedVersion: version, reason: reason } });
       Amor.toast('FG dibuka kembali.', 'success');
       setTimeout(function () { location.reload(); }, 600);
-    } catch (e) { Amor.toast(e.message, 'danger'); reopenBtn.disabled = false; }
+    } catch (e) { Amor.toast(e.message, 'danger'); reopenBtn2.disabled = false; }
   });
 })();
 </script>
