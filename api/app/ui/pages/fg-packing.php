@@ -254,6 +254,23 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   // per-store data for.
   var visibleProducts = <?= json_encode(array_map(static fn ($it) => ['productId' => $it['productId'], 'productName' => $it['productName']], $batchView['items'])) ?>;
 
+  // SECURITY: every dynamic value below (store name, product name,
+  // notes/keterangan, status label, API error messages) is untrusted
+  // string data that gets concatenated into innerHTML — this single
+  // helper is the ONLY place that decides how such a value is made safe,
+  // used consistently everywhere one of those values is interpolated
+  // into an HTML string (never a partial/inconsistent .replace()).
+  // Numeric-only values (ids, target/verified/packed quantities) are
+  // never passed through this — they cannot carry markup.
+  function escHtml(value) {
+    return String(value === null || value === undefined ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   // Sesuai/Tidak Sesuai — same auto-fill/lock convenience and same "server
   // always re-derives, never trusts a disabled input" rule everywhere it's
   // used (FG Verifikasi's own fields, Breakdown Toko's Verified, and FG
@@ -307,19 +324,19 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       var block = document.createElement('div');
       block.className = 'fg-card';
       block.setAttribute('data-product-id', pid);
-      var head = '<div class="fg-card-title">' + pname + '</div>'
+      var head = '<div class="fg-card-title">' + escHtml(pname) + '</div>'
         + (data.exploded ? '' : '<div class="alert alert-warning" style="margin:var(--space-2) 0;">Produk ini masih mode Per Produk — mengisi baris di bawah dan Simpan akan memecahnya ke per-Toko.</div>');
       var rowsHtml = (data.stores || []).map(function (s) {
         var verifiedSesuai = editableHere && Math.abs(s.fgVerified - s.target) < 0.01 && s.fgVerified > 0;
         var reviewBadge = s.needsReview ? ' <span class="badge badge-danger">Perlu Review Ulang</span>' : '';
-        var body = '<div class="fg-card-sub" style="margin-top:var(--space-3);margin-bottom:0;"><b>' + s.storeName + '</b>' + reviewBadge + ' &middot; Target Toko: ' + s.target.toLocaleString('id-ID') + '</div>';
+        var body = '<div class="fg-card-sub" style="margin-top:var(--space-3);margin-bottom:0;"><b>' + escHtml(s.storeName) + '</b>' + reviewBadge + ' &middot; Target Toko: ' + s.target.toLocaleString('id-ID') + '</div>';
         if (!editableHere) {
           return body
             + '<div class="fg-card-row"><span class="fg-card-row-label">Actual Verified</span><span>' + s.fgVerified.toLocaleString('id-ID') + '</span></div>'
             + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><span>' + s.reject.toLocaleString('id-ID') + '</span></div>'
             + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><span>' + s.hilang.toLocaleString('id-ID') + '</span></div>'
-            + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><span>' + (s.notes || '') + '</span></div>'
-            + '<div class="fg-card-row"><span class="fg-card-row-label">Status</span><span>' + (s.status || '') + '</span></div>';
+            + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><span>' + escHtml(s.notes || '') + '</span></div>'
+            + '<div class="fg-card-row"><span class="fg-card-row-label">Status</span><span>' + escHtml(s.status || '') + '</span></div>';
         }
         return body
           + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Verified Result</span>'
@@ -330,9 +347,9 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
           + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Actual Verified</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="fgVerified" value="' + s.fgVerified + '" ' + (verifiedSesuai ? 'disabled' : '') + '></div>'
           + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Reject</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="reject" value="' + s.reject + '"></div>'
           + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Hilang</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="hilang" value="' + s.hilang + '"></div>'
-          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-bt-field="notes" value="' + (s.notes || '').replace(/"/g, '&quot;') + '"></div>'
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-bt-field="notes" value="' + escHtml(s.notes || '') + '"></div>'
           + '<input type="hidden" data-store-id="' + s.storeId + '" data-bt-field="packed" value="' + s.packed + '">'
-          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Status</span><span>' + (s.status || '') + '</span></div>';
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Status</span><span>' + escHtml(s.status || '') + '</span></div>';
       }).join('');
       var actions = editableHere ? '<div class="fg-card-actions"><button type="button" class="btn btn-primary btn-sm bt-save">Simpan Breakdown Toko</button></div>' : '';
       block.innerHTML = head
@@ -405,7 +422,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
           if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       } catch (e) {
-        breakdownPanel.innerHTML = '<div class="alert alert-danger">' + e.message + '</div>';
+        breakdownPanel.innerHTML = '<div class="alert alert-danger">' + escHtml(e.message) + '</div>';
       }
     }
     function exitBreakdownMode() {
@@ -613,9 +630,9 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       chip.type = 'button';
       chip.className = 'fg-store-chip' + (g.storeId === currentStoreId ? ' active' : '');
       chip.setAttribute('data-store-id', g.storeId);
-      chip.innerHTML = '<div class="fg-store-chip-name">' + g.storeName + '</div>'
+      chip.innerHTML = '<div class="fg-store-chip-name">' + escHtml(g.storeName) + '</div>'
         + '<div class="fg-store-chip-meta">' + g.rows.length + ' produk &bull; ' + st.targetTotal.toLocaleString('id-ID') + ' pcs</div>'
-        + '<div class="fg-store-chip-meta">' + st.label + '</div>';
+        + '<div class="fg-store-chip-meta">' + escHtml(st.label) + '</div>';
       chip.addEventListener('click', function () { currentStoreId = g.storeId; renderChips(); renderDetail(); });
       row.appendChild(chip);
     });
@@ -628,7 +645,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     var cardsHtml = group.rows.map(function (r) {
       var packingSesuai = editableHere && Math.abs(r.packed - r.fgVerified) < 0.01 && r.packed > 0;
       var body = '<div class="fg-card fg-packing-row" data-product-id="' + r.productId + '" data-exploded="' + (r.exploded ? '1' : '0') + '">'
-        + '<div class="fg-card-title">' + r.productName + '</div>'
+        + '<div class="fg-card-title">' + escHtml(r.productName) + '</div>'
         + '<div class="fg-card-sub">Target Toko: ' + r.target.toLocaleString('id-ID') + ' &middot; Ready Verified: ' + r.fgVerified.toLocaleString('id-ID') + '</div>';
       if (!r.exploded) {
         // Still verified in default Per Produk mode — no real per-store
@@ -646,8 +663,8 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         body += '<div class="fg-card-row"><span class="fg-card-row-label">Actual Packing</span><span>' + r.packed.toLocaleString('id-ID') + '</span></div>'
           + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><span>' + r.reject.toLocaleString('id-ID') + '</span></div>'
           + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><span>' + r.hilang.toLocaleString('id-ID') + '</span></div>'
-          + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><span>' + (r.notes || '') + '</span></div>'
-          + '<div class="fg-card-row"><span class="fg-card-row-label">Status</span><span>' + (r.status || '') + '</span></div>'
+          + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><span>' + escHtml(r.notes || '') + '</span></div>'
+          + '<div class="fg-card-row"><span class="fg-card-row-label">Status</span><span>' + escHtml(r.status || '') + '</span></div>'
           + '<input type="hidden" data-pk-field="fgVerified" value="' + r.fgVerified + '">'
           + '</div>';
         return body;
@@ -666,15 +683,15 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         + '<div class="fg-card-row"><span class="fg-card-row-label">Actual Packing</span><input type="number" step="0.01" min="0" max="' + r.fgVerified + '" class="fg-card-input" data-pk-field="packed" value="' + r.packed + '" ' + (packingSesuai ? 'disabled' : '') + '></div>'
         + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><input type="number" step="0.01" min="0" class="fg-card-input" data-pk-field="reject" value="' + r.reject + '"></div>'
         + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><input type="number" step="0.01" min="0" class="fg-card-input" data-pk-field="hilang" value="' + r.hilang + '"></div>'
-        + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-pk-field="notes" value="' + (r.notes || '').replace(/"/g, '&quot;') + '"></div>'
+        + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-pk-field="notes" value="' + escHtml(r.notes || '') + '"></div>'
         + '<input type="hidden" data-pk-field="fgVerified" value="' + r.fgVerified + '">'
         + '</div>';
       return body;
     }).join('');
     var actions = editableHere
-      ? '<div class="fg-card-actions" style="margin-top:var(--space-3);"><button type="button" class="btn btn-primary" id="fg-submit-packing-store">Submit Packing ' + group.storeName + '</button></div>'
+      ? '<div class="fg-card-actions" style="margin-top:var(--space-3);"><button type="button" class="btn btn-primary" id="fg-submit-packing-store">Submit Packing ' + escHtml(group.storeName) + '</button></div>'
       : '';
-    detail.innerHTML = '<h3 class="card-title" style="font-size:var(--text-md);margin-bottom:var(--space-2);">Packing — ' + group.storeName + '</h3>'
+    detail.innerHTML = '<h3 class="card-title" style="font-size:var(--text-md);margin-bottom:var(--space-2);">Packing — ' + escHtml(group.storeName) + '</h3>'
       + '<div class="fg-card-list">' + cardsHtml + '</div>' + actions;
 
     detail.querySelectorAll('.pk-sesuai').forEach(function (group2) {
@@ -737,7 +754,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       renderChips();
       renderDetail();
     } catch (e) {
-      document.getElementById('fg-packing-header').innerHTML = '<div class="alert alert-danger">' + e.message + '</div>';
+      document.getElementById('fg-packing-header').innerHTML = '<div class="alert alert-danger">' + escHtml(e.message) + '</div>';
     }
   }
   // window.Amor is defined by assets/js/app.js, whose <script> tag is

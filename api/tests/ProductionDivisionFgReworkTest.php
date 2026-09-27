@@ -1907,6 +1907,95 @@ fwrite(STDOUT, "MOBILE_FG_TANGGAL={$mobileFgTanggal}\n");
 fwrite(STDOUT, "MOBILE_FG_PRODMOBILEA_NAME={$prodMobileA['name']}\n");
 
 // =======================================================================
+// Part J — SECURITY HOTFIX fixture: a store name, a product name, and a
+// Keterangan/notes value that are each a RAW, unescaped XSS payload
+// (task's own "escape ALL dynamic FG UI output" hotfix). Real browser
+// checks (FG-XSS-01..05, run-ui-smoke-fg-xss.mjs, invoked right after
+// this file exits 0) load the real fg-packing.php page against this
+// fixture and assert the payloads render as inert, literal text — never
+// as executed markup — in both FG Verifikasi's Breakdown Toko and FG
+// Packing's per-Toko view.
+// =======================================================================
+$xssTanggal = '2026-10-22';
+$xssStoreName = '<script>alert(1)</script>';
+$xssProductName = '<img src=x onerror=alert(1)>';
+$xssNotes = '"><img src=x onerror=alert(1)>';
+
+$pdo->prepare(
+    'INSERT INTO store (canonical_name, channel, active, version, created_at) VALUES (?, NULL, 1, 1, UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE canonical_name = VALUES(canonical_name)'
+)->execute([$xssStoreName]);
+$findXssStore = $pdo->prepare('SELECT store_id FROM store WHERE canonical_name = ?');
+$findXssStore->execute([$xssStoreName]);
+$xssStoreId = (int) $findXssStore->fetchColumn();
+expect($xssStoreId > 0, 'FG-XSS setup: expected XSS-payload store created');
+
+$pdo->prepare(
+    "INSERT INTO product (name, kategori, division_id, hpp, harga, aktif, version, created_at) VALUES (?, 'TEST', ?, 0, 0, 1, 1, UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE division_id = VALUES(division_id)"
+)->execute([$xssProductName, $rotiBollenDivId]);
+$findXssProduct = $pdo->prepare('SELECT product_id FROM product WHERE name = ?');
+$findXssProduct->execute([$xssProductName]);
+$xssProductId = (int) $findXssProduct->fetchColumn();
+expect($xssProductId > 0, 'FG-XSS setup: expected XSS-payload product created');
+
+runTest('FG-XSS-00 (setup) store name / product name / keterangan each hold a raw XSS payload, exploded into Breakdown Toko so both FG Verifikasi and FG Packing render them; a second, entirely normal product+notes rides along for FG-XSS-05 (normal text must render unchanged)', function () use (
+    $http, $csrf, $pdo, $xssTanggal, $karangtengahId, $rotiBollenDivId, $xssStoreId, $xssProductId, $xssNotes, $uiBollen
+) {
+    seedPoStoreSplit($pdo, $xssTanggal, $karangtengahId, $xssProductId, [
+        $xssStoreId => ['poAwal' => 10, 'poRevisi' => 0],
+    ]);
+    seedPoStoreSplit($pdo, $xssTanggal, $karangtengahId, (int) $uiBollen['product_id'], [
+        $xssStoreId => ['poAwal' => 5, 'poRevisi' => 0],
+    ]);
+    // Both products share ONE division/day, hence ONE production_run —
+    // submitProductionActual() (a single-item create+submit helper) would
+    // have its SECOND call reuse the run its FIRST call already
+    // submitted, and fail to PATCH an already-submitted run (409
+    // INVALID_STATUS). Both items go into the SAME draft instead.
+    $createProd = $http->request('POST', '/api/production', ['tanggal' => $xssTanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('xssfg-prod-create')));
+    expect($createProd['status'] === 200, 'FG-XSS-00: expected production draft create 200, got ' . $createProd['status'] . ': ' . json_encode($createProd['json']));
+    $prodRunId = (int) $createProd['json']['data']['productionRunId'];
+    $prodVersion = (int) $createProd['json']['data']['version'];
+    $patchProd = $http->request('PATCH', "/api/production/{$prodRunId}", [
+        'expectedVersion' => $prodVersion,
+        'items' => [
+            ['productId' => $xssProductId, 'actualQty' => 10],
+            ['productId' => (int) $uiBollen['product_id'], 'actualQty' => 5],
+        ],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('xssfg-prod-patch')));
+    expect($patchProd['status'] === 200, 'FG-XSS-00: expected production draft patch 200, got ' . $patchProd['status'] . ': ' . json_encode($patchProd['json']));
+    $prodVersion = (int) $patchProd['json']['data']['version'];
+    $submitProd = $http->request('POST', "/api/production/{$prodRunId}/submit", ['expectedVersion' => $prodVersion], array_merge(['X-CSRF-Token' => $csrf], idemKey('xssfg-prod-submit')));
+    expect($submitProd['status'] === 200, 'FG-XSS-00: expected production draft submit 200, got ' . $submitProd['status'] . ': ' . json_encode($submitProd['json']));
+
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $xssTanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('xssfg-create')));
+    expect($create['status'] === 200, 'FG-XSS-00: expected FG create 200, got ' . $create['status'] . ': ' . json_encode($create['json']));
+    $batchId = (int) $create['json']['data']['fgBatchId'];
+    $version = (int) $create['json']['data']['version'];
+
+    // Explode straight from the fresh zero baseline (never verified Per
+    // Produk first) — same pattern MOBILE-FG-00 uses for BOLLEN/CHOCO
+    // CUBE, since explodeToStores() refuses to explode a row that
+    // already has a nonzero Per Produk aggregate.
+    $explode = $http->request('PATCH', "/api/fg/{$batchId}", [
+        'expectedVersion' => $version,
+        'storeItems' => [
+            ['productId' => $xssProductId, 'rows' => [
+                ['storeId' => $xssStoreId, 'fgVerified' => 10, 'packed' => 0, 'sesuaiVerified' => true, 'notes' => $xssNotes],
+            ]],
+            ['productId' => (int) $uiBollen['product_id'], 'rows' => [
+                ['storeId' => $xssStoreId, 'fgVerified' => 5, 'packed' => 0, 'sesuaiVerified' => true, 'notes' => 'Sudah pas & lengkap, tidak ada masalah'],
+            ]],
+        ],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('xssfg-explode')));
+    expect($explode['status'] === 200, 'FG-XSS-00: expected explode 200, got ' . json_encode($explode['json']));
+});
+
+fwrite(STDOUT, "XSS_FG_FACTORY_ID={$karangtengahId}\n");
+fwrite(STDOUT, "XSS_FG_TANGGAL={$xssTanggal}\n");
+
+// =======================================================================
 // Summary
 // =======================================================================
 $total = count($results);

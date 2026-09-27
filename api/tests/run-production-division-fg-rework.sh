@@ -189,11 +189,32 @@ TANGGAL="$MOBILE_FG_TANGGAL" FACTORY_ID="$MOBILE_FG_FACTORY_ID" PRODMOBILEA_NAME
 node "$API_ROOT/tests/_ui_smoke_mobile_fg.mjs"
 MOBILE_SMOKE_RESULT=$?
 
+if [ $MOBILE_SMOKE_RESULT -ne 0 ]; then
+  kill "$PHP_PID" 2>/dev/null || true
+  PHP_PID=""
+  echo "_ui_smoke_mobile_fg.mjs FAILED — stopping before the full regression cascade"
+  exit 1
+fi
+
+echo "--- 8.7/9: real headless-browser smoke check — SECURITY HOTFIX escaping (FG-XSS-01..05) ---"
+XSS_FG_FACTORY_ID=$(grep -oP 'XSS_FG_FACTORY_ID=\K[0-9]+' "$WORKDIR/pdfg-output.log" | tail -1)
+XSS_FG_TANGGAL=$(grep -oP 'XSS_FG_TANGGAL=\K[0-9-]+' "$WORKDIR/pdfg-output.log" | tail -1)
+if [ -z "$XSS_FG_FACTORY_ID" ] || [ -z "$XSS_FG_TANGGAL" ]; then
+  kill "$PHP_PID" 2>/dev/null || true
+  PHP_PID=""
+  echo "Could not find XSS_FG_* markers in PDFG test output — cannot run the FG-XSS smoke check"
+  exit 1
+fi
+BASE_URL="http://127.0.0.1:$PHP_PORT" ADMIN_USER="pdfg_staging_admin" ADMIN_PASS="$TEST_ADMIN_PASS" \
+TANGGAL="$XSS_FG_TANGGAL" FACTORY_ID="$XSS_FG_FACTORY_ID" \
+node "$API_ROOT/tests/_ui_smoke_fg_xss.mjs"
+XSS_SMOKE_RESULT=$?
+
 kill "$PHP_PID" 2>/dev/null || true
 PHP_PID=""
 
-if [ $MOBILE_SMOKE_RESULT -ne 0 ]; then
-  echo "_ui_smoke_mobile_fg.mjs FAILED — stopping before the full regression cascade"
+if [ $XSS_SMOKE_RESULT -ne 0 ]; then
+  echo "_ui_smoke_fg_xss.mjs FAILED — stopping before the full regression cascade"
   exit 1
 fi
 
