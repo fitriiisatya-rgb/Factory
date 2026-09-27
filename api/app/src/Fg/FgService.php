@@ -740,7 +740,14 @@ final class FgService
     public function storeBreakdown(string $tanggal, int $factoryId, int $productId): array
     {
         $factory = $this->requireFactory($factoryId);
-        $rows = $this->targets->storeBreakdownForProduct($this->pdo, $tanggal, $factoryId, $productId);
+        // HOTFIX (live UAT 2026-09-26 Karangtengah) — "Only stores with
+        // target > 0" (no batch exists yet at this preview stage, so there
+        // is no "already-entered" row to ever preserve here — see
+        // batchProductStores() for that exception once a batch exists).
+        $rows = array_values(array_filter(
+            $this->targets->storeBreakdownForProduct($this->pdo, $tanggal, $factoryId, $productId),
+            static fn ($r) => $r['target'] > 0.0001
+        ));
         return [
             'tanggal' => $tanggal,
             'factoryId' => $factoryId,
@@ -789,6 +796,18 @@ final class FgService
         $rows = [];
         foreach ($targetRows as $t) {
             $existing = $byStore[$t['storeId']] ?? null;
+            // HOTFIX (live UAT 2026-09-26 Karangtengah) — "Only stores with
+            // target > 0" — but NEVER at the cost of hiding a store row
+            // that already has real data (a PO revision can legitimately
+            // drop a store's target to 0 after FG was already entered/
+            // shipped against the OLD target; that case must stay visible
+            // — flagged via needsReview below, never silently dropped from
+            // the view — see this method's own docblock and Delivery\
+            // ShipmentService's "PO revision must not silently reclaim
+            // packed/shipped stock" rule, applied here to display too).
+            if ($t['target'] <= 0.0001 && $existing === null) {
+                continue;
+            }
             $fgVerified = $existing !== null ? (float) $existing['qty'] : 0.0;
             // "Perlu Review Ulang" — same DERIVED, non-blocking, read-time
             // pattern already established for Production (see
@@ -875,12 +894,17 @@ final class FgService
         }
         $runIds = array_column($runs, 'productionRunId');
         $placeholders = implode(',', array_fill(0, count($runIds), '?'));
+        // Same "target > 0" data-layer filter as FgTargetService::
+        // productionActualByProduct() — see that method's own docblock;
+        // this is only the division-scoped PREVIEW re-aggregation (loadTarget's
+        // optional $divisionId filter), but must agree with it exactly.
         $stmt = $this->pdo->prepare(
             "SELECT pi.product_id, p.name AS product_name, SUM(pi.aktual) AS actual
              FROM production_item pi
              INNER JOIN product p ON p.product_id = pi.product_id
              WHERE pi.production_run_id IN ({$placeholders})
              GROUP BY pi.product_id, p.name
+             HAVING SUM(pi.aktual) > 0.0001
              ORDER BY p.name"
         );
         $stmt->execute($runIds);
@@ -1079,6 +1103,22 @@ final class FgService
 
         $rawItems = $this->repo->findItems($this->pdo, $batchId);
         foreach ($rawItems as $productId => $item) {
+            // HOTFIX (live UAT 2026-09-26 Karangtengah) — "FG must show
+            // ONLY products with target > 0" applied as a display-layer
+            // safety net too, not just at the source query (see
+            // FgTargetService::productionActualByProduct()'s own
+            // docblock): a batch created/refreshed BEFORE this hotfix may
+            // already have a zero-target fg_item row persisted (migration
+            // 0014 is live on cPanel — no backfill/cleanup migration ships
+            // with this hotfix), so this skip is what makes an
+            // ALREADY-EXISTING live batch correct immediately, without a
+            // schema change. Never hides a row that has real work entered
+            // against it (fgVerified/packed/reject/hilang > 0), even if a
+            // later Production reopen dropped its snapshot back to 0 — only
+            // a row nobody has ever touched is skipped.
+            if (!self::isVisibleItem($item)) {
+                continue;
+            }
             $dto = $this->buildItemDto($item, $batch['status'], $locationId);
             $totalActual += $dto['productionActualSnapshot'];
             $totalVerified += $dto['fgVerified'];
@@ -1217,5 +1257,27 @@ final class FgService
             return ['code' => 'selesai_dipacking', 'label' => 'Selesai Dipacking'];
         }
         return ['code' => 'sebagian_dipacking', 'label' => 'Sebagian Dipacking'];
+    }
+
+    /**
+     * HOTFIX (live UAT 2026-09-26 Karangtengah) — "FG must show ONLY
+     * products with target > 0", applied uniformly wherever a fg_item
+     * AGGREGATE (FgRepository::findItems()'s per-product shape — qty/
+     * packed_qty/reject_qty/hilang_qty are the SUM across every row) is
+     * about to be shown. A row is visible the moment there is SOMETHING to
+     * show for it: a positive production_actual_snapshot (the common
+     * case), or real already-entered data (fgVerified/packed/reject/
+     * hilang) — the latter guards against ever hiding genuine operator
+     * work purely because a LATER Production reopen happened to drop the
+     * snapshot back to 0.
+     */
+    private static function isVisibleItem(array $item): bool
+    {
+        $eps = 0.0001;
+        return (float) $item['production_actual_snapshot'] > $eps
+            || (float) $item['qty'] > $eps
+            || (float) $item['packed_qty'] > $eps
+            || (float) $item['reject_qty'] > $eps
+            || (float) $item['hilang_qty'] > $eps;
     }
 }

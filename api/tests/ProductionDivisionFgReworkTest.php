@@ -1386,6 +1386,181 @@ runTest('REGSTORE-19 CONTENTION/DEADLOCK: FG submit + Regular shipment + Special
 });
 
 // =======================================================================
+// Part G — HOTFIX LIVE UAT (2026-09-26 Karangtengah): "FG target 0
+// products" + "Breakdown Toko not rendering" (FG-UI-01..12).
+//
+// Reproduces the real cPanel bug with the SAME real katalog products the
+// live screenshot named (never hand-crafted names) — BOLLEN LILIT COKLAT
+// and CHOCO CUBE 12 (the only two with a real production actual that day),
+// plus BOLLEN COKLAT and BLACKFOREST CHOCO CASTLE 16 as the "template row
+// exists, nothing was ever produced" padding products (submitted with
+// actualQty=0 — see FgTargetService::productionActualByProduct()'s own
+// docblock for why this happens for a normal, real division). A third
+// store (P2 TEST STORE C, target 0 for both products) proves FG-UI-05
+// ("only store rows with target > 0 appear") is a REAL filter, not a
+// coincidence of the two seeded stores both happening to have a target.
+//
+// FG-UI-01/02/05/06 are verified here at the API/query layer (the exact
+// layer BUG 1 was fixed at). FG-UI-03/04/07/08/09/10/11/12 are real
+// browser/JS behavior — the exact layer BUG 2 was fixed at, and the exact
+// layer that hides a regression from an API-only test (BUG 2 shipped
+// despite every backend test passing) — so this suite deliberately leaves
+// the FG batch below in DRAFT status and hands off to a REAL headless
+// browser (run-ui-smoke-fg-breakdown.mjs, invoked by
+// run-production-division-fg-rework.sh right after this file exits 0,
+// against this SAME live server+DB+batch) to click the actual "Breakdown
+// Toko" button and inspect the actual rendered DOM.
+// =======================================================================
+$tanggalUiHotfix = '2026-09-26';
+$pastryDivId = (int) $pdo->query("SELECT division_id FROM division WHERE name = 'Pastry'")->fetchColumn();
+expect($pastryDivId > 0, 'expected Pastry division seeded');
+
+function productByName(PDO $pdo, string $name): array
+{
+    $stmt = $pdo->prepare('SELECT product_id, name FROM product WHERE name = ?');
+    $stmt->execute([$name]);
+    $row = $stmt->fetch();
+    expect($row !== false, "expected katalog product '{$name}' to exist after Phase 1 bootstrap");
+    return $row;
+}
+
+$uiBollen = productByName($pdo, 'BOLLEN LILIT COKLAT');
+$uiBollenPad = productByName($pdo, 'BOLLEN COKLAT');
+$uiChococube = productByName($pdo, 'CHOCO CUBE 12');
+$uiChococubePad = productByName($pdo, 'BLACKFOREST CHOCO CASTLE 16');
+
+$pdo->prepare(
+    "INSERT INTO store (canonical_name, channel, active, version, created_at) VALUES ('P2 TEST STORE C', NULL, 1, 1, UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE canonical_name = VALUES(canonical_name)"
+)->execute();
+$storeCId = (int) $pdo->query("SELECT store_id FROM store WHERE canonical_name = 'P2 TEST STORE C'")->fetchColumn();
+expect($storeCId > 0, 'expected P2 TEST STORE C created');
+
+$uiFgBatchId = null;
+$uiFgVersion = null;
+$uiTargetPreview = null;
+
+runTest('FG-UI-00 (setup) two divisions submit real production actual for BOLLEN LILIT COKLAT=25/CHOCO CUBE 12=14, plus a zero-actual padding product each (reproducing the live "template row exists, nothing produced" case) + PO store split (target>0 for A/B, target=0 for C)', function () use (
+    $http, $csrf, $pdo, $tanggalUiHotfix, $rotiBollenDivId, $pastryDivId, $uiBollen, $uiBollenPad, $uiChococube, $uiChococubePad,
+    $karangtengahId, $storeAId, $storeBId, $storeCId
+) {
+    // PO must exist BEFORE the production draft is created — a division's
+    // production_item rows are seeded from ITS OWN live PO target for that
+    // date (ProductionTargetService, read-only over Phase 2 PO) at
+    // createDraft() time; a product added to the PO afterwards would need
+    // an explicit refreshTargets to be pulled in. Seeding the padding
+    // products' PO target here (with SOME target, but actual left 0 below)
+    // is exactly the live bug's real-world root cause — a product that is
+    // part of the day's PO demand but simply wasn't produced.
+    seedPoStoreSplit($pdo, $tanggalUiHotfix, $karangtengahId, (int) $uiBollen['product_id'], [
+        $storeAId => ['poAwal' => 15, 'poRevisi' => 0],
+        $storeBId => ['poAwal' => 8, 'poRevisi' => 0],
+        $storeCId => ['poAwal' => 0, 'poRevisi' => 0],
+    ]);
+    seedPoStoreSplit($pdo, $tanggalUiHotfix, $karangtengahId, (int) $uiChococube['product_id'], [
+        $storeAId => ['poAwal' => 8, 'poRevisi' => 0],
+        $storeBId => ['poAwal' => 4, 'poRevisi' => 0],
+        $storeCId => ['poAwal' => 0, 'poRevisi' => 0],
+    ]);
+    seedPo($pdo, $tanggalUiHotfix, $karangtengahId, $storeAId, [
+        (int) $uiBollenPad['product_id'] => ['poAwal' => 5, 'poRevisi' => 0],
+        (int) $uiChococubePad['product_id'] => ['poAwal' => 5, 'poRevisi' => 0],
+    ]);
+
+    $createRoti = $http->request('POST', '/api/production', ['tanggal' => $tanggalUiHotfix, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fguihotfix-roti-create')));
+    expect($createRoti['status'] === 200, 'FG-UI-00: expected Roti & Bollen production draft create 200, got ' . $createRoti['status'] . ': ' . json_encode($createRoti['json']));
+    $runRoti = (int) $createRoti['json']['data']['productionRunId'];
+    $verRoti = (int) $createRoti['json']['data']['version'];
+    $patchRoti = $http->request('PATCH', "/api/production/{$runRoti}", [
+        'expectedVersion' => $verRoti,
+        'items' => [
+            ['productId' => (int) $uiBollen['product_id'], 'actualQty' => 25],
+            ['productId' => (int) $uiBollenPad['product_id'], 'actualQty' => 0],
+        ],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fguihotfix-roti-patch')));
+    expect($patchRoti['status'] === 200, 'FG-UI-00: expected Roti & Bollen production patch 200, got ' . $patchRoti['status'] . ': ' . json_encode($patchRoti['json']));
+    $verRoti = (int) $patchRoti['json']['data']['version'];
+    $submitRoti = $http->request('POST', "/api/production/{$runRoti}/submit", ['expectedVersion' => $verRoti], array_merge(['X-CSRF-Token' => $csrf], idemKey('fguihotfix-roti-submit')));
+    expect($submitRoti['status'] === 200, 'FG-UI-00: expected Roti & Bollen production submit 200, got ' . $submitRoti['status'] . ': ' . json_encode($submitRoti['json']));
+
+    $createPastry = $http->request('POST', '/api/production', ['tanggal' => $tanggalUiHotfix, 'divisionId' => $pastryDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fguihotfix-pastry-create')));
+    expect($createPastry['status'] === 200, 'FG-UI-00: expected Pastry production draft create 200, got ' . $createPastry['status'] . ': ' . json_encode($createPastry['json']));
+    $runPastry = (int) $createPastry['json']['data']['productionRunId'];
+    $verPastry = (int) $createPastry['json']['data']['version'];
+    $patchPastry = $http->request('PATCH', "/api/production/{$runPastry}", [
+        'expectedVersion' => $verPastry,
+        'items' => [
+            ['productId' => (int) $uiChococube['product_id'], 'actualQty' => 14],
+            ['productId' => (int) $uiChococubePad['product_id'], 'actualQty' => 0],
+        ],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fguihotfix-pastry-patch')));
+    expect($patchPastry['status'] === 200, 'FG-UI-00: expected Pastry production patch 200, got ' . $patchPastry['status'] . ': ' . json_encode($patchPastry['json']));
+    $verPastry = (int) $patchPastry['json']['data']['version'];
+    $submitPastry = $http->request('POST', "/api/production/{$runPastry}/submit", ['expectedVersion' => $verPastry], array_merge(['X-CSRF-Token' => $csrf], idemKey('fguihotfix-pastry-submit')));
+    expect($submitPastry['status'] === 200, 'FG-UI-00: expected Pastry production submit 200, got ' . $submitPastry['status'] . ': ' . json_encode($submitPastry['json']));
+});
+
+runTest('FG-UI-02 "Produksi Submitted Tersedia" (GET /api/fg/target) hides target=0 products — only BOLLEN LILIT COKLAT=25 and CHOCO CUBE 12=14 appear, never the zero-actual padding products', function () use ($http, $csrf, $tanggalUiHotfix, $karangtengahId, $uiBollen, $uiBollenPad, $uiChococube, $uiChococubePad, &$uiTargetPreview) {
+    $r = $http->request('GET', "/api/fg/target?date={$tanggalUiHotfix}&factoryId={$karangtengahId}", null, ['X-CSRF-Token' => $csrf]);
+    expect($r['status'] === 200, 'FG-UI-02: expected 200, got ' . $r['status'] . ': ' . json_encode($r['json']));
+    $items = $r['json']['data']['items'];
+    $uiTargetPreview = $items;
+    expect(count($items) === 2, 'FG-UI-02: expected exactly 2 products with target > 0, got ' . count($items) . ': ' . json_encode($items));
+    $byId = [];
+    foreach ($items as $it) {
+        $byId[$it['productId']] = $it;
+    }
+    expect(isset($byId[(int) $uiBollen['product_id']]) && numEq($byId[(int) $uiBollen['product_id']]['actual'], 25.0), 'FG-UI-02: expected BOLLEN LILIT COKLAT actual=25');
+    expect(isset($byId[(int) $uiChococube['product_id']]) && numEq($byId[(int) $uiChococube['product_id']]['actual'], 14.0), 'FG-UI-02: expected CHOCO CUBE 12 actual=14');
+    expect(!isset($byId[(int) $uiBollenPad['product_id']]), 'FG-UI-02: BOLLEN COKLAT (actual=0) must never appear in Produksi Submitted Tersedia');
+    expect(!isset($byId[(int) $uiChococubePad['product_id']]), 'FG-UI-02: BLACKFOREST CHOCO CASTLE 16 (actual=0) must never appear in Produksi Submitted Tersedia');
+});
+
+runTest('FG-UI-01 Draft FG Per Produk (GET /api/fg/{id}) hides target=0 rows — batch created from the SAME filtered source, so it materializes exactly 2 fg_item rows, never one per padding product', function () use ($http, $csrf, $tanggalUiHotfix, $karangtengahId, $uiBollen, $uiBollenPad, $uiChococube, $uiChococubePad, &$uiFgBatchId, &$uiFgVersion) {
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggalUiHotfix, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fguihotfix-fg-create')));
+    expect($create['status'] === 200, 'FG-UI-01: expected FG draft create 200, got ' . $create['status'] . ': ' . json_encode($create['json']));
+    $uiFgBatchId = (int) $create['json']['data']['fgBatchId'];
+    $uiFgVersion = (int) $create['json']['data']['version'];
+
+    $get = $http->request('GET', "/api/fg/{$uiFgBatchId}");
+    expect($get['status'] === 200, 'FG-UI-01: expected FG get 200, got ' . $get['status']);
+    $items = $get['json']['data']['items'];
+    expect(count($items) === 2, 'FG-UI-01: expected exactly 2 rows in Draft FG Per Produk, got ' . count($items) . ': ' . json_encode(array_column($items, 'productName')));
+    $names = array_column($items, 'productName');
+    expect(in_array('BOLLEN LILIT COKLAT', $names, true), 'FG-UI-01: expected BOLLEN LILIT COKLAT row');
+    expect(in_array('CHOCO CUBE 12', $names, true), 'FG-UI-01: expected CHOCO CUBE 12 row');
+    expect(!in_array('BOLLEN COKLAT', $names, true), 'FG-UI-01: BOLLEN COKLAT (target 0) must not appear');
+    expect(!in_array('BLACKFOREST CHOCO CASTLE 16', $names, true), 'FG-UI-01: BLACKFOREST CHOCO CASTLE 16 (target 0) must not appear');
+});
+
+runTest('FG-UI-05/FG-UI-06 Breakdown Toko store rows (GET /api/fg/{id}/items/{productId}/stores) only include stores with target > 0, and their targets sum to the product\'s authoritative PO target', function () use ($http, $uiBollen, $uiChococube, $storeAId, $storeBId, $storeCId, &$uiFgBatchId) {
+    $rBollen = $http->request('GET', "/api/fg/{$uiFgBatchId}/items/{$uiBollen['product_id']}/stores");
+    expect($rBollen['status'] === 200, 'FG-UI-05: expected 200 for BOLLEN LILIT COKLAT stores, got ' . $rBollen['status']);
+    $storesBollen = $rBollen['json']['data']['stores'];
+    $storeIdsBollen = array_column($storesBollen, 'storeId');
+    expect(count($storesBollen) === 2, 'FG-UI-05: expected exactly 2 store rows (A and B) for BOLLEN LILIT COKLAT, got ' . count($storesBollen));
+    expect(in_array($storeAId, $storeIdsBollen, true) && in_array($storeBId, $storeIdsBollen, true), 'FG-UI-05: expected Store A and Store B to be present');
+    expect(!in_array($storeCId, $storeIdsBollen, true), 'FG-UI-05: Store C (target 0) must never appear');
+    expect(numEq($rBollen['json']['data']['totalTarget'], 23.0), 'FG-UI-06: expected BOLLEN LILIT COKLAT store targets to sum to 23 (15+8), got ' . $rBollen['json']['data']['totalTarget']);
+
+    $rChococube = $http->request('GET', "/api/fg/{$uiFgBatchId}/items/{$uiChococube['product_id']}/stores");
+    expect($rChococube['status'] === 200, 'FG-UI-05: expected 200 for CHOCO CUBE 12 stores, got ' . $rChococube['status']);
+    $storesChococube = $rChococube['json']['data']['stores'];
+    $storeIdsChococube = array_column($storesChococube, 'storeId');
+    expect(count($storesChococube) === 2, 'FG-UI-05: expected exactly 2 store rows (A and B) for CHOCO CUBE 12, got ' . count($storesChococube));
+    expect(!in_array($storeCId, $storeIdsChococube, true), 'FG-UI-05: Store C (target 0) must never appear for CHOCO CUBE 12 either');
+    expect(numEq($rChococube['json']['data']['totalTarget'], 12.0), 'FG-UI-06: expected CHOCO CUBE 12 store targets to sum to 12 (8+4), got ' . $rChococube['json']['data']['totalTarget']);
+});
+
+// Deliberately no submit() here — the FG batch is handed to
+// run-ui-smoke-fg-breakdown.mjs below in DRAFT status, exactly matching
+// the real cPanel UAT screenshot (a batch still being worked on), and so
+// the Sesuai/Tidak Sesuai/actual-input editable controls FG-UI-07..10
+// checks are still rendered.
+fwrite(STDOUT, "FG_UI_HOTFIX_FACTORY_ID={$karangtengahId}\n");
+fwrite(STDOUT, "FG_UI_HOTFIX_TANGGAL={$tanggalUiHotfix}\n");
+
+// =======================================================================
 // Summary
 // =======================================================================
 $total = count($results);

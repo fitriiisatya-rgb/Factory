@@ -863,8 +863,17 @@ runTest('FG-R02 refresh-source updates fg_item.production_actual_snapshot', func
     $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr02')));
     $batchId = $create['json']['data']['fgBatchId'];
     $v = $create['json']['data']['version'];
-    $item0 = current(array_filter($create['json']['data']['items'], fn ($i) => $i['productId'] === $prodB['product_id']));
-    expect((float) $item0['productionActualSnapshot'] === 0.0, 'expected initial snapshot 0');
+    // HOTFIX (live UAT 2026-09-26): a product with actual=0 no longer
+    // materializes an fg_item row at all (see FgTargetService::
+    // productionActualByProduct()'s HAVING SUM(aktual)>0 filter — "FG must
+    // show ONLY products with target > 0") — prodB starts at actual=0
+    // deliberately (this test is about the LATER refresh, not the initial
+    // state), so there is no item yet to assert an initial snapshot on.
+    // The real assertion this test is named for (snapshot correctly
+    // becomes 2 after refresh) is still checked below via the DB row
+    // directly, regardless of whether refresh-source inserts this row
+    // fresh or updates an existing one.
+    expect(current(array_filter($create['json']['data']['items'], fn ($i) => $i['productId'] === $prodB['product_id'])) === false, 'expected prodB to NOT appear yet (actual=0, target>0 filter)');
 
     resubmitProduction($http, $csrf, $run['productionRunId'], $run['version'], $prodB['product_id'], 2.0, 'refresh snapshot test');
 
@@ -959,9 +968,15 @@ runTest("FG-R07 available stock for an already-posted product is unchanged by re
     $create = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr07')));
     $batchId = $create['json']['data']['fgBatchId'];
     $v = $create['json']['data']['version'];
+    // HOTFIX (live UAT 2026-09-26): prodVar1 starts at actual=0
+    // deliberately (its role in this test is the LATER refresh/resubmit
+    // below) — it no longer materializes an fg_item row at all (see
+    // FgTargetService::productionActualByProduct()'s HAVING SUM(aktual)>0
+    // filter), so there is nothing to PATCH for it yet; the old
+    // fgVerified=0/packed=0 entry was already a pure no-op even before
+    // this hotfix (setting an already-zero row to zero).
     $save = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [
         ['productId' => $prodBasic['product_id'], 'fgVerified' => 4, 'packed' => 4],
-        ['productId' => $prodVar1['product_id'], 'fgVerified' => 0, 'packed' => 0],
     ]], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgr07b')));
     expect($save['status'] === 200, 'save failed: ' . json_encode($save['json']));
     $v = $save['json']['data']['version'];

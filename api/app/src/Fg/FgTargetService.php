@@ -61,6 +61,18 @@ final class FgTargetService
      */
     public function productionActualByProduct(PDO $pdo, string $tanggal, int $factoryId): array
     {
+        // HOTFIX (live UAT 2026-09-26 Karangtengah) — "Target FG (Hasil
+        // Produksi)" must show ONLY products with target > 0. A division's
+        // production_item rows exist for every product in that division's
+        // PO-derived template regardless of whether it was actually
+        // produced that day (aktual defaults to 0 — see production_item's
+        // own schema) — without this HAVING clause every untouched
+        // template row would surface here (and, via createDraft()/
+        // refreshSource(), get materialized as a permanent zero-target
+        // fg_item row) even though nothing was ever produced. Filtered at
+        // the query layer, not in PHP/CSS, so "Produksi Submitted Tersedia"
+        // and every FG draft created/refreshed from this method are correct
+        // from the source, not merely hidden after the fact.
         $stmt = $pdo->prepare(
             "SELECT pi.product_id, p.name AS product_name, SUM(pi.aktual) AS actual
              FROM production_run r
@@ -69,6 +81,7 @@ final class FgTargetService
              INNER JOIN product p ON p.product_id = pi.product_id
              WHERE r.tanggal = ? AND d.factory_id = ? AND r.status = 'submitted'
              GROUP BY pi.product_id, p.name
+             HAVING SUM(pi.aktual) > 0.0001
              ORDER BY p.name"
         );
         $stmt->execute([$tanggal, $factoryId]);

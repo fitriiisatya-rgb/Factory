@@ -114,7 +114,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   </div>
 
   <form id="fg-form" data-batch-id="<?= (int) $batchView['fgBatchId'] ?>" data-expected-version="<?= (int) $batchView['version'] ?>" data-tanggal="<?= ui_esc($uiTanggal) ?>" data-factory-id="<?= $uiFactoryId ?>">
-  <div class="table-scroll"><table class="data-table">
+  <div class="table-scroll" id="fg-perproduk-wrap"><table class="data-table">
     <thead><tr><th>Produk</th><th>Mode</th><th class="num">Target FG (Hasil Produksi)</th><th>Verified</th><th class="num">FG Terverifikasi</th><th class="num">Selisih</th><th>Packing</th><th class="num">Packed</th><th class="num">Reject</th><th class="num">Hilang</th><th class="num">Available</th><th>FG Status</th><th>Packing Status</th><th>Catatan</th><th></th></tr></thead>
     <tbody>
     <?php foreach ($batchView['items'] as $it): ?>
@@ -220,34 +220,35 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     if (packedInput && verifiedInput) wireSesuaiGroup(group, packedInput, function () { return verifiedInput.value || '0'; });
   });
 
-  // Per Produk / Breakdown Toko — Breakdown Toko is a READ-ONLY reference
-  // (see FgTargetService::storeBreakdownForProduct()'s own docblock): it
-  // never becomes a second place to enter Verified/Packing, so Per Produk
-  // and Breakdown Toko can never disagree — there is only ever ONE stored
-  // number per product, entered above.
+  // Per Produk / Breakdown Toko — the top-level "Tampilan Data" toggle now
+  // actually SWITCHES the table's own data source/renderer (HOTFIX —
+  // previously it only changed the two buttons' CSS classes and revealed
+  // an empty panel, since nothing ever populated it unless a per-row
+  // "Breakdown Toko" button had separately been clicked). Breakdown Toko
+  // stays a pure VIEW over the SAME underlying fg_item rows Per Produk
+  // reads (FgService::batchProductStores(), the writable data source — see
+  // its own docblock): there is still only ONE stored number per store
+  // row, so switching modes can never double-count or duplicate data
+  // (task's own explicit "switching modes must not create duplicate
+  // data"/"both modes must reflect the same canonical FG truth" rule).
   var modeProduk = document.getElementById('fg-mode-produk');
   var modeToko = document.getElementById('fg-mode-toko');
   var breakdownPanel = document.getElementById('fg-breakdown-panel');
-  if (modeProduk && modeToko) {
-    modeProduk.addEventListener('click', function () {
-      modeProduk.className = 'btn btn-sm btn-primary'; modeToko.className = 'btn btn-sm btn-secondary';
-      if (breakdownPanel) breakdownPanel.style.display = 'none';
-    });
-    modeToko.addEventListener('click', function () {
-      modeToko.className = 'btn btn-sm btn-primary'; modeProduk.className = 'btn btn-sm btn-secondary';
-      if (breakdownPanel) breakdownPanel.style.display = '';
-    });
-  }
-  // Writable Breakdown Toko panel — GET /api/fg/{id}/items/{productId}/stores
-  // merges the live PO target with whatever has actually been entered so
-  // far (see FgService::batchProductStores()'s own docblock); each row
-  // gets the SAME Sesuai/Tidak Sesuai convenience as Per Produk, against
-  // that STORE's own target. Saving PATCHes storeItems for just this one
-  // product — the very first save explodes it (see explodeToStores()),
-  // after which the Per Produk row above becomes read-only automatically
-  // on next reload (server-derived, never a client-side guess).
-  function renderBreakdownPanel(pid, pname, data) {
-    var editableHere = <?= $editable ? 'true' : 'false' ?>;
+  var perProdukWrap = document.getElementById('fg-perproduk-wrap');
+  var editableHere = <?= $editable ? 'true' : 'false' ?>;
+  // Server-filtered list (BUG 1 fix already applied to $batchView['items']
+  // itself — see FgService::buildBatchDto()) — this is exactly "every
+  // product with target > 0" the whole-table Breakdown Toko view must
+  // fetch store rows for, never a second/looser list.
+  var visibleProducts = <?= json_encode(array_map(static fn ($it) => ['productId' => $it['productId'], 'productName' => $it['productName']], $batchView['items'])) ?>;
+
+  // Builds ONE product's store-breakdown block as a detached DOM node —
+  // shared by the whole-table "Breakdown Toko" mode (one block per visible
+  // product, stacked) and the per-row quick-view button (a single block).
+  // Every element inside is scoped via closures over THIS node (never a
+  // global id/getElementById), so any number of these can be on screen at
+  // once without id collisions.
+  function buildStoreBlock(pid, pname, data) {
     var rowsHtml = (data.stores || []).map(function (s, idx) {
       var verifiedSesuai = editableHere && Math.abs(s.fgVerified - s.target) < 0.01 && s.fgVerified > 0;
       var packingSesuai = editableHere && Math.abs(s.packed - s.fgVerified) < 0.01 && s.packed > 0;
@@ -258,13 +259,13 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       // already-packed/already-shipped stock).
       var reviewBadge = s.needsReview ? ' <span class="badge badge-danger">Perlu Review Ulang</span>' : '';
       if (!editableHere) {
-        return '<tr><td>' + (idx + 1) + '</td><td>' + s.storeName + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
+        return '<tr><td>' + (idx + 1) + '</td><td>' + pname + '</td><td>' + s.storeName + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
           + '<td class="num">' + s.fgVerified.toLocaleString('id-ID') + '</td><td class="num">' + s.packed.toLocaleString('id-ID') + '</td>'
           + '<td class="num">' + s.reject.toLocaleString('id-ID') + '</td><td class="num">' + s.hilang.toLocaleString('id-ID') + '</td>'
           + '<td>' + (s.notes || '') + '</td><td>' + (s.status || '') + reviewBadge + '</td></tr>';
       }
       return '<tr data-store-id="' + s.storeId + '">'
-        + '<td>' + (idx + 1) + '</td><td>' + s.storeName + reviewBadge + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
+        + '<td>' + (idx + 1) + '</td><td>' + pname + '</td><td>' + s.storeName + reviewBadge + '</td><td class="num">' + s.target.toLocaleString('id-ID') + '</td>'
         + '<td><div class="btn-group bt-verified-sesuai" data-target="' + s.target + '" data-sesuai="' + (verifiedSesuai ? '1' : '0') + '">'
         +   '<button type="button" class="btn btn-sm ' + (verifiedSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
         +   '<button type="button" class="btn btn-sm ' + (!verifiedSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'
@@ -280,35 +281,38 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         + '<td><input type="text" style="width:8rem;" data-bt-field="notes" value="' + (s.notes || '').replace(/"/g, '&quot;') + '"></td>'
         + '<td>' + (s.status || '') + '</td></tr>';
     }).join('');
-    var head = '<tr><th>No</th><th>Toko</th><th class="num">Target</th><th>Verified Result</th><th class="num">Actual Verified</th><th>Packing Result</th><th class="num">Actual Packing</th><th class="num">Reject</th><th class="num">Hilang</th><th>Keterangan</th><th>Status</th></tr>';
+    var head = '<tr><th>No</th><th>Produk</th><th>Toko</th><th class="num">Target Toko</th><th>Verified Result</th><th class="num">Actual Verified</th><th>Packing Result</th><th class="num">Actual Packing</th><th class="num">Reject</th><th class="num">Hilang</th><th>Keterangan</th><th>Status</th></tr>';
     var actions = editableHere
-      ? '<div class="btn-group" style="margin-top:var(--space-2);"><button type="button" class="btn btn-primary btn-sm" id="bt-save">Simpan Breakdown Toko</button><button type="button" class="btn btn-secondary btn-sm" id="bt-cancel">Tutup</button></div>'
-      : '<div class="btn-group" style="margin-top:var(--space-2);"><button type="button" class="btn btn-secondary btn-sm" id="bt-cancel">Tutup</button></div>';
-    breakdownPanel.innerHTML = '<div class="card-head"><h3 class="card-title" style="font-size:var(--text-md);">Breakdown Toko — ' + pname + '</h3></div>'
+      ? '<div class="btn-group" style="margin-top:var(--space-2);"><button type="button" class="btn btn-primary btn-sm bt-save">Simpan Breakdown Toko</button></div>'
+      : '';
+
+    var block = document.createElement('div');
+    block.className = 'card section';
+    block.setAttribute('data-product-id', pid);
+    block.innerHTML = '<div class="card-head"><h3 class="card-title" style="font-size:var(--text-md);">Breakdown Toko — ' + pname + '</h3></div>'
       + (data.exploded ? '' : '<div class="alert alert-warning" style="margin-bottom:var(--space-2);">Produk ini masih mode Per Produk — mengisi baris di bawah dan Simpan akan memecahnya ke per-Toko.</div>')
-      + '<div class="table-scroll"><table class="data-table"><thead>' + head + '</thead><tbody>' + rowsHtml + '</tbody>'
-      + '<tfoot><tr><td colspan="2">Total</td><td class="num">' + data.totalTarget.toLocaleString('id-ID') + '</td><td></td><td class="num">' + data.totalVerified.toLocaleString('id-ID') + '</td><td></td><td class="num">' + data.totalPacked.toLocaleString('id-ID') + '</td><td colspan="3"></td></tr></tfoot></table></div>'
+      + (data.stores.length === 0 ? '<p style="color:var(--text-muted);">Tidak ada Toko dengan target &gt; 0 untuk produk ini pada tanggal/pabrik ini.</p>' : (
+        '<div class="table-scroll"><table class="data-table"><thead>' + head + '</thead><tbody>' + rowsHtml + '</tbody>'
+        + '<tfoot><tr><td colspan="3">Total</td><td class="num">' + data.totalTarget.toLocaleString('id-ID') + '</td><td></td><td class="num">' + data.totalVerified.toLocaleString('id-ID') + '</td><td></td><td class="num">' + data.totalPacked.toLocaleString('id-ID') + '</td><td colspan="3"></td></tr></tfoot></table></div>'
+      ))
       + actions;
 
-    breakdownPanel.querySelectorAll('.bt-verified-sesuai').forEach(function (group) {
+    block.querySelectorAll('.bt-verified-sesuai').forEach(function (group) {
       var input = group.closest('tr').querySelector('[data-bt-field="fgVerified"]');
       wireSesuaiGroup(group, input, function () { return group.getAttribute('data-target'); });
     });
-    breakdownPanel.querySelectorAll('.bt-packing-sesuai').forEach(function (group) {
+    block.querySelectorAll('.bt-packing-sesuai').forEach(function (group) {
       var tr = group.closest('tr');
       var packedInput = tr.querySelector('[data-bt-field="packed"]');
       var verifiedInput = tr.querySelector('[data-bt-field="fgVerified"]');
       wireSesuaiGroup(group, packedInput, function () { return verifiedInput.value || '0'; });
     });
 
-    var cancelBtn = document.getElementById('bt-cancel');
-    if (cancelBtn) cancelBtn.addEventListener('click', function () { breakdownPanel.style.display = 'none'; breakdownPanel.innerHTML = ''; });
-
-    var saveBtn = document.getElementById('bt-save');
+    var saveBtn = block.querySelector('.bt-save');
     if (saveBtn) saveBtn.addEventListener('click', async function () {
       saveBtn.disabled = true;
       var rowsOut = [];
-      breakdownPanel.querySelectorAll('tbody tr[data-store-id]').forEach(function (tr) {
+      block.querySelectorAll('tbody tr[data-store-id]').forEach(function (tr) {
         var vGroup = tr.querySelector('.bt-verified-sesuai');
         var pGroup = tr.querySelector('.bt-packing-sesuai');
         rowsOut.push({
@@ -333,26 +337,60 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         setTimeout(function () { location.reload(); }, 600);
       } catch (e) { Amor.toast(e.message, 'danger'); saveBtn.disabled = false; }
     });
+    return block;
   }
 
-  async function loadBreakdownPanel(pid, pname) {
+  async function fetchStoreData(pid) {
+    return Amor.apiFetch('/api/fg/' + batchId + '/items/' + pid + '/stores');
+  }
+
+  // Whole-table mode switch: fetches EVERY visible product's store rows in
+  // parallel and stacks their blocks in place of the Per Produk table —
+  // "click Breakdown Toko -> rows appear directly", no manual per-product
+  // "explode" step required first (batchProductStores() already renders
+  // 0-rows from the live PO target before a product is ever exploded).
+  async function enterBreakdownMode(focusProductId) {
     if (!breakdownPanel) return;
+    modeToko.className = 'btn btn-sm btn-primary'; modeProduk.className = 'btn btn-sm btn-secondary';
+    if (perProdukWrap) perProdukWrap.style.display = 'none';
     breakdownPanel.style.display = '';
-    breakdownPanel.innerHTML = '<div style="color:var(--text-muted);">Memuat breakdown toko untuk ' + pname + '...</div>';
+    breakdownPanel.innerHTML = '<div style="color:var(--text-muted);">Memuat Breakdown Toko...</div>';
+    if (visibleProducts.length === 0) {
+      breakdownPanel.innerHTML = '<p style="color:var(--text-muted);">Tidak ada produk dengan target &gt; 0.</p>';
+      return;
+    }
     try {
-      var data = await Amor.apiFetch('/api/fg/' + batchId + '/items/' + pid + '/stores');
-      renderBreakdownPanel(pid, pname, data);
+      var results = await Promise.all(visibleProducts.map(function (p) {
+        return fetchStoreData(p.productId).then(function (data) { return { p: p, data: data }; });
+      }));
+      breakdownPanel.innerHTML = '';
+      results.forEach(function (r) {
+        breakdownPanel.appendChild(buildStoreBlock(r.p.productId, r.p.productName, r.data));
+      });
+      if (focusProductId) {
+        var target = breakdownPanel.querySelector('[data-product-id="' + focusProductId + '"]');
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     } catch (e) {
       breakdownPanel.innerHTML = '<div class="alert alert-danger">' + e.message + '</div>';
     }
   }
 
+  function exitBreakdownMode() {
+    modeProduk.className = 'btn btn-sm btn-primary'; modeToko.className = 'btn btn-sm btn-secondary';
+    if (perProdukWrap) perProdukWrap.style.display = '';
+    if (breakdownPanel) { breakdownPanel.style.display = 'none'; breakdownPanel.innerHTML = ''; }
+  }
+
+  if (modeProduk && modeToko) {
+    modeProduk.addEventListener('click', exitBreakdownMode);
+    modeToko.addEventListener('click', function () { enterBreakdownMode(null); });
+  }
+
   document.querySelectorAll('.fg-breakdown-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var pid = btn.getAttribute('data-product-id');
-      var pname = btn.getAttribute('data-product-name');
-      if (modeToko) modeToko.click();
-      loadBreakdownPanel(pid, pname);
+      enterBreakdownMode(pid);
     });
   });
 

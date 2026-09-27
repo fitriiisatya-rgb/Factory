@@ -35,6 +35,7 @@ cleanup() {
     sleep 1
   fi
   rm -f "$API_ROOT/app/config/config.php"
+  [ -L "$API_ROOT/api" ] && rm -f "$API_ROOT/api"
   rm -rf "$WORKDIR"
 }
 trap cleanup EXIT
@@ -113,6 +114,21 @@ return [
 PHPCONFIG
 
 echo "--- 8/9: starting php -S dev server on :$PHP_PORT and running ProductionDivisionFgReworkTest.php (PDFG-01..24) ---"
+# The app's own templates link static assets/pages via an ABSOLUTE
+# "/api/assets/..." path (correct against the REAL cPanel docroot, one
+# level above api/, where .htaccess rewrites bare "/api/xxx" JSON calls to
+# api/index.php while letting a literal static file under api/assets/
+# serve directly). This disposable php -S test server's own docroot IS
+# api/ itself (so every existing HttpPdfg JSON call's "/api/..." path
+# keeps falling through to index.php's router exactly as it always has —
+# never touched here), which makes a REQUEST for "/api/assets/..." look
+# for a literal "api/api/assets/..." file that doesn't exist. A
+# self-referential symlink (api/api -> .) makes that lookup resolve to the
+# real assets/ directory, purely a test-harness fix — the .htaccess/docroot
+# split this papers over is real cPanel behavior this script cannot
+# replicate under php -S, never a change to any shipped file. Removed by
+# cleanup() below; never left behind for a build script to recurse into.
+ln -sfn . "$API_ROOT/api"
 php -S "127.0.0.1:$PHP_PORT" -t "$API_ROOT" > "$WORKDIR/php-server.log" 2>&1 &
 PHP_PID=$!
 sleep 1
@@ -127,14 +143,35 @@ TEST_DB_SOCKET="$SOCK" \
 TEST_DB_NAME="$DB_NAME" \
 TEST_RUNTIME_USER="pdfg_runtime_user" \
 TEST_RUNTIME_PASS="$RUNTIME_USER_PASS" \
-php "$API_ROOT/tests/ProductionDivisionFgReworkTest.php"
-PDFG_RESULT=$?
+php "$API_ROOT/tests/ProductionDivisionFgReworkTest.php" 2>&1 | tee "$WORKDIR/pdfg-output.log"
+PDFG_RESULT=${PIPESTATUS[0]}
+
+if [ $PDFG_RESULT -ne 0 ]; then
+  kill "$PHP_PID" 2>/dev/null || true
+  PHP_PID=""
+  echo "ProductionDivisionFgReworkTest.php FAILED — stopping before the full regression cascade"
+  exit 1
+fi
+
+echo "--- 8.5/9: real headless-browser smoke check — HOTFIX LIVE UI (FG target=0 rows + Breakdown Toko rendering, FG-UI-03/04/07/08/09/10/11/12) ---"
+UI_HOTFIX_FACTORY_ID=$(grep -oP 'FG_UI_HOTFIX_FACTORY_ID=\K[0-9]+' "$WORKDIR/pdfg-output.log" | tail -1)
+UI_HOTFIX_TANGGAL=$(grep -oP 'FG_UI_HOTFIX_TANGGAL=\K[0-9-]+' "$WORKDIR/pdfg-output.log" | tail -1)
+if [ -z "$UI_HOTFIX_FACTORY_ID" ] || [ -z "$UI_HOTFIX_TANGGAL" ]; then
+  kill "$PHP_PID" 2>/dev/null || true
+  PHP_PID=""
+  echo "Could not find FG_UI_HOTFIX_FACTORY_ID/FG_UI_HOTFIX_TANGGAL markers in PDFG test output — cannot run the UI smoke check"
+  exit 1
+fi
+BASE_URL="http://127.0.0.1:$PHP_PORT" ADMIN_USER="pdfg_staging_admin" ADMIN_PASS="$TEST_ADMIN_PASS" \
+TANGGAL="$UI_HOTFIX_TANGGAL" FACTORY_ID="$UI_HOTFIX_FACTORY_ID" \
+node "$API_ROOT/tests/_ui_smoke_fg_breakdown_toko.mjs"
+UI_SMOKE_RESULT=$?
 
 kill "$PHP_PID" 2>/dev/null || true
 PHP_PID=""
 
-if [ $PDFG_RESULT -ne 0 ]; then
-  echo "ProductionDivisionFgReworkTest.php FAILED — stopping before the full regression cascade"
+if [ $UI_SMOKE_RESULT -ne 0 ]; then
+  echo "_ui_smoke_fg_breakdown_toko.mjs FAILED — stopping before the full regression cascade"
   exit 1
 fi
 
