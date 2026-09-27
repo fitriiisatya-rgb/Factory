@@ -535,6 +535,22 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         if (!byStore[s.storeId]) { byStore[s.storeId] = { storeId: s.storeId, storeName: s.storeName, rows: [] }; order.push(s.storeId); }
         byStore[s.storeId].rows.push({
           productId: r.productId, productName: r.productName,
+          // A product with real Regular PO store-level demand shows up
+          // here (batchProductStores() always renders live PO-target rows,
+          // whether or not this product has ever been exploded — Phase 2
+          // PO import is already store-split independently of Phase 4 FG's
+          // own explode step) EVEN IF it is still being verified in
+          // default Per Produk mode. r.data.exploded is per-PRODUCT (same
+          // value on every one of that product's rows here) — a still-
+          // unexploded product's fgVerified is always 0 at every store
+          // (nothing has been assigned to any one store yet), so there is
+          // nothing real to pack for it yet; it is shown read-only, never
+          // included in a "Submit Packing" payload (see renderDetail()) —
+          // attempting to would try to explodeToStores() a row that still
+          // has a real (nonzero) Per Produk aggregate, which the backend
+          // correctly refuses (MODE_SWITCH_REQUIRES_ZERO_PER_PRODUK) since
+          // it cannot guess how to split that number across stores.
+          exploded: r.data.exploded,
           target: s.target, fgVerified: s.fgVerified, packed: s.packed,
           reject: s.reject, hilang: s.hilang, notes: s.notes, status: s.status,
         });
@@ -553,7 +569,13 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   // what has been packed so far (still actively workable).
   function storeStatus(group) {
     var targetTotal = 0, readyTotal = 0, packedTotal = 0;
-    group.rows.forEach(function (r) { targetTotal += r.target; readyTotal += r.fgVerified; packedTotal += r.packed; });
+    // A never-exploded row (see groupByStore()'s own docblock) can never
+    // be packed at all yet — counting its target in this store's own
+    // progress denominator would understate real completion (a store
+    // fully packed for everything actually ready would never show
+    // "Selesai"/100%, forever short by an amount nothing here can act on
+    // yet). Only rows this store can actually submit packing for count.
+    group.rows.forEach(function (r) { if (r.exploded) { targetTotal += r.target; readyTotal += r.fgVerified; packedTotal += r.packed; } });
     var eps = 0.0001;
     var code, label;
     if (packedTotal <= eps) { code = 'belum_mulai'; label = 'Belum Mulai'; }
@@ -605,9 +627,21 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     if (!group) { detail.innerHTML = ''; return; }
     var cardsHtml = group.rows.map(function (r) {
       var packingSesuai = editableHere && Math.abs(r.packed - r.fgVerified) < 0.01 && r.packed > 0;
-      var body = '<div class="fg-card fg-packing-row" data-product-id="' + r.productId + '">'
+      var body = '<div class="fg-card fg-packing-row" data-product-id="' + r.productId + '" data-exploded="' + (r.exploded ? '1' : '0') + '">'
         + '<div class="fg-card-title">' + r.productName + '</div>'
         + '<div class="fg-card-sub">Target Toko: ' + r.target.toLocaleString('id-ID') + ' &middot; Ready Verified: ' + r.fgVerified.toLocaleString('id-ID') + '</div>';
+      if (!r.exploded) {
+        // Still verified in default Per Produk mode — no real per-store
+        // FG Verified exists yet, so there is nothing this store can
+        // legitimately pack for this product (Ready Verified is always 0
+        // here). Shown for visibility only; never part of a submit
+        // payload (see the submit handler below) — attempting to would
+        // try to split an existing nonzero Per Produk aggregate across
+        // stores, which the backend correctly refuses to guess at.
+        return body
+          + '<div class="alert alert-warning" style="margin:var(--space-2) 0;">Belum di-Breakdown Toko — verifikasi per Toko dulu di FG Verifikasi sebelum bisa dipacking di sini.</div>'
+          + '</div>';
+      }
       if (!editableHere) {
         body += '<div class="fg-card-row"><span class="fg-card-row-label">Actual Packing</span><span>' + r.packed.toLocaleString('id-ID') + '</span></div>'
           + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><span>' + r.reject.toLocaleString('id-ID') + '</span></div>'
@@ -654,7 +688,10 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     if (submitStoreBtn) submitStoreBtn.addEventListener('click', async function () {
       submitStoreBtn.disabled = true;
       var storeItems = [];
-      detail.querySelectorAll('.fg-packing-row').forEach(function (card) {
+      // A still-unexploded product (data-exploded="0") is deliberately
+      // left OUT of this store's own storeItems payload entirely — see
+      // this card's own rendering above for why.
+      detail.querySelectorAll('.fg-packing-row[data-exploded="1"]').forEach(function (card) {
         var pid = card.getAttribute('data-product-id');
         var field = function (name) { var el = card.querySelector('[data-pk-field="' + name + '"]'); return el ? el.value : ''; };
         var sesuaiGroup = card.querySelector('.pk-sesuai');

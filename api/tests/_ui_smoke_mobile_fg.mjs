@@ -107,6 +107,7 @@ try {
   check(await noHorizontalScroll(page), 'MOBILE-FG-01c: FG Packing at mobile width has no horizontal page scroll');
   check(await page.locator('#fg-perproduk-wrap').count() === 0, 'MOBILE-FG-07: FG Packing defaults to Per Toko — no Per Produk table/list rendered on this step');
   const chipCount = await page.locator('#fg-store-chip-row .fg-store-chip').count();
+  if (chipCount !== 2) console.log('DEBUG chip row text: ' + (await page.locator('#fg-store-chip-row').innerText()));
   check(chipCount === 2, `MOBILE-FG-08: store selector shows both stores with real target>0 rows (got ${chipCount}, expected 2)`);
 
   const storeAChip = page.locator('.fg-store-chip').filter({ hasText: 'P2 TEST STORE A' });
@@ -114,8 +115,18 @@ try {
   await page.waitForSelector('#fg-packing-detail .fg-packing-row', { timeout: 10000 });
   const detailTitle = await page.locator('#fg-packing-detail h3').innerText();
   check(detailTitle.includes('P2 TEST STORE A'), 'MOBILE-FG-08: store selector switches the detail view to the clicked store');
+  // Store A shows THREE rows: BOLLEN + CHOCO CUBE (both exploded, real
+  // Ready Verified) AND prodMobileA (still default Per Produk — its own
+  // real Regular PO store demand at Store A, per Phase 2 PO import,
+  // exists independently of whether THIS product has ever been exploded
+  // for FG purposes — see FgService::batchProductStores()'s own docblock;
+  // never a false-scoping bug, Store B correctly shows none of it below).
   const rowCountA = await page.locator('#fg-packing-detail .fg-packing-row').count();
-  check(rowCountA === 2, `MOBILE-FG-09: selecting Store A only shows Store A's own products (got ${rowCountA}, expected 2 — BOLLEN + CHOCO CUBE)`);
+  check(rowCountA === 3, `MOBILE-FG-09: selecting Store A shows only Store A's own rows (got ${rowCountA}, expected 3 — BOLLEN + CHOCO CUBE + prodMobileA)`);
+  const mobileARowA = page.locator('#fg-packing-detail .fg-packing-row').filter({ hasText: PRODMOBILEA_NAME });
+  check(await mobileARowA.count() === 1, 'MOBILE-FG-09: prodMobileA appears at Store A too (its own real PO store demand)');
+  check((await mobileARowA.innerText()).includes('Belum di-Breakdown Toko'), 'MOBILE-FG-09: prodMobileA (never exploded) renders read-only with an explanatory note, never editable packing controls');
+  check(await mobileARowA.locator('.pk-sesuai').count() === 0, 'MOBILE-FG-09: prodMobileA has no packing controls at all until it is exploded via FG Verifikasi first');
 
   // MOBILE-FG-10: Store A's BOLLEN row has Target=15 but Ready Verified=12
   // (deliberately different — see MOBILE-FG-00 fixture) — Sesuai must
@@ -137,6 +148,11 @@ try {
   await page.waitForTimeout(700);
   const toastText = await page.locator('body').innerText();
   check(toastText.includes('PACKED_EXCEEDS_VERIFIED') || toastText.toLowerCase().includes('exceed') || toastText.toLowerCase().includes('melebihi'), 'MOBILE-FG-12: server rejects Actual Packing (13) exceeding Ready Verified (12) — the ceiling is server-authoritative, not merely a UI hint');
+  // This deliberate negative-path request legitimately logs its own
+  // "Failed to load resource" browser console message (any non-2xx fetch
+  // does) — clear it so MOBILE-FG-17 below only ever catches a REAL,
+  // unexpected error from this point forward.
+  consoleErrors.length = 0;
 
   // Now save Store A for real, within its own ceiling, to exercise the
   // real submit-per-store path (MOBILE-FG-13/14).
@@ -181,7 +197,7 @@ try {
 
   // MOBILE-FG-14: header progress reflects the real packed total after Store A's submit.
   const headerText = await page.locator('#fg-packing-header').innerText();
-  check(/20\s*\/\s*23/.test(headerText.replace(/ /g, ' ')) || headerText.includes('20'), `MOBILE-FG-14: packed-pcs progress reflects Store A's real submit (12 BOLLEN + 8 CHOCO CUBE = 20 packed so far), got: ${headerText}`);
+  check(/20\s*\/\s*35/.test(headerText.replace(/ /g, ' ')), `MOBILE-FG-14: packed-pcs progress reflects both real submits (12 BOLLEN + 8 CHOCO CUBE = 20 packed / 35 real packable target across both stores, prodMobileA's own unpackable 20 excluded), got: ${headerText}`);
 
   check(consoleErrors.length === 0, `MOBILE-FG-17: no browser console errors: ${JSON.stringify(consoleErrors)}`);
   check(pageErrors.length === 0, `MOBILE-FG-17: no uncaught page/JS errors: ${JSON.stringify(pageErrors)}`);

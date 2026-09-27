@@ -805,7 +805,25 @@ final class FgService
             // the view — see this method's own docblock and Delivery\
             // ShipmentService's "PO revision must not silently reclaim
             // packed/shipped stock" rule, applied here to display too).
-            if ($t['target'] <= 0.0001 && $existing === null) {
+            //
+            // MOBILE-FIRST REWORK fix: "$existing !== null" alone is NOT
+            // enough to mean "has real data" — explodeToStores() creates a
+            // real fg_item row for EVERY store storeBreakdownForProduct()
+            // returns, including target=0 ones (it has no reason to filter
+            // those out itself; nothing every writes to them afterward in
+            // the normal flow) — so a freshly-exploded product would
+            // wrongly un-hide its own target=0 stores again the moment
+            // this ran, exactly the bug this hotfix was supposed to fix.
+            // The exception now requires the existing row to actually
+            // carry a nonzero qty/packed/reject/hilang — an explode-created
+            // zero row is treated exactly like "no row at all".
+            $existingHasRealData = $existing !== null && (
+                (float) $existing['qty'] > 0.0001
+                || (float) $existing['packed_qty'] > 0.0001
+                || (float) $existing['reject_qty'] > 0.0001
+                || (float) $existing['hilang_qty'] > 0.0001
+            );
+            if ($t['target'] <= 0.0001 && !$existingHasRealData) {
                 continue;
             }
             $fgVerified = $existing !== null ? (float) $existing['qty'] : 0.0;
