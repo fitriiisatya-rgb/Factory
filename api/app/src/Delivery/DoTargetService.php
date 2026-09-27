@@ -31,6 +31,18 @@ final class DoTargetService
      */
     public function storeDemandByProduct(PDO $pdo, string $tanggal, int $storeId): array
     {
+        // Zero-demand rows (LIVE UAT hotfix): a store's po_store_item rows
+        // exist for every product in that day's PO template regardless of
+        // whether this particular store actually has any of it (po_awal/
+        // po_revisi both default to 0) — same "template row exists,
+        // nothing real for it" shape FgTargetService's own HAVING filter
+        // fixed for FG. Filtered here so createDraft()/generateBulk() never
+        // insertDoItem() a real, persisted zero-planned row for a NEW DO in
+        // the first place — matches the filter storesWithPo()/
+        // allStoreDemandForFactory() already apply, just previously missing
+        // here. An ALREADY-CREATED DO's own existing zero rows (from before
+        // this fix) are handled separately, at render time, in
+        // DoService::buildDoDto() — this filter alone does not touch them.
         $stmt = $pdo->prepare(
             'SELECT p.product_id, p.name AS product_name, p.division_id, d.name AS division_name,
                     b.factory_id, f.name AS factory_name, si.po_awal, si.po_revisi
@@ -40,7 +52,7 @@ final class DoTargetService
              INNER JOIN product p ON p.product_id = i.product_id
              LEFT JOIN division d ON d.division_id = p.division_id
              INNER JOIN factory f ON f.factory_id = b.factory_id
-             WHERE b.tanggal = ? AND si.store_id = ?
+             WHERE b.tanggal = ? AND si.store_id = ? AND (si.po_awal > 0 OR si.po_revisi > 0)
              ORDER BY p.name'
         );
         $stmt->execute([$tanggal, $storeId]);

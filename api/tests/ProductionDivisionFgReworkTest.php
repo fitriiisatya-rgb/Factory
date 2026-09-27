@@ -1996,6 +1996,205 @@ fwrite(STDOUT, "XSS_FG_FACTORY_ID={$karangtengahId}\n");
 fwrite(STDOUT, "XSS_FG_TANGGAL={$xssTanggal}\n");
 
 // =======================================================================
+// Part K — LIVE UAT HOTFIX: hide zero-qty DO items (DO-UI-01..05).
+// =======================================================================
+$doUiTanggal = '2026-10-25';
+$doUiPaddingProducts = [$uiChococubePad, $uiBollenPad, $prodD, $prodE, $prodF, $prodG];
+
+runTest('DO-UI-00 (setup) a NEW DO created after the query-layer fix already has exactly 1 item (zero-demand rows never inserted); six legacy zero-planned rows are then added directly, reproducing DO/KRM/006/IX/2026\'s own pre-fix shape', function () use (
+    $http, $csrf, $pdo, $doUiTanggal, $karangtengahId, $storeAId, $uiChococube, $doUiPaddingProducts
+) {
+    seedPo($pdo, $doUiTanggal, $karangtengahId, $storeAId, [(int) $uiChococube['product_id'] => ['poAwal' => 1, 'poRevisi' => 0]]);
+
+    $create = $http->request('POST', '/api/do', ['tanggal' => $doUiTanggal, 'storeId' => $storeAId], array_merge(['X-CSRF-Token' => $csrf], idemKey('do-ui-create')));
+    expect($create['status'] === 200, 'DO-UI-00: expected DO create 200, got ' . $create['status'] . ': ' . json_encode($create['json']));
+    $doId = (int) $create['json']['data']['doId'];
+    expect(count($create['json']['data']['items']) === 1, 'DO-UI-00: expected a brand-new DO to already have exactly 1 item — DoTargetService::storeDemandByProduct()\'s own query-layer fix means zero-demand rows are never inserted for a NEW DO in the first place, got ' . count($create['json']['data']['items']));
+
+    // Simulate SIX already-persisted legacy zero rows on this SAME real
+    // DO (data that predates this hotfix) via direct insert — exactly
+    // the shape the live DO/KRM/006/IX/2026 had, which this DTO-layer
+    // render fix (not the query fix above) is responsible for hiding.
+    $insertZero = $pdo->prepare('INSERT INTO delivery_order_item (delivery_order_id, product_id, planned_qty) VALUES (?, ?, 0)');
+    foreach ($doUiPaddingProducts as $p) {
+        $insertZero->execute([$doId, (int) $p['product_id']]);
+    }
+
+    global $doUiDoId;
+    $doUiDoId = $doId;
+});
+
+fwrite(STDOUT, "DO_UI_DOID={$GLOBALS['doUiDoId']}\n");
+
+runTest('DO-UI-01 GET /api/do/{id} (screen view\'s own data source) renders exactly the 1 positive item, none of the 6 legacy zero rows', function () use ($http, $csrf) {
+    global $doUiDoId;
+    $get = $http->request('GET', "/api/do/{$doUiDoId}", null, ['X-CSRF-Token' => $csrf]);
+    expect($get['status'] === 200, 'DO-UI-01: expected GET 200, got ' . $get['status']);
+    $items = $get['json']['data']['items'];
+    expect(count($items) === 1, 'DO-UI-01: expected exactly 1 visible item, got ' . count($items) . ': ' . json_encode($items));
+    expect($items[0]['productName'] === 'CHOCO CUBE 12', 'DO-UI-01: expected the one visible item to be CHOCO CUBE 12, got ' . json_encode($items[0]));
+    expect(abs((float) $items[0]['plannedQty'] - 1.0) < 0.01, 'DO-UI-01: expected CHOCO CUBE 12 plannedQty=1, got ' . json_encode($items[0]));
+});
+
+runTest('DO-UI-02 print-do.php (the SAME buildDoDto() items array, no separate query — see print-template.php\'s own foreach) renders the exact same 1 item, real headless-browser check', function () {
+    // Covered end-to-end by a real headless-Chromium hit against the
+    // actual print-do.php page — see _ui_smoke_do_zero_qty.mjs
+    // (DO-UI-02), run right after this file exits 0. Asserted here only
+    // as a code-level guarantee: print-template.php's ui_render_do_print_
+    // document() iterates "foreach ($do['items'] as $i => $it)" off the
+    // exact same array GET /api/do/{id} returned above — there is no
+    // second, independent query for the print view to diverge from.
+    $printTemplateSrc = file_get_contents(__DIR__ . '/../app/ui/print-template.php');
+    expect(strpos($printTemplateSrc, "foreach (\$do['items'] as \$i => \$it)") !== false, 'DO-UI-02: expected print-template.php to iterate the same $do[\'items\'] DTO, no separate query');
+});
+
+runTest('DO-UI-03 totals remain correct: totalPlanned=1, totalShipped=0, totalRemaining=1, productCount=1 (the visible count, not the 7 raw persisted rows)', function () use ($http, $csrf) {
+    global $doUiDoId;
+    $get = $http->request('GET', "/api/do/{$doUiDoId}", null, ['X-CSRF-Token' => $csrf]);
+    $summary = $get['json']['data']['summary'];
+    expect(abs((float) $summary['totalPlanned'] - 1.0) < 0.01, 'DO-UI-03: expected totalPlanned=1, got ' . json_encode($summary));
+    expect(abs((float) $summary['totalShipped'] - 0.0) < 0.01, 'DO-UI-03: expected totalShipped=0, got ' . json_encode($summary));
+    expect(abs((float) $summary['totalRemaining'] - 1.0) < 0.01, 'DO-UI-03: expected totalRemaining=1, got ' . json_encode($summary));
+    expect((int) $summary['productCount'] === 1, 'DO-UI-03: expected productCount=1 (visible-only), got ' . json_encode($summary));
+});
+
+$doUiTanggal2 = '2026-10-26';
+runTest('DO-UI-04 (setup+assert) a historical line whose planned_qty has since been driven to 0 but which already has real shipped_qty > 0 is NEVER hidden — the shippedQty > 0 half of the visibility check is what protects it', function () use (
+    $http, $csrf, $pdo, $doUiTanggal2, $karangtengahId, $storeBId, $uiBollen
+) {
+    seedPo($pdo, $doUiTanggal2, $karangtengahId, $storeBId, [(int) $uiBollen['product_id'] => ['poAwal' => 5, 'poRevisi' => 0]]);
+    $create = $http->request('POST', '/api/do', ['tanggal' => $doUiTanggal2, 'storeId' => $storeBId], array_merge(['X-CSRF-Token' => $csrf], idemKey('do-ui-04-create')));
+    expect($create['status'] === 200, 'DO-UI-04: expected DO create 200, got ' . $create['status'] . ': ' . json_encode($create['json']));
+    $doId = (int) $create['json']['data']['doId'];
+
+    // A real shipment can never actually happen against a zero-planned
+    // item (remainingToShip caps it at 0) — this simulates the residual
+    // DATA shape such a history would leave behind (e.g. a later PO
+    // revision driving planned down after the fact), via direct insert,
+    // purely to prove the DTO's defensive "shippedQty > 0 keeps it
+    // visible" branch, independent of how that shipment history came to
+    // exist.
+    $pdo->prepare(
+        "INSERT INTO shipment (batch, tanggal, store_id, shipment_group, source_type, delivery_order_id, status, version, created_at)
+         VALUES ('DO-UI-04-BATCH', ?, ?, 'MAIN', 'delivery_order', ?, 'active', 1, UTC_TIMESTAMP())"
+    )->execute([$doUiTanggal2, $storeBId, $doId]);
+    $shipmentId = (int) $pdo->lastInsertId();
+    $pdo->prepare('INSERT INTO shipment_item (shipment_id, product_id, qty) VALUES (?, ?, ?)')
+        ->execute([$shipmentId, (int) $uiBollen['product_id'], 3]);
+
+    $pdo->prepare('UPDATE delivery_order_item SET planned_qty = 0 WHERE delivery_order_id = ? AND product_id = ?')
+        ->execute([$doId, (int) $uiBollen['product_id']]);
+
+    $get = $http->request('GET', "/api/do/{$doId}", null, ['X-CSRF-Token' => $csrf]);
+    expect($get['status'] === 200, 'DO-UI-04: expected GET 200, got ' . $get['status']);
+    $items = $get['json']['data']['items'];
+    expect(count($items) === 1, 'DO-UI-04: expected the historical line to STILL be visible despite planned_qty=0, got ' . count($items) . ' items: ' . json_encode($items));
+    expect(abs((float) $items[0]['plannedQty'] - 0.0) < 0.01 && abs((float) $items[0]['alreadyShippedQty'] - 3.0) < 0.01, 'DO-UI-04: expected planned=0/shipped=3 preserved exactly, got ' . json_encode($items[0]));
+});
+
+runTest('DO-UI-05 no shipment behavior changed: shippedQtyByProduct()/the shipment endpoints still read straight from the repository, never from the filtered items list', function () use ($pdo) {
+    // Architectural proof, not a new code path: buildDoDto()'s visibility
+    // filter only decides what goes into the RETURNED $items array for
+    // display — $shippedByProduct (used both for each item's own
+    // alreadyShippedQty/remainingToShip AND by pengiriman.php's ship
+    // form) is computed once, up front, straight from DoRepository::
+    // shippedQtyByProduct()'s own repository query, before the filter
+    // ever runs, and is never itself filtered.
+    $src = file_get_contents(__DIR__ . '/../app/src/Delivery/DoService.php');
+    $shippedComputedBeforeFilter = strpos($src, '$shippedByProduct = $this->repo->shippedQtyByProduct') < strpos($src, 'planned <= 0.0001 && $shippedQty <= 0.0001');
+    expect($shippedComputedBeforeFilter, 'DO-UI-05: expected $shippedByProduct to be computed once, upfront, independent of the visibility filter');
+});
+
+// =======================================================================
+// Part L — LIVE UAT HOTFIX: unambiguous "Sudah Disubmit" packing status
+// (PACK-STATUS-01..08). PACK-STATUS-01..07 are real headless-browser
+// checks (_ui_smoke_pack_status.mjs, run right after this file exits 0)
+// against Store A (left untouched here, for the browser to submit
+// through to completion) and Store B (left untouched everywhere, the
+// "stays clearly different" control). PACK-STATUS-08 is proven here,
+// directly at the API/DB level, against a THIRD store (P2 TEST STORE C)
+// the browser script never touches.
+// =======================================================================
+$packStatusTanggal = '2026-10-27';
+$psProdA = $prodE;
+$psProdB = $prodF;
+$psProdC = $prodG;
+
+runTest('PACK-STATUS-00 (setup) Store A (target 4) left untouched for the real browser to submit through to completion; Store B (target 3) left untouched everywhere as the "stays clearly different" control; Store C (target 2) for the direct double-submit idempotency proof below', function () use (
+    $http, $csrf, $pdo, $packStatusTanggal, $karangtengahId, $rotiBollenDivId, $psProdA, $psProdB, $psProdC, $storeAId, $storeBId, $storeCId
+) {
+    seedPoStoreSplit($pdo, $packStatusTanggal, $karangtengahId, (int) $psProdA['product_id'], [$storeAId => ['poAwal' => 4, 'poRevisi' => 0]]);
+    seedPoStoreSplit($pdo, $packStatusTanggal, $karangtengahId, (int) $psProdB['product_id'], [$storeBId => ['poAwal' => 3, 'poRevisi' => 0]]);
+    seedPoStoreSplit($pdo, $packStatusTanggal, $karangtengahId, (int) $psProdC['product_id'], [$storeCId => ['poAwal' => 2, 'poRevisi' => 0]]);
+
+    // All three share one division/day, hence ONE production_run — see
+    // Task D's own FG-XSS-00 fixture for why these must all go into a
+    // SINGLE create+patch+submit rather than three separate calls.
+    $createProd = $http->request('POST', '/api/production', ['tanggal' => $packStatusTanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('packstatus-prod-create')));
+    expect($createProd['status'] === 200, 'PACK-STATUS-00: expected production draft create 200, got ' . $createProd['status'] . ': ' . json_encode($createProd['json']));
+    $prodRunId = (int) $createProd['json']['data']['productionRunId'];
+    $prodVersion = (int) $createProd['json']['data']['version'];
+    $patchProd = $http->request('PATCH', "/api/production/{$prodRunId}", [
+        'expectedVersion' => $prodVersion,
+        'items' => [
+            ['productId' => (int) $psProdA['product_id'], 'actualQty' => 4],
+            ['productId' => (int) $psProdB['product_id'], 'actualQty' => 3],
+            ['productId' => (int) $psProdC['product_id'], 'actualQty' => 2],
+        ],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('packstatus-prod-patch')));
+    expect($patchProd['status'] === 200, 'PACK-STATUS-00: expected production draft patch 200, got ' . $patchProd['status'] . ': ' . json_encode($patchProd['json']));
+    $prodVersion = (int) $patchProd['json']['data']['version'];
+    $submitProd = $http->request('POST', "/api/production/{$prodRunId}/submit", ['expectedVersion' => $prodVersion], array_merge(['X-CSRF-Token' => $csrf], idemKey('packstatus-prod-submit')));
+    expect($submitProd['status'] === 200, 'PACK-STATUS-00: expected production draft submit 200, got ' . $submitProd['status'] . ': ' . json_encode($submitProd['json']));
+
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $packStatusTanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('packstatus-fgcreate')));
+    expect($create['status'] === 200, 'PACK-STATUS-00: expected FG create 200, got ' . $create['status'] . ': ' . json_encode($create['json']));
+    $batchId = (int) $create['json']['data']['fgBatchId'];
+    $version = (int) $create['json']['data']['version'];
+
+    $explode = $http->request('PATCH', "/api/fg/{$batchId}", [
+        'expectedVersion' => $version,
+        'storeItems' => [
+            ['productId' => (int) $psProdA['product_id'], 'rows' => [['storeId' => $storeAId, 'fgVerified' => 4, 'packed' => 0, 'sesuaiVerified' => true]]],
+            ['productId' => (int) $psProdB['product_id'], 'rows' => [['storeId' => $storeBId, 'fgVerified' => 3, 'packed' => 0, 'sesuaiVerified' => true]]],
+            ['productId' => (int) $psProdC['product_id'], 'rows' => [['storeId' => $storeCId, 'fgVerified' => 2, 'packed' => 0, 'sesuaiVerified' => true]]],
+        ],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('packstatus-explode')));
+    expect($explode['status'] === 200, 'PACK-STATUS-00: expected explode 200, got ' . json_encode($explode['json']));
+    $version = (int) $explode['json']['data']['version'];
+
+    global $packStatusBatchId, $packStatusVersion;
+    $packStatusBatchId = $batchId;
+    $packStatusVersion = $version;
+});
+
+runTest('PACK-STATUS-08 submitting Store C packing TWICE (simulating a retried/double-click "Submit Packing") is idempotent: packed_qty is not doubled, and no stock_ledger row is posted — Submit Packing stays a draft-level PATCH, never the stock-posting final FG submit', function () use ($http, $csrf, $pdo, $storeCId, $psProdC) {
+    global $packStatusBatchId, $packStatusVersion;
+    $batchId = $packStatusBatchId;
+    $payload = ['expectedVersion' => $packStatusVersion, 'storeItems' => [['productId' => (int) $psProdC['product_id'], 'rows' => [
+        ['storeId' => $storeCId, 'fgVerified' => 2, 'packed' => 2, 'reject' => 0, 'hilang' => 0, 'notes' => '', 'sesuaiPacking' => true],
+    ]]]];
+    $first = $http->request('PATCH', "/api/fg/{$batchId}", $payload, array_merge(['X-CSRF-Token' => $csrf], idemKey('packstatus-storeC-submit-1')));
+    expect($first['status'] === 200, 'PACK-STATUS-08: expected first Submit Packing 200, got ' . json_encode($first['json']));
+    $payload['expectedVersion'] = (int) $first['json']['data']['version'];
+    $second = $http->request('PATCH', "/api/fg/{$batchId}", $payload, array_merge(['X-CSRF-Token' => $csrf], idemKey('packstatus-storeC-submit-2')));
+    expect($second['status'] === 200, 'PACK-STATUS-08: expected second (retried) Submit Packing 200, got ' . json_encode($second['json']));
+
+    $itemStmt = $pdo->prepare('SELECT fg_item_id, packed_qty FROM fg_item WHERE fg_batch_id = ? AND product_id = ? AND store_id = ?');
+    $itemStmt->execute([$batchId, (int) $psProdC['product_id'], $storeCId]);
+    $item = $itemStmt->fetch();
+    expect($item !== false && abs((float) $item['packed_qty'] - 2.0) < 0.01, 'PACK-STATUS-08: expected packed_qty to stay exactly 2 after two identical submits (never doubled to 4), got ' . json_encode($item));
+
+    $ledgerStmt = $pdo->prepare("SELECT COUNT(*) AS c FROM stock_ledger WHERE source_type = 'fg_item' AND source_id = ?");
+    $ledgerStmt->execute([(int) $item['fg_item_id']]);
+    $actualLedgerCount = (int) $ledgerStmt->fetch()['c'];
+    expect($actualLedgerCount === 0, 'PACK-STATUS-08: expected ZERO stock_ledger rows for this still-DRAFT batch (Submit Packing never posts stock), got ' . $actualLedgerCount);
+});
+
+fwrite(STDOUT, "PACK_STATUS_FACTORY_ID={$karangtengahId}\n");
+fwrite(STDOUT, "PACK_STATUS_TANGGAL={$packStatusTanggal}\n");
+
+// =======================================================================
 // Summary
 // =======================================================================
 $total = count($results);

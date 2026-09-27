@@ -390,11 +390,36 @@ final class DoService
         $statusCounts = ['belum_dikirim' => 0, 'sebagian_dikirim' => 0, 'terkirim_penuh' => 0];
 
         $rawItems = $this->repo->findDoItems($this->pdo, $doId);
+        $visibleCount = 0;
         foreach ($rawItems as $productId => $item) {
             $planned = (float) $item['planned_qty'];
             $shippedQty = $shippedByProduct[$productId] ?? 0.0;
             $remaining = max(0.0, $planned - $shippedQty);
             $itemStatus = self::classifyItemStatus($shippedQty, $planned);
+
+            // LIVE UAT HOTFIX — hide zero-qty DO lines (screen + print,
+            // same buildDoDto() DTO both read): a DO's own delivery_order_
+            // item rows are inserted from that day's FULL store PO demand
+            // at draft-create/refresh time (createDraft()/refreshFromPo(),
+            // via DoTargetService::storeDemandByProduct()), independently
+            // of whether THIS store actually ordered any of a given
+            // product that day. DoTargetService's own query now excludes
+            // zero-demand rows for any NEW DO, but an ALREADY-CREATED DO
+            // (like the live DO/KRM/006/IX/2026) still has its own
+            // already-persisted zero rows — filtered here, at render time,
+            // rather than requiring a manual "Segarkan dari PO" or a
+            // backfill migration. A row with real historical shipped_qty
+            // (planned later revised down, but refreshFromPo() never lets
+            // planned drop below shipped — see its own docblock) always
+            // stays visible via the shippedQty > 0 half of this check, so
+            // shipment history is never hidden. This never deletes or
+            // mutates the persisted delivery_order_item row itself, and
+            // never affects $shippedByProduct/shipment logic, which reads
+            // straight from the repository, not from this filtered list.
+            if ($planned <= 0.0001 && $shippedQty <= 0.0001) {
+                continue;
+            }
+            $visibleCount++;
 
             // GLOBAL FG RESERVATION (cross-flow deep-check fix): this is
             // the SAME "physical minus active special reservations"
@@ -484,11 +509,11 @@ final class DoService
                 'totalPlanned' => $totalPlanned,
                 'totalShipped' => $totalShipped,
                 'totalRemaining' => max(0.0, $totalPlanned - $totalShipped),
-                'productCount' => count($rawItems),
+                'productCount' => $visibleCount,
                 'jumlahBelumDikirim' => $statusCounts['belum_dikirim'],
                 'jumlahSebagianDikirim' => $statusCounts['sebagian_dikirim'],
                 'jumlahTerkirimPenuh' => $statusCounts['terkirim_penuh'],
-                'fullyFulfilled' => count($rawItems) > 0 && $statusCounts['terkirim_penuh'] === count($rawItems),
+                'fullyFulfilled' => $visibleCount > 0 && $statusCounts['terkirim_penuh'] === $visibleCount,
             ],
         ];
     }

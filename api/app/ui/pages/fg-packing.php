@@ -543,6 +543,20 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   // ---------------------------------------------------------------------
   var storeGroups = [];
   var currentStoreId = null;
+  // LIVE UAT HOTFIX — "packing selesai" vs "sudah benar-benar disubmit"
+  // was ambiguous: true, because packed_qty only ever changes via a
+  // successful "Submit Packing [Store]" PATCH (Breakdown Toko's own save
+  // only ECHOES packed back unchanged — see its hidden data-bt-field
+  // input above), a store whose packed already reaches its own target IS
+  // always already submitted DATA — but the operator could be mid-typing
+  // a NEW, not-yet-submitted edit over that same store while it still
+  // displays the old, fully-packed numbers fetched at the last reload.
+  // currentStoreDirty tracks exactly that: true from the moment any
+  // packing input/button is touched, until the next successful submit or
+  // a fresh render from real server data. No new persisted field — this
+  // is a purely client-side "don't call it submitted while a live edit
+  // sits unsaved on screen" guard.
+  var currentStoreDirty = false;
 
   function groupByStore(results) {
     var byStore = {};
@@ -577,26 +591,43 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   }
 
   // Store status — a NEW UI-only concept (no pre-existing backend rule to
-  // preserve here), documented plainly: "Selesai" once every unit of this
-  // store's OWN PO target has been packed; "Belum Mulai" if nothing has;
-  // otherwise "Sebagian" when packing has caught up to everything
-  // CURRENTLY verified-ready (capped only by verification elsewhere still
-  // being incomplete — nothing more this store can pack right now) vs
-  // "Sedang Dikerjakan" when there is more ready-to-pack quantity than
-  // what has been packed so far (still actively workable).
-  function storeStatus(group) {
+  // preserve here), documented plainly: "Sudah Disubmit" once every unit
+  // of this store's OWN PO target has been packed AND that is real,
+  // persisted data (not a live unsaved edit sitting over it — see
+  // isDirty below); "Belum Mulai" if nothing has been packed at all;
+  // "Sebagian" when packing has caught up to everything CURRENTLY
+  // verified-ready (capped only by verification elsewhere still being
+  // incomplete — nothing more this store can pack right now) vs "Sedang
+  // Dikerjakan" when there is more ready-to-pack quantity than what has
+  // been packed so far (still actively workable); "Siap Submit" when the
+  // numbers on screen would be complete but haven't been (re)submitted
+  // since the last edit.
+  // @param isDirty true only for the ONE store currently open for
+  //   editing, and only once an input/button has been touched since its
+  //   detail view was last (re)rendered from real server data.
+  function storeStatus(group, isDirty) {
     var targetTotal = 0, readyTotal = 0, packedTotal = 0;
     // A never-exploded row (see groupByStore()'s own docblock) can never
     // be packed at all yet — counting its target in this store's own
     // progress denominator would understate real completion (a store
     // fully packed for everything actually ready would never show
-    // "Selesai"/100%, forever short by an amount nothing here can act on
-    // yet). Only rows this store can actually submit packing for count.
+    // "Sudah Disubmit"/100%, forever short by an amount nothing here can
+    // act on yet). Only rows this store can actually submit packing for
+    // count.
     group.rows.forEach(function (r) { if (r.exploded) { targetTotal += r.target; readyTotal += r.fgVerified; packedTotal += r.packed; } });
     var eps = 0.0001;
     var code, label;
     if (packedTotal <= eps) { code = 'belum_mulai'; label = 'Belum Mulai'; }
-    else if (packedTotal >= targetTotal - eps) { code = 'selesai'; label = 'Selesai'; }
+    else if (packedTotal >= targetTotal - eps) {
+      // packed_qty here is always PERSISTED data (see this section's own
+      // class docblock on currentStoreDirty) — reaching the target is
+      // only possible because a "Submit Packing [Store]" PATCH already
+      // succeeded. Still, an unsaved edit sitting on top of that fetched
+      // state must not be allowed to claim "submitted" for numbers the
+      // server has never actually seen.
+      if (isDirty) { code = 'siap_submit'; label = 'Siap Submit'; }
+      else { code = 'sudah_disubmit'; label = '✓ Sudah Disubmit'; }
+    }
     else if (packedTotal >= readyTotal - eps) { code = 'sebagian'; label = 'Sebagian'; }
     else { code = 'sedang_dikerjakan'; label = 'Sedang Dikerjakan'; }
     return { code: code, label: label, targetTotal: targetTotal, readyTotal: readyTotal, packedTotal: packedTotal };
@@ -607,8 +638,8 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     var totalStores = storeGroups.length;
     var doneStores = 0, packedSum = 0, targetSum = 0;
     storeGroups.forEach(function (g) {
-      var st = storeStatus(g);
-      if (st.code === 'selesai') doneStores++;
+      var st = storeStatus(g, g.storeId === currentStoreId && currentStoreDirty);
+      if (st.code === 'sudah_disubmit') doneStores++;
       packedSum += st.packedTotal; targetSum += st.targetTotal;
     });
     var pct = targetSum > 0 ? Math.min(100, Math.round((packedSum / targetSum) * 100)) : 0;
@@ -625,10 +656,10 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     }
     row.innerHTML = '';
     storeGroups.forEach(function (g) {
-      var st = storeStatus(g);
+      var st = storeStatus(g, g.storeId === currentStoreId && currentStoreDirty);
       var chip = document.createElement('button');
       chip.type = 'button';
-      chip.className = 'fg-store-chip' + (g.storeId === currentStoreId ? ' active' : '');
+      chip.className = 'fg-store-chip' + (g.storeId === currentStoreId ? ' active' : '') + (st.code === 'sudah_disubmit' ? ' fg-store-chip-submitted' : '');
       chip.setAttribute('data-store-id', g.storeId);
       chip.innerHTML = '<div class="fg-store-chip-name">' + escHtml(g.storeName) + '</div>'
         + '<div class="fg-store-chip-meta">' + g.rows.length + ' produk &bull; ' + st.targetTotal.toLocaleString('id-ID') + ' pcs</div>'
@@ -688,11 +719,14 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         + '</div>';
       return body;
     }).join('');
-    var actions = editableHere
-      ? '<div class="fg-card-actions" style="margin-top:var(--space-3);"><button type="button" class="btn btn-primary" id="fg-submit-packing-store">Submit Packing ' + escHtml(group.storeName) + '</button></div>'
-      : '';
+    // A fresh render always reflects real, just-fetched server data — any
+    // previously unsaved edit was already discarded by rebuilding these
+    // cards from group.rows, so there is nothing left to call "dirty".
+    currentStoreDirty = false;
+    var status = storeStatus(group, currentStoreDirty);
     detail.innerHTML = '<h3 class="card-title" style="font-size:var(--text-md);margin-bottom:var(--space-2);">Packing — ' + escHtml(group.storeName) + '</h3>'
-      + '<div class="fg-card-list">' + cardsHtml + '</div>' + actions;
+      + '<div class="fg-card-list">' + cardsHtml + '</div>'
+      + '<div id="fg-packing-actions">' + packingActionsHtml(group, status) + '</div>';
 
     detail.querySelectorAll('.pk-sesuai').forEach(function (group2) {
       var card = group2.closest('.fg-packing-row');
@@ -701,8 +735,52 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       wireSesuaiGroup(group2, packedInput, function () { return readyInput.value || '0'; });
     });
 
+    // The instant ANY packing input/button for this store is touched,
+    // mark it dirty and immediately reflect that in the action area and
+    // this store's own chip/header count — WITHOUT rebuilding the cards
+    // themselves (that would wipe out whatever the operator is mid-
+    // typing). Scoped to exploded rows only, matching the submit payload
+    // itself below.
+    detail.querySelectorAll('.fg-packing-row[data-exploded="1"] input, .fg-packing-row[data-exploded="1"] .pk-sesuai button').forEach(function (el) {
+      el.addEventListener(el.tagName === 'BUTTON' ? 'click' : 'input', function () {
+        if (currentStoreDirty) return;
+        currentStoreDirty = true;
+        var actionsEl = document.getElementById('fg-packing-actions');
+        if (actionsEl) { actionsEl.innerHTML = packingActionsHtml(group, storeStatus(group, currentStoreDirty)); wireSubmitButton(group, detail); }
+        renderChips();
+        renderHeader();
+      });
+    });
+
+    wireSubmitButton(group, detail);
+  }
+
+  // Builds the per-store action area: an active "Submit Packing [Store]"
+  // button in every state except the terminal one, where packed_qty
+  // already covers this store's own full target AND nothing unsaved sits
+  // on top of it (see storeStatus()'s own isDirty docblock) — there, an
+  // unmistakable disabled "Sudah Disubmit" indicator replaces it so a
+  // completed, already-persisted store can never look re-submittable by
+  // accident. No per-store "submitted by/at" metadata exists anywhere in
+  // the schema (only the WHOLE FG document's batch-level submitted_by/
+  // submitted_at, set by the separate final "Submit FG" action) — none is
+  // invented or shown here, per the task's own explicit instruction.
+  function packingActionsHtml(group, status) {
+    if (!editableHere) return '';
+    if (status.code === 'sudah_disubmit') {
+      return '<div class="fg-card-actions" style="margin-top:var(--space-3);">'
+        + '<button type="button" class="btn btn-success" disabled>✓ Sudah Disubmit</button>'
+        + '</div>';
+    }
+    return '<div class="fg-card-actions" style="margin-top:var(--space-3);">'
+      + '<button type="button" class="btn btn-primary" id="fg-submit-packing-store">Submit Packing ' + escHtml(group.storeName) + '</button>'
+      + '</div>';
+  }
+
+  function wireSubmitButton(group, detail) {
     var submitStoreBtn = document.getElementById('fg-submit-packing-store');
-    if (submitStoreBtn) submitStoreBtn.addEventListener('click', async function () {
+    if (!submitStoreBtn) return; // already "Sudah Disubmit" — non-actionable by design
+    submitStoreBtn.addEventListener('click', async function () {
       submitStoreBtn.disabled = true;
       var storeItems = [];
       // A still-unexploded product (data-exploded="0") is deliberately
@@ -730,13 +808,17 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         // every other store's own storeItems entry is left out of this
         // call entirely, so it is never touched (task's own explicit
         // "Submitting one store must not automatically submit another
-        // store" rule).
+        // store" rule). This is still only a DRAFT-level PATCH, never the
+        // stock-posting /submit endpoint (that stays the separate, once-
+        // per-document "Submit FG (Semua Toko)" action below) — so
+        // repeating it (e.g. a retried click) is idempotent, never a
+        // duplicate stock/ledger post.
         var saved = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, storeItems: storeItems } });
         version = saved.version;
         Amor.toast('Packing ' + group.storeName + ' disimpan.', 'success');
+        currentStoreDirty = false;
         await reloadStoreGroups();
         renderHeader(); renderChips(); renderDetail();
-        submitStoreBtn.disabled = false;
       } catch (e) { Amor.toast(e.message, 'danger'); submitStoreBtn.disabled = false; }
     });
   }

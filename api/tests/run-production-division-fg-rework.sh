@@ -210,11 +210,52 @@ TANGGAL="$XSS_FG_TANGGAL" FACTORY_ID="$XSS_FG_FACTORY_ID" \
 node "$API_ROOT/tests/_ui_smoke_fg_xss.mjs"
 XSS_SMOKE_RESULT=$?
 
+if [ $XSS_SMOKE_RESULT -ne 0 ]; then
+  kill "$PHP_PID" 2>/dev/null || true
+  PHP_PID=""
+  echo "_ui_smoke_fg_xss.mjs FAILED — stopping before the full regression cascade"
+  exit 1
+fi
+
+echo "--- 8.8/9: real headless-browser smoke check — LIVE UAT HOTFIX DO zero-qty items (DO-UI-01/02) ---"
+DO_UI_DOID=$(grep -oP 'DO_UI_DOID=\K[0-9]+' "$WORKDIR/pdfg-output.log" | tail -1)
+if [ -z "$DO_UI_DOID" ]; then
+  kill "$PHP_PID" 2>/dev/null || true
+  PHP_PID=""
+  echo "Could not find DO_UI_DOID marker in PDFG test output — cannot run the DO zero-qty smoke check"
+  exit 1
+fi
+BASE_URL="http://127.0.0.1:$PHP_PORT" ADMIN_USER="pdfg_staging_admin" ADMIN_PASS="$TEST_ADMIN_PASS" \
+DO_ID="$DO_UI_DOID" \
+node "$API_ROOT/tests/_ui_smoke_do_zero_qty.mjs"
+DO_SMOKE_RESULT=$?
+
+if [ $DO_SMOKE_RESULT -ne 0 ]; then
+  kill "$PHP_PID" 2>/dev/null || true
+  PHP_PID=""
+  echo "_ui_smoke_do_zero_qty.mjs FAILED — stopping before the full regression cascade"
+  exit 1
+fi
+
+echo "--- 8.9/9: real headless-browser smoke check — LIVE UAT HOTFIX Packing submit status (PACK-STATUS-01..07) ---"
+PACK_STATUS_FACTORY_ID=$(grep -oP 'PACK_STATUS_FACTORY_ID=\K[0-9]+' "$WORKDIR/pdfg-output.log" | tail -1)
+PACK_STATUS_TANGGAL=$(grep -oP 'PACK_STATUS_TANGGAL=\K[0-9-]+' "$WORKDIR/pdfg-output.log" | tail -1)
+if [ -z "$PACK_STATUS_FACTORY_ID" ] || [ -z "$PACK_STATUS_TANGGAL" ]; then
+  kill "$PHP_PID" 2>/dev/null || true
+  PHP_PID=""
+  echo "Could not find PACK_STATUS_* markers in PDFG test output — cannot run the packing submit-status smoke check"
+  exit 1
+fi
+BASE_URL="http://127.0.0.1:$PHP_PORT" ADMIN_USER="pdfg_staging_admin" ADMIN_PASS="$TEST_ADMIN_PASS" \
+TANGGAL="$PACK_STATUS_TANGGAL" FACTORY_ID="$PACK_STATUS_FACTORY_ID" \
+node "$API_ROOT/tests/_ui_smoke_pack_status.mjs"
+PACK_STATUS_SMOKE_RESULT=$?
+
 kill "$PHP_PID" 2>/dev/null || true
 PHP_PID=""
 
-if [ $XSS_SMOKE_RESULT -ne 0 ]; then
-  echo "_ui_smoke_fg_xss.mjs FAILED — stopping before the full regression cascade"
+if [ $PACK_STATUS_SMOKE_RESULT -ne 0 ]; then
+  echo "_ui_smoke_pack_status.mjs FAILED — stopping before the full regression cascade"
   exit 1
 fi
 
