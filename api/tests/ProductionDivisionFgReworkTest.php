@@ -1561,6 +1561,227 @@ fwrite(STDOUT, "FG_UI_HOTFIX_FACTORY_ID={$karangtengahId}\n");
 fwrite(STDOUT, "FG_UI_HOTFIX_TANGGAL={$tanggalUiHotfix}\n");
 
 // =======================================================================
+// Part H — RECONCILIATION AUDIT (RECON-01..08): "product target" vs
+// "store target sum" for Regular PO demand.
+//
+// Triggered by a report-clarity concern: the Part G delivery report used
+// the word "target" for TWO DIFFERENT, pre-existing (long before this
+// session) canonical numbers without always naming which one:
+//   - Production Actual (fg_item.production_actual_snapshot, sourced from
+//     Phase 3 production_item.aktual — "how much was actually produced")
+//   - Regular PO Demand Target (po_item.po_awal + po_revisi, PB excluded —
+//     "how much the stores ordered", read-only, NEVER written by FG) —
+//     the SAME number FgTargetService::storeBreakdownForProduct() sums
+//     per-store and ProductionTargetService::targetsByProduct() reads
+//     per-product; both are plain aggregates over the SAME po_item/
+//     po_store_item rows, so they reconcile with each other BY
+//     CONSTRUCTION (PoRepository::applyLines keeps po_item.po_awal/
+//     po_revisi as the sum of that product's po_store_item rows on every
+//     write — see its own docblock) — but NEITHER of them is the same
+//     number as Production Actual, which is a wholly separate, legitimately
+//     independent quantity from a different phase (Production, not PO).
+//     A factory can produce more OR less than stores ordered; this suite
+//     uses a DELIBERATELY different Production Actual (25) from Regular PO
+//     Demand Target (23) specifically so the two are never mistakable for
+//     the same figure. This part proves the reconciliation invariant that
+//     DOES hold (product PO target == SUM(store PO targets)) and the one
+//     that must NEVER be assumed (PO target == Production Actual), using a
+//     fresh, isolated product/date (never touching Part G's own BOLLEN
+//     LILIT COKLAT / CHOCO CUBE 12 batch, which run-ui-smoke-fg-breakdown-
+//     toko.mjs still inspects in a specific pristine shape afterward).
+// =======================================================================
+$reconTanggal1 = '2026-10-17';
+$reconTanggal2 = '2026-10-18';
+
+runTest('RECON-01/02 Regular product PO target = SUM(store PO targets), PO Awal only (po_revisi=0) reconciles, and this is a DIFFERENT number from Production Actual', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodA, $storeAId, $storeBId, $storeCId, $reconTanggal1) {
+    seedPoStoreSplit($pdo, $reconTanggal1, $karangtengahId, (int) $prodA['product_id'], [
+        $storeAId => ['poAwal' => 15, 'poRevisi' => 0],
+        $storeBId => ['poAwal' => 8, 'poRevisi' => 0],
+        $storeCId => ['poAwal' => 0, 'poRevisi' => 0],
+    ]);
+    submitProductionActual($http, $csrf, $reconTanggal1, $rotiBollenDivId, (int) $prodA['product_id'], 25.0);
+
+    // Direct DB truth: po_item is the per-product ROLLUP PoRepository::
+    // applyLines() keeps in sync with the SUM of its own po_store_item
+    // rows on every write — this is the "product PO target" number.
+    $poItemStmt = $pdo->prepare(
+        'SELECT i.po_awal, i.po_revisi FROM po_item i INNER JOIN po_batch b ON b.po_batch_id = i.po_batch_id
+         WHERE b.tanggal = ? AND b.factory_id = ? AND i.product_id = ?'
+    );
+    $poItemStmt->execute([$reconTanggal1, $karangtengahId, (int) $prodA['product_id']]);
+    $poItemRow = $poItemStmt->fetch();
+    $poItemTarget = (float) $poItemRow['po_awal'] + (float) $poItemRow['po_revisi'];
+    expect(numEq($poItemTarget, 23.0), "RECON-01: expected po_item-level product PO target 23 (15+8+0), got {$poItemTarget}");
+    expect(numEq((float) $poItemRow['po_revisi'], 0.0), 'RECON-02: expected po_revisi=0 for a PO-Awal-only product (no revision uploaded yet)');
+
+    // The SAME number, read via the REAL API (storeBreakdown() preview —
+    // FgTargetService::storeBreakdownForProduct(), the exact source
+    // batchProductStores()/explodeToStores() also use).
+    $preview = $http->request('GET', "/api/fg/store-breakdown?date={$reconTanggal1}&factoryId={$karangtengahId}&productId={$prodA['product_id']}");
+    expect($preview['status'] === 200, 'RECON-01: expected store-breakdown preview 200, got ' . $preview['status']);
+    expect(numEq($preview['json']['data']['totalTarget'], 23.0), "RECON-01: expected store-breakdown totalTarget 23 (SUM of store PO targets), got {$preview['json']['data']['totalTarget']}");
+    expect(count($preview['json']['data']['stores']) === 2, 'RECON-01: expected exactly 2 store rows (A, B — C is target=0)');
+
+    // Explicit, concrete proof these are TWO DIFFERENT canonical numbers —
+    // never assume "target" alone means the same thing in both places.
+    $target = $http->request('GET', "/api/fg/target?date={$reconTanggal1}&factoryId={$karangtengahId}");
+    $prodAActual = current(array_filter($target['json']['data']['items'], fn ($i) => $i['productId'] === (int) $prodA['product_id']));
+    expect($prodAActual !== false && numEq($prodAActual['actual'], 25.0), 'RECON-01: expected Production Actual 25 for prodA');
+    expect(abs(25.0 - 23.0) > 0.0001, 'RECON-01: Production Actual (25) and Regular PO Demand Target (23) are deliberately DIFFERENT numbers here — this is expected, not a bug');
+});
+
+runTest('RECON-08 excess Production Actual above Regular store demand is represented as variance (Selisih), never silently attributed to any one store', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodA, $storeAId, $storeBId, $reconTanggal1) {
+    // Same fixture as RECON-01/02: Production Actual 25, Regular PO
+    // Demand Target 23 (Store A=15, Store B=8). Explodes into store rows,
+    // verifies each store at EXACTLY its own PO target (Sesuai — the
+    // legitimate ceiling per store), then proves the un-verifiable excess
+    // (25 - 23 = 2) surfaces as this product's own variance/Selisih, is
+    // never force-fit into either store, and a store can never be pushed
+    // past its OWN target to "absorb" it (STORE_FG_EXCEEDS_TARGET).
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $reconTanggal1, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('recon08-create')));
+    expect($create['status'] === 200, 'RECON-08: expected FG create 200, got ' . $create['status'] . ': ' . json_encode($create['json']));
+    $batchId = (int) $create['json']['data']['fgBatchId'];
+    $version = (int) $create['json']['data']['version'];
+
+    $overAllocate = $http->request('PATCH', "/api/fg/{$batchId}", [
+        'expectedVersion' => $version,
+        'storeItems' => [['productId' => (int) $prodA['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 16, 'packed' => 0, 'sesuaiVerified' => false, 'notes' => 'attempting to exceed store A own target'],
+            ['storeId' => $storeBId, 'fgVerified' => 0, 'packed' => 0],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('recon08-over')));
+    expect($overAllocate['status'] === 400 && ($overAllocate['json']['code'] ?? null) === 'STORE_FG_EXCEEDS_TARGET', 'RECON-08: expected STORE_FG_EXCEEDS_TARGET when a store is pushed past its OWN PO target (16 > 15), got ' . json_encode($overAllocate));
+
+    $save = $http->request('PATCH', "/api/fg/{$batchId}", [
+        'expectedVersion' => $version,
+        'storeItems' => [['productId' => (int) $prodA['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 15, 'packed' => 0, 'sesuaiVerified' => true],
+            ['storeId' => $storeBId, 'fgVerified' => 8, 'packed' => 0, 'sesuaiVerified' => true],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('recon08-save')));
+    expect($save['status'] === 200, 'RECON-08: expected save at each store\'s own target 200, got ' . $save['status'] . ': ' . json_encode($save['json']));
+
+    $show = $http->request('GET', "/api/fg/{$batchId}");
+    $item = current(array_filter($show['json']['data']['items'], fn ($i) => $i['productId'] === (int) $prodA['product_id']));
+    expect($item !== false, 'RECON-08: expected prodA item present');
+    expect(numEq($item['fgVerified'], 23.0), "RECON-08: expected aggregate FG Verified 23 (15+8, the SUM of what each store could legitimately take), got {$item['fgVerified']}");
+    expect(numEq($item['productionActualSnapshot'], 25.0), 'RECON-08: expected Production Actual snapshot still 25 (unchanged, read-only)');
+    expect(numEq($item['variance'], 2.0), "RECON-08: expected variance/Selisih = 25 - 23 = 2 (the excess Production Actual above Regular store demand) — it must show up here, NEVER silently pushed into either store's own fgVerified, got {$item['variance']}");
+});
+
+runTest('RECON-03 a PO revision reconciles WITHOUT cumulative double-counting (latest snapshot only, never awal+revisi stacked on top of a previous revisi)', function () use ($http, $pdo, $karangtengahId, $prodA, $storeAId, $storeBId, $storeCId, $reconTanggal1) {
+    // Store A gets a +3 revision (15 -> 18); Store B/C untouched. If this
+    // system ever summed po_revisi cumulatively across uploads instead of
+    // treating each upload as the new snapshot (see PoRepository's own
+    // "UPDATE po_store_item SET po_awal = ?, po_revisi = ?" — an
+    // unconditional overwrite, never an addition), the new total would be
+    // wrong (e.g. 23 + 18 = 41) instead of the correct 26 (18+8+0).
+    seedPoStoreSplit($pdo, $reconTanggal1, $karangtengahId, (int) $prodA['product_id'], [
+        $storeAId => ['poAwal' => 15, 'poRevisi' => 3],
+        $storeBId => ['poAwal' => 8, 'poRevisi' => 0],
+        $storeCId => ['poAwal' => 0, 'poRevisi' => 0],
+    ]);
+    $poItemStmt = $pdo->prepare(
+        'SELECT i.po_awal, i.po_revisi FROM po_item i INNER JOIN po_batch b ON b.po_batch_id = i.po_batch_id
+         WHERE b.tanggal = ? AND b.factory_id = ? AND i.product_id = ?'
+    );
+    $poItemStmt->execute([$reconTanggal1, $karangtengahId, (int) $prodA['product_id']]);
+    $poItemRow = $poItemStmt->fetch();
+    $poItemTarget = (float) $poItemRow['po_awal'] + (float) $poItemRow['po_revisi'];
+    expect(numEq($poItemTarget, 26.0), "RECON-03: expected po_item target 26 after revision (18+8+0), NOT 49 (double-counted), got {$poItemTarget}");
+
+    $preview = $http->request('GET', "/api/fg/store-breakdown?date={$reconTanggal1}&factoryId={$karangtengahId}&productId={$prodA['product_id']}");
+    expect(numEq($preview['json']['data']['totalTarget'], 26.0), "RECON-03: expected store-breakdown totalTarget 26 after revision, got {$preview['json']['data']['totalTarget']}");
+});
+
+runTest('RECON-04 PB (pra-booking) contributes ZERO to either the product-level or store-level target — structurally impossible to leak (po_store_item has no pb column at all)', function () use ($pdo, $karangtengahId, $http, $prodA, $reconTanggal1) {
+    $pdo->prepare(
+        'UPDATE po_item i INNER JOIN po_batch b ON b.po_batch_id = i.po_batch_id
+         SET i.pb = 999 WHERE b.tanggal = ? AND b.factory_id = ? AND i.product_id = ?'
+    )->execute([$reconTanggal1, $karangtengahId, (int) $prodA['product_id']]);
+
+    $poItemStmt = $pdo->prepare(
+        'SELECT i.po_awal, i.po_revisi, i.pb FROM po_item i INNER JOIN po_batch b ON b.po_batch_id = i.po_batch_id
+         WHERE b.tanggal = ? AND b.factory_id = ? AND i.product_id = ?'
+    );
+    $poItemStmt->execute([$reconTanggal1, $karangtengahId, (int) $prodA['product_id']]);
+    $poItemRow = $poItemStmt->fetch();
+    expect(numEq((float) $poItemRow['pb'], 999.0), 'RECON-04: expected pb=999 to actually be stored (sanity check on the test itself)');
+    $poItemTarget = (float) $poItemRow['po_awal'] + (float) $poItemRow['po_revisi'];
+    expect(numEq($poItemTarget, 26.0), "RECON-04: expected po_item target to remain 26 — pb=999 must contribute ZERO, got {$poItemTarget}");
+
+    $preview = $http->request('GET', "/api/fg/store-breakdown?date={$reconTanggal1}&factoryId={$karangtengahId}&productId={$prodA['product_id']}");
+    expect(numEq($preview['json']['data']['totalTarget'], 26.0), "RECON-04: expected store-breakdown totalTarget to remain 26 despite pb=999 (po_store_item has no pb column — structurally cannot leak in), got {$preview['json']['data']['totalTarget']}");
+});
+
+runTest('RECON-05/06 zero-target-store cleanup hides ONLY the truly-zero store, never a positive-target one', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodB, $storeAId, $storeBId, $storeCId, $reconTanggal2) {
+    seedPoStoreSplit($pdo, $reconTanggal2, $karangtengahId, (int) $prodB['product_id'], [
+        $storeAId => ['poAwal' => 10, 'poRevisi' => 0],
+        $storeBId => ['poAwal' => 0, 'poRevisi' => 0],
+        $storeCId => ['poAwal' => 0, 'poRevisi' => 0],
+    ]);
+    submitProductionActual($http, $csrf, $reconTanggal2, $rotiBollenDivId, (int) $prodB['product_id'], 10.0);
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $reconTanggal2, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('recon0506-create')));
+    expect($create['status'] === 200, 'RECON-05/06: expected FG create 200, got ' . $create['status'] . ': ' . json_encode($create['json']));
+    $batchId = (int) $create['json']['data']['fgBatchId'];
+
+    $stores = $http->request('GET', "/api/fg/{$batchId}/items/{$prodB['product_id']}/stores");
+    expect($stores['status'] === 200, 'RECON-05/06: expected stores 200');
+    $storeIds = array_column($stores['json']['data']['stores'], 'storeId');
+    expect(!in_array($storeBId, $storeIds, true), 'RECON-05: Store B (target=0) must be hidden');
+    expect(!in_array($storeCId, $storeIds, true), 'RECON-05: Store C (target=0) must be hidden');
+    expect(in_array($storeAId, $storeIds, true), 'RECON-06: Store A (target=10, positive) must NEVER be hidden by the zero-target cleanup');
+    expect(count($stores['json']['data']['stores']) === 1, 'RECON-06: expected exactly 1 visible store (only the positive-target one)');
+});
+
+runTest('RECON-07 Per Produk -> Breakdown Toko -> Per Produk preserves the same Regular demand total (round trip never drops or duplicates it, and never writes to po_item/po_store_item)', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId) {
+    // Dedicated product + date, exclusively for this one test — sumShippedForStore()
+    // (behind CANNOT_COLLAPSE_STORE_ALREADY_SHIPPED) is scoped by product+store+
+    // factory only, NEVER by date/batch (shipment/stock are not date-scoped — see
+    // Delivery\ShipmentService's own docblock), so reusing a product+store pair
+    // that some OTHER test in this file has ever really shipped (e.g. REGSTORE-18
+    // ships prodB via Store A) would wrongly trip that guard here. A product/store
+    // pair this suite has never shipped anything for is required for a clean
+    // round-trip check.
+    $reconTanggal3 = '2026-10-19';
+    $prodRecon07 = productsInDivision($pdo, $rotiBollenDivId, 8)[7];
+    seedPoStoreSplit($pdo, $reconTanggal3, $karangtengahId, (int) $prodRecon07['product_id'], [$storeAId => ['poAwal' => 10, 'poRevisi' => 0]]);
+    submitProductionActual($http, $csrf, $reconTanggal3, $rotiBollenDivId, (int) $prodRecon07['product_id'], 10.0);
+
+    $poItemStmt = $pdo->prepare(
+        'SELECT i.po_awal, i.po_revisi FROM po_item i INNER JOIN po_batch b ON b.po_batch_id = i.po_batch_id
+         WHERE b.tanggal = ? AND b.factory_id = ? AND i.product_id = ?'
+    );
+    $poItemStmt->execute([$reconTanggal3, $karangtengahId, (int) $prodRecon07['product_id']]);
+    $before = $poItemStmt->fetch();
+
+    $create = $http->request('POST', '/api/fg', ['tanggal' => $reconTanggal3, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('recon07-fgcreate')));
+    expect($create['status'] === 200, 'RECON-07: expected FG create 200, got ' . $create['status'] . ': ' . json_encode($create['json']));
+    $batchId = (int) $create['json']['data']['fgBatchId'];
+    $version = (int) $create['json']['data']['version'];
+
+    $explode = $http->request('PATCH', "/api/fg/{$batchId}", [
+        'expectedVersion' => $version,
+        'storeItems' => [['productId' => (int) $prodRecon07['product_id'], 'rows' => [
+            ['storeId' => $storeAId, 'fgVerified' => 10, 'packed' => 0, 'sesuaiVerified' => true],
+        ]]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('recon07-explode')));
+    expect($explode['status'] === 200, 'RECON-07: expected explode 200, got ' . json_encode($explode['json']));
+    $version = (int) $explode['json']['data']['version'];
+
+    $collapse = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $version, 'collapseProductIds' => [(int) $prodRecon07['product_id']]], array_merge(['X-CSRF-Token' => $csrf], idemKey('recon07-collapse')));
+    expect($collapse['status'] === 200, 'RECON-07: expected collapse 200, got ' . json_encode($collapse['json']));
+
+    $show = $http->request('GET', "/api/fg/{$batchId}");
+    $item = current(array_filter($show['json']['data']['items'], fn ($i) => $i['productId'] === (int) $prodRecon07['product_id']));
+    expect($item !== false && numEq($item['fgVerified'], 10.0), "RECON-07: expected FG Verified still 10 after the explode->collapse round trip, got " . json_encode($item));
+
+    $poItemStmt->execute([$reconTanggal3, $karangtengahId, (int) $prodRecon07['product_id']]);
+    $after = $poItemStmt->fetch();
+    expect($before['po_awal'] === $after['po_awal'] && $before['po_revisi'] === $after['po_revisi'], 'RECON-07: expected po_item (Regular demand target) COMPLETELY untouched by explode/collapse — FG never writes to Phase 2 PO tables');
+});
+
+// =======================================================================
 // Summary
 // =======================================================================
 $total = count($results);
