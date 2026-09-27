@@ -5,12 +5,21 @@
 // php -S server + MariaDB + the exact FG batch Part G (FG-UI-00..06) just
 // created and deliberately left in DRAFT status.
 //
-// Covers FG-UI-03/04/07/08/09/10/11/12 — real browser/JS behavior that an
+// Covers FG-UI-03/04/05/09/11/12 — real browser/JS behavior that an
 // API-only test cannot see (BUG 2 shipped despite every backend test
 // passing, precisely because nothing exercised the actual click). Logs in
 // through the REAL /api/_admin-login/ HTML form (never a curl-injected
 // cookie), navigates to the REAL fg-packing.php page, clicks the actual
 // "Breakdown Toko" button, and inspects the actual rendered DOM.
+//
+// UPDATED for the "Mobile-First FG Verifikasi + Packing per Toko" rework:
+// markup is now stacked .fg-card divs (not a <table>), and FG Verifikasi's
+// own Breakdown Toko view no longer has ANY packing controls at all —
+// Actual Packing moved entirely to the separate FG Packing (per Toko)
+// step, see _ui_smoke_mobile_fg.mjs's MOBILE-FG-10/11/12 for that. The
+// former FG-UI-08 ("Packing Sesuai/Tidak Sesuai controls render per store
+// row") check is retired here for that reason — it is not a dropped
+// assertion, it moved to the correct place.
 //
 // Required environment: BASE_URL, ADMIN_USER, ADMIN_PASS, TANGGAL, FACTORY_ID.
 // Exit code 0 = pass, 1 = fail (message on stderr).
@@ -66,8 +75,8 @@ try {
   check(page.url().includes('page=fg-packing'), 'navigated to the real fg-packing.php page with the live session cookie');
 
   // FG-UI-01 (re-verified at the actual rendered page, not just the API)
-  const perProdukRows = await page.locator('#fg-perproduk-wrap tbody tr').count();
-  check(perProdukRows === 2, `Per Produk table shows exactly 2 rows (got ${perProdukRows})`);
+  const perProdukRows = await page.locator('#fg-perproduk-wrap .fg-card').count();
+  check(perProdukRows === 2, `Per Produk shows exactly 2 cards (got ${perProdukRows})`);
 
   const versionBefore = await page.getAttribute('#fg-form', 'data-expected-version');
 
@@ -77,12 +86,12 @@ try {
 
   // FG-UI-03: real renderer/data-source switch, not only a CSS class flip —
   // wait for the ACTUAL fetched product blocks to land in the DOM.
-  await page.waitForSelector('#fg-breakdown-panel .card[data-product-id]', { timeout: 15000 });
-  const blockCount = await page.locator('#fg-breakdown-panel .card[data-product-id]').count();
-  check(blockCount === 2, `Breakdown Toko renders one block per visible product (got ${blockCount}, expected 2)`);
+  await page.waitForSelector('#fg-breakdown-panel .fg-card[data-product-id]', { timeout: 15000 });
+  const blockCount = await page.locator('#fg-breakdown-panel .fg-card[data-product-id]').count();
+  check(blockCount === 2, `Breakdown Toko renders one card per visible product (got ${blockCount}, expected 2)`);
 
   const perProdukDisplay = await page.locator('#fg-perproduk-wrap').evaluate((el) => getComputedStyle(el).display);
-  check(perProdukDisplay === 'none', 'Per Produk table is actually hidden while in Breakdown Toko mode (FG-UI-03)');
+  check(perProdukDisplay === 'none', 'Per Produk cards are actually hidden while in Breakdown Toko mode (FG-UI-03)');
 
   const panelText = await page.locator('#fg-breakdown-panel').innerText();
   check(panelText.includes('P2 TEST STORE A'), 'Breakdown Toko shows store name "P2 TEST STORE A" (FG-UI-04)');
@@ -91,16 +100,15 @@ try {
   check(panelText.includes('BOLLEN LILIT COKLAT'), 'Breakdown Toko shows product name BOLLEN LILIT COKLAT');
   check(panelText.includes('CHOCO CUBE 12'), 'Breakdown Toko shows product name CHOCO CUBE 12');
 
-  const storeRowCount = await page.locator('#fg-breakdown-panel tbody tr[data-store-id]').count();
+  const storeRowCount = await page.locator('#fg-breakdown-panel [data-store-id]').filter({ has: page.locator('.bt-verified-sesuai') }).count();
   check(storeRowCount === 4, `exactly 4 store rows total across both products (2 stores x 2 products), got ${storeRowCount}`);
 
   const verifiedSesuaiGroups = await page.locator('#fg-breakdown-panel .bt-verified-sesuai').count();
-  const packingSesuaiGroups = await page.locator('#fg-breakdown-panel .bt-packing-sesuai').count();
-  check(verifiedSesuaiGroups === 4, `Verified Sesuai/Tidak Sesuai controls render per store row (FG-UI-07), got ${verifiedSesuaiGroups}`);
-  check(packingSesuaiGroups === 4, `Packing Sesuai/Tidak Sesuai controls render per store row (FG-UI-08), got ${packingSesuaiGroups}`);
+  check(verifiedSesuaiGroups === 4, `Verified Sesuai/Tidak Sesuai controls render per store row, got ${verifiedSesuaiGroups}`);
+  check(await page.locator('#fg-breakdown-panel .bt-packing-sesuai').count() === 0, 'Breakdown Toko in FG Verifikasi has NO packing controls at all — Packing moved entirely to the separate FG Packing step');
 
   // FG-UI-09: actual input enables only when Tidak Sesuai.
-  const firstRow = page.locator('#fg-breakdown-panel tbody tr[data-store-id]').first();
+  const firstRow = page.locator('#fg-breakdown-panel [data-store-id]').filter({ has: page.locator('.bt-verified-sesuai') }).first();
   const fgVerifiedInput = firstRow.locator('[data-bt-field="fgVerified"]');
   await firstRow.locator('.bt-verified-sesuai button[data-value="sesuai"]').click();
   check(await fgVerifiedInput.isDisabled(), 'Actual Verified input disables when "Sesuai" is clicked (FG-UI-09)');
@@ -116,8 +124,8 @@ try {
   // nothing was saved, so the batch's own version must be untouched.
   await page.locator('#fg-mode-produk').click();
   await page.waitForSelector('#fg-perproduk-wrap', { state: 'visible', timeout: 5000 });
-  const backRows = await page.locator('#fg-perproduk-wrap tbody tr').count();
-  check(backRows === 2, `switching back to Per Produk still shows exactly 2 rows, no duplication (got ${backRows})`);
+  const backRows = await page.locator('#fg-perproduk-wrap .fg-card').count();
+  check(backRows === 2, `switching back to Per Produk still shows exactly 2 cards, no duplication (got ${backRows})`);
   const versionAfter = await page.getAttribute('#fg-form', 'data-expected-version');
   check(versionBefore === versionAfter, `viewing Breakdown Toko and switching back never wrote anything (version unchanged: ${versionBefore} -> ${versionAfter})`);
 
