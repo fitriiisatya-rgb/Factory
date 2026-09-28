@@ -62,6 +62,44 @@
 -- CREATE TABLE IF NOT EXISTS, no existing table is dropped or narrowed,
 -- no existing row anywhere is touched. MariaDB 10.11 compatible (same
 -- idioms as every prior migration in this series).
+--
+-- RETRY-SAFETY (FINAL PRE-DEPLOY PATCH — this migration has NOT been
+-- applied to any live database; fixed IN PLACE here, never as a new
+-- 0017): every statement in this file tolerates re-application —
+-- CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS, and the two
+-- MODIFY COLUMN ENUM(...) reissues (always the FULL accumulated value
+-- list, see ENUM AUDIT below — a MODIFY COLUMN is inherently idempotent:
+-- reissuing the identical definition is a no-op). The ONE genuine gap a
+-- source deep-check found: "ALTER TABLE shipment ADD CONSTRAINT
+-- fk_shipment_replacement_do FOREIGN KEY (...)" had no existence guard.
+-- MariaDB has no "ADD CONSTRAINT IF NOT EXISTS ... FOREIGN KEY" syntax
+-- (empirically a hard SQL error on 10.11) — fixed using the EXACT same
+-- idiom migration 0013 already established and proved out for this
+-- identical situation (see schema-v1-0013-repair-production-flow-
+-- completion.sql's own fk_shipment_special_order_do fix): "ALTER TABLE
+-- shipment DROP FOREIGN KEY IF EXISTS fk_shipment_replacement_do;"
+-- (safe/idempotent whether or not the FK exists) immediately followed by
+-- an unconditional "ADD CONSTRAINT ... FOREIGN KEY (...)" — this always
+-- ends with the exact same FK present, regardless of starting state
+-- (table not yet created, column not yet added, or FK already present
+-- from a prior partial apply), and is safe to run any number of times.
+--
+-- ENUM AUDIT (before/after this migration, full accumulated value
+-- lists — NEVER narrowed, confirmed against every migration that has
+-- ever touched either column: 0001 baseline, 0005, 0012, 0013):
+--   shipment.source_type
+--     BEFORE (as of 0013, still live before this migration):
+--       ENUM('delivery_order','manual_kirim','customer_order_fulfillment','special_order_do')
+--     AFTER (this migration, section 6 below — adds ONLY 'replacement_do'):
+--       ENUM('delivery_order','manual_kirim','customer_order_fulfillment','special_order_do','replacement_do')
+--   stock_ledger.source_type
+--     BEFORE (as of 0012/0013, still live before this migration):
+--       ENUM('production_run','shipment_item','stock_adjustment','stock_transfer','opening_balance_cutover','historical_replay','reversal','fg_item','special_order_fg_allocation')
+--     AFTER (this migration, section 6 below — adds ONLY 'replacement_demand_fg_allocation'):
+--       ENUM('production_run','shipment_item','stock_adjustment','stock_transfer','opening_balance_cutover','historical_replay','reversal','fg_item','special_order_fg_allocation','replacement_demand_fg_allocation')
+-- Re-running either MODIFY COLUMN statement any number of times is safe:
+-- it reissues this SAME full "after" list every time, so a second (or
+-- Nth) run is a pure no-op, never a narrowing.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -244,6 +282,21 @@ ALTER TABLE shipment
 -- Listed after the additive/idempotent parts above, same "a from-scratch
 -- direct-apply failure happens after the safe parts" ordering as
 -- migration 0012's own final FK statement.
+--
+-- FINAL PRE-DEPLOY PATCH — retry-safety fix: MariaDB has no "ADD
+-- CONSTRAINT IF NOT EXISTS ... FOREIGN KEY" (empirically confirmed on
+-- MariaDB 10.11 — a hard SQL syntax error, not merely unsupported-but-
+-- ignored). MariaDB DOES support "DROP FOREIGN KEY IF EXISTS", which is
+-- safe/idempotent whether or not the named constraint exists. This is
+-- the EXACT SAME idiom migration 0013 already established and proved out
+-- (schema-v1-0013-repair-production-flow-completion.sql's own
+-- fk_shipment_special_order_do / fk_sri_special_line fixes — see that
+-- file's own docblock) — reused here verbatim rather than inventing a
+-- new pattern. The DROP+ADD pair always ends with the exact same FK
+-- present, regardless of whether it already existed (table doesn't
+-- exist yet, column doesn't exist yet, or the FK itself already exists
+-- from a prior partial apply), and is safe to run any number of times.
+ALTER TABLE shipment DROP FOREIGN KEY IF EXISTS fk_shipment_replacement_do;
 ALTER TABLE shipment
   ADD CONSTRAINT fk_shipment_replacement_do FOREIGN KEY (replacement_do_id) REFERENCES replacement_do(replacement_do_id);
 

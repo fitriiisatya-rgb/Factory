@@ -3089,6 +3089,209 @@ fwrite(STDOUT, "REPL_FACTORY_ID={$karangtengahId}\n");
 fwrite(STDOUT, "REPL_TANGGAL={$replTanggal4}\n");
 
 // =======================================================================
+// Part P — FINAL PRE-DEPLOY PATCH: Replacement Reject access control
+// (REPL-AUTH-01..12) + migration retry-safety (REPL-MIG-01..06, its own
+// dedicated suite — see test-0016-replacement-reject-migration.sh).
+// =======================================================================
+
+function replGrantDivisionAccess(PDO $pdo, int $userId, int $divisionId): void
+{
+    $pdo->prepare('INSERT IGNORE INTO user_division_access (user_id, division_id) VALUES (?, ?)')->execute([$userId, $divisionId]);
+}
+
+function replGrantFactoryAccess(PDO $pdo, int $userId, int $factoryId): void
+{
+    $pdo->prepare('INSERT IGNORE INTO user_factory_access (user_id, factory_id) VALUES (?, ?)')->execute([$userId, $factoryId]);
+}
+
+// -----------------------------------------------------------------------
+// REPL-AUTH-01/02 — ADMIN and PPIC can both decide a disposition (PPIC
+// preserves the existing "treated identically to ADMIN" policy).
+// -----------------------------------------------------------------------
+$replAuthProdA1 = replSeedProduct($pdo, $rotiBollenDivId, 'REPL AUTH Test Product A1');
+$replAuthTanggalA1 = '2026-11-20';
+$replAuthFxA1 = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, $replAuthTanggalA1, $storeAId, (int) $replAuthProdA1['product_id'], 10.0, 10.0, 'replauth01');
+runTest('REPL-AUTH-01 ADMIN can decide a Reject disposition', function () use ($http, $csrf, $replAuthFxA1) {
+    $confirm = replConfirmReceipt($replAuthFxA1['anon'], $replAuthFxA1['token'], $replAuthFxA1['shipmentId'], $replAuthFxA1['shipmentItemId'], 8.0, 2.0, 0.0, 'replauth01-confirm');
+    expect($confirm['status'] === 200, 'REPL-AUTH-01: confirm failed: ' . json_encode($confirm['json']));
+    $receiptId = (int) $confirm['json']['data']['receiptId'];
+    $receiptItemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    expect(replAdminVerify($http, $csrf, $receiptId, 'replauth01-verify')['status'] === 200, 'REPL-AUTH-01: admin verify failed');
+    $dispose = replDispose($http, $csrf, $receiptItemId, 'reject_final', 2.0, 'ADMIN disposition check', 'replauth01-dispose');
+    expect($dispose['status'] === 200, 'REPL-AUTH-01: expected ADMIN to successfully decide a disposition, got ' . $dispose['status'] . ': ' . json_encode($dispose['json']));
+});
+
+$replAuthProdA2 = replSeedProduct($pdo, $rotiBollenDivId, 'REPL AUTH Test Product A2');
+$replAuthTanggalA2 = '2026-11-21';
+$replAuthFxA2 = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, $replAuthTanggalA2, $storeAId, (int) $replAuthProdA2['product_id'], 10.0, 10.0, 'replauth02');
+$ppicPass = 'ReplAuthPpicPass#123';
+$ppicUserId = createUser($pdo, 'repl_auth_ppic', $ppicPass, ['PPIC']);
+$httpPpic = new HttpPdfg($baseUrl);
+runTest('REPL-AUTH-02 PPIC can also decide a Reject disposition ("if existing policy allows" — ReceiptController::adminVerify() itself is pre-existing ADMIN-only, unrelated to this patch, so ADMIN verifies here; the disposition call itself is what this test proves for PPIC)', function () use ($httpPpic, $ppicPass, $http, $csrf, $replAuthFxA2) {
+    $csrfPpic = login($httpPpic, 'repl_auth_ppic', $ppicPass);
+    $confirm = replConfirmReceipt($replAuthFxA2['anon'], $replAuthFxA2['token'], $replAuthFxA2['shipmentId'], $replAuthFxA2['shipmentItemId'], 8.0, 2.0, 0.0, 'replauth02-confirm');
+    expect($confirm['status'] === 200, 'REPL-AUTH-02: confirm failed: ' . json_encode($confirm['json']));
+    $receiptId = (int) $confirm['json']['data']['receiptId'];
+    $receiptItemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    $verify = replAdminVerify($http, $csrf, $receiptId, 'replauth02-verify');
+    expect($verify['status'] === 200, 'REPL-AUTH-02: ADMIN admin-verify failed: ' . json_encode($verify['json']));
+    $dispose = replDispose($httpPpic, $csrfPpic, $receiptItemId, 'kirim_ulang', 2.0, null, 'replauth02-dispose');
+    expect($dispose['status'] === 200, 'REPL-AUTH-02: expected PPIC to successfully decide a disposition, got ' . $dispose['status'] . ': ' . json_encode($dispose['json']));
+    expect($dispose['json']['data']['replacementDemandId'] > 0, 'REPL-AUTH-02: expected a real Replacement Demand id back');
+});
+
+// -----------------------------------------------------------------------
+// REPL-AUTH-03/04/05/06 — server-side UI page role gate (api/_ui-preview/
+// index.php's own $pageRoles check, run BEFORE ui_page_head() and BEFORE
+// any Replacement data is ever queried).
+// -----------------------------------------------------------------------
+runTest('REPL-AUTH-03 DRIVER cannot access the Replacement Reject Admin UI page (403, no data leaked)', function () use ($httpDriver, $driverPass) {
+    login($httpDriver, 'pdfg_pack_edit_driver', $driverPass);
+    $r = $httpDriver->request('GET', '/api/_ui-preview/?page=replacement-reject');
+    expect($r['status'] === 403, 'REPL-AUTH-03: expected 403 for DRIVER, got ' . $r['status']);
+    expect(!str_contains($r['body'], 'Tindak Lanjut Reject'), 'REPL-AUTH-03: the denied response must never contain the Admin page\'s own reject/traceability content');
+});
+
+$prodOnlyPass = 'ReplAuthProdOnlyPass#123';
+$prodOnlyUserId = createUser($pdo, 'repl_auth_prod_only', $prodOnlyPass, ['PRODUCTION']);
+$httpProdOnly = new HttpPdfg($baseUrl);
+runTest('REPL-AUTH-04 a plain PRODUCTION role cannot access the Replacement Reject Admin disposition/traceability UI (Admin-level page, never exposed to Production)', function () use ($httpProdOnly, $prodOnlyPass) {
+    login($httpProdOnly, 'repl_auth_prod_only', $prodOnlyPass);
+    $r = $httpProdOnly->request('GET', '/api/_ui-preview/?page=replacement-reject');
+    expect($r['status'] === 403, 'REPL-AUTH-04: expected 403 for a plain PRODUCTION user, got ' . $r['status']);
+    expect(!str_contains($r['body'], 'Replacement Reject — Traceability'), 'REPL-AUTH-04: the denied response must never contain the traceability list content');
+});
+
+runTest('REPL-AUTH-05 an unauthorized direct URL to replacement-reject returns a safe 403 denial regardless of role (FG_PACKING-only checked here)', function () use ($pdo, $baseUrl) {
+    $fgOnlyPass = 'ReplAuthFgOnlyPass#123';
+    createUser($pdo, 'repl_auth_fg_only_ui', $fgOnlyPass, ['FG_PACKING']);
+    $httpFgOnly = new HttpPdfg($baseUrl);
+    login($httpFgOnly, 'repl_auth_fg_only_ui', $fgOnlyPass);
+    $r = $httpFgOnly->request('GET', '/api/_ui-preview/?page=replacement-reject');
+    expect($r['status'] === 403, 'REPL-AUTH-05: expected 403 for a plain FG_PACKING user, got ' . $r['status']);
+    expect(!str_contains($r['body'], 'Reject Final'), 'REPL-AUTH-05: the denied response must never contain any disposition-worklist content');
+});
+
+runTest('REPL-AUTH-06 replacement-do-detail follows its own documented role matrix (ADMIN/PPIC/PRODUCTION allowed, DRIVER denied)', function () use ($httpDriver, $driverPass, $httpProdOnly, $prodOnlyPass, $replMainDoId) {
+    login($httpDriver, 'pdfg_pack_edit_driver', $driverPass);
+    $denied = $httpDriver->request('GET', "/api/_ui-preview/?page=replacement-do-detail&doId={$replMainDoId}");
+    expect($denied['status'] === 403, 'REPL-AUTH-06: expected 403 for DRIVER on replacement-do-detail, got ' . $denied['status']);
+
+    login($httpProdOnly, 'repl_auth_prod_only', $prodOnlyPass);
+    $allowed = $httpProdOnly->request('GET', "/api/_ui-preview/?page=replacement-do-detail&doId={$replMainDoId}");
+    expect($allowed['status'] === 200, 'REPL-AUTH-06: expected 200 for PRODUCTION (in this page\'s own documented role matrix) on replacement-do-detail, got ' . $allowed['status']);
+});
+
+// -----------------------------------------------------------------------
+// REPL-AUTH-07/08/09 — scoped PRODUCTION division access on
+// POST /api/replacement-demands/{id}/production-actual. Uses a Basic-
+// division product (deliberately NOT Roti & Bollen) at Karangtengah, so
+// a Roti & Bollen-only PRODUCTION user is genuinely out of scope.
+// -----------------------------------------------------------------------
+$replAuthProdB = replSeedProduct($pdo, $basicDivId, 'REPL AUTH Test Product B (Basic division)');
+$replAuthTanggalB = '2026-11-22';
+$replAuthFxB = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $basicDivId, $replAuthTanggalB, $storeAId, (int) $replAuthProdB['product_id'], 10.0, 10.0, 'replauthB');
+$replAuthDemandB = null;
+runTest('REPL-AUTH-07/08/09 (setup) a Basic-division Replacement demand needing production is created', function () use ($http, $csrf, $replAuthFxB, &$replAuthDemandB) {
+    $confirm = replConfirmReceipt($replAuthFxB['anon'], $replAuthFxB['token'], $replAuthFxB['shipmentId'], $replAuthFxB['shipmentItemId'], 5.0, 5.0, 0.0, 'replauthB-confirm');
+    expect($confirm['status'] === 200, 'REPL-AUTH-07/08/09 setup: confirm failed: ' . json_encode($confirm['json']));
+    $receiptId = (int) $confirm['json']['data']['receiptId'];
+    $receiptItemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    expect(replAdminVerify($http, $csrf, $receiptId, 'replauthB-verify')['status'] === 200, 'REPL-AUTH-07/08/09 setup: admin verify failed');
+    $dispose = replDispose($http, $csrf, $receiptItemId, 'kirim_ulang', 5.0, null, 'replauthB-dispose');
+    expect($dispose['status'] === 200, 'REPL-AUTH-07/08/09 setup: disposeReject failed: ' . json_encode($dispose['json']));
+    $replAuthDemandB = (int) $dispose['json']['data']['replacementDemandId'];
+    $demand = replGetDemand($http, $csrf, $replAuthDemandB);
+    expect($demand['status'] === 'need_production', 'REPL-AUTH-07/08/09 setup: expected status=need_production (zero free FG), got ' . $demand['status']);
+});
+
+$prodWrongDivPass = 'ReplAuthProdWrongDivPass#123';
+$prodWrongDivUserId = createUser($pdo, 'repl_auth_prod_wrongdiv', $prodWrongDivPass, ['PRODUCTION']);
+$httpProdWrongDiv = new HttpPdfg($baseUrl);
+runTest('REPL-AUTH-07 a PRODUCTION user assigned ONLY to Roti & Bollen cannot update a Basic-division Replacement demand\'s production actual', function () use ($pdo, $httpProdWrongDiv, $prodWrongDivPass, $prodWrongDivUserId, $rotiBollenDivId, $replAuthDemandB) {
+    replGrantDivisionAccess($pdo, $prodWrongDivUserId, $rotiBollenDivId);
+    $csrfProdWrongDiv = login($httpProdWrongDiv, 'repl_auth_prod_wrongdiv', $prodWrongDivPass);
+    $r = $httpProdWrongDiv->request('POST', "/api/replacement-demands/{$replAuthDemandB}/production-actual", ['aktualProduksi' => 5, 'rejectProduksi' => 0], array_merge(['X-CSRF-Token' => $csrfProdWrongDiv], idemKey('replauth07')));
+    expect($r['status'] === 403, 'REPL-AUTH-07: expected 403 (DIVISION_ACCESS_DENIED) for a Roti & Bollen-only PRODUCTION user on a Basic-division demand, got ' . $r['status'] . ': ' . json_encode($r['json']));
+    expect(($r['json']['code'] ?? null) === 'DIVISION_ACCESS_DENIED', 'REPL-AUTH-07: expected error code DIVISION_ACCESS_DENIED, got ' . json_encode($r['json']));
+});
+
+$prodCorrectDivPass = 'ReplAuthProdCorrectDivPass#123';
+$prodCorrectDivUserId = createUser($pdo, 'repl_auth_prod_correctdiv', $prodCorrectDivPass, ['PRODUCTION']);
+$httpProdCorrectDiv = new HttpPdfg($baseUrl);
+runTest('REPL-AUTH-08 a PRODUCTION user correctly assigned to the Basic division CAN update that Replacement demand\'s production actual', function () use ($pdo, $httpProdCorrectDiv, $prodCorrectDivPass, $prodCorrectDivUserId, $basicDivId, $replAuthDemandB) {
+    replGrantDivisionAccess($pdo, $prodCorrectDivUserId, $basicDivId);
+    $csrfProdCorrectDiv = login($httpProdCorrectDiv, 'repl_auth_prod_correctdiv', $prodCorrectDivPass);
+    $r = $httpProdCorrectDiv->request('POST', "/api/replacement-demands/{$replAuthDemandB}/production-actual", ['aktualProduksi' => 5, 'rejectProduksi' => 0], array_merge(['X-CSRF-Token' => $csrfProdCorrectDiv], idemKey('replauth08')));
+    expect($r['status'] === 200, 'REPL-AUTH-08: expected 200 for a correctly Basic-division-scoped PRODUCTION user, got ' . $r['status'] . ': ' . json_encode($r['json']));
+});
+
+$prodNoAccessPass = 'ReplAuthProdNoAccessPass#123';
+$prodNoAccessUserId = createUser($pdo, 'repl_auth_prod_noaccess', $prodNoAccessPass, ['PRODUCTION']);
+$httpProdNoAccess = new HttpPdfg($baseUrl);
+runTest('REPL-AUTH-09 a PRODUCTION user with ZERO division assignments remains default-deny', function () use ($httpProdNoAccess, $prodNoAccessPass, $replAuthDemandB) {
+    $csrfProdNoAccess = login($httpProdNoAccess, 'repl_auth_prod_noaccess', $prodNoAccessPass);
+    $r = $httpProdNoAccess->request('POST', "/api/replacement-demands/{$replAuthDemandB}/production-actual", ['aktualProduksi' => 5, 'rejectProduksi' => 0], array_merge(['X-CSRF-Token' => $csrfProdNoAccess], idemKey('replauth09')));
+    expect($r['status'] === 403, 'REPL-AUTH-09: expected 403 (NO_DIVISION_ASSIGNMENT) for zero-assignment PRODUCTION, got ' . $r['status'] . ': ' . json_encode($r['json']));
+    expect(($r['json']['code'] ?? null) === 'NO_DIVISION_ASSIGNMENT', 'REPL-AUTH-09: expected error code NO_DIVISION_ASSIGNMENT, got ' . json_encode($r['json']));
+});
+
+// -----------------------------------------------------------------------
+// REPL-AUTH-10/11/12 — scoped FG_PACKING factory access on
+// POST /api/replacement-demands/{id}/verify-fg. Uses a Cibadak-routed
+// product (found by its division's own factory_id, never hardcoded by
+// name), so a Karangtengah-only FG_PACKING user is genuinely out of
+// scope.
+// -----------------------------------------------------------------------
+$replAuthCibadakDivId = (int) $pdo->query("SELECT division_id FROM division WHERE factory_id = {$cibadakId} LIMIT 1")->fetchColumn();
+expect($replAuthCibadakDivId > 0, 'REPL-AUTH-10/11/12 setup: expected at least one division routed to Cibadak');
+$replAuthProdC = replSeedProduct($pdo, $replAuthCibadakDivId, 'REPL AUTH Test Product C (Cibadak-routed)');
+$replAuthTanggalC = '2026-11-23';
+$replAuthFxC = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $cibadakId, $replAuthCibadakDivId, $replAuthTanggalC, $storeAId, (int) $replAuthProdC['product_id'], 10.0, 10.0, 'replauthC');
+$replAuthDemandC = null;
+runTest('REPL-AUTH-10/11/12 (setup) a Cibadak-factory Replacement demand is created', function () use ($http, $csrf, $replAuthFxC, &$replAuthDemandC) {
+    $confirm = replConfirmReceipt($replAuthFxC['anon'], $replAuthFxC['token'], $replAuthFxC['shipmentId'], $replAuthFxC['shipmentItemId'], 5.0, 5.0, 0.0, 'replauthC-confirm');
+    expect($confirm['status'] === 200, 'REPL-AUTH-10/11/12 setup: confirm failed: ' . json_encode($confirm['json']));
+    $receiptId = (int) $confirm['json']['data']['receiptId'];
+    $receiptItemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    expect(replAdminVerify($http, $csrf, $receiptId, 'replauthC-verify')['status'] === 200, 'REPL-AUTH-10/11/12 setup: admin verify failed');
+    $dispose = replDispose($http, $csrf, $receiptItemId, 'kirim_ulang', 5.0, null, 'replauthC-dispose');
+    expect($dispose['status'] === 200, 'REPL-AUTH-10/11/12 setup: disposeReject failed: ' . json_encode($dispose['json']));
+    $replAuthDemandC = (int) $dispose['json']['data']['replacementDemandId'];
+});
+
+$fgWrongFactoryPass = 'ReplAuthFgWrongFactoryPass#123';
+$fgWrongFactoryUserId = createUser($pdo, 'repl_auth_fg_wrongfactory', $fgWrongFactoryPass, ['FG_PACKING']);
+$httpFgWrongFactory = new HttpPdfg($baseUrl);
+runTest('REPL-AUTH-10 an FG_PACKING user assigned ONLY to Karangtengah cannot verify FG for a Cibadak Replacement demand', function () use ($pdo, $httpFgWrongFactory, $fgWrongFactoryPass, $fgWrongFactoryUserId, $karangtengahId, $replAuthDemandC) {
+    replGrantFactoryAccess($pdo, $fgWrongFactoryUserId, $karangtengahId);
+    $csrfFgWrongFactory = login($httpFgWrongFactory, 'repl_auth_fg_wrongfactory', $fgWrongFactoryPass);
+    $r = $httpFgWrongFactory->request('POST', "/api/replacement-demands/{$replAuthDemandC}/verify-fg", ['fgVerifiedQty' => 0], array_merge(['X-CSRF-Token' => $csrfFgWrongFactory], idemKey('replauth10')));
+    expect($r['status'] === 403, 'REPL-AUTH-10: expected 403 (FACTORY_ACCESS_DENIED) for a Karangtengah-only FG_PACKING user on a Cibadak demand, got ' . $r['status'] . ': ' . json_encode($r['json']));
+    expect(($r['json']['code'] ?? null) === 'FACTORY_ACCESS_DENIED', 'REPL-AUTH-10: expected error code FACTORY_ACCESS_DENIED, got ' . json_encode($r['json']));
+});
+
+$fgCorrectFactoryPass = 'ReplAuthFgCorrectFactoryPass#123';
+$fgCorrectFactoryUserId = createUser($pdo, 'repl_auth_fg_correctfactory', $fgCorrectFactoryPass, ['FG_PACKING']);
+$httpFgCorrectFactory = new HttpPdfg($baseUrl);
+runTest('REPL-AUTH-11 an FG_PACKING user correctly assigned to Cibadak CAN verify FG for that Replacement demand', function () use ($pdo, $httpFgCorrectFactory, $fgCorrectFactoryPass, $fgCorrectFactoryUserId, $cibadakId, $replAuthDemandC) {
+    replGrantFactoryAccess($pdo, $fgCorrectFactoryUserId, $cibadakId);
+    $csrfFgCorrectFactory = login($httpFgCorrectFactory, 'repl_auth_fg_correctfactory', $fgCorrectFactoryPass);
+    $r = $httpFgCorrectFactory->request('POST', "/api/replacement-demands/{$replAuthDemandC}/verify-fg", ['fgVerifiedQty' => 0], array_merge(['X-CSRF-Token' => $csrfFgCorrectFactory], idemKey('replauth11')));
+    expect($r['status'] === 200, 'REPL-AUTH-11: expected 200 for a correctly Cibadak-scoped FG_PACKING user, got ' . $r['status'] . ': ' . json_encode($r['json']));
+});
+
+$fgNoAccessPass = 'ReplAuthFgNoAccessPass#123';
+$fgNoAccessUserId = createUser($pdo, 'repl_auth_fg_noaccess', $fgNoAccessPass, ['FG_PACKING']);
+$httpFgNoAccess = new HttpPdfg($baseUrl);
+runTest('REPL-AUTH-12 an FG_PACKING user with ZERO factory assignments remains default-deny', function () use ($httpFgNoAccess, $fgNoAccessPass, $replAuthDemandC) {
+    $csrfFgNoAccess = login($httpFgNoAccess, 'repl_auth_fg_noaccess', $fgNoAccessPass);
+    $r = $httpFgNoAccess->request('POST', "/api/replacement-demands/{$replAuthDemandC}/verify-fg", ['fgVerifiedQty' => 0], array_merge(['X-CSRF-Token' => $csrfFgNoAccess], idemKey('replauth12')));
+    expect($r['status'] === 403, 'REPL-AUTH-12: expected 403 (NO_FACTORY_ASSIGNMENT) for zero-assignment FG_PACKING, got ' . $r['status'] . ': ' . json_encode($r['json']));
+    expect(($r['json']['code'] ?? null) === 'NO_FACTORY_ASSIGNMENT', 'REPL-AUTH-12: expected error code NO_FACTORY_ASSIGNMENT, got ' . json_encode($r['json']));
+});
+
+// =======================================================================
 // Summary
 // =======================================================================
 $total = count($results);

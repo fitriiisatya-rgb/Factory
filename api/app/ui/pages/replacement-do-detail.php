@@ -13,7 +13,19 @@ use Amor\Api\Replacement\ReplacementDoService;
  * reuses the existing shipment_receipt/shipment_receipt_item flow
  * unchanged (Konfirmasi Toko already lists any shipment, regardless of
  * source, once it has departed).
+ *
+ * Role matrix: identical to ReplacementController's own DO_ROLES (ADMIN/
+ * PPIC/PRODUCTION) — enforced server-side, twice: the router (api/
+ * _ui-preview/index.php) already denies this page with a real HTTP 403
+ * before ui_page_head() ever runs; this second check is defense-in-depth
+ * only, in case this file is ever reached through a different entry
+ * point in the future.
  */
+
+if (array_intersect(['ADMIN', 'PPIC', 'PRODUCTION'], $ui['roles']) === []) {
+    echo ui_empty_state('Akses Ditolak', 'Anda tidak memiliki izin untuk mengakses halaman DO Replacement.');
+    return;
+}
 
 $doId = isset($_GET['doId']) ? (int) $_GET['doId'] : 0;
 $service = new ReplacementDoService($pdo);

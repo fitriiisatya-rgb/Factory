@@ -12,9 +12,19 @@ use Amor\Api\Replacement\ReplacementService;
  * mutating action goes through the same real JSON API via Amor.apiFetch,
  * same discipline as every other admin page in this app.
  *
- * Server-side authorization remains authoritative regardless of this
- * page's own visibility — see ReplacementController's own role gates.
+ * Server-side authorization is enforced TWICE, deliberately: the router
+ * (api/_ui-preview/index.php) already denies this page with a real HTTP
+ * 403 before ui_page_head() ever runs, for ANY unauthorized role — this
+ * second, redundant check exists purely as defense-in-depth in case this
+ * file is ever reached through a different entry point in the future.
+ * Either check alone is sufficient today; neither reject/demand data is
+ * ever queried without one of them passing first.
  */
+
+if (array_intersect(['ADMIN', 'PPIC'], $ui['roles']) === []) {
+    echo ui_empty_state('Akses Ditolak', 'Anda tidak memiliki izin untuk mengakses halaman Replacement Reject.');
+    return;
+}
 
 $service = new ReplacementService($pdo);
 $pending = $service->pendingDisposition(null);

@@ -145,6 +145,22 @@ grep -q "recordReceiptOutcome" "$STAGE/api/app/src/Replacement/ReplacementServic
 [ -f "$STAGE/api/app/ui/pages/replacement-do-detail.php" ] || { echo "REFUSING TO BUILD: the Admin Replacement DO detail UI page is missing."; exit 1; }
 grep -q "replacement-reject" "$STAGE/api/app/ui/layout.php" || { echo "REFUSING TO BUILD: the Replacement Reject nav item is missing from layout.php."; exit 1; }
 
+echo "--- sanity: FINAL PRE-DEPLOY PATCH — scoped access, UI role gate, and migration retry-safety are all present ---"
+grep -q "requireProductionScope" "$STAGE/api/app/src/Replacement/ReplacementService.php" || { echo "REFUSING TO BUILD: ReplacementService::requireProductionScope() (division-scoped access) is missing."; exit 1; }
+grep -q "requireFgScope" "$STAGE/api/app/src/Replacement/ReplacementService.php" || { echo "REFUSING TO BUILD: ReplacementService::requireFgScope() (factory-scoped access) is missing."; exit 1; }
+grep -q "requireDivisionAccess" "$STAGE/api/app/src/Replacement/ReplacementService.php" || { echo "REFUSING TO BUILD: ReplacementService no longer calls Auth::requireDivisionAccess()."; exit 1; }
+grep -q "requireFactoryAccess" "$STAGE/api/app/src/Replacement/ReplacementService.php" || { echo "REFUSING TO BUILD: ReplacementService no longer calls Auth::requireFactoryAccess()."; exit 1; }
+grep -q "pageRoles" "$STAGE/api/_ui-preview/index.php" || { echo "REFUSING TO BUILD: the _ui-preview router's own \$pageRoles server-side gate is missing."; exit 1; }
+grep -q "'replacement-reject' => \['ADMIN', 'PPIC'\]" "$STAGE/api/_ui-preview/index.php" || { echo "REFUSING TO BUILD: replacement-reject is no longer gated to ADMIN/PPIC in the router."; exit 1; }
+if ! grep -q "ADD CONSTRAINT fk_shipment_replacement_do" "$REPO_ROOT/database/schema-v1-0016-replacement-reject.sql"; then
+  echo "REFUSING TO BUILD: fk_shipment_replacement_do's own ADD CONSTRAINT statement is missing from 0016's SQL." >&2
+  exit 1
+fi
+if ! grep -q "DROP FOREIGN KEY IF EXISTS fk_shipment_replacement_do" "$REPO_ROOT/database/schema-v1-0016-replacement-reject.sql"; then
+  echo "REFUSING TO BUILD: fk_shipment_replacement_do's retry-safety guard (DROP FOREIGN KEY IF EXISTS) is missing — the FK add is not retry-safe." >&2
+  exit 1
+fi
+
 echo "--- sanity: confirm the prior passes' own fixes are still intact, unregressed ---"
 grep -q "var packingEditMode" "$STAGE/api/app/ui/pages/fg-packing.php" || { echo "REFUSING TO BUILD: fg-packing.php's packingEditMode UI state (the prior Lock Packing pass) is missing."; exit 1; }
 grep -q "function escHtml" "$STAGE/api/app/ui/pages/fg-packing.php" || { echo "REFUSING TO BUILD: fg-packing.php's escHtml() helper is missing — the security hotfix must not regress."; exit 1; }
@@ -246,6 +262,36 @@ permanent, one-time Admin decisions.
   Replacement — mutually protect each other's reservations; no existing
   call site needed any further change for this.
 
+## FINAL PRE-DEPLOY PATCH (this build) — access control + migration
+## retry-safety, no business-rule change
+
+A source deep-check before cPanel UAT found three gaps, all fixed here
+(migration 0016 itself was NOT yet applied anywhere live, so it was
+fixed IN PLACE — there is still no 0017):
+
+- **Scoped Production/FG access**: POST .../production-actual and
+  POST .../verify-fg now resolve the demand's own division/factory
+  (never a client-supplied value) and call the SAME
+  Auth::requireDivisionAccess()/Auth::requireFactoryAccess() every other
+  Production/FG endpoint already uses (ADMIN/PPIC still bypass, exactly
+  as everywhere else). A Production user assigned only to one division,
+  or an FG_PACKING user assigned only to one factory, can no longer
+  touch a Replacement demand outside that scope.
+- **Replacement Admin UI role gate**: the router (api/_ui-preview/
+  index.php) now denies replacement-reject (ADMIN/PPIC only) and
+  replacement-do-detail (ADMIN/PPIC/PRODUCTION, matching that page's own
+  API role tier) with a REAL server-side 403 before any Replacement data
+  is ever queried — not merely a hidden sidebar link. The sidebar itself
+  also now hides "Replacement Reject" from any role that cannot open it.
+- **Migration 0016 retry-safety**: its one FK-add statement
+  (fk_shipment_replacement_do) now uses the exact same "DROP FOREIGN KEY
+  IF EXISTS, then unconditional ADD CONSTRAINT" idiom migration 0013
+  already established — safe to re-run any number of times, whether the
+  table/column/FK already exist or not. No business rule, allocation
+  formula, Production Need formula, DO/Shipment/Receipt behavior, or
+  stock_ledger semantics changed in this patch — see the delivered
+  report's own "IMPORTANT — NO BUSINESS FLOW CHANGE" confirmation.
+
 ## What did NOT change
 
 Original PO targets, original DO planned quantities, original shipment/
@@ -274,6 +320,19 @@ disposition correctly chains to the original root; original PO/DO/
 invoice data stays completely untouched throughout) all pass, alongside
 an unauthorized-role check confirming server-side authorization is
 authoritative regardless of what the Admin UI shows.
+
+This build's own new REPL-AUTH-01..12 (ADMIN and PPIC can both decide a
+disposition; DRIVER/plain PRODUCTION cannot open the Replacement Admin
+UI at all; replacement-do-detail follows its own documented ADMIN/PPIC/
+PRODUCTION matrix; a Production/FG_PACKING user scoped to the WRONG
+division/factory is rejected, the CORRECT scope succeeds, and zero
+assignment remains default-deny) and REPL-MIG-01..06 (0016 applies
+cleanly to a fresh 0015 schema; rerunning it when tables/columns exist
+but the FK does not succeeds; rerunning the FULL SQL a second time when
+the FK already exists succeeds with zero destructive change; every
+pre-existing 0001-0015 row survives byte-for-byte; no migration 0017
+exists) all pass — see api/tests/test-0016-replacement-reject-migration.sh
+for the dedicated migration suite.
 EOF
 
 find "$STAGE" -name '.DS_Store' -delete 2>/dev/null || true

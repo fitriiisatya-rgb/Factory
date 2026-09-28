@@ -51,6 +51,42 @@ $page = (string) ($_GET['page'] ?? 'dashboard');
 if (!isset($pages[$page])) {
     $page = 'dashboard';
 }
+
+// FINAL PRE-DEPLOY PATCH — server-side page-level role gate. Runs BEFORE
+// ui_page_head() emits any output, so http_response_code(403) actually
+// takes effect and NO page-specific data is ever queried for a denied
+// role (the page file itself is never even required). This is the FIRST
+// such gate in this router (every other page today relies purely on the
+// JSON API's own role checks + sidebar hiding, per this file's own
+// original docblock) — added here, narrowly, only for the pages this
+// patch's own task explicitly named; every other page's behavior is
+// completely unchanged.
+$pageRoles = [
+    // Tindak Lanjut Reject + the full cross-store traceability list is
+    // Admin-level only (task's own "Admin traceability may remain Admin/
+    // PPIC-only") — a scoped Production/FG_PACKING user never sees
+    // another store's/factory's reject data through this page at all.
+    'replacement-reject' => ['ADMIN', 'PPIC'],
+    // The DO detail/ship page's own role matrix is documented as
+    // IDENTICAL to Replacement\ReplacementController's own DO_ROLES
+    // (ADMIN/PPIC/PRODUCTION) — the same tier already authorized to
+    // create/ship a Replacement DO via the real API; restricting this
+    // page to Admin/PPIC-only would block a legitimately-authorized
+    // PRODUCTION user from the UI action their own API call already
+    // permits, which is a usability regression, not a security fix.
+    'replacement-do-detail' => ['ADMIN', 'PPIC', 'PRODUCTION'],
+];
+if (isset($pageRoles[$page]) && array_intersect($pageRoles[$page], $ui['roles']) === []) {
+    http_response_code(403);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Akses Ditolak</title></head>'
+        . '<body style="font-family:system-ui,sans-serif;max-width:640px;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;">'
+        . '<h1 style="font-size:1.25rem;">403 — Akses Ditolak</h1>'
+        . '<p>Anda tidak memiliki izin untuk mengakses halaman ini.</p>'
+        . '</body></html>';
+    exit;
+}
+
 $activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order'
     : (str_starts_with($page, 'konfirmasi-toko') ? 'konfirmasi-toko'
     : (str_starts_with($page, 'replacement-') ? 'replacement-reject'

@@ -6,6 +6,16 @@ migrasi database baru (0016).**
 **Path yang BENAR di server Anda**: `public_html/factory/` (bukan
 `public_html/` itu sendiri).
 
+**Update (source deep-check sebelum UAT)**: paket ini SEKARANG juga
+mencakup perbaikan kontrol akses (role PRODUCTION/FG_PACKING kini benar-
+benar dibatasi sesuai divisi/pabrik yang ditugaskan, dan halaman Admin
+Replacement Reject kini benar-benar ditolak — bukan cuma disembunyikan
+dari menu — untuk role yang tidak berwenang) dan perbaikan keamanan
+migrasi (migrasi 0016 sekarang aman dijalankan ulang kapan pun, walau
+sebagian sudah pernah diterapkan sebelumnya). **Migrasi 0016 masih
+migrasi yang SAMA — belum pernah diterapkan ke server manapun — jadi
+tidak ada langkah tambahan di luar yang sudah dijelaskan di bawah ini.**
+
 ---
 
 ## Kenapa paket ini ada
@@ -118,6 +128,24 @@ sampai toko menerima kembali barang penggantinya.
    - **Verifikasi tidak ada efek samping**: cek halaman **Pesanan Toko**
      — target PO asli tidak berubah. Cek **Delivery Order** asli — qty
      rencana tidak bertambah.
+
+9. **UAT nyata — kontrol akses (bagian dari perbaikan sebelum UAT).**
+   - Login sebagai user dengan role **DRIVER** atau **PRODUCTION biasa**
+     (bukan ADMIN/PPIC), lalu coba buka
+     `https://domainanda.com/factory/api/_ui-preview/?page=replacement-reject`
+     langsung — halaman harus menampilkan **403 Akses Ditolak**, bukan
+     data reject/toko apa pun. Menu "Replacement Reject" di sidebar juga
+     seharusnya TIDAK muncul untuk user ini.
+   - Login sebagai user **PRODUCTION** yang HANYA ditugaskan ke satu
+     divisi tertentu (lihat Master Data → User → Akses Divisi). Coba isi
+     Aktual Produksi untuk sebuah Replacement Demand dari divisi LAIN —
+     harus ditolak. Coba lagi untuk Replacement Demand dari divisi yang
+     memang ditugaskan ke user tersebut — harus berhasil.
+   - Login sebagai user **FG_PACKING** yang HANYA ditugaskan ke satu
+     pabrik tertentu (lihat Master Data → User → Akses Pabrik). Coba
+     Verifikasi FG untuk Replacement Demand dari pabrik LAIN — harus
+     ditolak. Coba lagi untuk pabrik yang memang ditugaskan — harus
+     berhasil.
 
 ---
 

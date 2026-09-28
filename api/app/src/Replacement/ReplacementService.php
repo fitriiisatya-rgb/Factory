@@ -6,6 +6,7 @@ namespace Amor\Api\Replacement;
 
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
+use Amor\Api\Auth;
 use Amor\Api\Delivery\DoRepository;
 use PDO;
 
@@ -188,6 +189,7 @@ final class ReplacementService
         if ($demand === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Replacement demand not found');
         }
+        $this->requireProductionScope($demand);
         if ($demand['status'] !== self::PRODUCTION_STATUS) {
             throw new ApiException(400, 'INVALID_STATUS', "Actual/Reject Produksi can only be entered while the demand still needs production (current status: {$demand['status']})");
         }
@@ -210,6 +212,7 @@ final class ReplacementService
         if ($demand === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Replacement demand not found');
         }
+        $this->requireFgScope($demand);
         $aktual = (float) $demand['production_aktual'];
         if ($fgVerifiedQty < 0 || $fgVerifiedQty > $aktual + 0.0001) {
             throw new ApiException(400, 'INVALID_FG_QTY', 'fgVerifiedQty must be between 0 and production_aktual');
@@ -254,6 +257,40 @@ final class ReplacementService
         if ($newStatus === 'completed') {
             Audit::write($this->pdo, $requestId, $userId, 'replacement.completed', 'replacement_demand', (string) $demandId, 'ok', null, null, ['approvedQty' => $approvedQty, 'totalReceivedGood' => $totalGood]);
         }
+    }
+
+    /**
+     * FINAL PRE-DEPLOY PATCH — scoped access. Mirrors Production\
+     * ProductionService::requireProductionScopedDivision() exactly: a
+     * PRODUCTION user must be explicitly assigned (user_division_access)
+     * to the division that actually produces this demand's product —
+     * resolved from the row itself (product.division_id), never from a
+     * client-supplied value. ADMIN/PPIC bypass unconditionally inside
+     * Auth::requireDivisionAccess() itself, same as every other division-
+     * scoped endpoint in this app. Only division is checked here (never
+     * factory) — this is deliberately the SAME scope Production's own
+     * real endpoints check, never a stricter parallel rule invented for
+     * Replacement alone.
+     */
+    private function requireProductionScope(array $demand): void
+    {
+        $divisionId = $this->repo->findProductDivisionId($this->pdo, (int) $demand['product_id']);
+        if ($divisionId === null) {
+            throw new ApiException(422, 'PRODUCT_DIVISION_MISSING', 'This product has no production division set in Master Data');
+        }
+        Auth::requireDivisionAccess($divisionId);
+    }
+
+    /**
+     * Mirrors Fg\FgService::requireFactory() exactly: an FG_PACKING user
+     * must be explicitly assigned (user_factory_access) to the factory
+     * this demand's own factory_id column already carries (resolved from
+     * the just-locked row, never from the request). ADMIN/PPIC bypass
+     * unconditionally inside Auth::requireFactoryAccess() itself.
+     */
+    private function requireFgScope(array $demand): void
+    {
+        Auth::requireFactoryAccess((int) $demand['factory_id']);
     }
 
     private function buildDemandDto(array $r): array

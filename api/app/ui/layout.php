@@ -21,11 +21,21 @@ const ADMIN_ASSET_VERSION = '20260922-special-order-ui-routing-rework';
  * item); the backend's own role checks on every mutating API call remain
  * the real gate — hiding a menu item is a convenience, never a security
  * boundary (task's own "role-ready UI" rule).
+ *
+ * FINAL PRE-DEPLOY PATCH exception: "Replacement Reject" is the FIRST
+ * (and, deliberately, only) nav item this function ever hides, because
+ * its own page now carries a REAL server-side 403 gate (api/_ui-preview/
+ * index.php's own $pageRoles check) — showing the link to a role that
+ * would just get denied is confusing UX, not a security decision (the
+ * 403 gate is what actually protects the data either way). $roles
+ * defaults to [] (= show everything) so every OTHER existing call site/
+ * page keeps its prior, unchanged permissive behavior.
+ * @param string[] $roles the current user's roles (Auth::currentRoles()) — [] keeps the old fully-permissive behavior
  * @return array<int,array{key:string,label:string,icon:string}>
  */
-function ui_nav_items(): array
+function ui_nav_items(array $roles = []): array
 {
-    return [
+    $items = [
         ['key' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard'],
         ['key' => 'pesanan-toko', 'label' => 'Pesanan Toko', 'icon' => 'cart'],
         ['key' => 'produksi', 'label' => 'Produksi', 'icon' => 'factory'],
@@ -35,6 +45,10 @@ function ui_nav_items(): array
         ['key' => 'konfirmasi-toko', 'label' => 'Konfirmasi Toko', 'icon' => 'user'],
         ['key' => 'replacement-reject', 'label' => 'Replacement Reject', 'icon' => 'file'],
     ];
+    if ($roles !== [] && array_intersect(['ADMIN', 'PPIC'], $roles) === []) {
+        $items = array_values(array_filter($items, static fn ($i) => $i['key'] !== 'replacement-reject'));
+    }
+    return $items;
 }
 
 /** @return array<int,array{key:string,label:string,icon:string}> */
@@ -88,7 +102,7 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
       </div>
     </div>
     <nav class="sidebar-nav">
-      <?php foreach (ui_nav_items() as $item): ?>
+      <?php foreach (ui_nav_items($ui['roles']) as $item): ?>
       <a class="nav-item<?= $active === $item['key'] ? ' active' : '' ?>" href="/api/_ui-preview/?page=<?= $item['key'] ?><?= $navQS ?>">
         <span class="nav-icon"><?= ui_icon($item['icon']) ?></span><span class="nav-label"><?= ui_esc($item['label']) ?></span>
       </a>

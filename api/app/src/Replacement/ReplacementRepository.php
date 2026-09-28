@@ -322,6 +322,15 @@ final class ReplacementRepository
         return (float) $stmt->fetchColumn();
     }
 
+    /** The product's own production division — used to resolve which division/factory scope a Replacement demand's production side belongs to (Auth::requireDivisionAccess()'s own argument), mirroring Production\ProductionService's own row-then-check pattern. */
+    public function findProductDivisionId(PDO $pdo, int $productId): ?int
+    {
+        $stmt = $pdo->prepare('SELECT division_id FROM product WHERE product_id = ?');
+        $stmt->execute([$productId]);
+        $id = $stmt->fetchColumn();
+        return $id !== false && $id !== null ? (int) $id : null;
+    }
+
     /** True chain traceability: walks up parent_replacement_demand_id to the FIRST-generation demand's own store name, for the admin list "root reject" column. */
     public function findChainForDemand(PDO $pdo, int $demandId): array
     {
