@@ -83,6 +83,44 @@ final class HttpPdfg
         $json = $raw === '' ? null : json_decode($raw, true);
         return ['status' => $status, 'json' => $json, 'body' => $raw];
     }
+
+    /**
+     * Replacement Reject pass: the public receipt-confirm endpoint
+     * requires multipart/form-data once any reject/shortage evidence
+     * photo is involved (same real-UAT rule Phase55DispatchReceiptTest.php's
+     * own Http55::requestMultipart() already exercises) — mirrored here
+     * verbatim so this file never needs to borrow that other test file's
+     * own HTTP class.
+     * @param array<string,string> $files fieldName => local file path
+     */
+    public function requestMultipart(string $method, string $path, array $fields, array $files, array $headers = []): array
+    {
+        $ch = curl_init($this->baseUrl . $path);
+        $hdrLines = [];
+        foreach ($headers as $k => $v) {
+            $hdrLines[] = "{$k}: {$v}";
+        }
+        $postFields = $fields;
+        foreach ($files as $fieldName => $filePath) {
+            $postFields[$fieldName] = new CURLFile($filePath, mime_content_type($filePath) ?: 'application/octet-stream', basename($filePath));
+        }
+        curl_setopt_array($ch, [
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_COOKIEJAR => $this->cookieJar,
+            CURLOPT_COOKIEFILE => $this->cookieJar,
+            CURLOPT_HTTPHEADER => $hdrLines,
+            CURLOPT_POSTFIELDS => $postFields,
+        ]);
+        $raw = curl_exec($ch);
+        if ($raw === false) {
+            throw new RuntimeException('curl error: ' . curl_error($ch));
+        }
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        $json = $raw === '' ? null : json_decode($raw, true);
+        return ['status' => $status, 'json' => $json, 'body' => $raw];
+    }
 }
 
 function expect(bool $cond, string $message): void
@@ -2463,6 +2501,592 @@ runTest('PACK-EDIT-14 an unauthorized (DRIVER) role cannot submit or correct Pac
 
 fwrite(STDOUT, "PACK_EDIT_FACTORY_ID={$karangtengahId}\n");
 fwrite(STDOUT, "PACK_EDIT_TANGGAL={$packEditTanggal}\n");
+
+// =======================================================================
+// Part O — REPLACEMENT REJECT END-TO-END (migration 0016)
+// =======================================================================
+// REPL-01..25 (task's own numbered mandatory test list). Reuses this
+// file's own established fixture style (real HTTP calls through
+// Production -> FG -> DO -> Ship, never a second business-logic path),
+// extended here with a real store Receipt confirm (with reject) + Admin
+// verify + the new Replacement disposition/allocation/production/DO/
+// shipment/receipt endpoints. Brand-new products are seeded directly
+// (never reusing prodA..prodG, which prior Parts' own FG batches already
+// carry real state for) so every scenario below starts from a clean,
+// fully isolated slate.
+
+use Amor\Api\Dispatch\ReceiptService as ReplReceiptService;
+
+function replFakeEvidenceImage(): string
+{
+    $png = base64_decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+    );
+    $path = tempnam(sys_get_temp_dir(), 'replevidence') . '.png';
+    file_put_contents($path, $png);
+    return $path;
+}
+
+function replSeedProduct(PDO $pdo, int $divisionId, string $name): array
+{
+    $pdo->prepare('INSERT INTO product (name, division_id, hpp, harga, aktif, version, created_at) VALUES (?, ?, 0, 0, 1, 1, UTC_TIMESTAMP())')
+        ->execute([$name, $divisionId]);
+    return ['product_id' => (int) $pdo->lastInsertId(), 'name' => $name];
+}
+
+/**
+ * Full real chain: PO -> Production -> FG submit (Per Produk,
+ * fgVerified=packed=$produceQty) -> Regular DO -> ship $shipQty to
+ * $storeId. Returns the store Receipt fixture (public token + shipment/
+ * shipment-item ids) needed to confirm a reject against it.
+ */
+function replBuildShippedFixture(HttpPdfg $http, string $csrf, PDO $pdo, string $baseUrl, int $factoryId, int $divisionId, string $tanggal, int $storeId, int $productId, float $produceQty, float $shipQty, string $tag): array
+{
+    seedPoStoreSplit($pdo, $tanggal, $factoryId, $productId, [$storeId => ['poAwal' => $shipQty, 'poRevisi' => 0.0]]);
+    submitProductionActual($http, $csrf, $tanggal, $divisionId, $productId, $produceQty);
+
+    $fgCreate = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $factoryId], array_merge(['X-CSRF-Token' => $csrf], idemKey("{$tag}-fg-create")));
+    expect($fgCreate['status'] === 200, "{$tag}: fg create failed: " . json_encode($fgCreate['json']));
+    $batchId = $fgCreate['json']['data']['fgBatchId'];
+    $v = $fgCreate['json']['data']['version'];
+    $fgSave = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => $productId, 'fgVerified' => $produceQty, 'packed' => $produceQty]]], array_merge(['X-CSRF-Token' => $csrf], idemKey("{$tag}-fg-save")));
+    expect($fgSave['status'] === 200, "{$tag}: fg save failed: " . json_encode($fgSave['json']));
+    $v = $fgSave['json']['data']['version'];
+    $fgSubmit = $http->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey("{$tag}-fg-submit")));
+    expect($fgSubmit['status'] === 200, "{$tag}: fg submit failed: " . json_encode($fgSubmit['json']));
+
+    $do = createDoForStore($http, $csrf, $tanggal, $storeId);
+    $ship = $http->request('POST', "/api/do/{$do['doId']}/ship", ['expectedVersion' => $do['version'], 'items' => [['productId' => $productId, 'actualQty' => $shipQty]]], array_merge(['X-CSRF-Token' => $csrf], idemKey("{$tag}-ship")));
+    expect($ship['status'] === 200, "{$tag}: ship failed: " . json_encode($ship['json']));
+    $shipmentId = (int) $ship['json']['data']['shipmentId'];
+
+    $token = (new ReplReceiptService($pdo))->getReceiptToken((int) $do['doId']);
+    $anon = new HttpPdfg($baseUrl);
+    $view = $anon->request('GET', "/api/receive/{$token}");
+    expect($view['status'] === 200, "{$tag}: public receive view failed: " . json_encode($view['json']));
+    $shipmentItemId = null;
+    foreach ($view['json']['data']['shipments'] as $sh) {
+        if ((int) $sh['shipmentId'] === $shipmentId) {
+            $shipmentItemId = (int) $sh['items'][0]['shipmentItemId'];
+        }
+    }
+    expect($shipmentItemId !== null, "{$tag}: could not resolve shipmentItemId from public receive view");
+
+    return ['doId' => (int) $do['doId'], 'shipmentId' => $shipmentId, 'token' => $token, 'shipmentItemId' => $shipmentItemId, 'anon' => $anon];
+}
+
+/** Confirms receipt (multipart + evidence photo whenever reject/shortage > 0, matching the real store-side rule). Returns the confirm response. */
+function replConfirmReceipt(HttpPdfg $anon, string $token, int $shipmentId, int $shipmentItemId, float $good, float $reject, float $shortage, string $tag): array
+{
+    if ($reject > 0.0001 || $shortage > 0.0001) {
+        return $anon->requestMultipart('POST', "/api/receive/{$token}/shipments/{$shipmentId}/confirm", [
+            'receiverName' => 'Toko Replacement Test',
+            'items' => json_encode([['shipmentItemId' => $shipmentItemId, 'receivedGood' => $good, 'reject' => $reject, 'shortage' => $shortage]]),
+        ], ['evidence[]' => replFakeEvidenceImage()], idemKey($tag));
+    }
+    return $anon->request('POST', "/api/receive/{$token}/shipments/{$shipmentId}/confirm", [
+        'receiverName' => 'Toko Replacement Test',
+        'items' => [['shipmentItemId' => $shipmentItemId, 'receivedGood' => $good, 'reject' => $reject, 'shortage' => $shortage]],
+    ], idemKey($tag));
+}
+
+function replAdminVerify(HttpPdfg $http, string $csrf, int $receiptId, string $tag): array
+{
+    return $http->request('POST', "/api/admin/receipts/{$receiptId}/verify", [], array_merge(['X-CSRF-Token' => $csrf], idemKey($tag)));
+}
+
+function replDispose(HttpPdfg $http, string $csrf, int $receiptItemId, string $disposition, float $approvedQty, ?string $reason, string $tag): array
+{
+    return $http->request('POST', "/api/replacement/receipt-items/{$receiptItemId}/disposition", [
+        'disposition' => $disposition, 'approvedQty' => $approvedQty, 'reason' => $reason,
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey($tag)));
+}
+
+function replGetDemand(HttpPdfg $http, string $csrf, int $demandId): array
+{
+    $r = $http->request('GET', "/api/replacement-demands/{$demandId}", null, ['X-CSRF-Token' => $csrf]);
+    expect($r['status'] === 200, "repl get demand {$demandId} failed: " . json_encode($r['json']));
+    return $r['json']['data'];
+}
+
+// -----------------------------------------------------------------------
+// REPL-01/02/03 — Reject Final / Tidak Diganti
+// -----------------------------------------------------------------------
+$replProd1 = replSeedProduct($pdo, $rotiBollenDivId, 'REPL Test Product 1');
+$replTanggal1 = '2026-11-10';
+$replFx1 = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, $replTanggal1, $storeAId, (int) $replProd1['product_id'], 10.0, 10.0, 'repl01');
+$replBalanceBeforeDispose1 = (float) ($pdo->query("SELECT sb.qty_on_hand FROM stock_balance sb INNER JOIN location l ON l.location_id = sb.location_id WHERE sb.product_id = {$replProd1['product_id']} AND l.factory_id = {$karangtengahId}")->fetchColumn() ?: 0);
+$replReceiptItemId1 = null;
+runTest('REPL-01/02/03 Reject Final / Tidak Diganti: no Replacement created, no FG restored, original shipment/receipt preserved', function () use ($http, $csrf, $replFx1, $pdo, $replProd1, $karangtengahId, $replBalanceBeforeDispose1, &$replReceiptItemId1) {
+    $confirm = replConfirmReceipt($replFx1['anon'], $replFx1['token'], $replFx1['shipmentId'], $replFx1['shipmentItemId'], 7.0, 3.0, 0.0, 'repl01-confirm');
+    expect($confirm['status'] === 200, 'REPL-01: confirm failed: ' . json_encode($confirm['json']));
+    $receiptId = (int) $confirm['json']['data']['receiptId'];
+    $replReceiptItemId1 = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+
+    $verify = replAdminVerify($http, $csrf, $receiptId, 'repl01-verify');
+    expect($verify['status'] === 200, 'REPL-01: admin verify failed: ' . json_encode($verify['json']));
+
+    $dispose = replDispose($http, $csrf, $replReceiptItemId1, 'reject_final', 3.0, 'Barang pecah saat pengiriman', 'repl01-dispose');
+    expect($dispose['status'] === 200, 'REPL-01: disposeReject failed: ' . json_encode($dispose['json']));
+    expect($dispose['json']['data']['replacementDemandId'] === null, 'REPL-01: Reject Final must NEVER create a Replacement Demand, got ' . json_encode($dispose['json']));
+
+    $count = (int) $pdo->query("SELECT COUNT(*) FROM replacement_demand WHERE shipment_receipt_item_id = {$replReceiptItemId1}")->fetchColumn();
+    expect($count === 0, 'REPL-01: expected zero replacement_demand rows for this receipt item, got ' . $count);
+
+    $balanceAfter = (float) ($pdo->query("SELECT sb.qty_on_hand FROM stock_balance sb INNER JOIN location l ON l.location_id = sb.location_id WHERE sb.product_id = {$replProd1['product_id']} AND l.factory_id = {$karangtengahId}")->fetchColumn() ?: 0);
+    expect(abs($balanceAfter - $replBalanceBeforeDispose1) < 0.001, "REPL-02: Reject Final must NEVER restore FG — expected stock_balance unchanged at {$replBalanceBeforeDispose1}, got {$balanceAfter}");
+
+    $item = $pdo->query("SELECT shipped_qty, received_good_qty, reject_qty FROM shipment_receipt_item WHERE shipment_receipt_item_id = {$replReceiptItemId1}")->fetch();
+    expect(numEq($item['shipped_qty'], 10.0) && numEq($item['received_good_qty'], 7.0) && numEq($item['reject_qty'], 3.0),
+        'REPL-03: original shipment/receipt quantities must be preserved exactly, got ' . json_encode($item));
+});
+
+runTest('REPL-01b a SECOND disposition attempt on the same already-disposed line is refused (never silently re-decided)', function () use ($http, $csrf, &$replReceiptItemId1) {
+    $again = replDispose($http, $csrf, $replReceiptItemId1, 'kirim_ulang', 3.0, null, 'repl01b-dispose');
+    expect($again['status'] === 409, 'REPL-01b: expected 409 ALREADY_DISPOSED for a second disposition attempt, got ' . $again['status'] . ': ' . json_encode($again['json']));
+});
+
+// -----------------------------------------------------------------------
+// REPL-04 — Free FG fully covers the approved replacement qty
+// -----------------------------------------------------------------------
+$replProd2 = replSeedProduct($pdo, $rotiBollenDivId, 'REPL Test Product 2');
+$replTanggal2 = '2026-11-11';
+$replFx2 = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, $replTanggal2, $storeAId, (int) $replProd2['product_id'], 15.0, 10.0, 'repl04');
+$replDemand2 = null;
+runTest('REPL-04 approved 5, Free FG = 5 (produced 15, shipped 10, 5 remain physically free) -> Allocation = 5, Production Need = 0, status = ready', function () use ($http, $csrf, $replFx2, &$replDemand2) {
+    $confirm = replConfirmReceipt($replFx2['anon'], $replFx2['token'], $replFx2['shipmentId'], $replFx2['shipmentItemId'], 5.0, 5.0, 0.0, 'repl04-confirm');
+    expect($confirm['status'] === 200, 'REPL-04: confirm failed: ' . json_encode($confirm['json']));
+    $receiptId = (int) $confirm['json']['data']['receiptId'];
+    $receiptItemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    expect(replAdminVerify($http, $csrf, $receiptId, 'repl04-verify')['status'] === 200, 'REPL-04: admin verify failed');
+
+    $dispose = replDispose($http, $csrf, $receiptItemId, 'kirim_ulang', 5.0, null, 'repl04-dispose');
+    expect($dispose['status'] === 200, 'REPL-04: disposeReject failed: ' . json_encode($dispose['json']));
+    $replDemand2 = (int) $dispose['json']['data']['replacementDemandId'];
+
+    $demand = replGetDemand($http, $csrf, $replDemand2);
+    expect(numEq($demand['allocatedFromFg'], 5.0), 'REPL-04: expected allocatedFromFg=5, got ' . json_encode($demand));
+    expect(numEq($demand['productionNeed'], 0.0), 'REPL-04: expected productionNeed=0, got ' . json_encode($demand));
+    expect($demand['status'] === 'ready', 'REPL-04: expected status=ready, got ' . $demand['status']);
+});
+
+// -----------------------------------------------------------------------
+// REPL-05 — Free FG partially covers; remainder becomes Production Need
+// -----------------------------------------------------------------------
+$replProd3 = replSeedProduct($pdo, $rotiBollenDivId, 'REPL Test Product 3');
+$replTanggal3 = '2026-11-12';
+$replFx3 = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, $replTanggal3, $storeAId, (int) $replProd3['product_id'], 12.0, 10.0, 'repl05');
+runTest('REPL-05 approved 5, Free FG = 2 (produced 12, shipped 10, 2 remain) -> Allocation = 2, Production Need = 3, status = need_production', function () use ($http, $csrf, $replFx3) {
+    $confirm = replConfirmReceipt($replFx3['anon'], $replFx3['token'], $replFx3['shipmentId'], $replFx3['shipmentItemId'], 5.0, 5.0, 0.0, 'repl05-confirm');
+    expect($confirm['status'] === 200, 'REPL-05: confirm failed: ' . json_encode($confirm['json']));
+    $receiptId = (int) $confirm['json']['data']['receiptId'];
+    $receiptItemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    expect(replAdminVerify($http, $csrf, $receiptId, 'repl05-verify')['status'] === 200, 'REPL-05: admin verify failed');
+
+    $dispose = replDispose($http, $csrf, $receiptItemId, 'kirim_ulang', 5.0, null, 'repl05-dispose');
+    expect($dispose['status'] === 200, 'REPL-05: disposeReject failed: ' . json_encode($dispose['json']));
+    $demandId = (int) $dispose['json']['data']['replacementDemandId'];
+
+    $demand = replGetDemand($http, $csrf, $demandId);
+    expect(numEq($demand['allocatedFromFg'], 2.0), 'REPL-05: expected allocatedFromFg=2, got ' . json_encode($demand));
+    expect(numEq($demand['productionNeed'], 3.0), 'REPL-05: expected productionNeed=3, got ' . json_encode($demand));
+    expect($demand['status'] === 'need_production', 'REPL-05: expected status=need_production, got ' . $demand['status']);
+});
+
+// -----------------------------------------------------------------------
+// REPL-06/10..25 — the MAIN end-to-end lifecycle (zero free FG -> full
+// production -> ready -> separate no-price DO -> partial shipment ->
+// receipt Good completes -> receipt Reject does NOT auto-chain -> a
+// SECOND explicit disposition chains correctly -> PO/DO immutability ->
+// no invoice lineage created).
+// -----------------------------------------------------------------------
+$replProd4 = replSeedProduct($pdo, $rotiBollenDivId, 'REPL Test Product 4 (Main)');
+$replTanggal4 = '2026-11-13';
+$replFx4 = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, $replTanggal4, $storeAId, (int) $replProd4['product_id'], 10.0, 10.0, 'repl06');
+$replMainDemandId = null;
+$replMainReceiptItemId = null;
+$replMainOriginalPoAwal = null;
+$replMainOriginalPlannedQty = null;
+runTest('REPL-06 approved 5, Free FG = 0 (produced 10, shipped 10, nothing remains) -> Production Need = 5, status = need_production; original PO/DO snapshot taken for later immutability checks', function () use ($http, $csrf, $pdo, $replFx4, $replTanggal4, $karangtengahId, $replProd4, &$replMainDemandId, &$replMainReceiptItemId, &$replMainOriginalPoAwal, &$replMainOriginalPlannedQty) {
+    $confirm = replConfirmReceipt($replFx4['anon'], $replFx4['token'], $replFx4['shipmentId'], $replFx4['shipmentItemId'], 5.0, 5.0, 0.0, 'repl06-confirm');
+    expect($confirm['status'] === 200, 'REPL-06: confirm failed: ' . json_encode($confirm['json']));
+    $receiptId = (int) $confirm['json']['data']['receiptId'];
+    $replMainReceiptItemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    expect(replAdminVerify($http, $csrf, $receiptId, 'repl06-verify')['status'] === 200, 'REPL-06: admin verify failed');
+
+    $dispose = replDispose($http, $csrf, $replMainReceiptItemId, 'kirim_ulang', 5.0, null, 'repl06-dispose');
+    expect($dispose['status'] === 200, 'REPL-06: disposeReject failed: ' . json_encode($dispose['json']));
+    $replMainDemandId = (int) $dispose['json']['data']['replacementDemandId'];
+
+    $demand = replGetDemand($http, $csrf, $replMainDemandId);
+    expect(numEq($demand['allocatedFromFg'], 0.0), 'REPL-06: expected allocatedFromFg=0, got ' . json_encode($demand));
+    expect(numEq($demand['productionNeed'], 5.0), 'REPL-06: expected productionNeed=5, got ' . json_encode($demand));
+    expect($demand['status'] === 'need_production', 'REPL-06: expected status=need_production, got ' . $demand['status']);
+
+    $replMainOriginalPoAwal = (float) $pdo->query(
+        "SELECT pi.po_awal FROM po_item pi INNER JOIN po_batch pb ON pb.po_batch_id = pi.po_batch_id
+         WHERE pb.tanggal = '{$replTanggal4}' AND pb.factory_id = {$karangtengahId} AND pi.product_id = {$replProd4['product_id']}"
+    )->fetchColumn();
+    $replMainOriginalPlannedQty = (float) $pdo->query(
+        "SELECT doi.planned_qty FROM delivery_order_item doi WHERE doi.delivery_order_id = {$replFx4['doId']} AND doi.product_id = {$replProd4['product_id']}"
+    )->fetchColumn();
+});
+
+runTest('REPL-10 two disposition attempts against the SAME approved reject cannot both create a Replacement Demand', function () use ($http, $csrf, &$replMainReceiptItemId) {
+    $dup = replDispose($http, $csrf, $replMainReceiptItemId, 'kirim_ulang', 5.0, null, 'repl10-dup');
+    expect($dup['status'] === 409, 'REPL-10: expected 409 ALREADY_DISPOSED on a duplicate disposition, got ' . $dup['status'] . ': ' . json_encode($dup['json']));
+    $count = $GLOBALS['pdo']->query("SELECT COUNT(*) FROM replacement_demand WHERE shipment_receipt_item_id = {$replMainReceiptItemId}")->fetchColumn();
+    expect((int) $count === 1, 'REPL-10: expected EXACTLY ONE replacement_demand row for this receipt item, got ' . $count);
+});
+
+runTest('REPL-11 Production Need appears under the Replacement Reject source in Task per Divisi, never under PO Reguler', function () use ($http, $csrf, $replTanggal4, $rotiBollenDivId, $replMainDemandId, $replProd4) {
+    $r = $http->request('GET', "/api/production-tasks?tanggal={$replTanggal4}&divisionId={$rotiBollenDivId}&sourceType=replacement_reject", null, ['X-CSRF-Token' => $csrf]);
+    expect($r['status'] === 200, 'REPL-11: production-tasks failed: ' . json_encode($r['json']));
+    $found = null;
+    foreach ($r['json']['data']['tasks'] as $t) {
+        if ($t['orderId'] === $replMainDemandId) {
+            $found = $t;
+        }
+    }
+    expect($found !== null, 'REPL-11: expected a Task per Divisi row for this Replacement Demand under sourceType=replacement_reject, got ' . json_encode($r['json']['data']['tasks']));
+    expect($found['source'] === 'replacement_reject', 'REPL-11: expected source=replacement_reject, got ' . json_encode($found));
+    expect($found['sourceLabel'] === 'Replacement Reject', 'REPL-11: expected sourceLabel=Replacement Reject, got ' . json_encode($found));
+    expect(numEq($found['target'], 5.0), 'REPL-11: expected target=5 (the real production shortage), got ' . json_encode($found));
+    expect($found['taskName'] === $replProd4['name'], 'REPL-11: expected taskName to be the real product name, got ' . json_encode($found));
+});
+
+runTest('REPL-12/13 submitting Production Actual + verifying FG for the full shortage brings the demand to ready, reconciling EXACTLY to the approved qty', function () use ($http, $csrf, $replMainDemandId) {
+    $actual = $http->request('POST', "/api/replacement-demands/{$replMainDemandId}/production-actual", ['aktualProduksi' => 5.0, 'rejectProduksi' => 0.0], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl12-actual')));
+    expect($actual['status'] === 200, 'REPL-12: production-actual failed: ' . json_encode($actual['json']));
+
+    $verifyFg = $http->request('POST', "/api/replacement-demands/{$replMainDemandId}/verify-fg", ['fgVerifiedQty' => 5.0], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl12-verifyfg')));
+    expect($verifyFg['status'] === 200, 'REPL-12: verify-fg failed: ' . json_encode($verifyFg['json']));
+
+    $demand = replGetDemand($http, $csrf, $replMainDemandId);
+    expect($demand['status'] === 'ready', 'REPL-12: expected status=ready after full production verified, got ' . $demand['status']);
+    expect(numEq($demand['productionNeed'], 0.0), 'REPL-12: expected productionNeed=0, got ' . json_encode($demand));
+    expect(numEq($demand['allocatedFromFg'] + $demand['productionFgVerifiedQty'], 5.0), 'REPL-13: expected allocatedFromFg + productionFgVerifiedQty to reconcile EXACTLY to approvedQty=5, got ' . json_encode($demand));
+});
+
+$replMainDoId = null;
+runTest('REPL-14/15/24 creating the Replacement DO: a SEPARATE, no-price document referencing this demand (never the original DO)', function () use ($http, $csrf, $replMainDemandId, $replFx4, $storeAId, &$replMainDoId) {
+    $createDo = $http->request('POST', "/api/replacement-demands/{$replMainDemandId}/do", [], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl14-createdo')));
+    expect($createDo['status'] === 200, 'REPL-14: create Replacement DO failed: ' . json_encode($createDo['json']));
+    $dto = $createDo['json']['data'];
+    $replMainDoId = (int) $dto['doId'];
+    expect($replMainDoId !== (int) $replFx4['doId'], 'REPL-14: Replacement DO must be a genuinely SEPARATE document from the original DO');
+    expect(str_starts_with((string) $dto['docNo'], 'REPL-'), 'REPL-14: expected a distinct REPL- doc-no format, got ' . $dto['docNo']);
+    expect($dto['storeId'] === $storeAId, 'REPL-15: Replacement DO must ship to the SAME store as the original reject');
+    expect(!array_key_exists('price', $dto) && !array_key_exists('unitPrice', $dto) && !array_key_exists('harga', $dto), 'REPL-24: Replacement DO must carry NO price field at all, got ' . json_encode($dto));
+
+    $demand = replGetDemand($http, $csrf, $replMainDemandId);
+    expect($demand['status'] === 'do_created', 'REPL-14: expected demand status=do_created, got ' . $demand['status']);
+});
+
+$replMainShipment1 = null;
+$replMainShipment2 = null;
+runTest('REPL-16/17 partial Replacement shipment: 2 then 3, totalling exactly 5, consuming ONLY this demand\'s own allocation/production headroom', function () use ($http, $csrf, $replMainDoId, &$replMainShipment1, &$replMainShipment2) {
+    $ship1 = $http->request('POST', "/api/replacement-do/{$replMainDoId}/ship", ['qty' => 2.0], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl16-ship1')));
+    expect($ship1['status'] === 200, 'REPL-16: first partial ship failed: ' . json_encode($ship1['json']));
+    expect($ship1['json']['data']['status'] === 'partial', 'REPL-16: expected DO status=partial after shipping 2 of 5, got ' . json_encode($ship1['json']['data']));
+    $replMainShipment1 = (int) $ship1['json']['data']['shipmentId'];
+
+    $ship2 = $http->request('POST', "/api/replacement-do/{$replMainDoId}/ship", [], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl16-ship2')));
+    expect($ship2['status'] === 200, 'REPL-16: second (full-remaining) ship failed: ' . json_encode($ship2['json']));
+    expect($ship2['json']['data']['status'] === 'shipped', 'REPL-16: expected DO status=shipped after the remaining qty ships, got ' . json_encode($ship2['json']['data']));
+    expect(numEq($ship2['json']['data']['shippedQty'], 5.0), 'REPL-16: expected total shipped=5, got ' . json_encode($ship2['json']['data']));
+    $replMainShipment2 = (int) $ship2['json']['data']['shipmentId'];
+    expect($replMainShipment1 !== $replMainShipment2, 'REPL-16: expected two DISTINCT shipment rows for the two partial shipments');
+});
+
+runTest('REPL-18 physical stock is decremented exactly once — via REPL-04\'s FG-allocation-backed demand, never twice and never for the production-only portion', function () use ($http, $csrf, $replDemand2, $replProd2, $karangtengahId) {
+    // REPL-04's own demand (allocatedFromFg=5, productionNeed=0) is the
+    // right fixture for this check: 100% of its qty comes from the
+    // demand's own FG allocation, so exactly ONE stock_ledger deduction
+    // is expected for the ENTIRE shipment — never one per unit, never
+    // one for the (nonexistent) production side.
+    $createDo = $GLOBALS['http']->request('POST', "/api/replacement-demands/{$replDemand2}/do", [], array_merge(['X-CSRF-Token' => $GLOBALS['csrf']], idemKey('repl18-createdo')));
+    expect($createDo['status'] === 200, 'REPL-18: create Replacement DO failed: ' . json_encode($createDo['json']));
+    $doId = (int) $createDo['json']['data']['doId'];
+
+    $ship = $GLOBALS['http']->request('POST', "/api/replacement-do/{$doId}/ship", [], array_merge(['X-CSRF-Token' => $GLOBALS['csrf']], idemKey('repl18-ship')));
+    expect($ship['status'] === 200, 'REPL-18: ship failed: ' . json_encode($ship['json']));
+
+    $ledgerCount = (int) $GLOBALS['pdo']->query(
+        "SELECT COUNT(*) FROM stock_ledger sl INNER JOIN location l ON l.location_id = sl.location_id
+         WHERE sl.source_type = 'replacement_demand_fg_allocation' AND sl.product_id = {$replProd2['product_id']} AND l.factory_id = {$karangtengahId}"
+    )->fetchColumn();
+    expect($ledgerCount === 1, "REPL-18: expected EXACTLY ONE stock_ledger deduction for this FG-allocation-backed shipment, got {$ledgerCount}");
+
+    $GLOBALS['replDoForProd2'] = $doId;
+    $GLOBALS['replShipmentForProd2'] = (int) $ship['json']['data']['shipmentId'];
+});
+
+runTest('REPL-19 confirming Replacement Receipt as fully GOOD completes the demand at the correct qty', function () use ($pdo, $replDemand2) {
+    $shipmentId = $GLOBALS['replShipmentForProd2'];
+    $token = (new ReplReceiptService($pdo))->getOrCreateShipmentToken($shipmentId);
+    $anon = new HttpPdfg($GLOBALS['baseUrl']);
+    $view = $anon->request('GET', "/api/receive/{$token}");
+    expect($view['status'] === 200, 'REPL-19: public view failed: ' . json_encode($view['json']));
+    $lineId = (int) $view['json']['data']['shipments'][0]['items'][0]['shipmentItemId'];
+
+    $confirm = $anon->request('POST', "/api/receive/{$token}/shipments/{$shipmentId}/confirm", [
+        'receiverName' => 'Toko Replacement Test', 'items' => [['shipmentItemId' => $lineId, 'receivedGood' => 5.0, 'reject' => 0.0, 'shortage' => 0.0]],
+    ], idemKey('repl19-confirm'));
+    expect($confirm['status'] === 200, 'REPL-19: confirm failed: ' . json_encode($confirm['json']));
+
+    $demand = replGetDemand($GLOBALS['http'], $GLOBALS['csrf'], $replDemand2);
+    expect($demand['status'] === 'completed', 'REPL-19: expected status=completed once the full approved qty comes back GOOD, got ' . $demand['status']);
+});
+
+$replChainReceiptItemId = null;
+runTest('REPL-20 confirming Replacement Receipt with a Reject on it does NOT auto-create another Replacement Demand', function () use ($http, $csrf, $pdo, $replMainDemandId, &$replChainReceiptItemId) {
+    $before = (int) $pdo->query('SELECT COUNT(*) FROM replacement_demand')->fetchColumn();
+
+    $token = (new ReplReceiptService($pdo))->getOrCreateShipmentToken($GLOBALS['replMainShipment1']);
+    $anon = new HttpPdfg($GLOBALS['baseUrl']);
+    $view = $anon->request('GET', "/api/receive/{$token}");
+    expect($view['status'] === 200, 'REPL-20: public view failed: ' . json_encode($view['json']));
+    $lineId = (int) $view['json']['data']['shipments'][0]['items'][0]['shipmentItemId'];
+
+    $confirm = $anon->requestMultipart('POST', "/api/receive/{$token}/shipments/{$GLOBALS['replMainShipment1']}/confirm", [
+        'receiverName' => 'Toko Replacement Test', 'items' => json_encode([['shipmentItemId' => $lineId, 'receivedGood' => 1.0, 'reject' => 1.0, 'shortage' => 0.0]]),
+    ], ['evidence[]' => replFakeEvidenceImage()], idemKey('repl20-confirm'));
+    expect($confirm['status'] === 200, 'REPL-20: confirm failed: ' . json_encode($confirm['json']));
+    $replChainReceiptItemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+
+    // Admin verification (a SEPARATE, explicit step from confirmation
+    // itself — task's own "Admin verifies the Reject. Admin must THEN
+    // choose disposition") is a precondition disposeReject() requires;
+    // REPL-21 below is the one that actually decides this line's fate.
+    $verify = replAdminVerify($http, $csrf, (int) $confirm['json']['data']['receiptId'], 'repl20-verify');
+    expect($verify['status'] === 200, 'REPL-20: admin verify failed: ' . json_encode($verify['json']));
+
+    $after = (int) $pdo->query('SELECT COUNT(*) FROM replacement_demand')->fetchColumn();
+    expect($after === $before, "REPL-20: a Reject on a Replacement's OWN receipt must NEVER auto-create another Replacement Demand — count was {$before}, now {$after}");
+
+    $disposition = $pdo->query("SELECT disposition FROM shipment_receipt_item WHERE shipment_receipt_item_id = {$replChainReceiptItemId}")->fetchColumn();
+    expect($disposition === 'pending', "REPL-20: expected the new reject line to sit at disposition=pending awaiting an explicit Admin decision, got {$disposition}");
+
+    $demand = replGetDemand($GLOBALS['http'], $GLOBALS['csrf'], $replMainDemandId);
+    expect($demand['status'] === 'received_partial', 'REPL-20: expected status=received_partial (1 of 5 not yet back GOOD), got ' . $demand['status']);
+});
+
+runTest('REPL-21 Admin can explicitly approve ANOTHER replacement after a Replacement Reject, correctly chained to the original root', function () use ($http, $csrf, $pdo, &$replChainReceiptItemId, $replMainReceiptItemId) {
+    $dispose = replDispose($http, $csrf, $replChainReceiptItemId, 'kirim_ulang', 1.0, null, 'repl21-dispose');
+    expect($dispose['status'] === 200, 'REPL-21: disposeReject failed: ' . json_encode($dispose['json']));
+    $chainedDemandId = (int) $dispose['json']['data']['replacementDemandId'];
+    expect($chainedDemandId > 0, 'REPL-21: expected a real chained Replacement Demand to be created');
+
+    $row = $pdo->query("SELECT parent_replacement_demand_id, root_shipment_receipt_item_id FROM replacement_demand WHERE replacement_demand_id = {$chainedDemandId}")->fetch();
+    $originalMainDemandId = (int) $pdo->query("SELECT replacement_demand_id FROM replacement_demand WHERE shipment_receipt_item_id = {$replMainReceiptItemId}")->fetchColumn();
+    expect((int) $row['parent_replacement_demand_id'] === $originalMainDemandId, 'REPL-21: expected the chained demand\'s parent to be the immediately preceding Replacement Demand, got ' . json_encode($row));
+    expect((int) $row['root_shipment_receipt_item_id'] === $replMainReceiptItemId, 'REPL-21: expected root traceability to the VERY FIRST original reject, got ' . json_encode($row));
+});
+
+runTest('REPL-22 original PO target never changes throughout the entire Replacement Reject lifecycle', function () use ($pdo, $replTanggal4, $karangtengahId, $replProd4, $replMainOriginalPoAwal) {
+    $now = (float) $pdo->query(
+        "SELECT pi.po_awal FROM po_item pi INNER JOIN po_batch pb ON pb.po_batch_id = pi.po_batch_id
+         WHERE pb.tanggal = '{$replTanggal4}' AND pb.factory_id = {$karangtengahId} AND pi.product_id = {$replProd4['product_id']}"
+    )->fetchColumn();
+    expect(numEq($now, $replMainOriginalPoAwal), "REPL-22: expected po_item.po_awal to remain exactly {$replMainOriginalPoAwal}, got {$now}");
+});
+
+runTest('REPL-23 original DO planned qty never increases throughout the entire Replacement Reject lifecycle', function () use ($pdo, $replFx4, $replProd4, $replMainOriginalPlannedQty) {
+    $now = (float) $pdo->query(
+        "SELECT doi.planned_qty FROM delivery_order_item doi WHERE doi.delivery_order_id = {$replFx4['doId']} AND doi.product_id = {$replProd4['product_id']}"
+    )->fetchColumn();
+    expect(numEq($now, $replMainOriginalPlannedQty), "REPL-23: expected the ORIGINAL delivery_order_item.planned_qty to remain exactly {$replMainOriginalPlannedQty}, got {$now}");
+});
+
+runTest('REPL-24b no invoice/invoice_item row was ever created by any Replacement Reject activity in this test', function () use ($pdo) {
+    $invoiceCount = (int) $pdo->query('SELECT COUNT(*) FROM invoice')->fetchColumn();
+    $invoiceItemCount = (int) $pdo->query('SELECT COUNT(*) FROM invoice_item')->fetchColumn();
+    expect($invoiceCount === 0 && $invoiceItemCount === 0, "REPL-24b: expected zero invoice/invoice_item rows, got invoice={$invoiceCount} invoice_item={$invoiceItemCount}");
+});
+
+// -----------------------------------------------------------------------
+// REPL-07 — Replacement allocation cannot consume Regular store-owned FG
+// -----------------------------------------------------------------------
+// Direct, isolated-unit-style fixture (documented deliberately): rather
+// than reconstructing a full real Breakdown Toko UI flow purely to leave
+// a store-committed remainder, this seeds the EXACT SAME store_fg_
+// balance/fg_item preconditions Delivery\DoRepository::
+// hasAnyStoreAllocation()/sumStoreCommittedRemainingAcrossAllStores()
+// already read in production, directly — the real production code path
+// (ReplacementFgAllocationService::allocateAtCreation()) is exercised
+// completely unmodified; only the COMPETING reservation's origin is
+// synthetic.
+$replProd5 = replSeedProduct($pdo, $rotiBollenDivId, 'REPL Test Product 5 (Store Protection)');
+$replTanggal5 = '2026-11-14';
+$replFx5 = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, $replTanggal5, $storeAId, (int) $replProd5['product_id'], 20.0, 10.0, 'repl07');
+runTest('REPL-07 Replacement allocation cannot consume FG already committed (via Breakdown Toko) to another Regular store', function () use ($http, $csrf, $pdo, $replFx5, $replProd5, $karangtengahId, $storeBId) {
+    // 10 physical units remain free after the original shipment; commit
+    // 6 of them to Store B via a direct fg_item fixture row (mirroring a
+    // real, already-submitted Breakdown Toko allocation) BEFORE disposing
+    // this reject — true free FG for the replacement must become 10-6=4.
+    // Reuse the SAME fg_batch replBuildShippedFixture() already created
+    // for this exact (tanggal, factory) — fg_batch's own UNIQUE KEY
+    // (tanggal, factory_id) means a second batch row for this pair is
+    // impossible; fg_item's own UNIQUE KEY is (fg_batch_id, product_id,
+    // store_id), so a NEW row for Store B on the SAME batch/product never
+    // collides with the existing Per-Produk (synthetic-store) row.
+    $fgBatchId = (int) $pdo->query("SELECT fg_batch_id FROM fg_batch WHERE tanggal = '2026-11-14' AND factory_id = {$karangtengahId}")->fetchColumn();
+    $pdo->prepare(
+        'INSERT INTO fg_item (fg_batch_id, product_id, store_id, qty, packed_qty, posted_packed_qty, status)
+         VALUES (?, ?, ?, 6, 6, 6, \'dicek\')'
+    )->execute([$fgBatchId, (int) $replProd5['product_id'], $storeBId]);
+
+    $confirm = replConfirmReceipt($replFx5['anon'], $replFx5['token'], $replFx5['shipmentId'], $replFx5['shipmentItemId'], 6.0, 4.0, 0.0, 'repl07-confirm');
+    expect($confirm['status'] === 200, 'REPL-07: confirm failed: ' . json_encode($confirm['json']));
+    $receiptId = (int) $confirm['json']['data']['receiptId'];
+    $receiptItemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    expect(replAdminVerify($http, $csrf, $receiptId, 'repl07-verify')['status'] === 200, 'REPL-07: admin verify failed');
+
+    $dispose = replDispose($http, $csrf, $receiptItemId, 'kirim_ulang', 4.0, null, 'repl07-dispose');
+    expect($dispose['status'] === 200, 'REPL-07: disposeReject failed: ' . json_encode($dispose['json']));
+    $demandId = (int) $dispose['json']['data']['replacementDemandId'];
+
+    $demand = replGetDemand($http, $csrf, $demandId);
+    expect(numEq($demand['allocatedFromFg'], 4.0), "REPL-07: expected allocatedFromFg=4 (10 physical - 6 store-committed to Store B), got " . json_encode($demand));
+    expect(numEq($demand['productionNeed'], 0.0), 'REPL-07: expected productionNeed=0 (4 needed, 4 truly free), got ' . json_encode($demand));
+});
+
+// -----------------------------------------------------------------------
+// REPL-08 — Replacement allocation cannot consume an active Special order
+// FG allocation, via the REAL Special Order API (not a synthetic fixture).
+// -----------------------------------------------------------------------
+$replProd6 = replSeedProduct($pdo, $rotiBollenDivId, 'REPL Test Product 6 (Special Protection)');
+$replTanggal6 = '2026-11-15';
+$replFx6 = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, $replTanggal6, $storeAId, (int) $replProd6['product_id'], 20.0, 10.0, 'repl08');
+runTest('REPL-08 Replacement allocation cannot consume an active Special Order FG allocation for the same product/factory', function () use ($http, $csrf, $pdo, $replFx6, $replProd6, $storeAId) {
+    // 10 physical units remain free. A real Special Order (Pesanan Khusus
+    // Toko) reserves 7 of them via the REAL allocate-fg endpoint BEFORE
+    // this reject is disposed — true free FG for the replacement must
+    // become 10-7=3.
+    $create = $http->request('POST', '/api/special-orders', [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeAId, 'orderDate' => '2026-11-15', 'requiredDate' => '2026-11-16',
+        'items' => [['itemType' => 'existing_product', 'productId' => (int) $replProd6['product_id'], 'qty' => 7, 'charge' => 0]],
+    ], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl08-order-create')));
+    expect($create['status'] === 200, 'REPL-08: special order create failed: ' . json_encode($create['json']));
+    $orderId = (int) $create['json']['data']['orderId'];
+    $itemId = (int) $create['json']['data']['items'][0]['itemId'];
+    $v = (int) $create['json']['data']['version'];
+
+    $confirmOrder = $http->request('POST', "/api/special-orders/{$orderId}/confirm", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl08-order-confirm')));
+    expect($confirmOrder['status'] === 200, 'REPL-08: special order confirm failed: ' . json_encode($confirmOrder['json']));
+    $v = (int) $confirmOrder['json']['data']['version'];
+    $sendToProd = $http->request('POST', "/api/special-orders/{$orderId}/send-to-production", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl08-order-send')));
+    expect($sendToProd['status'] === 200, 'REPL-08: special order send-to-production failed: ' . json_encode($sendToProd['json']));
+
+    $allocate = $http->request('POST', "/api/special-orders/items/{$itemId}/allocate-fg", ['qty' => 7], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl08-allocate')));
+    expect($allocate['status'] === 200, 'REPL-08: special order allocate-fg failed: ' . json_encode($allocate['json']));
+
+    $confirm = replConfirmReceipt($replFx6['anon'], $replFx6['token'], $replFx6['shipmentId'], $replFx6['shipmentItemId'], 7.0, 3.0, 0.0, 'repl08-confirm');
+    expect($confirm['status'] === 200, 'REPL-08: confirm failed: ' . json_encode($confirm['json']));
+    $receiptId = (int) $confirm['json']['data']['receiptId'];
+    $receiptItemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    expect(replAdminVerify($http, $csrf, $receiptId, 'repl08-verify')['status'] === 200, 'REPL-08: admin verify failed');
+
+    $dispose = replDispose($http, $csrf, $receiptItemId, 'kirim_ulang', 3.0, null, 'repl08-dispose');
+    expect($dispose['status'] === 200, 'REPL-08: disposeReject failed: ' . json_encode($dispose['json']));
+    $demandId = (int) $dispose['json']['data']['replacementDemandId'];
+
+    $demand = replGetDemand($http, $csrf, $demandId);
+    expect(numEq($demand['allocatedFromFg'], 3.0), 'REPL-08: expected allocatedFromFg=3 (10 physical - 7 active Special allocation), got ' . json_encode($demand));
+    expect(numEq($demand['productionNeed'], 0.0), 'REPL-08: expected productionNeed=0 (3 needed, 3 truly free), got ' . json_encode($demand));
+});
+
+// -----------------------------------------------------------------------
+// REPL-09 — sequential replacement allocations against the SAME limited
+// free-FG pool never combine to oversubscribe it (the same lock-
+// protected sumActiveAllocatedForProductFactory()/stock_balance FOR
+// UPDATE discipline already proven safe under REAL concurrent processes
+// by ALLOC-GLOBAL-05 — see this pass's own report for why a SECOND real
+// two-process race test was not additionally built for Replacement).
+// -----------------------------------------------------------------------
+$replProd7 = replSeedProduct($pdo, $rotiBollenDivId, 'REPL Test Product 7 (Concurrency Cap)');
+$replTanggal7 = '2026-11-16';
+seedPoStoreSplit($pdo, $replTanggal7, $karangtengahId, (int) $replProd7['product_id'], [$storeAId => ['poAwal' => 3.0, 'poRevisi' => 0.0], $storeBId => ['poAwal' => 3.0, 'poRevisi' => 0.0]]);
+submitProductionActual($http, $csrf, $replTanggal7, $rotiBollenDivId, (int) $replProd7['product_id'], 10.0);
+runTest('REPL-09 two replacement demands competing for the same limited free FG pool never combine to exceed it', function () use ($http, $csrf, $pdo, $baseUrl, $replTanggal7, $karangtengahId, $storeAId, $storeBId, $replProd7) {
+    $fgCreate = $http->request('POST', '/api/fg', ['tanggal' => $replTanggal7, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl09-fg-create')));
+    expect($fgCreate['status'] === 200, 'REPL-09: fg create failed: ' . json_encode($fgCreate['json']));
+    $batchId = $fgCreate['json']['data']['fgBatchId'];
+    $v = $fgCreate['json']['data']['version'];
+    $fgSave = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => (int) $replProd7['product_id'], 'fgVerified' => 10, 'packed' => 10]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl09-fg-save')));
+    expect($fgSave['status'] === 200, 'REPL-09: fg save failed: ' . json_encode($fgSave['json']));
+    $v = $fgSave['json']['data']['version'];
+    $fgSubmit = $http->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl09-fg-submit')));
+    expect($fgSubmit['status'] === 200, 'REPL-09: fg submit failed: ' . json_encode($fgSubmit['json']));
+
+    // Ship 3 to Store A and 3 to Store B — 4 physical units remain free.
+    $doA = createDoForStore($http, $csrf, $replTanggal7, $storeAId);
+    $shipA = $http->request('POST', "/api/do/{$doA['doId']}/ship", ['expectedVersion' => $doA['version'], 'items' => [['productId' => (int) $replProd7['product_id'], 'actualQty' => 3]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl09-shipA')));
+    expect($shipA['status'] === 200, 'REPL-09: ship to Store A failed: ' . json_encode($shipA['json']));
+    $doB = createDoForStore($http, $csrf, $replTanggal7, $storeBId);
+    $shipB = $http->request('POST', "/api/do/{$doB['doId']}/ship", ['expectedVersion' => $doB['version'], 'items' => [['productId' => (int) $replProd7['product_id'], 'actualQty' => 3]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('repl09-shipB')));
+    expect($shipB['status'] === 200, 'REPL-09: ship to Store B failed: ' . json_encode($shipB['json']));
+
+    $tokenA = (new ReplReceiptService($pdo))->getReceiptToken((int) $doA['doId']);
+    $tokenB = (new ReplReceiptService($pdo))->getReceiptToken((int) $doB['doId']);
+    $anonA = new HttpPdfg($baseUrl);
+    $anonB = new HttpPdfg($baseUrl);
+    $viewA = $anonA->request('GET', "/api/receive/{$tokenA}");
+    $viewB = $anonB->request('GET', "/api/receive/{$tokenB}");
+    $shipmentIdA = (int) $shipA['json']['data']['shipmentId'];
+    $shipmentIdB = (int) $shipB['json']['data']['shipmentId'];
+    $lineIdA = null;
+    $lineIdB = null;
+    foreach ($viewA['json']['data']['shipments'] as $sh) {
+        if ((int) $sh['shipmentId'] === $shipmentIdA) { $lineIdA = (int) $sh['items'][0]['shipmentItemId']; }
+    }
+    foreach ($viewB['json']['data']['shipments'] as $sh) {
+        if ((int) $sh['shipmentId'] === $shipmentIdB) { $lineIdB = (int) $sh['items'][0]['shipmentItemId']; }
+    }
+
+    $confirmA = replConfirmReceipt($anonA, $tokenA, $shipmentIdA, $lineIdA, 0.0, 3.0, 0.0, 'repl09-confirmA');
+    expect($confirmA['status'] === 200, 'REPL-09: confirm A failed: ' . json_encode($confirmA['json']));
+    $confirmB = replConfirmReceipt($anonB, $tokenB, $shipmentIdB, $lineIdB, 0.0, 3.0, 0.0, 'repl09-confirmB');
+    expect($confirmB['status'] === 200, 'REPL-09: confirm B failed: ' . json_encode($confirmB['json']));
+
+    expect(replAdminVerify($http, $csrf, (int) $confirmA['json']['data']['receiptId'], 'repl09-verifyA')['status'] === 200, 'REPL-09: admin verify A failed');
+    expect(replAdminVerify($http, $csrf, (int) $confirmB['json']['data']['receiptId'], 'repl09-verifyB')['status'] === 200, 'REPL-09: admin verify B failed');
+
+    $receiptItemA = (int) $confirmA['json']['data']['items'][0]['receiptItemId'];
+    $receiptItemB = (int) $confirmB['json']['data']['items'][0]['receiptItemId'];
+
+    $disposeA = replDispose($http, $csrf, $receiptItemA, 'kirim_ulang', 3.0, null, 'repl09-disposeA');
+    expect($disposeA['status'] === 200, 'REPL-09: dispose A failed: ' . json_encode($disposeA['json']));
+    $demandA = replGetDemand($http, $csrf, (int) $disposeA['json']['data']['replacementDemandId']);
+
+    $disposeB = replDispose($http, $csrf, $receiptItemB, 'kirim_ulang', 3.0, null, 'repl09-disposeB');
+    expect($disposeB['status'] === 200, 'REPL-09: dispose B failed: ' . json_encode($disposeB['json']));
+    $demandB = replGetDemand($http, $csrf, (int) $disposeB['json']['data']['replacementDemandId']);
+
+    $totalAllocated = $demandA['allocatedFromFg'] + $demandB['allocatedFromFg'];
+    expect($totalAllocated <= 4.0 + 0.001, "REPL-09: combined allocation across both competing demands must NEVER exceed the 4 truly free units, got {$totalAllocated}");
+    expect(numEq($demandA['allocatedFromFg'], 3.0), 'REPL-09: expected demand A (disposed first) to get its full 3, got ' . json_encode($demandA));
+    expect(numEq($demandB['allocatedFromFg'], 1.0) && numEq($demandB['productionNeed'], 2.0), 'REPL-09: expected demand B (disposed second) to be capped to the 1 unit left, needing production for the other 2, got ' . json_encode($demandB));
+});
+
+// -----------------------------------------------------------------------
+// Bonus authorization check (report section 18) — an unauthorized DRIVER
+// role can neither decide a disposition nor create a Replacement DO,
+// regardless of the target's own business state (the role gate runs
+// BEFORE the service is ever reached).
+// -----------------------------------------------------------------------
+runTest('REPL-AUTH an unauthorized (DRIVER) role cannot decide a Reject disposition nor create a Replacement DO', function () use ($httpDriver, $driverPass, $replReceiptItemId1, $replMainDemandId) {
+    $csrfDriver = login($httpDriver, 'pdfg_pack_edit_driver', $driverPass);
+    $disposeAttempt = $httpDriver->request('POST', "/api/replacement/receipt-items/{$replReceiptItemId1}/disposition", ['disposition' => 'kirim_ulang', 'approvedQty' => 1], ['X-CSRF-Token' => $csrfDriver]);
+    expect($disposeAttempt['status'] === 403, 'REPL-AUTH: expected 403 for an unauthorized DRIVER disposition attempt, got ' . $disposeAttempt['status'] . ': ' . json_encode($disposeAttempt['json']));
+
+    $createDoAttempt = $httpDriver->request('POST', "/api/replacement-demands/{$replMainDemandId}/do", [], ['X-CSRF-Token' => $csrfDriver]);
+    expect($createDoAttempt['status'] === 403, 'REPL-AUTH: expected 403 for an unauthorized DRIVER create-DO attempt, got ' . $createDoAttempt['status'] . ': ' . json_encode($createDoAttempt['json']));
+});
+
+fwrite(STDOUT, "REPL_FACTORY_ID={$karangtengahId}\n");
+fwrite(STDOUT, "REPL_TANGGAL={$replTanggal4}\n");
 
 // =======================================================================
 // Summary

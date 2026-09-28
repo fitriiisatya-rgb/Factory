@@ -185,6 +185,22 @@ final class ReceiptRepository
     }
 
     /**
+     * Replacement/non-regular line — replacement_do_shipment_item_id
+     * populated instead; shipment_item_id/special_order_do_shipment_item_id
+     * always NULL. Mirrors insertReceiptItemForSpecialLine()'s own shape
+     * exactly (migration 0016).
+     */
+    public function insertReceiptItemForReplacementLine(PDO $pdo, int $receiptId, int $replacementLineId, int $productId, string $itemNameSnapshot, float $shippedQty, float $good, float $reject, float $shortage, ?string $reason): void
+    {
+        $stmt = $pdo->prepare(
+            'INSERT INTO shipment_receipt_item
+                (shipment_receipt_id, replacement_do_shipment_item_id, product_id, item_name_snapshot, shipped_qty, received_good_qty, reject_qty, shortage_qty, reason)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([$receiptId, $replacementLineId, $productId, $itemNameSnapshot, $shippedQty, $good, $reject, $shortage, $reason]);
+    }
+
+    /**
      * @return array<int,array> every shipment that has departed (i.e. exists at all — a
      * shipment row is only ever created by a real ship() commit) for a factory/date/status
      * filter, joined with its receipt (if any) — for the Admin "Konfirmasi Toko" page.
@@ -196,11 +212,13 @@ final class ReceiptRepository
                        s.canonical_name AS store_name, o.doc_no,
                        sodo.doc_no AS special_doc_no, so2.source_type AS special_source_type,
                        so2.non_store_source AS special_non_store_source, so2.order_no AS special_order_no,
+                       rdo.doc_no AS replacement_doc_no,
                        u.full_name AS driver_full_name, u.username AS driver_username,
                        r.shipment_receipt_id, r.status AS receipt_status, r.receiver_name, r.confirmed_at, r.verified_at,
                        e.status AS email_status,
                        (SELECT COALESCE(SUM(qty), 0) FROM shipment_item WHERE shipment_id = sh.shipment_id)
-                         + (SELECT COALESCE(SUM(qty), 0) FROM special_order_do_shipment_item WHERE shipment_id = sh.shipment_id) AS total_shipped,
+                         + (SELECT COALESCE(SUM(qty), 0) FROM special_order_do_shipment_item WHERE shipment_id = sh.shipment_id)
+                         + (SELECT COALESCE(SUM(qty), 0) FROM replacement_do_shipment_item WHERE shipment_id = sh.shipment_id) AS total_shipped,
                        (SELECT COALESCE(SUM(received_good_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_good,
                        (SELECT COALESCE(SUM(reject_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_reject,
                        (SELECT COALESCE(SUM(shortage_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_shortage
@@ -209,6 +227,7 @@ final class ReceiptRepository
                 LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
                 LEFT JOIN special_order_do sodo ON sodo.special_order_do_id = sh.special_order_do_id
                 LEFT JOIN special_order so2 ON so2.special_order_id = sodo.special_order_id
+                LEFT JOIN replacement_do rdo ON rdo.replacement_do_id = sh.replacement_do_id
                 LEFT JOIN users u ON u.user_id = sh.shipped_by
                 LEFT JOIN shipment_receipt r ON r.shipment_id = sh.shipment_id
                 LEFT JOIN shipment_email_delivery e ON e.shipment_id = sh.shipment_id

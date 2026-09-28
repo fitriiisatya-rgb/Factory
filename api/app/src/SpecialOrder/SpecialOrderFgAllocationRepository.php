@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Amor\Api\SpecialOrder;
 
+use Amor\Api\Replacement\ReplacementFgAllocationRepository;
 use PDO;
 
 /**
@@ -163,6 +164,22 @@ final class SpecialOrderFgAllocationRepository
      * real two-process race test (ALLOC-GLOBAL-05) that intermittently
      * failed before this fix.
      */
+    /**
+     * WIDENED (Replacement Reject pass, migration 0016): this is the ONE
+     * shared "how much of this product+factory's physical FG does anyone
+     * else already have first claim on" formula — called from HERE
+     * (Special allocate()/itemAllocationView()), from Regular PO's own
+     * Delivery\ShipmentService::preview()/ship(), AND from Replacement's
+     * own ReplacementFgAllocationService::allocate() (see that class's
+     * own docblock). It now ALSO subtracts replacement_demand_fg_
+     * allocation's active rows, so a Replacement reservation is invisible
+     * to Special/Regular and vice versa — genuinely global, three-way
+     * mutual protection, with zero new schema needed for the widening
+     * itself (both FOR UPDATE sums are taken inside the SAME caller
+     * transaction that already holds the stock_balance lock, so this
+     * stays exactly as race-safe as before this pass — see
+     * ALLOC-GLOBAL-05's own real two-process race test, unchanged).
+     */
     public function sumActiveAllocatedForProductFactory(PDO $pdo, int $productId, int $factoryId): float
     {
         $stmt = $pdo->prepare(
@@ -172,7 +189,11 @@ final class SpecialOrderFgAllocationRepository
              FOR UPDATE"
         );
         $stmt->execute([$productId, $factoryId]);
-        return (float) $stmt->fetchColumn();
+        $special = (float) $stmt->fetchColumn();
+
+        $replacement = (new ReplacementFgAllocationRepository())->sumActiveAllocatedForProductFactory($pdo, $productId, $factoryId);
+
+        return $special + $replacement;
     }
 
     /**

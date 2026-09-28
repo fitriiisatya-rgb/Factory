@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Amor\Api\Dispatch;
 
 use Amor\Api\Delivery\DoRepository;
+use Amor\Api\Replacement\ReplacementDoRepository;
 use Amor\Api\SpecialOrder\SpecialOrderDoRepository;
 use PDO;
 
@@ -29,11 +30,13 @@ final class ShipmentLineResolver
 {
     private DoRepository $doRepo;
     private SpecialOrderDoRepository $specialRepo;
+    private ReplacementDoRepository $replacementRepo;
 
     public function __construct()
     {
         $this->doRepo = new DoRepository();
         $this->specialRepo = new SpecialOrderDoRepository();
+        $this->replacementRepo = new ReplacementDoRepository();
     }
 
     /**
@@ -57,6 +60,21 @@ final class ShipmentLineResolver
                 'factory' => $r['factory_name'] ?? null,
                 'notes' => $r['special_note'] ?? null,
             ], $this->specialRepo->findShipmentLines($pdo, $shipmentId));
+        }
+
+        if (($shipment['source_type'] ?? null) === 'replacement_do') {
+            return array_map(static fn (array $r) => [
+                'lineId' => (int) $r['replacement_do_shipment_item_id'],
+                'itemType' => 'existing_product',
+                'productId' => (int) $r['product_id'],
+                'specialCatalogId' => null,
+                'itemName' => $r['product_name'],
+                'qtyShipped' => (float) $r['qty'],
+                'sourceOrderItemId' => (int) $r['replacement_demand_id'],
+                'division' => $r['division_name'] ?? null,
+                'factory' => $r['factory_name'] ?? null,
+                'notes' => null,
+            ], $this->replacementRepo->findShipmentLines($pdo, $shipmentId));
         }
 
         return array_map(static fn (array $r) => [

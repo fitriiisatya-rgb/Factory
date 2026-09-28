@@ -33,6 +33,7 @@ function ui_nav_items(): array
         ['key' => 'delivery-order', 'label' => 'Delivery Order', 'icon' => 'file'],
         ['key' => 'pengiriman', 'label' => 'Pengiriman', 'icon' => 'truck'],
         ['key' => 'konfirmasi-toko', 'label' => 'Konfirmasi Toko', 'icon' => 'user'],
+        ['key' => 'replacement-reject', 'label' => 'Replacement Reject', 'icon' => 'file'],
     ];
 }
 

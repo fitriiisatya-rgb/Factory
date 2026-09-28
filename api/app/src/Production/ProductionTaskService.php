@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Amor\Api\Production;
 
 use Amor\Api\ApiException;
+use Amor\Api\Replacement\ReplacementFgAllocationService;
+use Amor\Api\Replacement\ReplacementRepository;
 use Amor\Api\SpecialOrder\NormalizedSourceType;
 use Amor\Api\SpecialOrder\SpecialOrderFgAllocationService;
 use Amor\Api\SpecialOrder\SpecialOrderRepository;
@@ -59,6 +61,7 @@ final class ProductionTaskService
     private ProductionTargetService $targets;
     private SpecialOrderRepository $specialOrderRepo;
     private SpecialOrderFgAllocationService $allocSvc;
+    private ReplacementRepository $replacementRepo;
 
     public function __construct(private PDO $pdo)
     {
@@ -66,6 +69,7 @@ final class ProductionTaskService
         $this->targets = new ProductionTargetService();
         $this->specialOrderRepo = new SpecialOrderRepository();
         $this->allocSvc = new SpecialOrderFgAllocationService($this->pdo);
+        $this->replacementRepo = new ReplacementRepository();
     }
 
     /** GET /api/production-tasks — Task per Divisi for ONE division+date. */
@@ -208,10 +212,36 @@ final class ProductionTaskService
             }
         }
 
-        // Replacement Reject — module does not exist yet; deliberately
-        // zero rows (task's own explicit "do NOT fabricate records").
-        // The source enum/type above is already ready for it the moment
-        // that module ships — no further Task per Divisi change needed.
+        if ($sourceFilter === null || $sourceFilter === self::SOURCE_REPLACEMENT_REJECT) {
+            // Replacement Reject (migration 0016) — read-only here, same
+            // "never a second source of truth" discipline as every other
+            // branch above: production_aktual/production_reject are
+            // edited only through POST /api/replacement-demands/{id}/
+            // production-actual (this task's own dedicated Admin screen),
+            // never inline in this table. target already nets out
+            // whatever this demand's own FG allocation already covers
+            // (task's own worked example: approved 5, FG bebas 2 -> target
+            // 3), same "never ask Production for more than the real
+            // shortage" principle as the Special/Non-Regular branch above.
+            $rows = $this->replacementRepo->findNeedProductionForDivision($this->pdo, $divisionId);
+            foreach ($rows as $r) {
+                $target = max(0.0, (float) $r['approved_qty'] - (new ReplacementFgAllocationService($this->pdo))->remainingForDemand((int) $r['replacement_demand_id']));
+                $tasks[] = $this->buildTaskRow(
+                    self::SOURCE_REPLACEMENT_REJECT,
+                    'Replacement Reject',
+                    $r['product_name'],
+                    'Replacement — ' . $r['store_name'],
+                    $target,
+                    (float) $r['production_aktual'],
+                    (float) $r['production_reject'],
+                    null,
+                    true,
+                    null,
+                    (int) $r['replacement_demand_id'],
+                    (int) $r['product_id']
+                );
+            }
+        }
 
         return $tasks;
     }

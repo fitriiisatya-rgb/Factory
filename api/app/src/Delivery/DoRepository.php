@@ -262,13 +262,15 @@ final class DoRepository
                     f.name AS factory_name,
                     sodo.doc_no AS special_doc_no, sodo.tanggal AS special_tanggal,
                     sodo.special_order_id AS special_order_id, so2.order_no AS special_order_no,
-                    so2.source_type AS special_source_type, so2.non_store_source AS special_non_store_source
+                    so2.source_type AS special_source_type, so2.non_store_source AS special_non_store_source,
+                    rdo.doc_no AS replacement_doc_no, rdo.tanggal AS replacement_tanggal
              FROM shipment sh
              INNER JOIN store s ON s.store_id = sh.store_id
              LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
              LEFT JOIN factory f ON f.factory_id = sh.factory_id
              LEFT JOIN special_order_do sodo ON sodo.special_order_do_id = sh.special_order_do_id
              LEFT JOIN special_order so2 ON so2.special_order_id = sodo.special_order_id
+             LEFT JOIN replacement_do rdo ON rdo.replacement_do_id = sh.replacement_do_id
              WHERE sh.shipment_id = ?'
         );
         $stmt->execute([$shipmentId]);
@@ -597,5 +599,50 @@ final class DoRepository
         );
         $stmt->execute([$storeId, $productId, $factoryId]);
         return (float) $stmt->fetchColumn();
+    }
+
+    /**
+     * Replacement Reject pass (migration 0016): "DO NOT STEAL STORE FG" —
+     * unlike special_order_fg_allocation, Regular per-store commitment has
+     * no explicit reservation row to sum (see store_fg_balance's own
+     * docblock: it is a lock anchor only). This sums the REMAINING
+     * (not-yet-shipped) posted_packed_qty committed to ANY REAL store for
+     * one product+factory — i.e. every store's own share of "already
+     * packed, still sitting in the warehouse, spoken for" FG — across
+     * every store at once, never just one.
+     *
+     * $unallocatedStoreId MUST be the real synthetic "NON-OUTLET /
+     * PERORANGAN" placeholder store id (Fg\FgRepository::
+     * unallocatedStoreId()) — every fg_item row, even an un-split Per
+     * Produk one, carries a real, non-NULL store_id (inherited NOT NULL
+     * FK from the original 0001 schema), so this method excludes that one
+     * specific synthetic store's rows to count only GENUINE store
+     * commitments. Callers MUST first confirm hasAnyStoreAllocation() is
+     * true with that SAME id — otherwise this method has nothing real to
+     * subtract and returns a meaningless number for a product that was
+     * never store-split at all.
+     */
+    public function sumStoreCommittedRemainingAcrossAllStores(PDO $pdo, int $productId, int $factoryId, int $unallocatedStoreId, bool $forUpdate = false): float
+    {
+        $committedStmt = $pdo->prepare(
+            "SELECT COALESCE(SUM(fi.posted_packed_qty), 0) FROM fg_item fi
+             INNER JOIN fg_batch fb ON fb.fg_batch_id = fi.fg_batch_id
+             WHERE fi.product_id = ? AND fb.factory_id = ? AND fi.store_id != ?"
+             . ($forUpdate ? ' FOR UPDATE' : '')
+        );
+        $committedStmt->execute([$productId, $factoryId, $unallocatedStoreId]);
+        $committed = (float) $committedStmt->fetchColumn();
+
+        $shippedStmt = $pdo->prepare(
+            "SELECT COALESCE(SUM(si.qty), 0) FROM shipment_item si
+             INNER JOIN shipment sh ON sh.shipment_id = si.shipment_id
+             WHERE si.product_id = ? AND sh.factory_id = ?
+               AND sh.source_type = 'delivery_order' AND sh.status = 'active'"
+             . ($forUpdate ? ' FOR UPDATE' : '')
+        );
+        $shippedStmt->execute([$productId, $factoryId]);
+        $shipped = (float) $shippedStmt->fetchColumn();
+
+        return max(0.0, $committed - $shipped);
     }
 }

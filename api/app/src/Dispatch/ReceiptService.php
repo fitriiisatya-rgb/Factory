@@ -7,6 +7,7 @@ namespace Amor\Api\Dispatch;
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Delivery\DoRepository;
+use Amor\Api\Replacement\ReplacementService;
 use Amor\Api\SpecialOrder\NormalizedSourceType;
 use Amor\Api\Users\UserRepository;
 use PDO;
@@ -154,7 +155,8 @@ final class ReceiptService
         $lines = $this->lineResolver->linesForShipment($this->pdo, $sh);
         $receipt = $this->repo->findReceiptForShipment($this->pdo, $shipmentId);
         $isSpecial = ($sh['source_type'] ?? null) === 'special_order_do';
-        $docNo = $isSpecial ? $sh['special_doc_no'] : $sh['doc_no'];
+        $isReplacement = ($sh['source_type'] ?? null) === 'replacement_do';
+        $docNo = $isSpecial ? $sh['special_doc_no'] : ($isReplacement ? $sh['replacement_doc_no'] : $sh['doc_no']);
 
         return [
             'docNo' => $docNo,
@@ -311,9 +313,20 @@ final class ReceiptService
         $validated = $this->validateReceiptLines($items, $shippedQtyByLineId, $evidenceFiles);
         $status = $validated['anyDiscrepancy'] ? 'confirmed_discrepancy' : 'confirmed_ok';
         $receiptId = $this->repo->insertReceipt($this->pdo, $shipmentId, $status, $receiverName, $note);
+        // Replacement Reject (migration 0016) reuses this SAME shipment-
+        // token receipt path (its own replacement_do shipment is just
+        // another shipment row) — the only difference is which line-id
+        // column the receipt item row populates, resolved here by the
+        // underlying shipment's own source_type, never guessed from the
+        // line shape.
+        $isReplacement = ($shipment['source_type'] ?? null) === 'replacement_do';
         foreach ($validated['rows'] as $r) {
             $line = $byId[$r['lineId']];
-            $this->repo->insertReceiptItemForSpecialLine($this->pdo, $receiptId, $r['lineId'], $line['productId'], $line['itemName'], $r['shippedQty'], $r['good'], $r['reject'], $r['shortage'], $r['reason']);
+            if ($isReplacement) {
+                $this->repo->insertReceiptItemForReplacementLine($this->pdo, $receiptId, $r['lineId'], $line['productId'], $line['itemName'], $r['shippedQty'], $r['good'], $r['reject'], $r['shortage'], $r['reason']);
+            } else {
+                $this->repo->insertReceiptItemForSpecialLine($this->pdo, $receiptId, $r['lineId'], $line['productId'], $line['itemName'], $r['shippedQty'], $r['good'], $r['reject'], $r['shortage'], $r['reason']);
+            }
         }
         foreach ($evidenceFiles as $ev) {
             $this->repo->insertEvidence($this->pdo, $receiptId, $ev['filePath'], $ev['mimeType'], $ev['fileSize'], $ev['originalName']);
@@ -323,6 +336,10 @@ final class ReceiptService
             $this->pdo, $requestId, null, 'receipt.confirmed', 'shipment_receipt', (string) $receiptId,
             'ok', null, null, ['shipmentId' => $shipmentId, 'status' => $status, 'receiverName' => $receiverName]
         );
+
+        if ($isReplacement) {
+            (new ReplacementService($this->pdo))->recordReceiptOutcome($shipmentId, null, $requestId);
+        }
 
         $created = $this->repo->findReceiptForShipment($this->pdo, $shipmentId);
         return $this->buildReceiptDto($created);
@@ -397,9 +414,10 @@ final class ReceiptService
         $rows = $this->repo->listForAdmin($this->pdo, $tanggal, $status);
         return array_map(static function ($r) {
             $isSpecial = ($r['source_type'] ?? null) === 'special_order_do';
+            $isReplacement = ($r['source_type'] ?? null) === 'replacement_do';
             $sourceType = $isSpecial
                 ? NormalizedSourceType::fromSpecialOrder((string) $r['special_source_type'], $r['special_non_store_source'] ?? null)
-                : NormalizedSourceType::REGULAR_STORE_PO;
+                : ($isReplacement ? NormalizedSourceType::REPLACEMENT_REJECT : NormalizedSourceType::REGULAR_STORE_PO);
             $deliveryMethod = $r['delivery_method'] ?? 'DRIVER_INTERNAL';
             $driverName = ($deliveryMethod === 'EXTERNAL_COURIER')
                 ? 'Kurir: ' . ($r['courier_name'] ?? ucfirst((string) ($r['courier_provider'] ?? 'kurir')))
@@ -407,7 +425,7 @@ final class ReceiptService
             return [
             'shipmentId' => (int) $r['shipment_id'],
             'doId' => $r['delivery_order_id'] !== null ? (int) $r['delivery_order_id'] : null,
-            'docNo' => $r['doc_no'] ?? $r['special_doc_no'],
+            'docNo' => $r['doc_no'] ?? $r['special_doc_no'] ?? $r['replacement_doc_no'],
             'storeId' => (int) $r['store_id'],
             'storeName' => $r['store_name'],
             'tanggal' => $r['tanggal'],
@@ -486,16 +504,31 @@ final class ReceiptService
             'confirmedAt' => $receipt['confirmed_at'],
             'verifiedAt' => $receipt['verified_at'],
             'verifiedByName' => $this->repo->findVerifierName($this->pdo, $receipt['verified_by'] !== null ? (int) $receipt['verified_by'] : null),
-            'items' => array_map(static fn ($it) => [
-                'shipmentItemId' => $it['shipment_item_id'] !== null ? (int) $it['shipment_item_id'] : (int) $it['special_order_do_shipment_item_id'],
-                'productId' => $it['product_id'] !== null ? (int) $it['product_id'] : null,
-                'productName' => $it['product_name'],
-                'shippedQty' => (float) $it['shipped_qty'],
-                'receivedGoodQty' => (float) $it['received_good_qty'],
-                'rejectQty' => (float) $it['reject_qty'],
-                'shortageQty' => (float) $it['shortage_qty'],
-                'reason' => $it['reason'],
-            ], $items),
+            'items' => array_map(static function ($it) {
+                if ($it['shipment_item_id'] !== null) {
+                    $lineId = (int) $it['shipment_item_id'];
+                } elseif ($it['special_order_do_shipment_item_id'] !== null) {
+                    $lineId = (int) $it['special_order_do_shipment_item_id'];
+                } else {
+                    $lineId = (int) $it['replacement_do_shipment_item_id'];
+                }
+                return [
+                    'shipmentItemId' => $lineId,
+                    'receiptItemId' => (int) $it['shipment_receipt_item_id'],
+                    'productId' => $it['product_id'] !== null ? (int) $it['product_id'] : null,
+                    'productName' => $it['product_name'],
+                    'shippedQty' => (float) $it['shipped_qty'],
+                    'receivedGoodQty' => (float) $it['received_good_qty'],
+                    'rejectQty' => (float) $it['reject_qty'],
+                    'shortageQty' => (float) $it['shortage_qty'],
+                    'reason' => $it['reason'],
+                    // Replacement Reject disposition (migration 0016) — surfaced
+                    // here so the Admin "Tindak Lanjut Reject" screen can read
+                    // a receipt's own per-line state directly off this DTO.
+                    'approvedRejectQty' => $it['approved_reject_qty'] !== null ? (float) $it['approved_reject_qty'] : null,
+                    'disposition' => $it['disposition'],
+                ];
+            }, $items),
             // Never the raw filesystem path — just enough for the admin
             // detail page to build a thumbnail <img src="/api/admin/
             // receipts/evidence/{evidenceId}"> and to know evidence

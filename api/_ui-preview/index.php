@@ -40,6 +40,8 @@ $pages = [
     'pengiriman' => ['title' => 'Pengiriman', 'subtitle' => 'Kelola pengiriman aktual dan pengiriman bertahap.'],
     'konfirmasi-toko' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Tinjau konfirmasi penerimaan barang dari toko dan verifikasi selisih.'],
     'konfirmasi-toko-detail' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Detail konfirmasi penerimaan satu pengiriman.'],
+    'replacement-reject' => ['title' => 'Replacement Reject', 'subtitle' => 'Tindak lanjut reject yang sudah diverifikasi: Reject Final atau Kirim Ulang / Ganti Produk.'],
+    'replacement-do-detail' => ['title' => 'Replacement Reject', 'subtitle' => 'Detail DO Replacement — pengiriman make-good tanpa harga.'],
     'master-data' => ['title' => 'Master Data', 'subtitle' => 'Produk, toko, divisi, dan pabrik.'],
     'laporan' => ['title' => 'Laporan', 'subtitle' => 'Ringkasan lintas tahap, dari PO sampai pengiriman.'],
     'pengaturan' => ['title' => 'Pengaturan', 'subtitle' => 'Akun, preferensi tampilan, dan sesi.'],
@@ -51,9 +53,10 @@ if (!isset($pages[$page])) {
 }
 $activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order'
     : (str_starts_with($page, 'konfirmasi-toko') ? 'konfirmasi-toko'
+    : (str_starts_with($page, 'replacement-') ? 'replacement-reject'
     : ((str_starts_with($page, 'pesanan-khusus-toko') || str_starts_with($page, 'pesanan-non-toko')) ? 'pesanan-toko'
     : (str_starts_with($page, 'produksi-') ? 'produksi'
-    : (str_starts_with($page, 'fg-') && $page !== 'fg-packing' ? 'fg-packing' : $page))));
+    : (str_starts_with($page, 'fg-') && $page !== 'fg-packing' ? 'fg-packing' : $page)))));
 
 // Shared date/factory selection every page can use as its default filter
 // state, so the topbar's date/factory chips stay meaningful app-wide.

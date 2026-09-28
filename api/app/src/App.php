@@ -19,6 +19,7 @@ use Amor\Api\Controllers\ProductionController;
 use Amor\Api\Controllers\ReceiptController;
 use Amor\Api\Controllers\ShipmentEmailController;
 use Amor\Api\Controllers\ProductionTaskController;
+use Amor\Api\Controllers\ReplacementController;
 use Amor\Api\Controllers\SpecialOrderController;
 use Amor\Api\Controllers\SpecialOrderDoController;
 use Amor\Api\Controllers\StoreController;
@@ -179,6 +180,21 @@ final class App
         $router->post('/api/special-order-do/{id}/courier-handover', [SpecialOrderDoController::class, 'courierHandover']);
         $router->get('/api/production-tasks/factory', [ProductionTaskController::class, 'forFactory']);
         $router->get('/api/production-tasks', [ProductionTaskController::class, 'forDivision']);
+
+        // Migration 0016 — Replacement Reject. Disposition (ADMIN/PPIC)
+        // is the one and only place a verified Reject's fate is decided;
+        // everything downstream (production actual/FG verify, DO,
+        // shipment) reuses the same role tiers as the equivalent Regular/
+        // Special actions — see ReplacementController's own docblock.
+        $router->get('/api/replacement/pending-disposition', [ReplacementController::class, 'pendingDisposition']);
+        $router->post('/api/replacement/receipt-items/{id}/disposition', [ReplacementController::class, 'disposeReject']);
+        $router->get('/api/replacement-demands', [ReplacementController::class, 'index']);
+        $router->get('/api/replacement-demands/{id}', [ReplacementController::class, 'show']);
+        $router->post('/api/replacement-demands/{id}/production-actual', [ReplacementController::class, 'updateProductionActual']);
+        $router->post('/api/replacement-demands/{id}/verify-fg', [ReplacementController::class, 'verifyFg']);
+        $router->post('/api/replacement-demands/{id}/do', [ReplacementController::class, 'createDo']);
+        $router->get('/api/replacement-do/{id}', [ReplacementController::class, 'showDo']);
+        $router->post('/api/replacement-do/{id}/ship', [ReplacementController::class, 'ship']);
 
         // User / Driver Account Management (ADMIN-only, normal session/CSRF/Idempotency-Key —
         // same guards as every other mutating route, nothing special-cased).
