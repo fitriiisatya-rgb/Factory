@@ -26,6 +26,18 @@ use PDO;
  * the token row itself on first use (task's own allowance: printing a
  * Draft/Preprint DO's QR must not create a shipment/change the DO/change
  * its version — issuing the token satisfies all three).
+ *
+ * CORE INVARIANT (live-UAT lifecycle-consistency fix): a receipt can never
+ * be confirmed before a shipment has genuinely departed, because a
+ * `shipment` row is created ONLY by Delivery\ShipmentService::ship()
+ * (called directly by the manual "Kirim" action or via Dispatch\
+ * DepartureService's driver-claim flow — both paths, never any other),
+ * atomically together with its own `shipped_by`/`shipped_at` — there is no
+ * "draft"/staged shipment concept anywhere in this schema. confirmReceipt*()
+ * below therefore throws the stable SHIPMENT_NOT_DISPATCHED code (never a
+ * bare 404) specifically when the targeted DO/token has no active shipment
+ * at all yet — a direct token/API call cannot bypass this by guessing a
+ * shipmentId, since no such row exists to find.
  */
 final class ReceiptService
 {
@@ -242,7 +254,27 @@ final class ReceiptService
                 break;
             }
         }
-        if ($shipment === null || $shipment['status'] !== 'active') {
+        if ($shipment === null) {
+            // No shipment row at all matches this id under this DO. If the
+            // DO has NEVER had a real (active) shipment depart, this is the
+            // literal "receipt attempted before real dispatch" case (a
+            // stable, distinct code from a plain wrong/mismatched id — see
+            // this class's CORE INVARIANT docblock addition). A DO that DOES
+            // have other active shipments just got handed an id that isn't
+            // one of them — a plain not-found, never a dispatch-state claim.
+            $hasAnyActiveShipment = false;
+            foreach ($shipments as $sh) {
+                if ($sh['status'] === 'active') {
+                    $hasAnyActiveShipment = true;
+                    break;
+                }
+            }
+            if (!$hasAnyActiveShipment) {
+                throw new ApiException(409, 'SHIPMENT_NOT_DISPATCHED', 'Pengiriman belum berangkat — konfirmasi penerimaan belum tersedia');
+            }
+            throw new ApiException(404, 'NOT_FOUND', 'Pengiriman tidak ditemukan untuk tautan ini');
+        }
+        if ($shipment['status'] !== 'active') {
             throw new ApiException(404, 'NOT_FOUND', 'Pengiriman tidak ditemukan untuk tautan ini');
         }
 

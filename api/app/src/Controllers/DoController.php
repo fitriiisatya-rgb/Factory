@@ -11,6 +11,7 @@ use Amor\Api\Delivery\DoRepository;
 use Amor\Api\Delivery\DoService;
 use Amor\Api\Delivery\ShipmentService;
 use Amor\Api\Idempotency;
+use Amor\Api\Mail\ShipmentEmailService;
 use Amor\Api\Request;
 use Amor\Api\Response;
 use PDO;
@@ -193,6 +194,20 @@ final class DoController
         Response::json($service->preview($id, $items));
     }
 
+    /**
+     * Live-UAT lifecycle-consistency fix: this manual "Kirim" action creates
+     * a real shipment exactly like Dispatch\DepartureService's driver-claim
+     * flow does, but previously skipped that flow's own email-outbox step —
+     * leaving a genuinely departed shipment permanently reading "Belum
+     * Dikirim" (no shipment_email_delivery row ever existed for it at all).
+     * Fixed by mirroring Controllers\DispatchController::departures()'s own
+     * pattern exactly: create the outbox row INSIDE the same transaction as
+     * ship() (a row insert can't fail the way SMTP can), then attempt the
+     * real send AFTER commit, best-effort (never turns a successful ship
+     * into an error the user sees). On an exact Idempotency-Key replay,
+     * $createdShipment stays null (the closure never re-runs), so no
+     * duplicate email attempt ever fires for a replayed request.
+     */
     public static function ship(Request $request): void
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
@@ -201,11 +216,23 @@ final class DoController
         $shipmentGroup = (string) $request->input('shipmentGroup', 'MAIN');
         $items = (array) $request->input('items', []);
 
-        Idempotency::handle($request, 'POST /api/do/{id}/ship', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $shipmentGroup, $items) {
+        $createdShipment = null;
+        Idempotency::handle($request, 'POST /api/do/{id}/ship', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $shipmentGroup, $items, &$createdShipment) {
             $service = new ShipmentService($pdo);
             $dto = $service->ship($id, $expectedVersion, $shipmentGroup, $items, $userId, $request->header('Idempotency-Key'));
+            $outbox = (new ShipmentEmailService())->createOutboxForShipment($pdo, (int) $dto['shipmentId'], (int) $dto['storeId']);
+            $dto['emailOutboxId'] = $outbox['outboxId'];
+            $createdShipment = $dto;
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'delivery_order', 'recordKey' => (string) $id];
         });
+
+        if ($createdShipment !== null && isset($createdShipment['emailOutboxId'])) {
+            try {
+                (new ShipmentEmailService())->attemptSend((int) $createdShipment['emailOutboxId'], $userId, $request->header('Idempotency-Key'));
+            } catch (\Throwable $e) {
+                error_log('ShipmentEmailService::attemptSend failed for outboxId=' . $createdShipment['emailOutboxId'] . ': ' . $e->getMessage());
+            }
+        }
     }
 
     private static function requireDate(?string $s): string

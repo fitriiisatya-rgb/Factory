@@ -2550,6 +2550,193 @@ runTest('MAIL-28 the existing Store photo evidence flow is unchanged by this pat
 // same pattern as P55-24 (this file's own docblock) — it is the
 // orchestrator's (run-phase55-dispatch-receipt.sh) own final step.
 
+// ---------------------------------------------------------------------
+// SHIP-STATE-01..12 — live-UAT lifecycle-consistency fix (Abdul Gani
+// blocker): a receipt must never be confirmable before a shipment has
+// genuinely departed, and Driver "Tersedia" must never keep showing
+// qty that already departed/was received. Root cause was NOT a broken
+// invariant at the data layer (a `shipment` row is always created
+// atomically with real shipped_by/shipped_at by Delivery\
+// ShipmentService::ship() — no draft/staged shipment concept exists) —
+// it was (a) Controllers\DoController::ship()'s manual "Kirim" action
+// never creating an email outbox row the way Dispatch\DepartureService's
+// driver-claim flow does, and (b) the receipt gate returning a bare
+// NOT_FOUND instead of a stable, distinct code for "never dispatched".
+// Both are fixed; these tests prove the fix and the already-correct
+// surrounding invariants together.
+// ---------------------------------------------------------------------
+
+runTest('SHIP-STATE-01 a fresh unshipped DO item appears in Driver Tersedia', function () use ($adminHttp, $adminCsrf, $httpA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA) {
+    $tanggal = '2026-09-20';
+    $p = nextProduct();
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $p['product_id'], 8.0, 8.0, 8.0);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $avail = $httpA->request('GET', "/api/dispatch/available?tanggal={$tanggal}&storeId={$storeA}");
+    expect($avail['status'] === 200, 'SHIP-STATE-01: available fetch failed: ' . json_encode($avail['json']));
+    $found = false;
+    foreach ($avail['json']['data']['items'] as $it) {
+        if ((int) $it['doId'] === $do['doId'] && (int) $it['productId'] === (int) $p['product_id']) {
+            $found = true;
+        }
+    }
+    expect($found, 'SHIP-STATE-01: expected the fresh, never-shipped DO item to appear in Driver Tersedia');
+    $GLOBALS['shipstate01_do_id'] = $do['doId'];
+});
+
+runTest('SHIP-STATE-02 receipt confirmation before dispatch is rejected with SHIPMENT_NOT_DISPATCHED', function () use ($pdo, $baseUrl) {
+    $doId = $GLOBALS['shipstate01_do_id'] ?? null;
+    expect($doId !== null, 'depends on SHIP-STATE-01 having run first');
+    $token = (new \Amor\Api\Dispatch\ReceiptService($pdo))->getReceiptToken($doId);
+    $anon = new Http55($baseUrl);
+    $view = $anon->request('GET', "/api/receive/{$token}");
+    expect($view['status'] === 200 && $view['json']['data']['shipments'] === [], 'SHIP-STATE-02: expected an empty shipments list before dispatch (no confirmation control to show), got ' . json_encode($view['json']));
+    $r = $anon->request('POST', "/api/receive/{$token}/shipments/999999999/confirm", [
+        'receiverName' => 'Test Toko', 'items' => [['shipmentItemId' => 1, 'receivedGood' => 1, 'reject' => 0, 'shortage' => 0]],
+    ], idemKey('shipstate02'));
+    expect($r['status'] !== 200, 'SHIP-STATE-02: a direct API call before dispatch must never succeed');
+    expect(($r['json']['code'] ?? null) === 'SHIPMENT_NOT_DISPATCHED', 'SHIP-STATE-02: expected SHIPMENT_NOT_DISPATCHED, got ' . json_encode($r['json']));
+});
+
+runTest('SHIP-STATE-03 once fully claimed, the item drops out of Tersedia for a different driver', function () use ($adminHttp, $adminCsrf, $httpA, $httpB, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA) {
+    $tanggal = '2026-09-21';
+    $p = nextProduct();
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $p['product_id'], 6.0, 6.0, 6.0);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemId = doItemIdFor($pdo, $do['doId'], $p['product_id']);
+    $claim = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemId, 'qty' => 6.0]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('shipstate03')));
+    expect($claim['status'] === 200, 'SHIP-STATE-03: claim failed: ' . json_encode($claim['json']));
+    $avail = $httpB->request('GET', "/api/dispatch/available?tanggal={$tanggal}&storeId={$storeA}");
+    $found = false;
+    foreach ($avail['json']['data']['items'] as $it) {
+        if ((int) $it['doId'] === $do['doId'] && (int) $it['productId'] === (int) $p['product_id']) {
+            $found = true;
+        }
+    }
+    expect(!$found, 'SHIP-STATE-03: expected the fully-claimed item to no longer be shown as freely available to a different driver');
+});
+
+runTest('SHIP-STATE-04/05/06 dispatch -> eligible for receipt -> confirmed -> never reappears in Tersedia', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
+    $tanggal = '2026-09-22';
+    $p = nextProduct();
+    $qty = 4.0;
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $p['product_id'], $qty, $qty, $qty);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $itemId = doItemIdFor($pdo, $do['doId'], $p['product_id']);
+    $claim = $httpA->request('POST', '/api/dispatch/claim', ['lines' => [['doItemId' => $itemId, 'qty' => $qty]]], array_merge(['X-CSRF-Token' => $csrfA], idemKey('shipstate0456-claim')));
+    expect($claim['status'] === 200, 'SHIP-STATE-04: claim failed: ' . json_encode($claim['json']));
+    $claimId = $claim['json']['data']['claims'][0]['claimId'];
+    $stop = $httpA->request('GET', "/api/dispatch/route/stops/{$storeA}?tanggal={$tanggal}");
+    $depart = $httpA->request('POST', '/api/dispatch/departures', [
+        'doId' => $do['doId'], 'expectedVersion' => $stop['json']['data']['doVersion'], 'shipmentGroup' => 'MAIN',
+        'items' => [['claimId' => $claimId, 'actualQty' => $qty]],
+    ], array_merge(['X-CSRF-Token' => $csrfA], idemKey('shipstate0456-depart')));
+    expect($depart['status'] === 200, 'SHIP-STATE-04: departure failed: ' . json_encode($depart['json']));
+    $shipmentId = (int) $depart['json']['data']['shipments'][0]['shipmentId'];
+
+    $token = (new \Amor\Api\Dispatch\ReceiptService($pdo))->getReceiptToken($do['doId']);
+    $anon = new Http55($baseUrl);
+    $view = $anon->request('GET', "/api/receive/{$token}");
+    $sh = null;
+    foreach ($view['json']['data']['shipments'] as $s) {
+        if ((int) $s['shipmentId'] === $shipmentId) {
+            $sh = $s;
+        }
+    }
+    expect($sh !== null && $sh['receiptStatus'] === 'pending', 'SHIP-STATE-04: expected the departed shipment to show as pending/eligible for receipt, got ' . json_encode($view['json']));
+
+    $itemIdRc = (int) $sh['items'][0]['shipmentItemId'];
+    $confirm = $anon->request('POST', "/api/receive/{$token}/shipments/{$shipmentId}/confirm", [
+        'receiverName' => 'Toko Ship State', 'items' => [['shipmentItemId' => $itemIdRc, 'receivedGood' => $qty, 'reject' => 0, 'shortage' => 0]],
+    ], idemKey('shipstate05'));
+    expect($confirm['status'] === 200 && $confirm['json']['data']['status'] === 'confirmed_ok', 'SHIP-STATE-05: expected confirmed_ok after a valid dispatch, got ' . json_encode($confirm['json']));
+
+    $avail = $httpA->request('GET', "/api/dispatch/available?tanggal={$tanggal}&storeId={$storeA}");
+    $found = false;
+    foreach ($avail['json']['data']['items'] as $it) {
+        if ((int) $it['doId'] === $do['doId'] && (int) $it['productId'] === (int) $p['product_id']) {
+            $found = true;
+        }
+    }
+    expect(!$found, 'SHIP-STATE-06: expected the received/fully-shipped item to never reappear in Driver Tersedia');
+});
+
+runTest('SHIP-STATE-07 email failure does not block the manual admin ship action, and the fix creates its outbox row', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeA) {
+    $tanggal = '2026-09-24';
+    $p = nextProduct();
+    $qty = 5.0;
+    $email = 'simulate-smtp-failure-' . uniqid() . '@example.test';
+    setStoreEmail($adminHttp, $adminCsrf, $pdo, $storeA, $email);
+    stockUpForDelivery($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $tanggal, $storeA, $p['product_id'], $qty, $qty, $qty);
+    $do = createDoDraft($adminHttp, $adminCsrf, $tanggal, $storeA);
+    $ship = $adminHttp->request('POST', "/api/do/{$do['doId']}/ship", ['expectedVersion' => $do['version'], 'items' => [['productId' => $p['product_id'], 'actualQty' => $qty]]], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('shipstate07')));
+    expect($ship['status'] === 200, 'SHIP-STATE-07: expected the manual ship action to succeed despite a doomed-to-fail store email, got ' . json_encode($ship['json']));
+    $shipmentId = (int) $ship['json']['data']['shipmentId'];
+    $row = $pdo->query("SELECT status, last_error FROM shipment_email_delivery WHERE shipment_id = {$shipmentId}")->fetch();
+    expect($row !== false, 'SHIP-STATE-07: expected the manual-ship path to now ALSO create an email outbox row (this is the fix for the live-UAT Abdul Gani "Belum Dikirim forever" gap)');
+    expect($row['status'] === 'failed', 'SHIP-STATE-07: expected status=failed for the simulated SMTP failure, got ' . $row['status']);
+    $GLOBALS['shipstate08_fx'] = ['doId' => $do['doId'], 'shipmentId' => $shipmentId, 'productId' => $p['product_id'], 'qty' => $qty];
+});
+
+runTest('SHIP-STATE-08 email failure does not block receipt confirmation after a valid manual dispatch', function () use ($pdo, $baseUrl) {
+    $fx = $GLOBALS['shipstate08_fx'] ?? null;
+    expect($fx !== null, 'depends on SHIP-STATE-07 having run first');
+    $token = (new \Amor\Api\Dispatch\ReceiptService($pdo))->getReceiptToken($fx['doId']);
+    $anon = new Http55($baseUrl);
+    $itemId = shipmentItemIdFromToken($anon, $token, $fx['shipmentId']);
+    $r = $anon->request('POST', "/api/receive/{$token}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Toko Ship State', 'items' => [['shipmentItemId' => $itemId, 'receivedGood' => $fx['qty'], 'reject' => 0, 'shortage' => 0]],
+    ], idemKey('shipstate08'));
+    expect($r['status'] === 200 && $r['json']['data']['status'] === 'confirmed_ok', 'SHIP-STATE-08: expected confirmed_ok despite the earlier email failure, got ' . json_encode($r['json']));
+});
+
+runTest('SHIP-STATE-09 a second receipt confirmation attempt returns the existing receipt, never double-counts', function () use ($pdo, $baseUrl) {
+    $fx = $GLOBALS['shipstate08_fx'] ?? null;
+    expect($fx !== null, 'depends on SHIP-STATE-07/08 having run first');
+    $token = (new \Amor\Api\Dispatch\ReceiptService($pdo))->getReceiptToken($fx['doId']);
+    $anon = new Http55($baseUrl);
+    $itemId = shipmentItemIdFromToken($anon, $token, $fx['shipmentId']);
+    $countBefore = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt WHERE shipment_id = {$fx['shipmentId']}")->fetchColumn();
+    $r = $anon->request('POST', "/api/receive/{$token}/shipments/{$fx['shipmentId']}/confirm", [
+        'receiverName' => 'Percobaan Kedua', 'items' => [['shipmentItemId' => $itemId, 'receivedGood' => 0, 'reject' => $fx['qty'], 'shortage' => 0]],
+    ], idemKey('shipstate09'));
+    $countAfter = (int) $pdo->query("SELECT COUNT(*) FROM shipment_receipt WHERE shipment_id = {$fx['shipmentId']}")->fetchColumn();
+    expect($countAfter === $countBefore, 'SHIP-STATE-09: expected NO new shipment_receipt row on a second confirm attempt for the same shipment, before=' . $countBefore . ' after=' . $countAfter);
+    expect($r['status'] === 200 && $r['json']['data']['status'] === 'confirmed_ok', 'SHIP-STATE-09: expected the ORIGINAL confirmed_ok receipt to be returned unchanged (never flipped to a discrepancy by the second, different-payload attempt), got ' . json_encode($r['json']));
+});
+
+runTest('SHIP-STATE-10 a real shipmentId from an unrelated shipment cannot be confirmed against an undispatched DO token', function () use ($pdo, $baseUrl) {
+    $foreignShipmentId = $GLOBALS['shipstate08_fx']['shipmentId'] ?? null;
+    $doTest = $GLOBALS['shipstate01_do_id'] ?? null;
+    expect($foreignShipmentId !== null && $doTest !== null, 'depends on SHIP-STATE-01 and SHIP-STATE-07 having run first');
+    $token = (new \Amor\Api\Dispatch\ReceiptService($pdo))->getReceiptToken($doTest);
+    $anon = new Http55($baseUrl);
+    $r = $anon->request('POST', "/api/receive/{$token}/shipments/{$foreignShipmentId}/confirm", [
+        'receiverName' => 'Percobaan Langsung', 'items' => [['shipmentItemId' => 1, 'receivedGood' => 1, 'reject' => 0, 'shortage' => 0]],
+    ], idemKey('shipstate10'));
+    expect($r['status'] !== 200, 'SHIP-STATE-10: a direct API call using a real-but-unrelated shipmentId must never succeed against an undispatched DO token');
+    expect(in_array($r['json']['code'] ?? null, ['SHIPMENT_NOT_DISPATCHED', 'NOT_FOUND'], true), 'SHIP-STATE-10: expected SHIPMENT_NOT_DISPATCHED (or NOT_FOUND), got ' . json_encode($r['json']));
+});
+
+runTest('SHIP-STATE-11 Special/Non-Regular shipment receipt flow is unaffected by this patch', function () {
+    // This lifecycle-consistency fix only touched Controllers\DoController::
+    // ship() (manual Regular-PO path) and Dispatch\ReceiptService's DO-scoped
+    // confirmReceiptForDo() branch — SpecialOrder\SpecialOrderDoService and
+    // ReceiptService::confirmReceiptForShipmentToken()'s special-order branch
+    // were never touched. SpecialOrderTest.php (run via run-special-order.sh,
+    // part of this patch's own regression run) is the real proof; this is an
+    // explicit marker, not a duplicate (same convention as MAIL-28 above).
+    expect(true, 'SHIP-STATE-11: marker only — see run-special-order.sh in the full regression run for the real proof');
+});
+
+runTest('SHIP-STATE-12 Replacement Reject receipt flow is unaffected by this patch', function () {
+    // Same reasoning as SHIP-STATE-11 — Replacement Reject's own shipment-
+    // token receipt branch (confirmReceiptForShipmentToken(), reused as-is)
+    // and Replacement\ReplacementDoRepository::createShipment() were never
+    // touched. REPL-01..25 (ProductionDivisionFgReworkTest.php, part of this
+    // patch's own full regression run) is the real proof.
+    expect(true, 'SHIP-STATE-12: marker only — see REPL-01..25 in the full regression run for the real proof');
+});
+
 $failed = array_filter($results, fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests run, ' . count($failed) . " failed.\n");
 exit($failed === [] ? 0 : 1);

@@ -288,7 +288,7 @@
     if (!view.shipments || view.shipments.length === 0) {
       var empty = document.createElement('div');
       empty.className = 'rc-card rc-empty';
-      empty.textContent = 'Pengiriman belum dikonfirmasi berangkat.';
+      empty.textContent = 'Belum Dikirim — konfirmasi penerimaan belum tersedia.';
       root.appendChild(empty);
       return;
     }
