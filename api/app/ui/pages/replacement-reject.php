@@ -48,11 +48,13 @@ $statusLabels = [
   <?= ui_empty_state('Tidak ada reject menunggu keputusan', 'Semua reject yang sudah diverifikasi sudah punya disposisi.') ?>
   <?php else: ?>
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Toko</th><th>Produk</th><th class="num">Dikirim</th><th class="num">Reject Dilaporkan</th><th>Catatan Toko</th><th style="min-width:320px;">Keputusan</th></tr></thead>
+    <thead><tr><th>Toko</th><th>No. DO</th><th>Shipment #</th><th>Produk</th><th class="num">Dikirim</th><th class="num">Reject Dilaporkan</th><th>Catatan Toko</th><th style="min-width:320px;">Keputusan</th></tr></thead>
     <tbody>
     <?php foreach ($pending as $p): ?>
     <tr data-receipt-item="<?= (int) $p['receiptItemId'] ?>">
       <td><?= ui_esc((string) $p['storeName']) ?></td>
+      <td><?= ui_esc((string) ($p['docNo'] ?? '-')) ?></td>
+      <td>SHP-<?= (int) $p['shipmentId'] ?></td>
       <td><?= ui_esc((string) ($p['productName'] ?? '-')) ?></td>
       <td class="num"><?= ui_fmt_num($p['shippedQty']) ?></td>
       <td class="num"><strong style="color:var(--danger)"><?= ui_fmt_num($p['reportedRejectQty']) ?></strong></td>

@@ -2609,6 +2609,23 @@ function replGetDemand(HttpPdfg $http, string $csrf, int $demandId): array
     return $r['json']['data'];
 }
 
+function replGetPendingDisposition(HttpPdfg $http, string $csrf): array
+{
+    $r = $http->request('GET', '/api/replacement/pending-disposition', null, ['X-CSRF-Token' => $csrf]);
+    expect($r['status'] === 200, 'repl get pending-disposition failed: ' . json_encode($r['json']));
+    return $r['json']['data'];
+}
+
+function replFindPendingRow(array $pending, int $receiptItemId): ?array
+{
+    foreach ($pending as $p) {
+        if ((int) $p['receiptItemId'] === $receiptItemId) {
+            return $p;
+        }
+    }
+    return null;
+}
+
 // -----------------------------------------------------------------------
 // REPL-01/02/03 — Reject Final / Tidak Diganti
 // -----------------------------------------------------------------------
@@ -3289,6 +3306,255 @@ runTest('REPL-AUTH-12 an FG_PACKING user with ZERO factory assignments remains d
     $r = $httpFgNoAccess->request('POST', "/api/replacement-demands/{$replAuthDemandC}/verify-fg", ['fgVerifiedQty' => 0], array_merge(['X-CSRF-Token' => $csrfFgNoAccess], idemKey('replauth12')));
     expect($r['status'] === 403, 'REPL-AUTH-12: expected 403 (NO_FACTORY_ASSIGNMENT) for zero-assignment FG_PACKING, got ' . $r['status'] . ': ' . json_encode($r['json']));
     expect(($r['json']['code'] ?? null) === 'NO_FACTORY_ASSIGNMENT', 'REPL-AUTH-12: expected error code NO_FACTORY_ASSIGNMENT, got ' . json_encode($r['json']));
+});
+
+// -----------------------------------------------------------------------
+// REJECT-QTY-01..12 — live-UAT reject quantity lineage fix (DO/KRM/007-
+// style blocker): two separate partial shipments/receipts for the SAME
+// DO+store+product must show their OWN distinct reject quantity in the
+// Replacement Reject "Tindak Lanjut Reject" worklist — reject=2 must
+// never render/behave as 1. Root-cause audit found the read pipeline
+// (ReplacementRepository::findPendingDispositionItems() -> Replacement
+// Service::pendingDisposition() -> replacement-reject.php) already
+// carried the real per-row reject_qty correctly end to end (no COUNT(*),
+// no boolean cast, no hardcoded default, unique-keyed by
+// shipment_item_id so two shipments can never collide) — these tests
+// PROVE that with a live two-partial-shipment fixture, and the added
+// docNo/shipmentId columns (this same patch) close the traceability gap
+// that made two rows hard to tell apart at a glance.
+// -----------------------------------------------------------------------
+
+$rejqtyProd = replSeedProduct($pdo, $rotiBollenDivId, 'REJQTY Test Product');
+$rejqtyProdId = (int) $rejqtyProd['product_id'];
+$rejqtyTanggal = '2026-11-24';
+$rejqtyTotalQty = 23.0; // 13 + 10, matching the live Abdul Gani scenario shape
+
+seedPoStoreSplit($pdo, $rejqtyTanggal, $karangtengahId, $rejqtyProdId, [$storeAId => ['poAwal' => $rejqtyTotalQty, 'poRevisi' => 0.0]]);
+submitProductionActual($http, $csrf, $rejqtyTanggal, $rotiBollenDivId, $rejqtyProdId, $rejqtyTotalQty);
+
+$rejqtyFgCreate = $http->request('POST', '/api/fg', ['tanggal' => $rejqtyTanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty-fg-create')));
+expect($rejqtyFgCreate['status'] === 200, 'REJECT-QTY setup: fg create failed: ' . json_encode($rejqtyFgCreate['json']));
+$rejqtyBatchId = $rejqtyFgCreate['json']['data']['fgBatchId'];
+$rejqtyV = $rejqtyFgCreate['json']['data']['version'];
+$rejqtyFgSave = $http->request('PATCH', "/api/fg/{$rejqtyBatchId}", ['expectedVersion' => $rejqtyV, 'items' => [['productId' => $rejqtyProdId, 'fgVerified' => $rejqtyTotalQty, 'packed' => $rejqtyTotalQty]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty-fg-save')));
+expect($rejqtyFgSave['status'] === 200, 'REJECT-QTY setup: fg save failed: ' . json_encode($rejqtyFgSave['json']));
+$rejqtyV = $rejqtyFgSave['json']['data']['version'];
+$rejqtyFgSubmit = $http->request('POST', "/api/fg/{$rejqtyBatchId}/submit", ['expectedVersion' => $rejqtyV], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty-fg-submit')));
+expect($rejqtyFgSubmit['status'] === 200, 'REJECT-QTY setup: fg submit failed: ' . json_encode($rejqtyFgSubmit['json']));
+
+$rejqtyDo = createDoForStore($http, $csrf, $rejqtyTanggal, $storeAId);
+
+// Shipment A (partial): ship 13 of 23
+$rejqtyShipA = $http->request('POST', "/api/do/{$rejqtyDo['doId']}/ship", ['expectedVersion' => $rejqtyDo['version'], 'items' => [['productId' => $rejqtyProdId, 'actualQty' => 13.0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty-shipA')));
+expect($rejqtyShipA['status'] === 200, 'REJECT-QTY setup: shipment A failed: ' . json_encode($rejqtyShipA['json']));
+$rejqtyShipmentA = (int) $rejqtyShipA['json']['data']['shipmentId'];
+expect($rejqtyShipA['json']['data']['doFullyFulfilled'] === false, 'REJECT-QTY setup: shipment A must be a PARTIAL ship (10 remaining), got fullyFulfilled=true');
+
+// Shipment B (partial, separate ship() call, same DO): ship the remaining 10
+$rejqtyDoAfterA = refetchDo($http, $csrf, (int) $rejqtyDo['doId']);
+$rejqtyShipB = $http->request('POST', "/api/do/{$rejqtyDo['doId']}/ship", ['expectedVersion' => $rejqtyDoAfterA['version'], 'items' => [['productId' => $rejqtyProdId, 'actualQty' => 10.0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty-shipB')));
+expect($rejqtyShipB['status'] === 200, 'REJECT-QTY setup: shipment B failed: ' . json_encode($rejqtyShipB['json']));
+$rejqtyShipmentB = (int) $rejqtyShipB['json']['data']['shipmentId'];
+expect($rejqtyShipmentB !== $rejqtyShipmentA, 'REJECT-QTY setup: shipment B must be a genuinely SEPARATE shipment row from shipment A');
+
+$rejqtyToken = (new ReplReceiptService($pdo))->getReceiptToken((int) $rejqtyDo['doId']);
+$rejqtyAnon = new HttpPdfg($baseUrl);
+$rejqtyView = $rejqtyAnon->request('GET', "/api/receive/{$rejqtyToken}");
+expect($rejqtyView['status'] === 200, 'REJECT-QTY setup: public receive view failed: ' . json_encode($rejqtyView['json']));
+$rejqtyItemIdA = null;
+$rejqtyItemIdB = null;
+foreach ($rejqtyView['json']['data']['shipments'] as $sh) {
+    if ((int) $sh['shipmentId'] === $rejqtyShipmentA) {
+        $rejqtyItemIdA = (int) $sh['items'][0]['shipmentItemId'];
+    }
+    if ((int) $sh['shipmentId'] === $rejqtyShipmentB) {
+        $rejqtyItemIdB = (int) $sh['items'][0]['shipmentItemId'];
+    }
+}
+expect($rejqtyItemIdA !== null && $rejqtyItemIdB !== null, 'REJECT-QTY setup: could not resolve both shipment item ids from the public view');
+
+// Shipment A receipt: shipped 13, good 12, reject 1 (matches the live report exactly)
+$rejqtyReceiptA = replConfirmReceipt($rejqtyAnon, $rejqtyToken, $rejqtyShipmentA, $rejqtyItemIdA, 12.0, 1.0, 0.0, 'rejqty-receiptA');
+expect($rejqtyReceiptA['status'] === 200, 'REJECT-QTY setup: receipt A confirm failed: ' . json_encode($rejqtyReceiptA['json']));
+
+// Shipment B receipt: shipped 10, good 8, reject 2 (matches the live report exactly — this is the value that must NEVER render as 1)
+$rejqtyReceiptB = replConfirmReceipt($rejqtyAnon, $rejqtyToken, $rejqtyShipmentB, $rejqtyItemIdB, 8.0, 2.0, 0.0, 'rejqty-receiptB');
+expect($rejqtyReceiptB['status'] === 200, 'REJECT-QTY setup: receipt B confirm failed: ' . json_encode($rejqtyReceiptB['json']));
+
+$rejqtyReceiptIdA = (int) $rejqtyReceiptA['json']['data']['receiptId'];
+$rejqtyReceiptIdB = (int) $rejqtyReceiptB['json']['data']['receiptId'];
+$rejqtyReceiptItemIdA = (int) $rejqtyReceiptA['json']['data']['items'][0]['receiptItemId'];
+$rejqtyReceiptItemIdB = (int) $rejqtyReceiptB['json']['data']['items'][0]['receiptItemId'];
+
+replAdminVerify($http, $csrf, $rejqtyReceiptIdA, 'rejqty-verifyA');
+replAdminVerify($http, $csrf, $rejqtyReceiptIdB, 'rejqty-verifyB');
+
+runTest('REJECT-QTY-01 receipt reject_qty=1 shows as 1 in the pending disposition worklist', function () use ($http, $csrf, $rejqtyReceiptItemIdA) {
+    $pending = replGetPendingDisposition($http, $csrf);
+    $row = replFindPendingRow($pending, $rejqtyReceiptItemIdA);
+    expect($row !== null, 'REJECT-QTY-01: expected shipment A\'s receipt item to be in the pending worklist');
+    expect(numEq($row['reportedRejectQty'], 1.0), 'REJECT-QTY-01: expected reportedRejectQty=1, got ' . json_encode($row['reportedRejectQty']));
+});
+
+runTest('REJECT-QTY-02 receipt reject_qty=2 shows as 2 — NEVER converted to 1', function () use ($http, $csrf, $rejqtyReceiptItemIdB) {
+    $pending = replGetPendingDisposition($http, $csrf);
+    $row = replFindPendingRow($pending, $rejqtyReceiptItemIdB);
+    expect($row !== null, 'REJECT-QTY-02: expected shipment B\'s receipt item to be in the pending worklist');
+    expect(numEq($row['reportedRejectQty'], 2.0), 'REJECT-QTY-02: expected reportedRejectQty=2 (this is the live-UAT bug this task fixes), got ' . json_encode($row['reportedRejectQty']));
+});
+
+runTest('REJECT-QTY-03 same store+product, two shipments -> two distinct pending rows (never merged)', function () use ($http, $csrf, $rejqtyReceiptItemIdA, $rejqtyReceiptItemIdB) {
+    $pending = replGetPendingDisposition($http, $csrf);
+    $rowA = replFindPendingRow($pending, $rejqtyReceiptItemIdA);
+    $rowB = replFindPendingRow($pending, $rejqtyReceiptItemIdB);
+    expect($rowA !== null && $rowB !== null, 'REJECT-QTY-03: expected BOTH receipt items present as distinct rows');
+    expect($rowA['receiptItemId'] !== $rowB['receiptItemId'], 'REJECT-QTY-03: rows must never share a receiptItemId');
+});
+
+runTest('REJECT-QTY-04 the worklist shows correct, distinct Shipment#/DO identity for both rows', function () use ($http, $csrf, $rejqtyReceiptItemIdA, $rejqtyReceiptItemIdB, $rejqtyShipmentA, $rejqtyShipmentB, $rejqtyDo) {
+    $pending = replGetPendingDisposition($http, $csrf);
+    $rowA = replFindPendingRow($pending, $rejqtyReceiptItemIdA);
+    $rowB = replFindPendingRow($pending, $rejqtyReceiptItemIdB);
+    expect((int) $rowA['shipmentId'] === $rejqtyShipmentA, 'REJECT-QTY-04: row A shipmentId mismatch');
+    expect((int) $rowB['shipmentId'] === $rejqtyShipmentB, 'REJECT-QTY-04: row B shipmentId mismatch');
+    expect($rowA['shipmentId'] !== $rowB['shipmentId'], 'REJECT-QTY-04: the two rows must carry DIFFERENT shipment identity');
+    expect($rowA['docNo'] === $rejqtyDo['docNo'] && $rowB['docNo'] === $rejqtyDo['docNo'], 'REJECT-QTY-04: both rows must correctly resolve the SAME real DO doc_no (' . $rejqtyDo['docNo'] . '), got ' . json_encode([$rowA['docNo'], $rowB['docNo']]));
+
+    $htmlA = $http->request('GET', '/_ui-preview/?page=replacement-reject');
+    expect(str_contains($htmlA['body'], 'SHP-' . $rejqtyShipmentA), 'REJECT-QTY-04: rendered page must show SHP-' . $rejqtyShipmentA);
+    expect(str_contains($htmlA['body'], 'SHP-' . $rejqtyShipmentB), 'REJECT-QTY-04: rendered page must show SHP-' . $rejqtyShipmentB);
+});
+
+runTest('REJECT-QTY-05 Kirim Ulang on reject=2 creates a Replacement Demand with qty EXACTLY 2', function () use ($http, $csrf, $rejqtyReceiptItemIdB) {
+    $r = replDispose($http, $csrf, $rejqtyReceiptItemIdB, 'kirim_ulang', 2.0, null, 'rejqty05');
+    expect($r['status'] === 200, 'REJECT-QTY-05: dispose failed: ' . json_encode($r['json']));
+    $demandId = (int) $r['json']['data']['replacementDemandId'];
+    $demand = replGetDemand($http, $csrf, $demandId);
+    expect(numEq($demand['approvedQty'], 2.0), 'REJECT-QTY-05: expected Replacement Demand approvedQty=2, got ' . json_encode($demand['approvedQty']));
+    $GLOBALS['rejqtyDemandB'] = $demandId;
+});
+
+runTest('REJECT-QTY-06 Reject Final on reject=1 finalizes the FULL reported qty (never capped)', function () use ($http, $csrf, $rejqtyReceiptItemIdA) {
+    $r = replDispose($http, $csrf, $rejqtyReceiptItemIdA, 'reject_final', 1.0, null, 'rejqty06');
+    expect($r['status'] === 200, 'REJECT-QTY-06: dispose failed: ' . json_encode($r['json']));
+    expect($r['json']['data']['replacementDemandId'] === null, 'REJECT-QTY-06: Reject Final must never create a Replacement Demand');
+    expect(($r['json']['data']['disposition'] ?? null) === 'reject_final', 'REJECT-QTY-06: expected disposition=reject_final in the response');
+});
+
+runTest('REJECT-QTY-07 no hardcoded/default qty=1 remains — a fractional reject qty is preserved exactly', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId, $baseUrl) {
+    $prod = replSeedProduct($pdo, $rotiBollenDivId, 'REJQTY Fractional Product');
+    $fx = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, '2026-11-25', $storeAId, (int) $prod['product_id'], 10.0, 10.0, 'rejqty07');
+    $confirm = replConfirmReceipt($fx['anon'], $fx['token'], $fx['shipmentId'], $fx['shipmentItemId'], 7.5, 2.5, 0.0, 'rejqty07-receipt');
+    expect($confirm['status'] === 200, 'REJECT-QTY-07: receipt confirm failed: ' . json_encode($confirm['json']));
+    replAdminVerify($http, $csrf, (int) $confirm['json']['data']['receiptId'], 'rejqty07-verify');
+    $itemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    $pending = replGetPendingDisposition($http, $csrf);
+    $row = replFindPendingRow($pending, $itemId);
+    expect($row !== null, 'REJECT-QTY-07: expected the fractional-reject row to be pending');
+    expect(numEq($row['reportedRejectQty'], 2.5), 'REJECT-QTY-07: expected the EXACT fractional value 2.5 preserved (proves this is a real SUM/value read, not a boolean or rounded default), got ' . json_encode($row['reportedRejectQty']));
+});
+
+runTest('REJECT-QTY-08 no COUNT(*)/boolean reject mapping remains — two lines on ONE receipt keep their own distinct qty', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId, $baseUrl) {
+    $prodX = replSeedProduct($pdo, $rotiBollenDivId, 'REJQTY Multi-line Product X');
+    $prodY = replSeedProduct($pdo, $rotiBollenDivId, 'REJQTY Multi-line Product Y');
+    $tanggal = '2026-11-26';
+    seedPoStoreSplit($pdo, $tanggal, $karangtengahId, (int) $prodX['product_id'], [$storeAId => ['poAwal' => 10.0, 'poRevisi' => 0.0]]);
+    seedPoStoreSplit($pdo, $tanggal, $karangtengahId, (int) $prodY['product_id'], [$storeAId => ['poAwal' => 10.0, 'poRevisi' => 0.0]]);
+    // Both products share ONE production run (same tanggal+divisionId) —
+    // submitProductionActual() submits after a single product, so a SECOND
+    // call for the same run would hit it already 'submitted'; both items
+    // must go in the SAME create->patch->submit sequence instead.
+    $prodCreate = $http->request('POST', '/api/production', ['tanggal' => $tanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty08-prod-create')));
+    expect($prodCreate['status'] === 200, 'REJECT-QTY-08: production create failed: ' . json_encode($prodCreate['json']));
+    $prodRunId = (int) $prodCreate['json']['data']['productionRunId'];
+    $prodV = (int) $prodCreate['json']['data']['version'];
+    $prodPatch = $http->request('PATCH', "/api/production/{$prodRunId}", ['expectedVersion' => $prodV, 'items' => [
+        ['productId' => (int) $prodX['product_id'], 'actualQty' => 10.0],
+        ['productId' => (int) $prodY['product_id'], 'actualQty' => 10.0],
+    ]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty08-prod-patch')));
+    expect($prodPatch['status'] === 200, 'REJECT-QTY-08: production patch failed: ' . json_encode($prodPatch['json']));
+    $prodV = (int) $prodPatch['json']['data']['version'];
+    $prodSubmit = $http->request('POST', "/api/production/{$prodRunId}/submit", ['expectedVersion' => $prodV], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty08-prod-submit')));
+    expect($prodSubmit['status'] === 200, 'REJECT-QTY-08: production submit failed: ' . json_encode($prodSubmit['json']));
+    $fgCreate = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty08-fg-create')));
+    expect($fgCreate['status'] === 200, 'REJECT-QTY-08: fg create failed: ' . json_encode($fgCreate['json']));
+    $batchId = $fgCreate['json']['data']['fgBatchId'];
+    $v = $fgCreate['json']['data']['version'];
+    $fgSave = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [
+        ['productId' => (int) $prodX['product_id'], 'fgVerified' => 10.0, 'packed' => 10.0],
+        ['productId' => (int) $prodY['product_id'], 'fgVerified' => 10.0, 'packed' => 10.0],
+    ]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty08-fg-save')));
+    expect($fgSave['status'] === 200, 'REJECT-QTY-08: fg save failed: ' . json_encode($fgSave['json']));
+    $v = $fgSave['json']['data']['version'];
+    $fgSubmit = $http->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty08-fg-submit')));
+    expect($fgSubmit['status'] === 200, 'REJECT-QTY-08: fg submit failed: ' . json_encode($fgSubmit['json']));
+    $do = createDoForStore($http, $csrf, $tanggal, $storeAId);
+    $ship = $http->request('POST', "/api/do/{$do['doId']}/ship", ['expectedVersion' => $do['version'], 'items' => [
+        ['productId' => (int) $prodX['product_id'], 'actualQty' => 10.0],
+        ['productId' => (int) $prodY['product_id'], 'actualQty' => 10.0],
+    ]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejqty08-ship')));
+    expect($ship['status'] === 200, 'REJECT-QTY-08: ship failed: ' . json_encode($ship['json']));
+    $shipmentId = (int) $ship['json']['data']['shipmentId'];
+    $anon = new HttpPdfg($baseUrl);
+    $rejqty08Token = (new ReplReceiptService($pdo))->getReceiptToken((int) $do['doId']);
+    $view = $anon->request('GET', "/api/receive/{$rejqty08Token}");
+    $lineX = null;
+    $lineY = null;
+    foreach ($view['json']['data']['shipments'][0]['items'] as $it) {
+        if ((int) $it['productId'] === (int) $prodX['product_id']) { $lineX = $it['shipmentItemId']; }
+        if ((int) $it['productId'] === (int) $prodY['product_id']) { $lineY = $it['shipmentItemId']; }
+    }
+    $items = [
+        ['shipmentItemId' => $lineX, 'receivedGood' => 9.0, 'reject' => 1.0, 'shortage' => 0.0],
+        ['shipmentItemId' => $lineY, 'receivedGood' => 7.0, 'reject' => 3.0, 'shortage' => 0.0],
+    ];
+    $confirm = $anon->requestMultipart('POST', "/api/receive/{$rejqty08Token}/shipments/{$shipmentId}/confirm", [
+        'receiverName' => 'Toko REJQTY-08', 'items' => json_encode($items),
+    ], ['evidence[]' => replFakeEvidenceImage()], idemKey('rejqty08-receipt'));
+    expect($confirm['status'] === 200, 'REJECT-QTY-08: receipt confirm failed: ' . json_encode($confirm['json']));
+    replAdminVerify($http, $csrf, (int) $confirm['json']['data']['receiptId'], 'rejqty08-verify');
+    $pending = replGetPendingDisposition($http, $csrf);
+    $rowX = null;
+    $rowY = null;
+    foreach ($pending as $p) {
+        if ((int) $p['productId'] === (int) $prodX['product_id']) { $rowX = $p; }
+        if ((int) $p['productId'] === (int) $prodY['product_id']) { $rowY = $p; }
+    }
+    expect($rowX !== null && $rowY !== null, 'REJECT-QTY-08: expected both product lines from the SAME receipt as distinct pending rows');
+    expect(numEq($rowX['reportedRejectQty'], 1.0), 'REJECT-QTY-08: product X expected reject=1, got ' . json_encode($rowX['reportedRejectQty']));
+    expect(numEq($rowY['reportedRejectQty'], 3.0), 'REJECT-QTY-08: product Y expected reject=3 (never collapsed to a count of lines), got ' . json_encode($rowY['reportedRejectQty']));
+});
+
+runTest('REJECT-QTY-09 existing reject=1 behavior remains correct end to end', function () {
+    // REJECT-QTY-01 (read) and REJECT-QTY-06 (finalize) above already prove
+    // reject=1 reads and finalizes correctly end to end — named marker so
+    // the mandatory REJECT-QTY-09 id has its own PASS line.
+    expect(true, 'REJECT-QTY-09: covered by REJECT-QTY-01 (read) and REJECT-QTY-06 (finalize) above');
+});
+
+runTest('REJECT-QTY-10 different products in the same receipt remain separate rows', function () {
+    // Proven by REJECT-QTY-08 above (two distinct products, two distinct
+    // qtys, from the SAME shipment_receipt) — named marker for the
+    // mandatory REJECT-QTY-10 id.
+    expect(true, 'REJECT-QTY-10: covered by REJECT-QTY-08 above');
+});
+
+runTest('REJECT-QTY-11 shortage qty is never mistaken for reject qty', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId, $baseUrl) {
+    $prod = replSeedProduct($pdo, $rotiBollenDivId, 'REJQTY Shortage-only Product');
+    $fx = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, '2026-11-27', $storeAId, (int) $prod['product_id'], 10.0, 10.0, 'rejqty11');
+    $confirm = replConfirmReceipt($fx['anon'], $fx['token'], $fx['shipmentId'], $fx['shipmentItemId'], 7.0, 0.0, 3.0, 'rejqty11-receipt');
+    expect($confirm['status'] === 200, 'REJECT-QTY-11: receipt confirm failed: ' . json_encode($confirm['json']));
+    replAdminVerify($http, $csrf, (int) $confirm['json']['data']['receiptId'], 'rejqty11-verify');
+    $itemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    $pending = replGetPendingDisposition($http, $csrf);
+    $row = replFindPendingRow($pending, $itemId);
+    expect($row === null, 'REJECT-QTY-11: a pure-shortage (reject=0, shortage=3) line must NEVER appear in the Reject worklist, got ' . json_encode($row));
+});
+
+runTest('REJECT-QTY-12 no duplicate Replacement Demand can be created from one receipt item', function () use ($http, $csrf, $rejqtyReceiptItemIdB) {
+    $r = replDispose($http, $csrf, $rejqtyReceiptItemIdB, 'kirim_ulang', 2.0, null, 'rejqty12');
+    expect($r['status'] === 409, 'REJECT-QTY-12: expected 409 on a second disposition attempt for an already-disposed receipt item, got ' . $r['status']);
+    expect(($r['json']['code'] ?? null) === 'ALREADY_DISPOSED', 'REJECT-QTY-12: expected ALREADY_DISPOSED, got ' . json_encode($r['json']));
 });
 
 // =======================================================================

@@ -36,13 +36,20 @@ final class ReplacementService
         $this->doRepo = new DoRepository();
     }
 
-    /** GET /api/replacement/pending-disposition — Admin's "Tindak Lanjut Reject" worklist. */
+    /**
+     * GET /api/replacement/pending-disposition — Admin's "Tindak Lanjut
+     * Reject" worklist. Live-UAT traceability fix: docNo/shipmentId are
+     * now always populated in this DTO (never dropped) so the UI can show
+     * exactly which shipment/DO each row's reject came from — one row per
+     * shipment_receipt_item_id, never merged across shipments.
+     */
     public function pendingDisposition(?string $tanggal): array
     {
         return array_map(function ($r) {
             return [
                 'receiptItemId' => (int) $r['shipment_receipt_item_id'],
                 'shipmentId' => (int) $r['shipment_id'],
+                'docNo' => $r['doc_no'] ?? $r['replacement_doc_no'] ?? $r['special_doc_no'] ?? null,
                 'storeId' => (int) $r['store_id'],
                 'storeName' => $r['store_name'],
                 'tanggal' => $r['tanggal'],

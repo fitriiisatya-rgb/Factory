@@ -91,16 +91,33 @@ final class ReplacementRepository
      * verifies the Reject. Admin must then choose disposition" — the two
      * are sequential, never combined into one click).
      */
+    /**
+     * Live-UAT traceability fix: each pending row must carry its OWN
+     * shipment identity (shipmentId + docNo) so two receipts for the SAME
+     * store+product (e.g. a DO shipped in two separate partial batches)
+     * are never visually indistinguishable in the Admin worklist — this is
+     * display-only enrichment, never a second/different filter or
+     * aggregation; the WHERE clause and row shape (one row per
+     * shipment_receipt_item_id) are unchanged. docNo resolves across all
+     * three shipment sources a receipt item can trace to (mirrors
+     * Dispatch\ReceiptRepository::listForAdmin()'s own multi-source
+     * pattern) — never assumes Regular-DO-only, since a Replacement DO's
+     * own shipment can itself carry a chained reject.
+     */
     public function findPendingDispositionItems(PDO $pdo, ?string $tanggal): array
     {
-        $sql = "SELECT ri.*, r.verified_at, r.shipment_id, sh.store_id, sh.tanggal,
+        $sql = "SELECT ri.*, r.verified_at, r.shipment_id, sh.store_id, sh.tanggal, sh.source_type,
                        s.canonical_name AS store_name,
-                       COALESCE(p.name, ri.item_name_snapshot) AS product_name
+                       COALESCE(p.name, ri.item_name_snapshot) AS product_name,
+                       o.doc_no, rdo.doc_no AS replacement_doc_no, sodo.doc_no AS special_doc_no
                 FROM shipment_receipt_item ri
                 INNER JOIN shipment_receipt r ON r.shipment_receipt_id = ri.shipment_receipt_id
                 INNER JOIN shipment sh ON sh.shipment_id = r.shipment_id
                 INNER JOIN store s ON s.store_id = sh.store_id
                 LEFT JOIN product p ON p.product_id = ri.product_id
+                LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
+                LEFT JOIN replacement_do rdo ON rdo.replacement_do_id = sh.replacement_do_id
+                LEFT JOIN special_order_do sodo ON sodo.special_order_do_id = sh.special_order_do_id
                 WHERE r.status = 'verified' AND ri.reject_qty > 0.0001 AND ri.disposition = 'pending'";
         $params = [];
         if ($tanggal !== null) {
