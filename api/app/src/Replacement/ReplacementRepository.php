@@ -103,6 +103,32 @@ final class ReplacementRepository
      * Dispatch\ReceiptRepository::listForAdmin()'s own multi-source
      * pattern) — never assumes Regular-DO-only, since a Replacement DO's
      * own shipment can itself carry a chained reject.
+     *
+     * DISCOVERY INVARIANT (live-UAT "verified reject missing" audit): a
+     * verified receipt item with reject_qty > 0 must appear here UNLESS it
+     * already has a disposition ('reject_final' or 'kirim_ulang' — see
+     * disposeReject()'s own guard, which refuses a second decision on the
+     * same line). The three conditions below are exactly and only:
+     *   1. r.status = 'verified' — Admin must have explicitly verified
+     *      THIS shipment's OWN receipt (a separate action per shipment;
+     *      a receipt still sitting at 'confirmed_discrepancy', including
+     *      one permanently blocked by ReceiptService::adminVerify()'s own
+     *      EVIDENCE_REQUIRED_FOR_VERIFY gate for lack of a store photo,
+     *      correctly does NOT appear here yet — that is the existing,
+     *      intentional evidence-required design, not a bug in this
+     *      query. See dist/diagnostics/reject-missing-shp-check.sql for
+     *      a read-only way to tell these apart on a real database).
+     *   2. ri.reject_qty > 0.0001 — real reported reject.
+     *   3. disposition IS NULL OR disposition = 'pending' — the schema
+     *      defines this column NOT NULL DEFAULT 'pending' (migration
+     *      0016), so it can never actually be NULL; the IS NULL branch
+     *      is a zero-cost defensive net against any row that somehow
+     *      predates that column (never observed, but costs nothing to
+     *      tolerate — "prefer query compatibility over a migration").
+     * No other filter (source_type, created_at/verified_at cutoff, a
+     * replacement_demand NOT EXISTS join, etc.) is applied — anything
+     * that satisfies these three conditions is discovered, regardless of
+     * when its underlying rows were created.
      */
     public function findPendingDispositionItems(PDO $pdo, ?string $tanggal): array
     {
@@ -118,7 +144,8 @@ final class ReplacementRepository
                 LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
                 LEFT JOIN replacement_do rdo ON rdo.replacement_do_id = sh.replacement_do_id
                 LEFT JOIN special_order_do sodo ON sodo.special_order_do_id = sh.special_order_do_id
-                WHERE r.status = 'verified' AND ri.reject_qty > 0.0001 AND ri.disposition = 'pending'";
+                WHERE r.status = 'verified' AND ri.reject_qty > 0.0001
+                  AND (ri.disposition IS NULL OR ri.disposition = 'pending')";
         $params = [];
         if ($tanggal !== null) {
             $sql .= ' AND sh.tanggal = ?';

@@ -3557,6 +3557,217 @@ runTest('REJECT-QTY-12 no duplicate Replacement Demand can be created from one r
     expect(($r['json']['code'] ?? null) === 'ALREADY_DISPOSED', 'REJECT-QTY-12: expected ALREADY_DISPOSED, got ' . json_encode($r['json']));
 });
 
+// -----------------------------------------------------------------------
+// REJECT-MISSING-01..10 — live-UAT "verified reject vanished" audit
+// (SHP-6 report): a verified shipment_receipt_item with reject_qty > 0
+// must always be discoverable as EXACTLY one of pending / reject_final /
+// linked-to-a-Replacement-Demand — never silently absent from all three.
+// Root-cause audit found the query's three real gates (r.status=
+// 'verified', reject_qty>0, disposition IN (NULL,'pending')) already
+// correct for anything created through today's application code — the
+// column is NOT NULL DEFAULT 'pending' (migration 0016), so it can never
+// truly be NULL. REJECT-MISSING-02 below proves that directly (the DB
+// itself refuses a NULL write). A defensive "disposition IS NULL OR
+// disposition = 'pending'" was still added to
+// ReplacementRepository::findPendingDispositionItems() as a zero-cost
+// safety net. The live SHP-6 case itself most plausibly traces to one of
+// two ENTIRELY NON-BUGGY, already-intentional states — either Admin has
+// not yet clicked "Verifikasi" for that specific shipment's own receipt,
+// or that receipt has reject>0 with zero store evidence photos and is
+// therefore correctly, permanently blocked by ReceiptService::
+// adminVerify()'s own EVIDENCE_REQUIRED_FOR_VERIFY rule — dist/
+// diagnostics/reject-missing-shp-check.sql (shipped with this patch) is
+// the read-only way to tell these apart on the real database.
+// -----------------------------------------------------------------------
+
+runTest('REJECT-MISSING-01 a verified reject created via the normal (post-0016) API flow appears pending', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId, $baseUrl) {
+    $prod = replSeedProduct($pdo, $rotiBollenDivId, 'REJMISS Normal Product');
+    $fx = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, '2026-11-28', $storeAId, (int) $prod['product_id'], 10.0, 10.0, 'rejmiss01');
+    $confirm = replConfirmReceipt($fx['anon'], $fx['token'], $fx['shipmentId'], $fx['shipmentItemId'], 9.0, 1.0, 0.0, 'rejmiss01-receipt');
+    expect($confirm['status'] === 200, 'REJECT-MISSING-01: receipt confirm failed: ' . json_encode($confirm['json']));
+    replAdminVerify($http, $csrf, (int) $confirm['json']['data']['receiptId'], 'rejmiss01-verify');
+    $itemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    $row = replFindPendingRow(replGetPendingDisposition($http, $csrf), $itemId);
+    expect($row !== null, 'REJECT-MISSING-01: expected a freshly-verified reject to appear pending');
+    expect(numEq($row['reportedRejectQty'], 1.0), 'REJECT-MISSING-01: expected reject=1, got ' . json_encode($row['reportedRejectQty'] ?? null));
+});
+
+runTest('REJECT-MISSING-02 a receipt inserted via RAW SQL (bypassing all app code, disposition/approved_reject_qty columns omitted entirely) still appears pending — proves the schema DEFAULT alone is sufficient, and that disposition can never truly be NULL', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId, $baseUrl) {
+    $prod = replSeedProduct($pdo, $rotiBollenDivId, 'REJMISS Legacy Raw-Insert Product');
+    $tanggal = '2026-11-29';
+    seedPoStoreSplit($pdo, $tanggal, $karangtengahId, (int) $prod['product_id'], [$storeAId => ['poAwal' => 10.0, 'poRevisi' => 0.0]]);
+    submitProductionActual($http, $csrf, $tanggal, $rotiBollenDivId, (int) $prod['product_id'], 10.0);
+    $fgCreate = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejmiss02-fg-create')));
+    expect($fgCreate['status'] === 200, 'REJECT-MISSING-02: fg create failed: ' . json_encode($fgCreate['json']));
+    $batchId = $fgCreate['json']['data']['fgBatchId'];
+    $v = $fgCreate['json']['data']['version'];
+    $fgSave = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => (int) $prod['product_id'], 'fgVerified' => 10.0, 'packed' => 10.0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejmiss02-fg-save')));
+    expect($fgSave['status'] === 200, 'REJECT-MISSING-02: fg save failed: ' . json_encode($fgSave['json']));
+    $v = $fgSave['json']['data']['version'];
+    $fgSubmit = $http->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejmiss02-fg-submit')));
+    expect($fgSubmit['status'] === 200, 'REJECT-MISSING-02: fg submit failed: ' . json_encode($fgSubmit['json']));
+    $do = createDoForStore($http, $csrf, $tanggal, $storeAId);
+    $ship = $http->request('POST', "/api/do/{$do['doId']}/ship", ['expectedVersion' => $do['version'], 'items' => [['productId' => (int) $prod['product_id'], 'actualQty' => 10.0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejmiss02-ship')));
+    expect($ship['status'] === 200, 'REJECT-MISSING-02: ship failed: ' . json_encode($ship['json']));
+    $shipmentId = (int) $ship['json']['data']['shipmentId'];
+    $shipmentItemRow = $pdo->query("SELECT shipment_item_id FROM shipment_item WHERE shipment_id = {$shipmentId} LIMIT 1")->fetch();
+    $shipmentItemId = (int) $shipmentItemRow['shipment_item_id'];
+
+    // Deliberately BYPASSES ReceiptService/ReceiptRepository entirely —
+    // simulates a receipt row created by code/a data path that predates
+    // (or is otherwise unaware of) migration 0016's disposition/
+    // approved_reject_qty columns, by never mentioning them in the
+    // INSERT column list at all (relying purely on the schema DEFAULT).
+    $insReceipt = $pdo->prepare(
+        "INSERT INTO shipment_receipt (shipment_id, status, receiver_name, confirmed_at, verified_by, verified_at, version, created_at)
+         VALUES (?, 'verified', 'REJMISS Legacy Simulation', UTC_TIMESTAMP(), NULL, UTC_TIMESTAMP(), 1, UTC_TIMESTAMP())"
+    );
+    $insReceipt->execute([$shipmentId]);
+    $legacyReceiptId = (int) $pdo->lastInsertId();
+    $insItem = $pdo->prepare(
+        "INSERT INTO shipment_receipt_item (shipment_receipt_id, shipment_item_id, product_id, shipped_qty, received_good_qty, reject_qty, shortage_qty)
+         VALUES (?, ?, ?, 10.0, 8.0, 2.0, 0.0)"
+    );
+    $insItem->execute([$legacyReceiptId, $shipmentItemId, (int) $prod['product_id']]);
+    $legacyReceiptItemId = (int) $pdo->lastInsertId();
+
+    // The NOT NULL constraint itself is the real proof disposition can
+    // never be a true NULL — confirm the DB refuses it outright.
+    $rejectedNull = false;
+    try {
+        $pdo->prepare('UPDATE shipment_receipt_item SET disposition = NULL WHERE shipment_receipt_item_id = ?')->execute([$legacyReceiptItemId]);
+    } catch (\Throwable $e) {
+        $rejectedNull = true;
+    }
+    expect($rejectedNull, 'REJECT-MISSING-02: expected the database itself to refuse a NULL disposition (NOT NULL constraint) — if this ever stops throwing, the defensive "IS NULL" branch in the query becomes load-bearing, not just a safety net');
+
+    $row = replFindPendingRow(replGetPendingDisposition($http, $csrf), $legacyReceiptItemId);
+    expect($row !== null, 'REJECT-MISSING-02: expected the raw-SQL-inserted "legacy" verified reject to appear pending via the schema DEFAULT alone');
+    $GLOBALS['rejmiss02ItemId'] = $legacyReceiptItemId;
+    $GLOBALS['rejmiss02Row'] = $row;
+});
+
+runTest('REJECT-MISSING-03 the legacy-simulated reject qty remains exactly 2 (never truncated/defaulted)', function () {
+    $row = $GLOBALS['rejmiss02Row'] ?? null;
+    expect($row !== null, 'depends on REJECT-MISSING-02 having run first');
+    expect(numEq($row['reportedRejectQty'], 2.0), 'REJECT-MISSING-03: expected exactly 2, got ' . json_encode($row['reportedRejectQty']));
+});
+
+runTest('REJECT-MISSING-04 a reject already linked to a Replacement Demand (Kirim Ulang) never reappears as pending', function () use ($http, $csrf) {
+    $itemId = $GLOBALS['rejmiss02ItemId'] ?? null;
+    expect($itemId !== null, 'depends on REJECT-MISSING-02 having run first');
+    $r = replDispose($http, $csrf, $itemId, 'kirim_ulang', 2.0, null, 'rejmiss04');
+    expect($r['status'] === 200, 'REJECT-MISSING-04: dispose failed: ' . json_encode($r['json']));
+    $row = replFindPendingRow(replGetPendingDisposition($http, $csrf), $itemId);
+    expect($row === null, 'REJECT-MISSING-04: expected the now-disposed (kirim_ulang) item to no longer appear pending');
+});
+
+runTest('REJECT-MISSING-05 a Reject Final decision never reappears as pending', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId, $baseUrl) {
+    $prod = replSeedProduct($pdo, $rotiBollenDivId, 'REJMISS RejectFinal Product');
+    $fx = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, '2026-11-30', $storeAId, (int) $prod['product_id'], 10.0, 10.0, 'rejmiss05');
+    $confirm = replConfirmReceipt($fx['anon'], $fx['token'], $fx['shipmentId'], $fx['shipmentItemId'], 9.0, 1.0, 0.0, 'rejmiss05-receipt');
+    expect($confirm['status'] === 200, 'REJECT-MISSING-05: receipt confirm failed: ' . json_encode($confirm['json']));
+    replAdminVerify($http, $csrf, (int) $confirm['json']['data']['receiptId'], 'rejmiss05-verify');
+    $itemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    $r = replDispose($http, $csrf, $itemId, 'reject_final', 1.0, null, 'rejmiss05-dispose');
+    expect($r['status'] === 200, 'REJECT-MISSING-05: dispose failed: ' . json_encode($r['json']));
+    $row = replFindPendingRow(replGetPendingDisposition($http, $csrf), $itemId);
+    expect($row === null, 'REJECT-MISSING-05: expected a Reject Final line to no longer appear pending');
+});
+
+runTest('REJECT-MISSING-06 a verified reject appears exactly once, never duplicated', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId, $baseUrl) {
+    $prod = replSeedProduct($pdo, $rotiBollenDivId, 'REJMISS ExactlyOnce Product');
+    $fx = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, '2026-12-01', $storeAId, (int) $prod['product_id'], 10.0, 10.0, 'rejmiss06');
+    $confirm = replConfirmReceipt($fx['anon'], $fx['token'], $fx['shipmentId'], $fx['shipmentItemId'], 9.0, 1.0, 0.0, 'rejmiss06-receipt');
+    expect($confirm['status'] === 200, 'REJECT-MISSING-06: receipt confirm failed: ' . json_encode($confirm['json']));
+    replAdminVerify($http, $csrf, (int) $confirm['json']['data']['receiptId'], 'rejmiss06-verify');
+    $itemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    $pending = replGetPendingDisposition($http, $csrf);
+    $matches = array_filter($pending, static fn ($p) => (int) $p['receiptItemId'] === $itemId);
+    expect(count($matches) === 1, 'REJECT-MISSING-06: expected exactly ONE matching row, got ' . count($matches));
+});
+
+runTest('REJECT-MISSING-07 two partial shipments from the same DO/product remain separate pending rows', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId, $baseUrl) {
+    $prod = replSeedProduct($pdo, $rotiBollenDivId, 'REJMISS TwoPartial Product');
+    $tanggal = '2026-12-02';
+    seedPoStoreSplit($pdo, $tanggal, $karangtengahId, (int) $prod['product_id'], [$storeAId => ['poAwal' => 9.0, 'poRevisi' => 0.0]]);
+    submitProductionActual($http, $csrf, $tanggal, $rotiBollenDivId, (int) $prod['product_id'], 9.0);
+    $fgCreate = $http->request('POST', '/api/fg', ['tanggal' => $tanggal, 'factoryId' => $karangtengahId], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejmiss07-fg-create')));
+    expect($fgCreate['status'] === 200, 'REJECT-MISSING-07: fg create failed: ' . json_encode($fgCreate['json']));
+    $batchId = $fgCreate['json']['data']['fgBatchId'];
+    $v = $fgCreate['json']['data']['version'];
+    $fgSave = $http->request('PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $v, 'items' => [['productId' => (int) $prod['product_id'], 'fgVerified' => 9.0, 'packed' => 9.0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejmiss07-fg-save')));
+    expect($fgSave['status'] === 200, 'REJECT-MISSING-07: fg save failed: ' . json_encode($fgSave['json']));
+    $v = $fgSave['json']['data']['version'];
+    $fgSubmit = $http->request('POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $v], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejmiss07-fg-submit')));
+    expect($fgSubmit['status'] === 200, 'REJECT-MISSING-07: fg submit failed: ' . json_encode($fgSubmit['json']));
+    $do = createDoForStore($http, $csrf, $tanggal, $storeAId);
+    $shipA = $http->request('POST', "/api/do/{$do['doId']}/ship", ['expectedVersion' => $do['version'], 'items' => [['productId' => (int) $prod['product_id'], 'actualQty' => 5.0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejmiss07-shipA')));
+    expect($shipA['status'] === 200, 'REJECT-MISSING-07: ship A failed: ' . json_encode($shipA['json']));
+    $shipmentA = (int) $shipA['json']['data']['shipmentId'];
+    $doAfterA = refetchDo($http, $csrf, (int) $do['doId']);
+    $shipB = $http->request('POST', "/api/do/{$do['doId']}/ship", ['expectedVersion' => $doAfterA['version'], 'items' => [['productId' => (int) $prod['product_id'], 'actualQty' => 4.0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('rejmiss07-shipB')));
+    expect($shipB['status'] === 200, 'REJECT-MISSING-07: ship B failed: ' . json_encode($shipB['json']));
+    $shipmentB = (int) $shipB['json']['data']['shipmentId'];
+    $token = (new ReplReceiptService($pdo))->getReceiptToken((int) $do['doId']);
+    $anon = new HttpPdfg($baseUrl);
+    $view = $anon->request('GET', "/api/receive/{$token}");
+    $itemIdA = null;
+    $itemIdB = null;
+    foreach ($view['json']['data']['shipments'] as $sh) {
+        if ((int) $sh['shipmentId'] === $shipmentA) { $itemIdA = (int) $sh['items'][0]['shipmentItemId']; }
+        if ((int) $sh['shipmentId'] === $shipmentB) { $itemIdB = (int) $sh['items'][0]['shipmentItemId']; }
+    }
+    $confirmA = replConfirmReceipt($anon, $token, $shipmentA, $itemIdA, 4.0, 1.0, 0.0, 'rejmiss07-receiptA');
+    expect($confirmA['status'] === 200, 'REJECT-MISSING-07: receipt A confirm failed: ' . json_encode($confirmA['json']));
+    $confirmB = replConfirmReceipt($anon, $token, $shipmentB, $itemIdB, 2.0, 2.0, 0.0, 'rejmiss07-receiptB');
+    expect($confirmB['status'] === 200, 'REJECT-MISSING-07: receipt B confirm failed: ' . json_encode($confirmB['json']));
+    replAdminVerify($http, $csrf, (int) $confirmA['json']['data']['receiptId'], 'rejmiss07-verifyA');
+    replAdminVerify($http, $csrf, (int) $confirmB['json']['data']['receiptId'], 'rejmiss07-verifyB');
+    $itemIdRcA = (int) $confirmA['json']['data']['items'][0]['receiptItemId'];
+    $itemIdRcB = (int) $confirmB['json']['data']['items'][0]['receiptItemId'];
+    $pending = replGetPendingDisposition($http, $csrf);
+    $rowA = replFindPendingRow($pending, $itemIdRcA);
+    $rowB = replFindPendingRow($pending, $itemIdRcB);
+    expect($rowA !== null && $rowB !== null, 'REJECT-MISSING-07: expected BOTH partial shipments\' rejects present as distinct rows');
+    expect($rowA['shipmentId'] !== $rowB['shipmentId'], 'REJECT-MISSING-07: rows must carry different shipmentId');
+});
+
+runTest('REJECT-MISSING-08 SHP-6 equivalent (sent 10 / good 8 / reject 2, single shipment) appears pending via the normal flow', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId, $baseUrl) {
+    $prod = replSeedProduct($pdo, $rotiBollenDivId, 'REJMISS SHP6-Equivalent Product');
+    $fx = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, '2026-12-03', $storeAId, (int) $prod['product_id'], 10.0, 10.0, 'rejmiss08');
+    $confirm = replConfirmReceipt($fx['anon'], $fx['token'], $fx['shipmentId'], $fx['shipmentItemId'], 8.0, 2.0, 0.0, 'rejmiss08-receipt');
+    expect($confirm['status'] === 200, 'REJECT-MISSING-08: receipt confirm failed: ' . json_encode($confirm['json']));
+    replAdminVerify($http, $csrf, (int) $confirm['json']['data']['receiptId'], 'rejmiss08-verify');
+    $itemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    $row = replFindPendingRow(replGetPendingDisposition($http, $csrf), $itemId);
+    expect($row !== null, 'REJECT-MISSING-08: expected the SHP-6-equivalent (sent 10/good 8/reject 2) receipt to appear pending — proves the CODE path is correct for this exact live scenario when the receipt is actually verified');
+    expect(numEq($row['reportedRejectQty'], 2.0), 'REJECT-MISSING-08: expected reject=2, got ' . json_encode($row['reportedRejectQty']));
+});
+
+runTest('REJECT-MISSING-09 no stock/FG/DO mutation is ever caused by the pending-disposition read or the legacy-compatibility widening', function () use ($http, $csrf, $pdo) {
+    $ledgerBefore = (int) $pdo->query('SELECT COUNT(*) FROM stock_ledger')->fetchColumn();
+    $doVersionsBefore = $pdo->query('SELECT delivery_order_id, version FROM delivery_order')->fetchAll(PDO::FETCH_KEY_PAIR);
+    replGetPendingDisposition($http, $csrf);
+    replGetPendingDisposition($http, $csrf);
+    $ledgerAfter = (int) $pdo->query('SELECT COUNT(*) FROM stock_ledger')->fetchColumn();
+    $doVersionsAfter = $pdo->query('SELECT delivery_order_id, version FROM delivery_order')->fetchAll(PDO::FETCH_KEY_PAIR);
+    expect($ledgerBefore === $ledgerAfter, 'REJECT-MISSING-09: expected ZERO new stock_ledger rows from reading the pending worklist twice, before=' . $ledgerBefore . ' after=' . $ledgerAfter);
+    expect($doVersionsBefore === $doVersionsAfter, 'REJECT-MISSING-09: expected ZERO delivery_order version changes from reading the pending worklist');
+});
+
+runTest('REJECT-MISSING-10 existing single-shipment small-DO reject behavior (SHP-9/SHP-4 style) remains correct', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeAId, $baseUrl) {
+    $prod = replSeedProduct($pdo, $rotiBollenDivId, 'REJMISS SmallDO Product');
+    $fx = replBuildShippedFixture($http, $csrf, $pdo, $baseUrl, $karangtengahId, $rotiBollenDivId, '2026-12-04', $storeAId, (int) $prod['product_id'], 2.0, 2.0, 'rejmiss10');
+    $confirm = replConfirmReceipt($fx['anon'], $fx['token'], $fx['shipmentId'], $fx['shipmentItemId'], 1.0, 1.0, 0.0, 'rejmiss10-receipt');
+    expect($confirm['status'] === 200, 'REJECT-MISSING-10: receipt confirm failed: ' . json_encode($confirm['json']));
+    replAdminVerify($http, $csrf, (int) $confirm['json']['data']['receiptId'], 'rejmiss10-verify');
+    $itemId = (int) $confirm['json']['data']['items'][0]['receiptItemId'];
+    $row = replFindPendingRow(replGetPendingDisposition($http, $csrf), $itemId);
+    expect($row !== null, 'REJECT-MISSING-10: expected a small-DO (Dikirim=2) single-shipment reject to appear pending exactly like the live SHP-4 case');
+    expect(numEq($row['reportedRejectQty'], 1.0), 'REJECT-MISSING-10: expected reject=1, got ' . json_encode($row['reportedRejectQty']));
+});
+
 // =======================================================================
 // Summary
 // =======================================================================
