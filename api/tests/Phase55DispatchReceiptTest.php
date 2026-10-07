@@ -2342,22 +2342,26 @@ runTest('MAIL-06 email contains the actual total products/qty shipped', function
     expect(str_contains($mail['htmlBody'], (string) (int) $GLOBALS['mail01_qty']), 'MAIL-06: expected the real shipped qty in the email body');
 });
 
-runTest('MAIL-07 the Digital Surat Jalan link in the email is token-gated', function () use ($baseUrl) {
+runTest('MAIL-07 the email CTA is a token-gated Permanent Bakery Portal link that actually resolves the real shipment', function () use ($baseUrl) {
+    // Permanent Bakery Portal (migration 0017) changed the email's CTA:
+    // it now points at /api/_store/?token=... (StorePortalService's own
+    // permanent per-store link) rather than the old one-shipment
+    // /api/_receive/?token=...&shipment=... link — see
+    // ShipmentEmailService::buildMessage()'s own docblock ("EMAIL CHANGE:
+    // CTA points to the permanent portal"). MAIL-01's store has no prior
+    // portal token, so this — its first-ever notification — doubles as
+    // onboarding and embeds a freshly-issued raw token
+    // (getOrIssueTokenForEmailOnboarding()).
     $mail = $GLOBALS['mail01_record'] ?? null;
     expect($mail !== null, 'depends on MAIL-01 having run first');
-    // The email body is HTML, so a literal "&" in the link is entity-encoded
-    // to "&amp;" — match either, the token itself is what matters.
-    $matched = (bool) preg_match('#/api/_receive/\?token=([a-f0-9]{64})(?:&amp;|&)shipment=' . $GLOBALS['mail01_shipment_id'] . '#', $mail['htmlBody'], $m);
-    expect($matched, 'MAIL-07: expected a token-gated /api/_receive/?token=...&shipment=... link in the email body');
-    $ch = curl_init($baseUrl . '/api/_receive/?token=' . $m[1] . '&shipment=' . $GLOBALS['mail01_shipment_id']);
+    $matched = (bool) preg_match('#/api/_store/\?token=([a-f0-9]{64})#', $mail['htmlBody'], $m);
+    expect($matched, 'MAIL-07: expected a token-gated /api/_store/?token=... Permanent Bakery Portal link in the email body');
+    $ch = curl_init($baseUrl . '/api/store/' . $m[1] . '/receipts/' . $GLOBALS['mail01_shipment_id']);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     $body = curl_exec($ch);
     curl_close($ch);
-    // "SHP-{id}" itself is rendered by receipt.js CLIENT-SIDE (curl never
-    // executes JS) — the raw HTML instead embeds the real shipment inside
-    // window.RECEIPT_VIEW's JSON, which is the reliable thing to assert on
-    // here (same technique MAIL-22/23 use for RECEIPT_FOCUS_SHIPMENT_ID).
-    expect(str_contains($body, '"shipmentId":' . $GLOBALS['mail01_shipment_id']), 'MAIL-07: expected the token-gated link to actually resolve the real shipment');
+    $json = json_decode($body, true);
+    expect(($json['data']['shipmentId'] ?? null) === $GLOBALS['mail01_shipment_id'], 'MAIL-07: expected the token-gated link to actually resolve the real shipment, got ' . $body);
 });
 
 runTest('MAIL-08/09/10 an email failure does NOT roll back the shipment or stock ledger, and sets status=failed', function () use ($adminHttp, $adminCsrf, $httpA, $csrfA, $pdo, $karangtengahId, $rotiBollenDivId, $storeA) {
