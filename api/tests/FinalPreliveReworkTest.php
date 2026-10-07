@@ -407,15 +407,26 @@ runTest('FINAL-16b a real store email receives the Digital Surat Jalan email, ad
     $GLOBALS['final16b_mail'] = $mail;
 });
 
-runTest('FINAL-19 the email\'s receipt link resolves to the correct single special shipment', function () use ($baseUrl) {
+runTest('FINAL-19 the email CTA is a Permanent Portal link, and the Portal resolves the correct special shipment', function () use ($adminHttp, $adminCsrf, $baseUrl, $storeAId) {
+    // Permanent Bakery Portal (migration 0017) changed the email's CTA:
+    // it no longer mints a per-shipment /api/_receive/ token — see
+    // ShipmentEmailService::buildMessage()'s own "EMAIL CHANGE" docblock.
+    // storeAId already has an active token by this point (minted by an
+    // earlier email in this same run, e.g. FINAL-16/18's), so FINAL-16b's
+    // own email is a bare /api/_store/ reminder, never re-embedding a raw
+    // token (see getOrIssueTokenForEmailOnboarding()'s own docblock) — so
+    // this asserts the bare link, then mints a fresh admin token to prove
+    // the Portal itself still resolves the real special shipment.
     $mail = $GLOBALS['final16b_mail'];
-    expect(preg_match('/token=([0-9a-f]{64})/', $mail['htmlBody'], $m) === 1, 'FINAL-19: expected a 64-hex token in the email link');
-    $ch = curl_init($baseUrl . '/api/_receive/?token=' . $m[1]);
+    expect(str_contains($mail['htmlBody'], '/api/_store/'), 'FINAL-19: expected a Permanent Portal link in the email body');
+    $issue = $adminHttp->request('POST', "/api/admin/store-portal/{$storeAId}/issue", [], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('final19-portal')));
+    $token = $issue['json']['data']['rawToken'];
+    $ch = curl_init($baseUrl . '/api/store/' . $token . '/receipts/' . $GLOBALS['final16b_shipmentId']);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     $body = curl_exec($ch);
     curl_close($ch);
-    expect(str_contains($body, '"shipmentId":' . $GLOBALS['final16b_shipmentId']), 'FINAL-19: expected the shipment-scoped token to resolve to the real special shipment');
-    expect(substr_count($body, '"shipmentId":') === 1, 'FINAL-19: expected EXACTLY one shipment in view — the Bakery must not see another source\'s shipment');
+    $json = json_decode($body, true);
+    expect(($json['data']['shipmentId'] ?? null) === $GLOBALS['final16b_shipmentId'], 'FINAL-19: expected the Portal token to actually resolve the real special shipment, got ' . $body);
 });
 
 runTest('FINAL-17 EXTERNAL_COURIER handover also creates+sends an automatic email', function () use ($adminHttp, $adminCsrf, $storeAId, $karangtengahFactoryId, $pdo, $mailLogPath) {
@@ -450,19 +461,20 @@ runTest('FINAL-20/21 Admin resend reuses the SAME outbox row with zero shipment/
 
 // --- FINAL-22..30 (Bakery Receipt) ------------------------------------------
 
-runTest('FINAL-22/11c a custom-item special shipment can be confirmed via its shipment token, math-validated, with no photo required when clean', function () use ($baseUrl, $mailLogPath) {
-    $mail = $GLOBALS['final16b_mail'];
-    preg_match('/token=([0-9a-f]{64})/', $mail['htmlBody'], $m);
-    $token = $m[1];
+runTest('FINAL-22/11c a custom-item special shipment can be confirmed via the Permanent Portal, math-validated, with no photo required when clean', function () use ($adminHttp, $adminCsrf, $baseUrl, $storeAId) {
+    // Minted fresh (not parsed from the email) — see FINAL-19's own
+    // comment on why this store's email no longer embeds a raw token.
+    $issue = $adminHttp->request('POST', "/api/admin/store-portal/{$storeAId}/issue", [], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('final22-portal')));
+    $token = $issue['json']['data']['rawToken'];
     $shipmentId = $GLOBALS['final16b_shipmentId'];
 
     $anon = new HttpFinal($baseUrl);
-    $view = $anon->request('GET', "/api/receive/{$token}");
+    $view = $anon->request('GET', "/api/store/{$token}/receipts/{$shipmentId}");
     expect($view['status'] === 200, 'FINAL-22: expected public view 200: ' . json_encode($view['json']));
-    $lineId = $view['json']['data']['shipments'][0]['items'][0]['shipmentItemId'];
-    $shippedQty = $view['json']['data']['shipments'][0]['items'][0]['shippedQty'];
+    $lineId = $view['json']['data']['items'][0]['shipmentItemId'];
+    $shippedQty = $view['json']['data']['items'][0]['shippedQty'];
 
-    $confirm = $anon->request('POST', "/api/receive/{$token}/shipments/{$shipmentId}/confirm", [
+    $confirm = $anon->request('POST', "/api/store/{$token}/receipts/{$shipmentId}/confirm", [
         'receiverName' => 'Bakery Tester', 'items' => [['shipmentItemId' => $lineId, 'receivedGood' => $shippedQty, 'reject' => 0, 'shortage' => 0]],
     ], idemKey('final22'));
     expect($confirm['status'] === 200, 'FINAL-22: expected confirm 200: ' . json_encode($confirm['json']));
@@ -481,29 +493,34 @@ runTest('FINAL-23/24/09c discrepancy math is enforced and requires photo evidenc
 
     $mail = lastMailTo($mailLogPath, $email);
     expect($mail !== null, 'FINAL-23: expected an automatic email for this shipment');
-    preg_match('/token=([0-9a-f]{64})/', $mail['htmlBody'], $m);
-    $token = $m[1];
+    // storeAId already has an active Permanent Portal token from FINAL-16b's
+    // onboarding, so THIS email is a bare reminder with no raw token
+    // embedded (getOrIssueTokenForEmailOnboarding() never re-embeds one —
+    // see ShipmentEmailService's own docblock). Mint a fresh one via the
+    // Admin "regenerate" endpoint instead of parsing the email body.
+    $issue = $adminHttp->request('POST', "/api/admin/store-portal/{$storeAId}/issue", [], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('final23-portal')));
+    $token = $issue['json']['data']['rawToken'];
 
     $anon = new HttpFinal($baseUrl);
-    $view = $anon->request('GET', "/api/receive/{$token}");
-    $lineId = $view['json']['data']['shipments'][0]['items'][0]['shipmentItemId'];
+    $view = $anon->request('GET', "/api/store/{$token}/receipts/{$fx['shipmentId']}");
+    $lineId = $view['json']['data']['items'][0]['shipmentItemId'];
 
     // Math mismatch (2 + 1 + 1 = 4, not 5) is rejected server-side.
-    $badMath = $anon->request('POST', "/api/receive/{$token}/shipments/{$fx['shipmentId']}/confirm", [
+    $badMath = $anon->request('POST', "/api/store/{$token}/receipts/{$fx['shipmentId']}/confirm", [
         'receiverName' => 'Bakery', 'items' => [['shipmentItemId' => $lineId, 'receivedGood' => 2, 'reject' => 1, 'shortage' => 1]],
     ], idemKey('final23bad'));
     expect($badMath['status'] === 400, 'FINAL-23: expected 400 for a math mismatch, got ' . $badMath['status']);
     expect(($badMath['json']['code'] ?? null) === 'RECEIPT_MATH_INVALID', 'FINAL-23: expected code=RECEIPT_MATH_INVALID, got ' . json_encode($badMath['json']));
 
     // Correct math (3 + 1 + 1 = 5) but a discrepancy exists (reject/shortage > 0) and NO photo — rejected.
-    $noEvidence = $anon->request('POST', "/api/receive/{$token}/shipments/{$fx['shipmentId']}/confirm", [
+    $noEvidence = $anon->request('POST', "/api/store/{$token}/receipts/{$fx['shipmentId']}/confirm", [
         'receiverName' => 'Bakery', 'items' => [['shipmentItemId' => $lineId, 'receivedGood' => 3, 'reject' => 1, 'shortage' => 1]],
     ], idemKey('final23noev'));
     expect($noEvidence['status'] === 400, 'FINAL-24: expected 400 without evidence, got ' . $noEvidence['status']);
     expect(($noEvidence['json']['code'] ?? null) === 'EVIDENCE_REQUIRED', 'FINAL-24: expected code=EVIDENCE_REQUIRED, got ' . json_encode($noEvidence['json']));
 
     // Same submission WITH a real photo succeeds.
-    $withEvidence = $anon->requestMultipart('POST', "/api/receive/{$token}/shipments/{$fx['shipmentId']}/confirm",
+    $withEvidence = $anon->requestMultipart('POST', "/api/store/{$token}/receipts/{$fx['shipmentId']}/confirm",
         ['receiverName' => 'Bakery', 'items' => json_encode([['shipmentItemId' => $lineId, 'receivedGood' => 3, 'reject' => 1, 'shortage' => 1]])],
         ['evidence[]' => fakeEvidenceImage()], idemKey('final24ok'));
     expect($withEvidence['status'] === 200, 'FINAL-24: expected 200 with photo evidence: ' . json_encode($withEvidence['json']));
@@ -575,17 +592,26 @@ runTest('FINAL-31/32 a partial DO produces TWO separate shipments, each with its
     $mailCount = count(array_filter(readMailLog($mailLogPath), static fn ($m) => $m['to'] === $email));
     expect($mailCount >= 2, 'FINAL-32: expected at least two separate emails sent to the same bakery for the two partial shipments, got ' . $mailCount);
 
-    // Each shipment confirms SEPARATELY (never merged into one receipt) —
-    // looked up directly from shipment_receipt_token (minted by the
-    // automatic-email attempt above) rather than fragile log-scraping.
-    $token2 = $pdo->query("SELECT token FROM shipment_receipt_token WHERE shipment_id = {$shipment2}")->fetchColumn();
-    expect($token2 !== false, 'FINAL-31: expected shipment2 to have minted its OWN shipment_receipt_token row');
-    $token1Row = $pdo->query("SELECT token FROM shipment_receipt_token WHERE shipment_id = {$shipment1}")->fetchColumn();
-    expect($token1Row !== false && $token1Row !== $token2, 'FINAL-31: expected shipment1 and shipment2 to have DIFFERENT tokens, never shared');
+    // Each shipment confirms SEPARATELY (never merged into one receipt).
+    // Permanent Bakery Portal (migration 0017) replaced the automatic
+    // email's per-shipment /api/_receive/ token mint with the store's ONE
+    // permanent Portal token (ShipmentEmailService's own "EMAIL CHANGE"
+    // docblock) — shipment_receipt_token is no longer written by this
+    // flow, so the property to check now is that the Portal's receipts
+    // list/detail still track the two shipments SEPARATELY under that one
+    // store token, never merged.
+    $issue = $adminHttp->request('POST', "/api/admin/store-portal/{$storeAId}/issue", [], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('final31-portal')));
+    $portalToken = $issue['json']['data']['rawToken'];
+    $anon = new HttpFinal($baseUrl);
 
-    $view2 = (new HttpFinal($baseUrl))->request('GET', "/api/receive/{$token2}");
-    expect(count($view2['json']['data']['shipments']) === 1, 'FINAL-31: expected the shipment-scoped view to show exactly ONE shipment (never auto-merged with shipment1)');
-    expect((int) $view2['json']['data']['shipments'][0]['shipmentId'] === $shipment2, 'FINAL-31: expected the token to resolve to shipment2 specifically');
+    $list = $anon->request('GET', "/api/store/{$portalToken}/receipts");
+    $ids = array_column($list['json']['data'], 'shipmentId');
+    expect(in_array($shipment1, $ids, true) && in_array($shipment2, $ids, true), 'FINAL-31: expected BOTH partial shipments to appear as SEPARATE rows in the Portal receipts list');
+
+    $view2 = $anon->request('GET', "/api/store/{$portalToken}/receipts/{$shipment2}");
+    expect($view2['status'] === 200 && (int) $view2['json']['data']['shipmentId'] === $shipment2, 'FINAL-31: expected the Portal to resolve shipment2 specifically');
+    $view1 = $anon->request('GET', "/api/store/{$portalToken}/receipts/{$shipment1}");
+    expect($view1['status'] === 200 && (int) $view1['json']['data']['shipmentId'] === $shipment1, 'FINAL-31: expected the Portal to resolve shipment1 specifically, never merged with shipment2');
 });
 
 // --- SRC-E2E-01..12 (normalized source must never collapse to generic
