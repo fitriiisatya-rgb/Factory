@@ -506,6 +506,31 @@ final class ReceiptService
         $isReplacement = ($shipment['source_type'] ?? null) === 'replacement_do';
         $docNo = $isSpecial ? $shipment['special_doc_no'] : ($isReplacement ? $shipment['replacement_doc_no'] : $shipment['doc_no']);
 
+        // Once a receipt exists, the actually-confirmed Baik/Reject/Kurang
+        // figures live in shipment_receipt_item, keyed by whichever of the
+        // three line-id columns applies to this shipment's own source type
+        // (regular/special/replacement — same resolution buildReceiptDto()
+        // uses for the Admin-facing DTO). Without this, a Bakery reopening
+        // its own already-confirmed receipt in the Portal would see every
+        // line as 0/0/0 regardless of what it actually reported.
+        $receivedByLineId = [];
+        if ($receipt !== null) {
+            foreach ($this->repo->findReceiptItems($this->pdo, (int) $receipt['shipment_receipt_id']) as $it) {
+                if ($it['shipment_item_id'] !== null) {
+                    $lineId = (int) $it['shipment_item_id'];
+                } elseif ($it['special_order_do_shipment_item_id'] !== null) {
+                    $lineId = (int) $it['special_order_do_shipment_item_id'];
+                } else {
+                    $lineId = (int) $it['replacement_do_shipment_item_id'];
+                }
+                $receivedByLineId[$lineId] = [
+                    'receivedGoodQty' => (float) $it['received_good_qty'],
+                    'rejectQty' => (float) $it['reject_qty'],
+                    'shortageQty' => (float) $it['shortage_qty'],
+                ];
+            }
+        }
+
         return [
             'shipmentId' => $shipmentId,
             'docNo' => $docNo,
@@ -513,12 +538,18 @@ final class ReceiptService
             'shipmentGroup' => $shipment['shipment_group'],
             'driverName' => $this->shipmentDriverLabel($shipment),
             'departedAt' => $shipment['shipped_at'],
-            'items' => array_map(static fn ($l) => [
-                'shipmentItemId' => $l['lineId'],
-                'productId' => $l['productId'],
-                'productName' => $l['itemName'],
-                'shippedQty' => $l['qtyShipped'],
-            ], $lines),
+            'items' => array_map(static function ($l) use ($receivedByLineId) {
+                $actual = $receivedByLineId[$l['lineId']] ?? null;
+                return [
+                    'shipmentItemId' => $l['lineId'],
+                    'productId' => $l['productId'],
+                    'productName' => $l['itemName'],
+                    'shippedQty' => $l['qtyShipped'],
+                    'receivedGoodQty' => $actual['receivedGoodQty'] ?? null,
+                    'rejectQty' => $actual['rejectQty'] ?? null,
+                    'shortageQty' => $actual['shortageQty'] ?? null,
+                ];
+            }, $lines),
             'receiptStatus' => $receipt['status'] ?? 'pending',
             'confirmedAt' => $receipt['confirmed_at'] ?? null,
             'receiverName' => $receipt['receiver_name'] ?? null,
