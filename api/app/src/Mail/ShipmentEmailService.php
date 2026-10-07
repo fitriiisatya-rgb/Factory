@@ -9,8 +9,8 @@ use Amor\Api\Audit;
 use Amor\Api\Config;
 use Amor\Api\Database;
 use Amor\Api\Dispatch\DispatchService;
-use Amor\Api\Dispatch\ReceiptService;
 use Amor\Api\Repositories\StoreRepository;
+use Amor\Api\StorePortal\StorePortalService;
 use PDO;
 
 /**
@@ -103,17 +103,17 @@ final class ShipmentEmailService
         // shipped_by-only ownership check this method also serves the
         // Driver's own detail page with).
         $detail = (new DispatchService($pdo))->shipmentDetail($shipmentId, $triggeredBy ?? 0, true);
-        // A special/non-regular shipment has no delivery_order_id (doId is
-        // null — see DispatchService::shipmentDetail()'s own branch) — its
-        // Digital Surat Jalan link uses the shipment-scoped token instead
-        // of the Regular DO token (task's own Section F). The link's own
-        // URL shape/handling never changes: ReceiptService::getPublicView()
-        // already resolves either token type transparently.
-        $receiptService = new ReceiptService($pdo);
-        $token = $detail['doId'] !== null
-            ? $receiptService->getReceiptToken((int) $detail['doId'])
-            : $receiptService->getOrCreateShipmentToken($shipmentId);
-        $message = $this->buildMessage($detail, $store, $token, $recipient);
+        // Permanent Bakery Portal (migration 0017) — the email's CTA now
+        // points THERE, never the old per-shipment /api/_receive/ link
+        // (task's own "EMAIL CHANGE: becomes NOTIFICATION only... CTA
+        // points to the permanent portal"). See
+        // StorePortalService::getOrIssueTokenForEmailOnboarding()'s own
+        // docblock for why this returns a raw token only on a store's
+        // FIRST ever notification. Historic /api/_receive/ links already
+        // sent in older emails are completely unaffected — that route and
+        // its token tables are untouched by this change.
+        $onboardingToken = (new StorePortalService($pdo))->getOrIssueTokenForEmailOnboarding((int) $outbox['store_id'], $requestId);
+        $message = $this->buildMessage($detail, $store, $onboardingToken, $recipient);
 
         $result = MailTransportFactory::create()->send($message);
 
@@ -167,14 +167,20 @@ final class ShipmentEmailService
         return $this->attemptSend((int) $outbox['shipment_email_delivery_id'], $adminUserId, $requestId);
     }
 
-    private function buildMessage(array $detail, array $store, string $token, string $recipientEmail): MailMessage
+    private function buildMessage(array $detail, array $store, ?string $onboardingToken, string $recipientEmail): MailMessage
     {
         $baseUrl = rtrim((string) Config::get('APP_BASE_URL', 'https://factory.amorgroup.id'), '/');
-        // Same path convention as the existing DO receipt QR (see
-        // Ui/print-template.php's ui_do_receipt_qr_svg()) — the public
-        // Store Receipt portal lives at api/_receive/, never a bare
-        // /_receive/ at the docroot.
-        $link = $baseUrl . '/api/_receive/?token=' . urlencode($token) . '&shipment=' . (int) $detail['shipmentId'];
+        // Permanent Bakery Portal path convention (same as StorePortal
+        // Service::buildPortalUrl()) — api/_store/, never a bare /_store/
+        // at the docroot. A fresh onboarding token embeds a one-click deep
+        // link (this store's very first notification); otherwise this is
+        // a bare reminder URL — the store already has its permanent link
+        // bookmarked from either that first email or Admin's own token-
+        // management screen, and this method never re-embeds/regenerates
+        // a token it cannot recover (see getOrIssueTokenForEmailOnboarding()).
+        $link = $onboardingToken !== null
+            ? $baseUrl . '/api/_store/?token=' . urlencode($onboardingToken)
+            : $baseUrl . '/api/_store/';
 
         $storeName = (string) ($store['canonical_name'] ?? $detail['storeName'] ?? '-');
         $subject = self::buildSubject((int) $detail['shipmentId'], $storeName);
@@ -203,9 +209,12 @@ final class ShipmentEmailService
             . '<thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:2px solid #333;">Produk</th><th style="text-align:right;padding:4px 8px;border-bottom:2px solid #333;">Qty</th></tr></thead>'
             . '<tbody>' . $itemRows . '</tbody></table>'
             . '<p style="font-size:14px;">Total: <strong>' . (int) $detail['summary']['productCount'] . ' produk &middot; ' . self::fmtQty((float) $detail['summary']['totalQty']) . ' pcs</strong></p>'
-            . '<p style="font-size:14px;">Barang telah diberangkatkan. Silakan melakukan pengecekan dan konfirmasi penerimaan ketika bakery buka.</p>'
-            . '<p style="margin:24px 0;"><a href="' . htmlspecialchars($link) . '" style="background:#7a3b2e;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block;">LIHAT SURAT JALAN &amp; KONFIRMASI PENERIMAAN</a></p>'
+            . '<p style="font-size:14px;">Barang telah diberangkatkan. Silakan melakukan pengecekan dan konfirmasi penerimaan di Portal Bakery ketika bakery buka.</p>'
+            . '<p style="margin:24px 0;"><a href="' . htmlspecialchars($link) . '" style="background:#7a3b2e;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block;">BUKA PORTAL BAKERY</a></p>'
             . '<p style="font-size:12px;color:#999;">Jika tombol di atas tidak berfungsi, salin tautan berikut: ' . htmlspecialchars($link) . '</p>'
+            . ($onboardingToken === null
+                ? '<p style="font-size:12px;color:#999;">Email ini hanya pemberitahuan — gunakan link permanen Portal Bakery yang sudah Anda simpan sebelumnya untuk Konfirmasi Penerimaan, Pesanan Khusus, Retur, dan Mutasi Produk.</p>'
+                : '<p style="font-size:12px;color:#999;">Ini adalah link PERMANEN Portal Bakery Anda — simpan/bookmark tautan ini. Gunakan untuk Konfirmasi Penerimaan, Pesanan Khusus, Retur, dan Mutasi Produk kapan saja.</p>')
             . '</div>';
 
         return new MailMessage(

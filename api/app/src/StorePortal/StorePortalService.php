@@ -184,6 +184,33 @@ final class StorePortalService
         ];
     }
 
+    /**
+     * Used ONLY by the automatic Bakery email (Mail\ShipmentEmailService) —
+     * task's own "EMAIL CHANGE: CTA points to the permanent portal". A
+     * store's FIRST ever notification doubles as its onboarding: if it has
+     * no active token yet, one is issued here (system-triggered, same
+     * lazily-provisioned system-user actor as SpecialOrderService's own
+     * portal-submitted orders) and the raw value is returned so THIS ONE
+     * email can embed a real, working deep link — captured fresh because
+     * we just created it. Every later email to the SAME store returns null
+     * here on purpose: an existing active token's raw value is permanently
+     * unrecoverable by design (see this class's own docblock), and this
+     * method never regenerates one just to re-embed a link — doing so
+     * would invalidate whatever the store already has bookmarked, exactly
+     * the "unexpectedly broken link" the task's own backward-compatibility
+     * rule forbids. The caller falls back to a bare portal-URL reminder
+     * (no token) in that case.
+     */
+    public function getOrIssueTokenForEmailOnboarding(int $storeId, ?string $requestId): ?string
+    {
+        if ($this->repo->findActiveByStoreId($this->pdo, $storeId) !== null) {
+            return null;
+        }
+        $systemUserId = $this->repo->findOrCreateSystemUserId($this->pdo);
+        $issued = $this->issueToken($storeId, $systemUserId, $requestId);
+        return $issued['rawToken'];
+    }
+
     private static function generateRawToken(): string
     {
         // 32 random bytes -> 64 hex chars: same entropy as delivery_receipt_token's
