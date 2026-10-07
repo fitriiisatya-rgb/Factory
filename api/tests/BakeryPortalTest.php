@@ -397,10 +397,23 @@ runTest('RECEIPT-PORTAL-02 Confirm with matching qty (no discrepancy) succeeds w
     $detail = $anon->request('GET', "/api/store/{$token}/receipts/{$fx['shipmentId']}");
     $itemId = $detail['json']['data']['items'][0]['shipmentItemId'];
     $qty = $detail['json']['data']['items'][0]['shippedQty'];
+    expect($detail['json']['data']['items'][0]['receivedGoodQty'] === null, 'expected a still-pending shipment to report null received/reject/shortage, not 0/0/0');
     $r = $anon->request('POST', "/api/store/{$token}/receipts/{$fx['shipmentId']}/confirm", [
         'receiverName' => 'Toko A', 'items' => [['shipmentItemId' => $itemId, 'receivedGood' => $qty, 'reject' => 0, 'shortage' => 0]],
     ], idemKey('rp02'));
     expect($r['status'] === 200 && $r['json']['data']['status'] === 'confirmed_ok', 'expected confirmed_ok, got ' . json_encode($r['json']));
+
+    // Re-fetching the SAME detail after confirmation must show the REAL
+    // reported figures, not 0/0/0 — regression guard for a bug local
+    // interactive UAT (task #133) caught: getPortalShipmentDetail() built
+    // shippedQty from ShipmentLineResolver alone and never merged in
+    // shipment_receipt_item's actual received/reject/shortage once a
+    // receipt existed, so a Bakery reopening its own confirmed shipment
+    // (e.g. from Riwayat) saw every line as 0/0/0 regardless of what it
+    // had actually submitted.
+    $after = $anon->request('GET', "/api/store/{$token}/receipts/{$fx['shipmentId']}");
+    expect((float) $after['json']['data']['items'][0]['receivedGoodQty'] === (float) $qty, 'expected the re-fetched detail to show the REAL confirmed receivedGoodQty, got ' . json_encode($after['json']['data']['items'][0]));
+    expect((float) $after['json']['data']['items'][0]['rejectQty'] === 0.0, 'expected rejectQty=0 on the re-fetched detail');
 });
 
 runTest('RECEIPT-PORTAL-03 Reject > 0 without evidence is rejected (EVIDENCE_REQUIRED)', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $baseUrl) {
