@@ -11,6 +11,15 @@ api/tests/.tmp/
 *.sqlite
 *.sqlite3
 
+# Self-referential symlink some php -S test orchestrators create for the
+# duration of their own run (see run-production-division-fg-rework.sh's
+# own docblock at its "ln -sfn . "$API_ROOT/api"" step) so a disposable
+# local server can resolve "/api/assets/..." the same way real cPanel's
+# one-level-higher docroot does. Removed by each script's own cleanup()
+# trap on exit — this entry only guards against a run that is still in
+# progress (or was killed) when git status is checked.
+api/api
+
 # Runtime-uploaded receipt evidence photos (Phase 5.5 Driver/Bakery
 # receipt UAT flows write real files here against the live api/ tree,
 # same as a real deployment's writable uploads dir would) — only the
