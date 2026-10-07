@@ -45,7 +45,7 @@ if (preg_match('#^/api/(assets/[\w./-]+\.(css|js|png|jpg|jpeg|svg))$#', $uri, $m
     }
 }
 
-if (preg_match('#^/api/_receive/?$#', $uri)) {
+if (preg_match('#^/api/_receive/(index\.php)?$#', $uri)) {
     require __DIR__ . '/../_receive/index.php';
     return true;
 }
@@ -54,7 +54,15 @@ if (preg_match('#^/api/_receive/?$#', $uri)) {
 // mismatch as _receive/ above (Mail\ShipmentEmailService's own CTA link
 // is built as /api/_store/?token=... — see StorePortalService::
 // buildPortalUrl()), and the same fix: strip the extra /api locally.
-if (preg_match('#^/api/_store/?$#', $uri)) {
+// Also matches the trailing "/index.php" form — store.js's own in-page
+// navigation (tab switches, list->detail clicks) builds relative links
+// as "index.php?token=...", which the browser resolves against the
+// CURRENT page's own /api/_store/ path, landing on
+// /api/_store/index.php?... — a sub-path the bare "/api/_store/?$"
+// pattern above never matched, left unexercised until this phase's own
+// local interactive UAT actually clicked through the rendered UI instead
+// of calling the JSON API directly.
+if (preg_match('#^/api/_store/(index\.php)?$#', $uri)) {
     require __DIR__ . '/../_store/index.php';
     return true;
 }
