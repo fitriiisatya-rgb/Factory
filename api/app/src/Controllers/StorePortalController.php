@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Amor\Api\Controllers;
 
+use Amor\Api\ApiException;
 use Amor\Api\Database;
 use Amor\Api\Dispatch\EvidenceUploader;
 use Amor\Api\Dispatch\ReceiptService;
@@ -155,6 +156,27 @@ final class StorePortalController
         $identity = (new StorePortalService($pdo))->resolvePortalIdentity($token);
         $service = new SpecialOrderService($pdo);
         Response::json($service->getOrderForStorePortal($identity['storeId'], $orderId));
+    }
+
+    /** GET /api/store/{token}/special-orders/{orderId}/attachments/{attachmentId} — streams one of the bakery's OWN uploaded reference photos. Ownership-checked on both ids (see SpecialOrderService::getAttachmentForStorePortal()). */
+    public static function specialOrderAttachment(Request $request): void
+    {
+        $token = (string) $request->routeParams['token'];
+        $orderId = (int) $request->routeParams['orderId'];
+        $attachmentId = (int) $request->routeParams['attachmentId'];
+        $pdo = Database::pdo();
+        $identity = (new StorePortalService($pdo))->resolvePortalIdentity($token);
+        $service = new SpecialOrderService($pdo);
+        $attachment = $service->getAttachmentForStorePortal($identity['storeId'], $orderId, $attachmentId);
+        $path = EvidenceUploader::absolutePath($attachment['file_path'], 'special-order-attachment');
+        if (!is_file($path)) {
+            throw new ApiException(404, 'NOT_FOUND', 'Berkas lampiran tidak ditemukan di server');
+        }
+        header('Content-Type: ' . $attachment['mime_type']);
+        header('Content-Length: ' . (string) filesize($path));
+        header('Cache-Control: private, max-age=3600');
+        header('X-Content-Type-Options: nosniff');
+        readfile($path);
     }
 
     /** GET /api/store/{token}/retur — Riwayat tab's Retur list, this store's own submissions only. */

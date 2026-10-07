@@ -1,0 +1,101 @@
+/*
+ * Permanent Bakery Portal (migration 0017). Loaded AFTER tokens.css +
+ * driver.css (api/_store/bootstrap.php) — this file only adds the
+ * handful of rules that vocabulary has no equivalent for yet (store
+ * identity header, form fields, evidence thumbnail grid, incoming/
+ * outgoing section headers). Every color/spacing/radius value below is a
+ * var(--token) already defined by tokens.css — no new theme, no new
+ * palette, task's own explicit "reuse existing... no new theme".
+ */
+
+.store-topbar-text { flex: 1; min-width: 0; }
+/* "Home shows bakery name prominently" — larger/bolder than the page
+   title underneath it, inverted from driver-topbar's own title-first
+   layout (a driver already knows who they are; a bakery opening its one
+   permanent bookmark should see ITS OWN NAME first, every time). */
+.store-topbar-store { font-weight: 800; font-size: var(--text-lg); line-height: 1.2; }
+.store-topbar-title { font-size: var(--text-xs); color: var(--text-muted); font-weight: 600; margin-top: 1px; }
+
+.store-error-card { margin-top: 40px; text-align: center; }
+
+.store-section-title {
+  font-weight: 700; font-size: var(--text-sm); color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .03em; margin: var(--space-2) 2px var(--space-2);
+}
+.store-section-title:first-child { margin-top: 0; }
+
+/* Status badges beyond driver.css's own main/pastry/success/danger set. */
+.driver-badge.warning { background: var(--warning-soft); color: var(--warning); }
+.driver-badge.info { background: var(--primary-soft); color: var(--primary); }
+
+/* --- Form fields (create/confirm forms: Konfirmasi Penerimaan, Pesanan
+   Khusus, Retur, Mutasi) — same shape as driver-qty-input, generalized. --- */
+.store-field { margin-bottom: var(--space-3); }
+.store-field label { display: block; font-size: var(--text-xs); color: var(--text-muted); margin-bottom: 4px; font-weight: 600; }
+.store-field input[type="text"],
+.store-field input[type="number"],
+.store-field input[type="date"],
+.store-field input[type="time"],
+.store-field select,
+.store-field textarea {
+  width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  font-size: var(--text-base); font-family: inherit;
+}
+.store-field textarea { resize: vertical; min-height: 64px; }
+.store-field-hint { font-size: var(--text-xs); color: var(--text-muted); margin-top: 3px; }
+.store-field-error { font-size: var(--text-xs); color: var(--danger); margin-top: 3px; }
+
+.store-item-row {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: var(--space-3); margin-bottom: var(--space-2); position: relative;
+}
+.store-item-remove {
+  position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border-radius: 50%;
+  border: none; background: var(--surface); color: var(--text-muted); font-size: 1rem; line-height: 1; cursor: pointer;
+}
+.store-add-item-btn {
+  width: 100%; padding: 10px; border-radius: var(--radius); border: 1px dashed var(--border);
+  background: transparent; color: var(--primary); font-weight: 700; font-size: var(--text-sm); cursor: pointer; margin-bottom: var(--space-3);
+}
+
+/* --- Evidence (photo) upload — dark-navy port of receipt.css's own
+   proven thumbnail-grid/lightbox-trigger markup (receipt.js precedent),
+   reused across Konfirmasi Penerimaan/Retur/Mutasi, never four separate
+   upload widgets. Tap-to-enlarge uses the SHARED Amor.imageLightbox()
+   (app.js) instead of receipt.js's own bespoke lightbox — one fewer
+   component to keep in sync. --- */
+.store-evidence-hint { font-size: var(--text-xs); color: var(--text-muted); margin: -2px 0 6px; }
+.store-evidence-hint.required { color: var(--warning); }
+.store-evidence-input {
+  display: block; width: 100%; box-sizing: border-box; padding: 10px; border-radius: var(--radius);
+  border: 1px dashed var(--border); background: var(--surface-2); color: var(--text-muted); font-size: var(--text-sm);
+}
+.store-evidence-error { color: var(--danger); font-size: var(--text-xs); margin-top: 4px; }
+.store-evidence-previews {
+  display: grid; grid-template-columns: repeat(auto-fill, 84px); gap: 8px; margin-top: 8px; max-width: 100%;
+}
+.store-evidence-thumb {
+  position: relative; width: 84px; height: 84px; max-width: 84px; max-height: 84px;
+  border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--border); background: var(--surface-2);
+}
+.store-evidence-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: pointer; }
+.store-evidence-remove {
+  position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; border: none;
+  background: rgba(0, 0, 0, .65); color: #fff; font-size: .82rem; line-height: 1; cursor: pointer; padding: 0;
+}
+
+/* --- Mutasi Masuk/Keluar split (Riwayat + action tab) --- */
+.store-subtabs { display: flex; gap: 8px; margin-bottom: var(--space-3); }
+.store-subtab {
+  flex: 1; text-align: center; padding: 9px 4px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text-muted); font-weight: 700; font-size: var(--text-sm); cursor: pointer;
+}
+.store-subtab.active { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+
+.store-qty-compare { display: flex; gap: var(--space-4); margin: 6px 0; }
+.store-qty-compare div { flex: 1; text-align: center; background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px; }
+.store-qty-compare .val { font-weight: 800; font-size: var(--text-lg); }
+.store-qty-compare .lbl { font-size: var(--text-xs); color: var(--text-muted); }
+
+.store-attachment-note { font-size: var(--text-xs); color: var(--text-muted); margin-top: -2px; margin-bottom: var(--space-2); }

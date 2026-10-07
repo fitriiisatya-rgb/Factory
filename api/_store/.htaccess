@@ -1,0 +1,5 @@
+# This portal is PUBLIC BY DESIGN (access control is the permanent,
+# high-entropy ?token= query parameter, not a login) — Options -Indexes
+# here only stops directory listing from leaking filenames, nothing more
+# is needed. Mirrors api/_receive/.htaccess exactly.
+Options -Indexes

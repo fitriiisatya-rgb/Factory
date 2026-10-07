@@ -225,6 +225,29 @@ final class SpecialOrderService
     }
 
     /**
+     * Permanent Bakery Portal — streams ONE of the bakery's own uploaded
+     * reference photos back to it (the Portal detail view's own thumbnail
+     * grid). Ownership-checked on BOTH the order (must belong to
+     * $storeId) AND the attachment (must belong to $orderId) — a bakery
+     * can never view another store's reference photo by guessing either
+     * id.
+     *
+     * @throws ApiException 404 NOT_FOUND
+     */
+    public function getAttachmentForStorePortal(int $storeId, int $orderId, int $attachmentId): array
+    {
+        $order = $this->repo->findOrderById($this->pdo, $orderId);
+        if ($order === null || (int) ($order['store_id'] ?? 0) !== $storeId) {
+            throw new ApiException(404, 'NOT_FOUND', 'Pesanan tidak ditemukan untuk toko ini');
+        }
+        $attachment = $this->repo->findAttachmentById($this->pdo, $attachmentId);
+        if ($attachment === null || (int) $attachment['special_order_id'] !== $orderId) {
+            throw new ApiException(404, 'NOT_FOUND', 'Lampiran tidak ditemukan');
+        }
+        return $attachment;
+    }
+
+    /**
      * Permanent Bakery Portal — "Riwayat" tab's Pesanan Khusus list, this
      * store's own submissions only. findOrders() already supports a
      * storeId filter (used by the existing Admin list screen too) — zero

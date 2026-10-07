@@ -163,6 +163,7 @@ final class App
         $router->get('/api/special-orders', [SpecialOrderController::class, 'index']);
         $router->post('/api/special-orders', [SpecialOrderController::class, 'create']);
         $router->get('/api/special-orders/{id}', [SpecialOrderController::class, 'show']);
+        $router->get('/api/admin/special-orders/attachments/{id}', [SpecialOrderController::class, 'attachment']);
         $router->post('/api/special-orders/{id}/confirm', [SpecialOrderController::class, 'confirm']);
         $router->post('/api/special-orders/{id}/send-to-production', [SpecialOrderController::class, 'sendToProduction']);
         $router->post('/api/special-orders/{id}/status', [SpecialOrderController::class, 'updateStatus']);
@@ -211,6 +212,7 @@ final class App
         $router->get('/api/store/{token}/special-orders', [StorePortalController::class, 'specialOrderList']);
         $router->post('/api/store/{token}/special-orders', [StorePortalController::class, 'specialOrderCreate']);
         $router->get('/api/store/{token}/special-orders/{orderId}', [StorePortalController::class, 'specialOrderDetail']);
+        $router->get('/api/store/{token}/special-orders/{orderId}/attachments/{attachmentId}', [StorePortalController::class, 'specialOrderAttachment']);
         $router->get('/api/store/{token}/retur', [StorePortalController::class, 'returList']);
         $router->post('/api/store/{token}/retur', [StorePortalController::class, 'returCreate']);
         $router->get('/api/store/{token}/retur/{returId}', [StorePortalController::class, 'returDetail']);

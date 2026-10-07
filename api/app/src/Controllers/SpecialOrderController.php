@@ -7,10 +7,12 @@ namespace Amor\Api\Controllers;
 use Amor\Api\ApiException;
 use Amor\Api\Auth;
 use Amor\Api\Database;
+use Amor\Api\Dispatch\EvidenceUploader;
 use Amor\Api\Idempotency;
 use Amor\Api\Request;
 use Amor\Api\Response;
 use Amor\Api\SpecialOrder\SpecialOrderFgAllocationService;
+use Amor\Api\SpecialOrder\SpecialOrderRepository;
 use Amor\Api\SpecialOrder\SpecialOrderService;
 use PDO;
 
@@ -49,6 +51,37 @@ final class SpecialOrderController
         $id = (int) $request->routeParams['id'];
         $service = new SpecialOrderService(Database::pdo());
         Response::json($service->getOrder($id));
+    }
+
+    /**
+     * GET /api/admin/special-orders/attachments/{id} — streams ONE
+     * Pesanan Khusus reference photo's bytes (migration 0017). Any
+     * authenticated user may view it (same "every item/order-detail
+     * reader" audience as show() above) — these are optional bakery-
+     * submitted reference images, not a restricted-access evidence
+     * record, so this is deliberately Auth::requireAuth() rather than
+     * the stricter ADMIN-only gate ReceiptController::adminEvidence()
+     * uses for store receipt evidence. The real filesystem path is never
+     * exposed to the client — same streaming discipline as that method.
+     */
+    public static function attachment(Request $request): void
+    {
+        Auth::requireAuth();
+        $attachmentId = (int) $request->routeParams['id'];
+        $repo = new SpecialOrderRepository();
+        $attachment = $repo->findAttachmentById(Database::pdo(), $attachmentId);
+        if ($attachment === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'Lampiran tidak ditemukan');
+        }
+        $path = EvidenceUploader::absolutePath($attachment['file_path'], 'special-order-attachment');
+        if (!is_file($path)) {
+            throw new ApiException(404, 'NOT_FOUND', 'Berkas lampiran tidak ditemukan di server');
+        }
+        header('Content-Type: ' . $attachment['mime_type']);
+        header('Content-Length: ' . (string) filesize($path));
+        header('Cache-Control: private, max-age=3600');
+        header('X-Content-Type-Options: nosniff');
+        readfile($path);
     }
 
     public static function create(Request $request): void

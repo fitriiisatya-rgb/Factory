@@ -50,4 +50,13 @@ if (preg_match('#^/api/_receive/?$#', $uri)) {
     return true;
 }
 
+// Permanent Bakery Portal (migration 0017) — same real-production-path
+// mismatch as _receive/ above (Mail\ShipmentEmailService's own CTA link
+// is built as /api/_store/?token=... — see StorePortalService::
+// buildPortalUrl()), and the same fix: strip the extra /api locally.
+if (preg_match('#^/api/_store/?$#', $uri)) {
+    require __DIR__ . '/../_store/index.php';
+    return true;
+}
+
 return false; // let the built-in server's normal file/index.php-fallback handling take it from here
