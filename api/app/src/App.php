@@ -23,6 +23,7 @@ use Amor\Api\Controllers\ReplacementController;
 use Amor\Api\Controllers\SpecialOrderController;
 use Amor\Api\Controllers\SpecialOrderDoController;
 use Amor\Api\Controllers\StoreController;
+use Amor\Api\Controllers\StorePortalAdminController;
 use Amor\Api\Controllers\StorePortalController;
 use Amor\Api\Controllers\UserController;
 
@@ -222,6 +223,25 @@ final class App
         $router->post('/api/store/{token}/mutasi', [StorePortalController::class, 'mutasiCreate']);
         $router->get('/api/store/{token}/mutasi/{mutasiId}', [StorePortalController::class, 'mutasiDetail']);
         $router->post('/api/store/{token}/mutasi/{mutasiId}/confirm', [StorePortalController::class, 'mutasiConfirm']);
+
+        // Permanent Bakery Portal — ADMIN-only side (ADMIN role, normal
+        // session/CSRF/Idempotency-Key, nothing special-cased). Pesanan
+        // Khusus review has NO new route here — the existing
+        // /api/special-orders/{id}/confirm|cancel already serve a
+        // portal-submitted toko_khusus order exactly like any other.
+        $router->get('/api/admin/store-portal/{storeId}/status', [StorePortalAdminController::class, 'tokenStatus']);
+        $router->get('/api/admin/store-portal/{storeId}/history', [StorePortalAdminController::class, 'tokenHistory']);
+        $router->post('/api/admin/store-portal/{storeId}/issue', [StorePortalAdminController::class, 'tokenIssue']);
+        $router->post('/api/admin/store-portal/{storeId}/revoke', [StorePortalAdminController::class, 'tokenRevoke']);
+        $router->get('/api/admin/retur', [StorePortalAdminController::class, 'returList']);
+        $router->get('/api/admin/retur/evidence/{id}', [StorePortalAdminController::class, 'returEvidence']);
+        $router->get('/api/admin/retur/{id}', [StorePortalAdminController::class, 'returShow']);
+        $router->post('/api/admin/retur/{id}/verify', [StorePortalAdminController::class, 'returVerify']);
+        $router->post('/api/admin/retur/{id}/reject', [StorePortalAdminController::class, 'returReject']);
+        $router->get('/api/admin/mutasi', [StorePortalAdminController::class, 'mutasiList']);
+        $router->get('/api/admin/mutasi/evidence/{id}', [StorePortalAdminController::class, 'mutasiEvidence']);
+        $router->get('/api/admin/mutasi/{id}', [StorePortalAdminController::class, 'mutasiShow']);
+        $router->post('/api/admin/mutasi/{id}/review', [StorePortalAdminController::class, 'mutasiReview']);
 
         // User / Driver Account Management (ADMIN-only, normal session/CSRF/Idempotency-Key —
         // same guards as every other mutating route, nothing special-cased).

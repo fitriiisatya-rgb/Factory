@@ -44,9 +44,21 @@ function ui_nav_items(array $roles = []): array
         ['key' => 'pengiriman', 'label' => 'Pengiriman', 'icon' => 'truck'],
         ['key' => 'konfirmasi-toko', 'label' => 'Konfirmasi Toko', 'icon' => 'user'],
         ['key' => 'replacement-reject', 'label' => 'Replacement Reject', 'icon' => 'file'],
+        ['key' => 'retur-review', 'label' => 'Retur', 'icon' => 'box'],
+        ['key' => 'mutasi-review', 'label' => 'Mutasi Produk', 'icon' => 'bolt'],
+        ['key' => 'bakery-portal-tokens', 'label' => 'Portal Bakery', 'icon' => 'mail'],
     ];
+    // Same "hide a link a role would just get denied on" reasoning as the
+    // existing replacement-reject hide below — widened to the three
+    // Permanent Bakery Portal admin pages (migration 0017), each gated
+    // identically to api/_ui-preview/index.php's own $pageRoles.
     if ($roles !== [] && array_intersect(['ADMIN', 'PPIC'], $roles) === []) {
-        $items = array_values(array_filter($items, static fn ($i) => $i['key'] !== 'replacement-reject'));
+        $hidden = ['replacement-reject', 'retur-review', 'mutasi-review', 'bakery-portal-tokens'];
+        $items = array_values(array_filter($items, static fn ($i) => !in_array($i['key'], $hidden, true)));
+    } elseif ($roles !== [] && !in_array('ADMIN', $roles, true)) {
+        // bakery-portal-tokens is ADMIN-only (token mgmt is more sensitive
+        // than Retur/Mutasi review) — a PPIC user keeps the other two.
+        $items = array_values(array_filter($items, static fn ($i) => $i['key'] !== 'bakery-portal-tokens'));
     }
     return $items;
 }

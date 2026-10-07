@@ -42,6 +42,9 @@ $pages = [
     'konfirmasi-toko-detail' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Detail konfirmasi penerimaan satu pengiriman.'],
     'replacement-reject' => ['title' => 'Replacement Reject', 'subtitle' => 'Tindak lanjut reject yang sudah diverifikasi: Reject Final atau Kirim Ulang / Ganti Produk.'],
     'replacement-do-detail' => ['title' => 'Replacement Reject', 'subtitle' => 'Detail DO Replacement — pengiriman make-good tanpa harga.'],
+    'bakery-portal-tokens' => ['title' => 'Portal Bakery', 'subtitle' => 'Kelola link permanen Portal Bakery per toko (generate/regenerate/revoke).'],
+    'retur-review' => ['title' => 'Retur', 'subtitle' => 'Tinjau dan verifikasi pengajuan Retur dari Portal Bakery.'],
+    'mutasi-review' => ['title' => 'Mutasi Produk', 'subtitle' => 'Tinjau Mutasi antar toko dan putuskan kasus selisih.'],
     'master-data' => ['title' => 'Master Data', 'subtitle' => 'Produk, toko, divisi, dan pabrik.'],
     'laporan' => ['title' => 'Laporan', 'subtitle' => 'Ringkasan lintas tahap, dari PO sampai pengiriman.'],
     'pengaturan' => ['title' => 'Pengaturan', 'subtitle' => 'Akun, preferensi tampilan, dan sesi.'],
@@ -75,6 +78,12 @@ $pageRoles = [
     // PRODUCTION user from the UI action their own API call already
     // permits, which is a usability regression, not a security fix.
     'replacement-do-detail' => ['ADMIN', 'PPIC', 'PRODUCTION'],
+    // Portal Bakery token management is more sensitive than most admin
+    // actions (a leaked link is a standing, no-login credential) — ADMIN
+    // only, never PPIC (same reasoning the page file's own docblock gives).
+    'bakery-portal-tokens' => ['ADMIN'],
+    'retur-review' => ['ADMIN', 'PPIC'],
+    'mutasi-review' => ['ADMIN', 'PPIC'],
 ];
 if (isset($pageRoles[$page]) && array_intersect($pageRoles[$page], $ui['roles']) === []) {
     http_response_code(403);
