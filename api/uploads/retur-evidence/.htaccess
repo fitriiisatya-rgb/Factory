@@ -1,0 +1,15 @@
+# Blocks ALL direct HTTP access to uploaded Retur evidence photos
+# (Permanent Bakery Portal, migration 0017). These files must NEVER be
+# reachable by a direct URL — they are always served through an
+# authenticated Admin controller, which streams the bytes with the stored
+# content-type. This also guarantees an uploaded file can never be
+# executed as a script, regardless of what its (server-generated) name
+# happens to end in. Mirrors api/uploads/receipt-evidence/.htaccess and
+# api/app/.htaccess exactly.
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

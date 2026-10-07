@@ -249,6 +249,49 @@ final class ReceiptRepository
         return $stmt->fetchAll();
     }
 
+    /**
+     * Permanent Bakery Portal — "Konfirmasi Penerimaan" list, scoped to
+     * exactly ONE store. Identical row shape/joins to listForAdmin() above
+     * (deliberately — ReceiptService::listForStorePortal() reuses the same
+     * mapping logic, just dropping the fields a bakery has no reason to
+     * see) so this is purely an additional WHERE clause, never a second
+     * parallel query to keep in sync. $storeId is ALWAYS the server-
+     * resolved identity from StorePortalService::resolvePortalIdentity() —
+     * never a value the caller can influence — so a bakery can only ever
+     * see its own shipments, across every source (Regular PO, Special/
+     * Non-Regular, Replacement Reject) alike.
+     */
+    public function listForStore(PDO $pdo, int $storeId): array
+    {
+        $sql = "SELECT sh.shipment_id, sh.tanggal, sh.store_id, sh.shipment_group, sh.shipped_at, sh.delivery_order_id, sh.shipped_by,
+                       sh.source_type, sh.delivery_method, sh.courier_provider, sh.courier_name,
+                       s.canonical_name AS store_name, o.doc_no,
+                       sodo.doc_no AS special_doc_no, so2.source_type AS special_source_type,
+                       so2.non_store_source AS special_non_store_source, so2.order_no AS special_order_no,
+                       rdo.doc_no AS replacement_doc_no,
+                       u.full_name AS driver_full_name, u.username AS driver_username,
+                       r.shipment_receipt_id, r.status AS receipt_status, r.receiver_name, r.confirmed_at, r.verified_at,
+                       (SELECT COALESCE(SUM(qty), 0) FROM shipment_item WHERE shipment_id = sh.shipment_id)
+                         + (SELECT COALESCE(SUM(qty), 0) FROM special_order_do_shipment_item WHERE shipment_id = sh.shipment_id)
+                         + (SELECT COALESCE(SUM(qty), 0) FROM replacement_do_shipment_item WHERE shipment_id = sh.shipment_id) AS total_shipped,
+                       (SELECT COALESCE(SUM(received_good_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_good,
+                       (SELECT COALESCE(SUM(reject_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_reject,
+                       (SELECT COALESCE(SUM(shortage_qty), 0) FROM shipment_receipt_item WHERE shipment_receipt_id = r.shipment_receipt_id) AS total_shortage
+                FROM shipment sh
+                INNER JOIN store s ON s.store_id = sh.store_id
+                LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
+                LEFT JOIN special_order_do sodo ON sodo.special_order_do_id = sh.special_order_do_id
+                LEFT JOIN special_order so2 ON so2.special_order_id = sodo.special_order_id
+                LEFT JOIN replacement_do rdo ON rdo.replacement_do_id = sh.replacement_do_id
+                LEFT JOIN users u ON u.user_id = sh.shipped_by
+                LEFT JOIN shipment_receipt r ON r.shipment_id = sh.shipment_id
+                WHERE sh.status = 'active' AND sh.store_id = ?
+                ORDER BY sh.shipment_id DESC";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$storeId]);
+        return $stmt->fetchAll();
+    }
+
     /** Row-locked (FOR UPDATE) for the admin verify transaction. */
     public function lockReceipt(PDO $pdo, int $receiptId): ?array
     {

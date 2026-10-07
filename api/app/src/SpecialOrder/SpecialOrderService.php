@@ -8,6 +8,7 @@ use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Production\ProductionRoutingService;
 use Amor\Api\Services\DocumentSequenceService;
+use Amor\Api\StorePortal\StorePortalRepository;
 use Amor\Api\Versioning;
 use PDO;
 
@@ -164,11 +165,101 @@ final class SpecialOrderService
         return $this->getOrder($orderId);
     }
 
+    /**
+     * Permanent Bakery Portal — "Pesanan Khusus/Custom" submission. Stays
+     * in this SAME Special/Non-Regular Order source (task's own LOCKED
+     * rule: "never merged into Regular PO") — this is a thin wrapper
+     * around the UNCHANGED createOrder(), never a second order engine.
+     * sourceType/storeId are forced here regardless of whatever the
+     * client sent — a bakery can never submit as another store or as a
+     * non_toko order (task's own "bakery cannot select/change identity").
+     * unitPrice/charge per item are stripped for the same reason pricing
+     * is never a bakery-dictated field: resolveItem() already falls back
+     * to the product/catalog's own default price when neither is
+     * present, the exact same default path Admin's own blank-price entry
+     * already uses. extraPackaging and specialNote DO pass through
+     * unchanged — the task's own field list explicitly includes "extra
+     * packaging if applicable" and "custom request" as bakery-submitted
+     * values.
+     *
+     * The resulting order lands in status='draft' exactly like any other
+     * toko_khusus order Admin enters directly — the task's own suggested
+     * "SUBMITTED / WAITING_ADMIN_VERIFICATION" labels are a PRESENTATION
+     * mapping onto this same status (Portal UI relabels 'draft' for a
+     * bakery-submitted order), never a second status value: Admin's
+     * EXISTING confirmOrder()/cancelOrder() actions are "Admin
+     * Verification" / "APPROVED" / "REJECTED(reason)" respectively — no
+     * new transition is added anywhere in this file for the Portal.
+     *
+     * created_by is a lazily-provisioned, role-less, unloggable system
+     * user (StorePortalRepository::findOrCreateSystemUserId()) — see that
+     * method's own docblock for why this is not a loss of audit fidelity;
+     * the real actor is, and always was, store_id.
+     *
+     * @param array<int,array{filePath:string,mimeType:string,fileSize:int,originalName:?string}> $attachmentFiles already validated/moved to disk by the controller (EvidenceUploader::validateAndStore(..., 'special-order-attachment')) — optional, may be empty.
+     * @throws ApiException same codes as createOrder() (e.g. STORE_NOT_FOUND, ITEMS_REQUIRED, PRODUCT_NOT_FOUND)
+     */
+    public function createOrderForStorePortal(int $storeId, array $input, array $attachmentFiles, ?string $requestId): array
+    {
+        $input['sourceType'] = 'toko_khusus';
+        $input['storeId'] = $storeId;
+        unset($input['nonStoreSource'], $input['fulfillmentType'], $input['deliveryAddress'], $input['picUserId']);
+
+        $items = is_array($input['items'] ?? null) ? $input['items'] : [];
+        foreach ($items as &$item) {
+            if (is_array($item)) {
+                unset($item['unitPrice'], $item['charge']);
+            }
+        }
+        unset($item);
+        $input['items'] = $items;
+
+        $systemUserId = (new StorePortalRepository())->findOrCreateSystemUserId($this->pdo);
+        $dto = $this->createOrder($input, $systemUserId, $requestId);
+
+        foreach ($attachmentFiles as $file) {
+            $this->repo->insertAttachment($this->pdo, (int) $dto['orderId'], $file['filePath'], $file['mimeType'], $file['fileSize'], $file['originalName']);
+        }
+
+        return $attachmentFiles === [] ? $dto : $this->getOrder((int) $dto['orderId']);
+    }
+
+    /**
+     * Permanent Bakery Portal — "Riwayat" tab's Pesanan Khusus list, this
+     * store's own submissions only. findOrders() already supports a
+     * storeId filter (used by the existing Admin list screen too) — zero
+     * backend change needed beyond this one-line scoping wrapper.
+     */
+    public function listOrdersForStorePortal(int $storeId): array
+    {
+        return $this->listOrders(['storeId' => $storeId]);
+    }
+
     public function getOrder(int $orderId): array
     {
         $order = $this->repo->findOrderById($this->pdo, $orderId);
         if ($order === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Special order not found');
+        }
+        $items = $this->repo->findItemsForOrder($this->pdo, $orderId);
+        return $this->buildOrderDto($order, $items);
+    }
+
+    /**
+     * Permanent Bakery Portal — one order's detail, ownership-checked.
+     * getOrder() above has no ownership concept at all (it's an Admin/
+     * Production-facing read with no ambient storeId to scope by) — a
+     * bakery calling it directly with a guessed orderId would leak another
+     * store's customer name/pricing/notes. This wrapper is the ONLY entry
+     * point the Portal controller may call for a single order's detail.
+     *
+     * @throws ApiException 404 NOT_FOUND if the order doesn't exist or doesn't belong to $storeId
+     */
+    public function getOrderForStorePortal(int $storeId, int $orderId): array
+    {
+        $order = $this->repo->findOrderById($this->pdo, $orderId);
+        if ($order === null || (int) ($order['store_id'] ?? 0) !== $storeId) {
+            throw new ApiException(404, 'NOT_FOUND', 'Pesanan tidak ditemukan untuk toko ini');
         }
         $items = $this->repo->findItemsForOrder($this->pdo, $orderId);
         return $this->buildOrderDto($order, $items);
@@ -588,6 +679,17 @@ final class SpecialOrderService
             if ($stmt->fetchColumn() === false) {
                 throw new ApiException(404, 'STORE_NOT_FOUND', 'Store not found or inactive');
             }
+            // Both optional — unlike Pesanan Non-Toko below, a toko_khusus
+            // order already has a real store identity, so neither is
+            // required. Added for the Permanent Bakery Portal (migration
+            // 0017): "customer name, contact (optional)" are fields on the
+            // bakery's own submission form — the columns already existed
+            // on special_order (used by the non_toko branch below) but
+            // were never populated for toko_khusus until now. Admin's own
+            // existing toko_khusus creation flow never sent these, so this
+            // is purely additive — every existing caller still gets NULL.
+            $customerName = $this->nullableString($input['customerName'] ?? null);
+            $customerContact = $this->nullableString($input['customerContact'] ?? null);
         } else {
             $nonStoreSource = (string) ($input['nonStoreSource'] ?? '');
             if (!in_array($nonStoreSource, self::VALID_NON_STORE_SOURCES, true)) {
@@ -803,6 +905,17 @@ final class SpecialOrderService
             'createdAt' => $order['created_at'],
             'cancelReason' => $order['cancel_reason'],
             'items' => $itemDtos,
+            // Permanent Bakery Portal (migration 0017) — optional
+            // reference photos. Never the raw filesystem path, same
+            // "enough to build a thumbnail <img src=...>" discipline as
+            // ReceiptService::buildReceiptDto()'s own evidence list.
+            'attachments' => array_map(static fn ($a) => [
+                'attachmentId' => (int) $a['special_order_attachment_id'],
+                'mimeType' => $a['mime_type'],
+                'fileSize' => (int) $a['file_size'],
+                'originalName' => $a['original_name'],
+                'uploadedAt' => $a['uploaded_at'],
+            ], $this->repo->findAttachmentsForOrder($this->pdo, (int) $order['special_order_id'])),
         ];
     }
 

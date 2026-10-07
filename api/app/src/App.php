@@ -23,6 +23,7 @@ use Amor\Api\Controllers\ReplacementController;
 use Amor\Api\Controllers\SpecialOrderController;
 use Amor\Api\Controllers\SpecialOrderDoController;
 use Amor\Api\Controllers\StoreController;
+use Amor\Api\Controllers\StorePortalController;
 use Amor\Api\Controllers\UserController;
 
 /**
@@ -196,6 +197,30 @@ final class App
         $router->get('/api/replacement-do/{id}', [ReplacementController::class, 'showDo']);
         $router->post('/api/replacement-do/{id}/ship', [ReplacementController::class, 'ship']);
 
+        // Migration 0017 — Permanent Bakery Portal. PUBLIC (no session): the
+        // permanent {token} path segment IS the access control, resolved
+        // ONLY via StorePortalService::resolvePortalIdentity() — never a
+        // raw store_id — same discipline as /api/receive/{token} above.
+        // Menu 1 (Konfirmasi Penerimaan, Reject included) only for now;
+        // Pesanan Khusus/Retur/Mutasi/Riwayat routes are added alongside
+        // their own controllers' tasks.
+        $router->get('/api/store/{token}', [StorePortalController::class, 'bootstrap']);
+        $router->get('/api/store/{token}/receipts', [StorePortalController::class, 'receiptList']);
+        $router->get('/api/store/{token}/receipts/{shipmentId}', [StorePortalController::class, 'receiptDetail']);
+        $router->post('/api/store/{token}/receipts/{shipmentId}/confirm', [StorePortalController::class, 'receiptConfirm']);
+        $router->get('/api/store/{token}/special-orders', [StorePortalController::class, 'specialOrderList']);
+        $router->post('/api/store/{token}/special-orders', [StorePortalController::class, 'specialOrderCreate']);
+        $router->get('/api/store/{token}/special-orders/{orderId}', [StorePortalController::class, 'specialOrderDetail']);
+        $router->get('/api/store/{token}/retur', [StorePortalController::class, 'returList']);
+        $router->post('/api/store/{token}/retur', [StorePortalController::class, 'returCreate']);
+        $router->get('/api/store/{token}/retur/{returId}', [StorePortalController::class, 'returDetail']);
+        $router->get('/api/store/{token}/mutasi/incoming', [StorePortalController::class, 'mutasiIncomingPending']);
+        $router->get('/api/store/{token}/mutasi/outgoing', [StorePortalController::class, 'mutasiOutgoing']);
+        $router->get('/api/store/{token}/mutasi/incoming-history', [StorePortalController::class, 'mutasiIncomingHistory']);
+        $router->post('/api/store/{token}/mutasi', [StorePortalController::class, 'mutasiCreate']);
+        $router->get('/api/store/{token}/mutasi/{mutasiId}', [StorePortalController::class, 'mutasiDetail']);
+        $router->post('/api/store/{token}/mutasi/{mutasiId}/confirm', [StorePortalController::class, 'mutasiConfirm']);
+
         // User / Driver Account Management (ADMIN-only, normal session/CSRF/Idempotency-Key —
         // same guards as every other mutating route, nothing special-cased).
         $router->get('/api/users', [UserController::class, 'index']);
@@ -214,7 +239,11 @@ final class App
         // login exemption above, scoped by prefix since {token}/{shipmentId}
         // are dynamic segments a literal CSRF_EXEMPT string can't match.
         $isPublicReceiptConfirm = $request->method === 'POST' && str_starts_with($request->path, '/api/receive/');
-        if ($request->method !== 'GET' && !in_array($routeKey, self::CSRF_EXEMPT, true) && !$isPublicReceiptConfirm) {
+        // Permanent Bakery Portal (migration 0017) — same "no session, so
+        // no CSRF token to check" reasoning, scoped by prefix for the same
+        // dynamic-{token}-segment reason as the receive/ exemption above.
+        $isPublicStorePortal = $request->method === 'POST' && str_starts_with($request->path, '/api/store/');
+        if ($request->method !== 'GET' && !in_array($routeKey, self::CSRF_EXEMPT, true) && !$isPublicReceiptConfirm && !$isPublicStorePortal) {
             // CSRF is checked centrally, before the handler runs, per
             // docs/php-api-contract-v1.md §1 rule 3 — no handler can forget it.
             Csrf::verify($request);

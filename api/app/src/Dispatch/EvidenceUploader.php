@@ -31,6 +31,20 @@ use Amor\Api\ApiException;
  * Files are validated and moved to disk BEFORE any DB row is written —
  * see ReceiptService::confirmReceipt()'s own docblock for how a later
  * failure in the same request cleans them back up (deleteStoredFiles()).
+ *
+ * WIDENED (Permanent Bakery Portal, migration 0017): the Portal's Retur/
+ * Mutasi/Pesanan Khusus evidence rules all need this exact same MIME-
+ * sniffing/size/filename-randomization logic, just filed under a
+ * different upload subdirectory — task's own explicit "use ONE reusable
+ * evidence/attachment mechanism... do NOT build four separate
+ * incompatible upload systems." Every method below gained an optional
+ * trailing $context parameter (default 'receipt-evidence', the original
+ * and only directory before this pass) so every EXISTING call site needs
+ * zero changes and keeps writing to exactly the same place; a new caller
+ * passes e.g. 'special-order-attachment' to get its own sibling directory
+ * under api/uploads/, each with its own deny-all .htaccess (never a
+ * shared directory across contexts — keeps each feature's files trivially
+ * separable on disk for ops/backup purposes, at no extra code cost).
  */
 final class EvidenceUploader
 {
@@ -44,9 +58,9 @@ final class EvidenceUploader
         'image/webp' => 'webp',
     ];
 
-    public static function uploadRoot(): string
+    public static function uploadRoot(string $context = 'receipt-evidence'): string
     {
-        return dirname(__DIR__, 3) . '/uploads/receipt-evidence';
+        return dirname(__DIR__, 3) . '/uploads/' . $context;
     }
 
     /**
@@ -97,7 +111,7 @@ final class EvidenceUploader
      * in THIS call is left behind (cleaned up before rethrowing).
      * @return array<int,array{filePath:string,mimeType:string,fileSize:int,originalName:?string}>
      */
-    public static function validateAndStore(array $filesField): array
+    public static function validateAndStore(array $filesField, string $context = 'receipt-evidence'): array
     {
         $normalized = self::normalize($filesField);
         if ($normalized === []) {
@@ -107,7 +121,7 @@ final class EvidenceUploader
             throw new ApiException(400, 'TOO_MANY_EVIDENCE_FILES', 'Maksimal ' . self::MAX_FILES . ' foto bukti per pengiriman');
         }
 
-        $root = self::uploadRoot();
+        $root = self::uploadRoot($context);
         if (!is_dir($root) && !mkdir($root, 0755, true) && !is_dir($root)) {
             throw new ApiException(500, 'EVIDENCE_STORAGE_UNAVAILABLE', 'Penyimpanan bukti foto tidak tersedia di server');
         }
@@ -167,9 +181,9 @@ final class EvidenceUploader
     }
 
     /** @param array<int,array{filePath:string}> $stored */
-    public static function deleteStoredFiles(array $stored): void
+    public static function deleteStoredFiles(array $stored, string $context = 'receipt-evidence'): void
     {
-        $root = self::uploadRoot();
+        $root = self::uploadRoot($context);
         foreach ($stored as $s) {
             $path = $root . '/' . basename($s['filePath']);
             if (is_file($path)) {
@@ -179,8 +193,8 @@ final class EvidenceUploader
     }
 
     /** basename() defends against a stored value ever containing a path traversal, even though every value here is always server-generated. */
-    public static function absolutePath(string $filePath): string
+    public static function absolutePath(string $filePath, string $context = 'receipt-evidence'): string
     {
-        return self::uploadRoot() . '/' . basename($filePath);
+        return self::uploadRoot($context) . '/' . basename($filePath);
     }
 }

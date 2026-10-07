@@ -28,6 +28,19 @@ api/api
 api/uploads/receipt-evidence/*
 !api/uploads/receipt-evidence/.htaccess
 
+# Permanent Bakery Portal (migration 0017) — Pesanan Khusus/Custom
+# reference photos, same "only the .htaccess is source-controlled" rule.
+api/uploads/special-order-attachment/*
+!api/uploads/special-order-attachment/.htaccess
+
+# Permanent Bakery Portal (migration 0017) — Retur evidence photos, same rule.
+api/uploads/retur-evidence/*
+!api/uploads/retur-evidence/.htaccess
+
+# Permanent Bakery Portal (migration 0017) — Mutasi evidence photos, same rule.
+api/uploads/mutasi-evidence/*
+!api/uploads/mutasi-evidence/.htaccess
+
 # dist/amor-factory-api-preprod.zip IS committed deliberately (contains no
 # secrets — verified by build-cpanel-package.sh's own sanity check — and a
 # non-technical operator needs to download it directly, not run a build

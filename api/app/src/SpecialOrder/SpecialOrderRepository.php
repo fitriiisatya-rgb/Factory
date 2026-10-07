@@ -299,6 +299,41 @@ final class SpecialOrderRepository
     }
 
     /**
+     * Permanent Bakery Portal (migration 0017) — optional, multiple
+     * reference photos attached to the ORDER HEADER (never per line item
+     * — see special_order_attachment's own migration docblock for why).
+     * ON DELETE CASCADE on the FK means no explicit delete path is needed
+     * here; special_order rows are never hard-deleted by any code path.
+     */
+    public function insertAttachment(PDO $pdo, int $orderId, string $filePath, string $mimeType, int $fileSize, ?string $originalName): void
+    {
+        $stmt = $pdo->prepare(
+            'INSERT INTO special_order_attachment
+                (special_order_id, file_path, mime_type, file_size, original_name, uploaded_at)
+             VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP())'
+        );
+        $stmt->execute([$orderId, $filePath, $mimeType, $fileSize, $originalName]);
+    }
+
+    /** @return array<int,array> every attachment for one order, oldest first (upload order). */
+    public function findAttachmentsForOrder(PDO $pdo, int $orderId): array
+    {
+        $stmt = $pdo->prepare(
+            'SELECT * FROM special_order_attachment WHERE special_order_id = ? ORDER BY special_order_attachment_id'
+        );
+        $stmt->execute([$orderId]);
+        return $stmt->fetchAll();
+    }
+
+    public function findAttachmentById(PDO $pdo, int $attachmentId): ?array
+    {
+        $stmt = $pdo->prepare('SELECT * FROM special_order_attachment WHERE special_order_attachment_id = ?');
+        $stmt->execute([$attachmentId]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    }
+
+    /**
      * Snapshot semantics, same convention as ProductionRepository::
      * updateItemActual() — $aktual/$reject each REPLACE the stored value.
      * The WHERE clause scopes by BOTH special_order_item_id AND

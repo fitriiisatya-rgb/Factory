@@ -436,6 +436,174 @@ final class ReceiptService
     }
 
     /**
+     * Permanent Bakery Portal — "Konfirmasi Penerimaan" list. $storeId is
+     * ALWAYS the server-resolved identity from StorePortalService::
+     * resolvePortalIdentity() — this method has no other way to learn
+     * which store it's listing for, so a bakery can never see another
+     * store's shipments by any route-level manipulation. Reuses
+     * ReceiptRepository::listForStore() (store-scoped twin of
+     * listForAdmin()) and the same NormalizedSourceType labeling adminList()
+     * already uses, so Regular/Special/Replacement shipments all render
+     * through the one list a bakery sees — "No. DO/Shipment#/Tanggal
+     * Kirim/Produk/Qty Dikirim/Status" (task's own field list).
+     */
+    public function listForStorePortal(int $storeId): array
+    {
+        $rows = $this->repo->listForStore($this->pdo, $storeId);
+        return array_map(static function ($r) {
+            $isSpecial = ($r['source_type'] ?? null) === 'special_order_do';
+            $isReplacement = ($r['source_type'] ?? null) === 'replacement_do';
+            $sourceType = $isSpecial
+                ? NormalizedSourceType::fromSpecialOrder((string) $r['special_source_type'], $r['special_non_store_source'] ?? null)
+                : ($isReplacement ? NormalizedSourceType::REPLACEMENT_REJECT : NormalizedSourceType::REGULAR_STORE_PO);
+            $deliveryMethod = $r['delivery_method'] ?? 'DRIVER_INTERNAL';
+            $driverName = ($deliveryMethod === 'EXTERNAL_COURIER')
+                ? 'Kurir: ' . ($r['courier_name'] ?? ucfirst((string) ($r['courier_provider'] ?? 'kurir')))
+                : (($r['driver_full_name'] ?? '') !== '' ? $r['driver_full_name'] : $r['driver_username']);
+            return [
+                'shipmentId' => (int) $r['shipment_id'],
+                'docNo' => $r['doc_no'] ?? $r['special_doc_no'] ?? $r['replacement_doc_no'],
+                'tanggal' => $r['tanggal'],
+                'shipmentGroup' => $r['shipment_group'],
+                'shippedAt' => $r['shipped_at'],
+                'driverName' => $driverName,
+                'source' => ['type' => $sourceType, 'label' => NormalizedSourceType::label($sourceType), 'orderNo' => $r['special_order_no'] ?? null],
+                'deliveryMethod' => $deliveryMethod,
+                'totalShipped' => (float) $r['total_shipped'],
+                'totalGood' => (float) $r['total_good'],
+                'totalReject' => (float) $r['total_reject'],
+                'totalShortage' => (float) $r['total_shortage'],
+                'receiptId' => $r['shipment_receipt_id'] !== null ? (int) $r['shipment_receipt_id'] : null,
+                'status' => $r['receipt_status'] ?? 'belum_dikonfirmasi',
+                'confirmedAt' => $r['confirmed_at'],
+                'verifiedAt' => $r['verified_at'],
+            ];
+        }, $rows);
+    }
+
+    /**
+     * Permanent Bakery Portal — one shipment's detail, the data a bakery
+     * needs to fill the Konfirmasi Penerimaan form (per-product Qty
+     * Baik/Reject/Kurang/Catatan/Foto). Same shape as
+     * getPublicViewForShipmentToken()'s own `shipments[0]`, reused
+     * verbatim by portal.js. Ownership is enforced here (never only at the
+     * list level): a bakery cannot view or confirm another store's
+     * shipment by guessing a shipmentId, because the Portal's access
+     * control is the token-resolved storeId, never the shipmentId itself.
+     *
+     * @throws ApiException 404 NOT_FOUND if the shipment doesn't exist or doesn't belong to $storeId
+     */
+    public function getPortalShipmentDetail(int $storeId, int $shipmentId): array
+    {
+        $shipment = $this->doRepo->findShipmentById($this->pdo, $shipmentId);
+        if ($shipment === null || (int) $shipment['store_id'] !== $storeId) {
+            throw new ApiException(404, 'NOT_FOUND', 'Pengiriman tidak ditemukan untuk toko ini');
+        }
+
+        $lines = $this->lineResolver->linesForShipment($this->pdo, $shipment);
+        $receipt = $this->repo->findReceiptForShipment($this->pdo, $shipmentId);
+        $isSpecial = ($shipment['source_type'] ?? null) === 'special_order_do';
+        $isReplacement = ($shipment['source_type'] ?? null) === 'replacement_do';
+        $docNo = $isSpecial ? $shipment['special_doc_no'] : ($isReplacement ? $shipment['replacement_doc_no'] : $shipment['doc_no']);
+
+        return [
+            'shipmentId' => $shipmentId,
+            'docNo' => $docNo,
+            'tanggal' => $shipment['tanggal'],
+            'shipmentGroup' => $shipment['shipment_group'],
+            'driverName' => $this->shipmentDriverLabel($shipment),
+            'departedAt' => $shipment['shipped_at'],
+            'items' => array_map(static fn ($l) => [
+                'shipmentItemId' => $l['lineId'],
+                'productId' => $l['productId'],
+                'productName' => $l['itemName'],
+                'shippedQty' => $l['qtyShipped'],
+            ], $lines),
+            'receiptStatus' => $receipt['status'] ?? 'pending',
+            'confirmedAt' => $receipt['confirmed_at'] ?? null,
+            'receiverName' => $receipt['receiver_name'] ?? null,
+        ];
+    }
+
+    /**
+     * Permanent Bakery Portal — "Konfirmasi Penerimaan" submit, where
+     * REJECT also lives (task's own LOCKED rule: "Reject lives inside
+     * Konfirmasi Penerimaan, never a standalone menu"). This is the
+     * generalization confirmReceiptForShipmentToken() never needed: that
+     * method only ever saw special/replacement shipments (Regular PO
+     * always used the DO-token path's own confirmReceiptForDo()); the
+     * Portal instead sees a bakery's shipments from ALL THREE sources
+     * through the same storeId-scoped list, so this method branches the
+     * same way confirmReceiptForShipmentToken() does, just widened to also
+     * cover the regular case via ShipmentLineResolver's own default branch
+     * (already structurally identical to doRepo->findShipmentItems() — see
+     * that class's own docblock) rather than forking into two near-
+     * duplicate methods. Ownership (store_id match) replaces token
+     * resolution as the access control; everything else (shared math/
+     * evidence validation, idempotent "already confirmed -> return
+     * existing", disposition/Replacement hookup) is identical to the
+     * existing public paths — never a second reject/validation engine.
+     *
+     * @param array<int,array{shipmentItemId:int,receivedGood:float,reject:float,shortage:float,reason?:string}> $items
+     * @param array<int,array{filePath:string,mimeType:string,fileSize:int,originalName:?string}> $evidenceFiles
+     * @throws ApiException 404 NOT_FOUND if the shipment doesn't exist or doesn't belong to $storeId
+     */
+    public function confirmReceiptForStorePortal(int $storeId, int $shipmentId, ?string $receiverName, ?string $note, array $items, array $evidenceFiles, ?string $requestId): array
+    {
+        $shipment = $this->doRepo->findShipmentById($this->pdo, $shipmentId);
+        if ($shipment === null || $shipment['status'] !== 'active' || (int) $shipment['store_id'] !== $storeId) {
+            throw new ApiException(404, 'NOT_FOUND', 'Pengiriman tidak ditemukan untuk toko ini');
+        }
+
+        $existing = $this->repo->lockReceiptForShipment($this->pdo, $shipmentId);
+        if ($existing !== null) {
+            return $this->buildReceiptDto($existing);
+        }
+
+        $lines = $this->lineResolver->linesForShipment($this->pdo, $shipment);
+        $shippedQtyByLineId = [];
+        $byId = [];
+        foreach ($lines as $l) {
+            $shippedQtyByLineId[$l['lineId']] = $l['qtyShipped'];
+            $byId[$l['lineId']] = $l;
+        }
+        $validated = $this->validateReceiptLines($items, $shippedQtyByLineId, $evidenceFiles);
+        $status = $validated['anyDiscrepancy'] ? 'confirmed_discrepancy' : 'confirmed_ok';
+        $receiptId = $this->repo->insertReceipt($this->pdo, $shipmentId, $status, $receiverName, $note);
+
+        $sourceType = $shipment['source_type'] ?? null;
+        foreach ($validated['rows'] as $r) {
+            $line = $byId[$r['lineId']];
+            if ($sourceType === 'special_order_do') {
+                $this->repo->insertReceiptItemForSpecialLine($this->pdo, $receiptId, $r['lineId'], $line['productId'], $line['itemName'], $r['shippedQty'], $r['good'], $r['reject'], $r['shortage'], $r['reason']);
+            } elseif ($sourceType === 'replacement_do') {
+                $this->repo->insertReceiptItemForReplacementLine($this->pdo, $receiptId, $r['lineId'], $line['productId'], $line['itemName'], $r['shippedQty'], $r['good'], $r['reject'], $r['shortage'], $r['reason']);
+            } else {
+                $this->repo->insertReceiptItem($this->pdo, $receiptId, $r['lineId'], $line['productId'], $r['shippedQty'], $r['good'], $r['reject'], $r['shortage'], $r['reason']);
+            }
+        }
+        foreach ($evidenceFiles as $ev) {
+            $this->repo->insertEvidence($this->pdo, $receiptId, $ev['filePath'], $ev['mimeType'], $ev['fileSize'], $ev['originalName']);
+        }
+
+        // user_id = null: the Portal identifies a BAKERY (a token, never a
+        // users row) — same "no users FK for an unauthenticated store
+        // actor" discipline as every other public receipt path in this
+        // file; storeId is captured in the payload summary instead.
+        Audit::write(
+            $this->pdo, $requestId, null, 'receipt.confirmed', 'shipment_receipt', (string) $receiptId,
+            'ok', null, null, ['shipmentId' => $shipmentId, 'storeId' => $storeId, 'status' => $status, 'receiverName' => $receiverName, 'via' => 'store_portal']
+        );
+
+        if ($sourceType === 'replacement_do') {
+            (new ReplacementService($this->pdo))->recordReceiptOutcome($shipmentId, null, $requestId);
+        }
+
+        $created = $this->repo->findReceiptForShipment($this->pdo, $shipmentId);
+        return $this->buildReceiptDto($created);
+    }
+
+    /**
      * GET /api/admin/receipts — Konfirmasi Toko list (Part I). Every row
      * (Regular or special/non-regular) now carries an explicit normalized
      * `source` — task's own Section H: "special/non-regular shipments must
