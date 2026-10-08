@@ -47,18 +47,21 @@ function ui_nav_items(array $roles = []): array
         ['key' => 'retur-review', 'label' => 'Retur', 'icon' => 'box'],
         ['key' => 'mutasi-review', 'label' => 'Mutasi Produk', 'icon' => 'bolt'],
         ['key' => 'bakery-portal-tokens', 'label' => 'Portal Bakery', 'icon' => 'mail'],
+        ['key' => 'invoice', 'label' => 'Invoice', 'icon' => 'file'],
     ];
     // Same "hide a link a role would just get denied on" reasoning as the
     // existing replacement-reject hide below — widened to the three
     // Permanent Bakery Portal admin pages (migration 0017), each gated
     // identically to api/_ui-preview/index.php's own $pageRoles.
     if ($roles !== [] && array_intersect(['ADMIN', 'PPIC'], $roles) === []) {
-        $hidden = ['replacement-reject', 'retur-review', 'mutasi-review', 'bakery-portal-tokens'];
+        $hidden = ['replacement-reject', 'retur-review', 'mutasi-review', 'bakery-portal-tokens', 'invoice'];
         $items = array_values(array_filter($items, static fn ($i) => !in_array($i['key'], $hidden, true)));
     } elseif ($roles !== [] && !in_array('ADMIN', $roles, true)) {
-        // bakery-portal-tokens is ADMIN-only (token mgmt is more sensitive
-        // than Retur/Mutasi review) — a PPIC user keeps the other two.
-        $items = array_values(array_filter($items, static fn ($i) => $i['key'] !== 'bakery-portal-tokens'));
+        // bakery-portal-tokens and invoice are ADMIN-only (token mgmt is
+        // more sensitive than Retur/Mutasi review; Invoice generation is
+        // ADMIN-only end to end via InvoiceController's own role gate) —
+        // a PPIC user keeps the other two.
+        $items = array_values(array_filter($items, static fn ($i) => !in_array($i['key'], ['bakery-portal-tokens', 'invoice'], true)));
     }
     return $items;
 }

@@ -10,6 +10,7 @@ use Amor\Api\Controllers\DashboardController;
 use Amor\Api\Controllers\DispatchController;
 use Amor\Api\Controllers\DivisionController;
 use Amor\Api\Controllers\DoController;
+use Amor\Api\Controllers\InvoiceController;
 use Amor\Api\Controllers\FactoryController;
 use Amor\Api\Controllers\FgController;
 use Amor\Api\Controllers\HealthController;
@@ -109,6 +110,12 @@ final class App
         $router->get('/api/do/{id}/shipments', [DoController::class, 'shipments']);
         $router->post('/api/do/{id}/shipment-preview', [DoController::class, 'shipmentPreview']);
         $router->post('/api/do/{id}/ship', [DoController::class, 'ship']);
+
+        $router->get('/api/invoices/preview', [InvoiceController::class, 'preview']);
+        $router->get('/api/invoices', [InvoiceController::class, 'index']);
+        $router->post('/api/invoices', [InvoiceController::class, 'generate']);
+        $router->get('/api/invoices/{id}', [InvoiceController::class, 'show']);
+        $router->post('/api/invoices/{id}/void', [InvoiceController::class, 'void']);
 
         $router->get('/api/dashboard/summary', [DashboardController::class, 'summary']);
 

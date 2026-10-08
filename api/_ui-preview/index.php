@@ -43,6 +43,8 @@ $pages = [
     'replacement-reject' => ['title' => 'Replacement Reject', 'subtitle' => 'Tindak lanjut reject yang sudah diverifikasi: Reject Final atau Kirim Ulang / Ganti Produk.'],
     'replacement-do-detail' => ['title' => 'Replacement Reject', 'subtitle' => 'Detail DO Replacement — pengiriman make-good tanpa harga.'],
     'bakery-portal-tokens' => ['title' => 'Portal Bakery', 'subtitle' => 'Kelola link permanen Portal Bakery per toko (generate/regenerate/revoke).'],
+    'invoice' => ['title' => 'Invoice', 'subtitle' => 'Generate dan kelola invoice dari data pengiriman dan mutasi yang sudah terkonfirmasi.'],
+    'invoice-detail' => ['title' => 'Invoice', 'subtitle' => 'Detail satu invoice.'],
     'retur-review' => ['title' => 'Retur', 'subtitle' => 'Tinjau dan verifikasi pengajuan Retur dari Portal Bakery.'],
     'mutasi-review' => ['title' => 'Mutasi Produk', 'subtitle' => 'Tinjau Mutasi antar toko dan putuskan kasus selisih.'],
     'master-data' => ['title' => 'Master Data', 'subtitle' => 'Produk, toko, divisi, dan pabrik.'],
@@ -84,6 +86,12 @@ $pageRoles = [
     'bakery-portal-tokens' => ['ADMIN'],
     'retur-review' => ['ADMIN', 'PPIC'],
     'mutasi-review' => ['ADMIN', 'PPIC'],
+    // Invoice generation is ADMIN-only end to end (InvoiceController's own
+    // Auth::requireRole('ADMIN') gate) — hiding the nav link and the page
+    // itself from any other role avoids a dead-end UI that would just
+    // 403 on every underlying API call anyway.
+    'invoice' => ['ADMIN'],
+    'invoice-detail' => ['ADMIN'],
 ];
 if (isset($pageRoles[$page]) && array_intersect($pageRoles[$page], $ui['roles']) === []) {
     http_response_code(403);
@@ -101,7 +109,8 @@ $activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order'
     : (str_starts_with($page, 'replacement-') ? 'replacement-reject'
     : ((str_starts_with($page, 'pesanan-khusus-toko') || str_starts_with($page, 'pesanan-non-toko')) ? 'pesanan-toko'
     : (str_starts_with($page, 'produksi-') ? 'produksi'
-    : (str_starts_with($page, 'fg-') && $page !== 'fg-packing' ? 'fg-packing' : $page)))));
+    : (str_starts_with($page, 'fg-') && $page !== 'fg-packing' ? 'fg-packing'
+    : (str_starts_with($page, 'invoice') ? 'invoice' : $page))))));
 
 // Shared date/factory selection every page can use as its default filter
 // state, so the topbar's date/factory chips stay meaningful app-wide.

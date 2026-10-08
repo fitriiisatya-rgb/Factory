@@ -107,11 +107,11 @@ runTest('P0-01 DB connection works', function () use ($http) {
     expect($r['json']['data']['db'] === 'connected', 'db should be connected: ' . json_encode($r['json']));
 });
 
-runTest('P0-02 all 74 tables exist (45 original + po_import from migration 0003 + 6 Phase 5.5 dispatch/receipt tables from migration 0007 + shipment_receipt_evidence from migration 0008 + shipment_email_delivery from migration 0009 + special_order/special_order_item/special_order_catalog from migration 0010 + special_order_do/special_order_do_item/special_order_do_shipment_item/shipment_receipt_token/special_order_fg_allocation from migration 0012 + store_fg_balance from migration 0014\'s store-specific FG reservation guard extension + fg_store_packing_submission from migration 0015 + replacement_demand/replacement_demand_fg_allocation/replacement_do/replacement_do_shipment_item from migration 0016 + store_portal_token/retur_request/retur_request_evidence/mutasi_request/mutasi_request_evidence/special_order_attachment from migration 0017 — migrations 0011, 0013, and the REST of 0014/0016 are additive ALTERs only, no new tables)', function () use ($pdo) {
+runTest('P0-02 all 75 tables exist (45 original + po_import from migration 0003 + 6 Phase 5.5 dispatch/receipt tables from migration 0007 + shipment_receipt_evidence from migration 0008 + shipment_email_delivery from migration 0009 + special_order/special_order_item/special_order_catalog from migration 0010 + special_order_do/special_order_do_item/special_order_do_shipment_item/shipment_receipt_token/special_order_fg_allocation from migration 0012 + store_fg_balance from migration 0014\'s store-specific FG reservation guard extension + fg_store_packing_submission from migration 0015 + replacement_demand/replacement_demand_fg_allocation/replacement_do/replacement_do_shipment_item from migration 0016 + store_portal_token/retur_request/retur_request_evidence/mutasi_request/mutasi_request_evidence/special_order_attachment from migration 0017 + invoice_mutasi from migration 0018 — migrations 0011, 0013, and the REST of 0014/0016 are additive ALTERs only, no new tables)', function () use ($pdo) {
     $count = (int) $pdo->query(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name != 'schema_migrations'"
     )->fetchColumn();
-    expect($count === 74, "expected 74 tables, got {$count}");
+    expect($count === 75, "expected 75 tables, got {$count}");
 });
 
 $adminCsrf = null;
