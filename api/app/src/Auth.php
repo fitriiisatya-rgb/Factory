@@ -67,6 +67,9 @@ final class Auth
         $_SESSION['factory_ids'] = $factoryIds;
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
         $_SESSION['login_at'] = time();
+        // A fresh login must never inherit the previous person's
+        // "Siapa Anda?" answer from the same browser session.
+        unset($_SESSION['operator_name']);
 
         return [
             'userId' => (int) $row['user_id'],
@@ -96,6 +99,53 @@ final class Auth
     public static function currentRoles(): array
     {
         return $_SESSION['roles'] ?? [];
+    }
+
+    /**
+     * Shared Division Login (migration 0019): each production division
+     * logs in with ONE shared account, so after login the operator types
+     * their own name ("Siapa Anda?"). Kept in the session only — re-asked
+     * on every new login, recorded on every production create/edit/submit.
+     */
+    public static function currentOperatorName(): ?string
+    {
+        return $_SESSION['operator_name'] ?? null;
+    }
+
+    public static function setOperatorName(string $name): void
+    {
+        $name = trim(preg_replace('/\s+/u', ' ', $name) ?? '');
+        if (mb_strlen($name) > 150) {
+            $name = mb_substr($name, 0, 150);
+        }
+        $_SESSION['operator_name'] = $name !== '' ? $name : null;
+    }
+
+    public static function clearOperatorName(): void
+    {
+        unset($_SESSION['operator_name']);
+    }
+
+    /**
+     * True only for a PRODUCTION shared account that has not yet named
+     * itself this session. Scoped TIGHTLY: ADMIN/PPIC log in individually
+     * and are never asked (a broader "every non-admin role" version was a
+     * real bug caught by regression tests in an earlier build of this
+     * feature).
+     */
+    public static function needsOperatorName(): bool
+    {
+        if (self::currentUserId() === null) {
+            return false;
+        }
+        $roles = self::currentRoles();
+        if (array_intersect(['ADMIN', 'PPIC'], $roles) !== []) {
+            return false;
+        }
+        if (!in_array('PRODUCTION', $roles, true)) {
+            return false;
+        }
+        return self::currentOperatorName() === null;
     }
 
     public static function requireAuth(): int
@@ -202,6 +252,7 @@ final class Auth
             'fullName' => $_SESSION['full_name'],
             'roles' => $_SESSION['roles'],
             'csrfToken' => $_SESSION['csrf_token'],
+            'operatorName' => self::currentOperatorName(),
         ];
     }
 

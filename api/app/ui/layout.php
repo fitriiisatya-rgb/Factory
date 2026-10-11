@@ -63,17 +63,64 @@ function ui_nav_items(array $roles = []): array
         // a PPIC user keeps the other two.
         $items = array_values(array_filter($items, static fn ($i) => !in_array($i['key'], ['bakery-portal-tokens', 'invoice'], true)));
     }
+    // Role-scoped accounts (PRODUCTION shared division logins, FG_PACKING,
+    // DRIVER, ...) only see what ui_role_scoped_pages() lets them open.
+    $scoped = $roles !== [] ? ui_role_scoped_pages($roles) : null;
+    if ($scoped !== null) {
+        $items = array_values(array_filter($items, static fn ($i) => in_array($i['key'], $scoped, true)));
+    }
     return $items;
 }
 
-/** @return array<int,array{key:string,label:string,icon:string}> */
-function ui_nav_items_secondary(): array
+/**
+ * "Kelola User" (migration 0019) links straight to the EXISTING standalone
+ * api/_users-uat/ tool via its own 'href' (not the ?page= pattern) and is
+ * ADMIN-only — that tool's own server-side ADMIN gate is the real boundary.
+ * $roles defaults to [] so any older call site keeps its prior output.
+ * @param string[] $roles
+ * @return array<int,array{key:string,label:string,icon:string,href?:string}>
+ */
+function ui_nav_items_secondary(array $roles = []): array
 {
-    return [
-        ['key' => 'laporan', 'label' => 'Laporan', 'icon' => 'chart'],
-        ['key' => 'master-data', 'label' => 'Master Data', 'icon' => 'database'],
-        ['key' => 'pengaturan', 'label' => 'Pengaturan', 'icon' => 'settings'],
+    $items = [];
+    if ($roles === [] || ui_role_scoped_pages($roles) === null) {
+        $items[] = ['key' => 'laporan', 'label' => 'Laporan', 'icon' => 'chart'];
+        $items[] = ['key' => 'master-data', 'label' => 'Master Data', 'icon' => 'database'];
+    }
+    if (in_array('ADMIN', $roles, true)) {
+        $items[] = ['key' => 'kelola-user', 'label' => 'Kelola User', 'icon' => 'user', 'href' => '/api/_users-uat/'];
+    }
+    $items[] = ['key' => 'pengaturan', 'label' => 'Pengaturan', 'icon' => 'settings'];
+    return $items;
+}
+
+/**
+ * Pages a non-ADMIN/PPIC account may open in this shell, or null for
+ * ADMIN/PPIC (= every page, each still subject to $pageRoles). Before
+ * migration 0019 only ADMIN could log in through api/_admin-login/, but a
+ * DRIVER session from api/_driver-uat/login.php already reached every
+ * ungated page here (Laporan with omset, Master Data, Pesanan, ...). This
+ * list closes that: each role gets only the worksheets it works in.
+ * @param string[] $roles
+ * @return string[]|null
+ */
+function ui_role_scoped_pages(array $roles): ?array
+{
+    if (array_intersect(['ADMIN', 'PPIC'], $roles) !== []) {
+        return null;
+    }
+    $byRole = [
+        'PRODUCTION' => ['produksi', 'produksi-demand', 'produksi-task-per-divisi', 'fg-packing', 'fg-khusus-non-toko', 'replacement-do-detail'],
+        'FG_PACKING' => ['fg-packing', 'fg-khusus-non-toko'],
     ];
+    $pages = [];
+    foreach ($roles as $role) {
+        foreach ($byRole[$role] ?? [] as $page) {
+            $pages[] = $page;
+        }
+    }
+    $pages[] = 'pengaturan';
+    return array_values(array_unique($pages));
 }
 
 /**
@@ -87,6 +134,7 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
 {
     $initials = strtoupper(substr($ui['fullName'] !== '' ? $ui['fullName'] : $ui['username'], 0, 2));
     $primaryRole = $ui['roles'][0] ?? '-';
+    $operatorName = \Amor\Api\Auth::currentOperatorName();
     // Carries the current date/factory selection across nav clicks, so
     // switching pages doesn't silently reset the operator's context.
     $navQS = '';
@@ -123,8 +171,8 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
       </a>
       <?php endforeach; ?>
       <div class="sidebar-section-label">Lainnya</div>
-      <?php foreach (ui_nav_items_secondary() as $item): ?>
-      <a class="nav-item<?= $active === $item['key'] ? ' active' : '' ?>" href="/api/_ui-preview/?page=<?= $item['key'] ?><?= $navQS ?>">
+      <?php foreach (ui_nav_items_secondary($ui['roles']) as $item): ?>
+      <a class="nav-item<?= $active === $item['key'] ? ' active' : '' ?>" href="<?= isset($item['href']) ? ui_esc($item['href']) : '/api/_ui-preview/?page=' . $item['key'] . $navQS ?>">
         <span class="nav-icon"><?= ui_icon($item['icon']) ?></span><span class="nav-label"><?= ui_esc($item['label']) ?></span>
       </a>
       <?php endforeach; ?>
@@ -157,7 +205,7 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
           <div class="user-avatar"><?= ui_esc($initials) ?></div>
           <div class="user-meta">
             <div class="user-name"><?= ui_esc($ui['fullName'] !== '' ? $ui['fullName'] : $ui['username']) ?></div>
-            <div class="user-role"><?= ui_esc($primaryRole) ?></div>
+            <div class="user-role"><?= ui_esc($primaryRole) ?><?php if ($operatorName !== null): ?> &middot; <?= ui_esc($operatorName) ?> <a href="/api/_admin-login/?action=change_operator&amp;return=<?= urlencode((string) ($_SERVER['REQUEST_URI'] ?? '/api/_ui-preview/')) ?>" style="color:inherit;text-decoration:underline;">(ganti)</a><?php endif; ?></div>
           </div>
         </div>
       </div>

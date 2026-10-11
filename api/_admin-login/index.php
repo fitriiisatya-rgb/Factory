@@ -25,6 +25,15 @@ declare(strict_types=1);
  * scoped speed bump (a growing delay after repeated failures within the
  * SAME browser session) — a deterrent, not a security control.
  * Amor\Api\Auth itself has no built-in throttling to hook into.
+ *
+ * Migration 0019 (Shared Division Login): no longer ADMIN-only — PPIC and
+ * PRODUCTION accounts log in here too (ALLOWED_ROLES). A PRODUCTION shared
+ * division account is then asked "Siapa Anda?" (Auth::needsOperatorName())
+ * before being sent back to ?return= (only /api/_ui-preview/... targets are
+ * honoured — see safeReturnUrl()). Every ADMIN-only tool (_upgrade,
+ * _import-po, _import-master, the *-uat tools, _users-uat) keeps its OWN
+ * ADMIN role check, so
+ * widening this login page does not widen access to any of them.
  */
 
 require __DIR__ . '/../app/autoload.php';
@@ -54,62 +63,228 @@ if ((bool) Config::get('SESSION_SECURE') && ($_SERVER['HTTPS'] ?? '') === '' && 
 
 Auth::bootSession();
 
+const ALLOWED_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION'];
+
 function esc(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 
-function renderLoginForm(?string $error = null): void
+/**
+ * Only ever redirects back into the Admin UI shell — anything else
+ * (absolute URLs, protocol-relative "//host", other paths) falls back to
+ * the shell's root, so ?return= can never become an open redirect.
+ */
+function safeReturnUrl(?string $raw): ?string
 {
-    $errorBlock = $error !== null ? '<p style="color:#b00;font-weight:bold;">' . htmlspecialchars($error) . '</p>' : '';
+    $raw = (string) $raw;
+    if ($raw === '' || !str_starts_with($raw, '/api/_ui-preview/') || str_contains($raw, "\\") || preg_match('/[\r\n]/', $raw)) {
+        return null;
+    }
+    return $raw;
+}
+
+const LOGIN_ASSET_VERSION = '20261011';
+
+/** Inline line icons for the login shell (no external icon font). */
+function loginSvg(string $name): string
+{
+    $paths = [
+        'user' => '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+        'lock' => '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/><path d="M12 15v2"/>',
+        'shield' => '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+        'server' => '<rect x="4" y="4" width="16" height="7" rx="1.5"/><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M8 7.5h3M8 16.5h3"/>',
+        'chart' => '<path d="M5 20V12M10 20V6M15 20v-9M20 20V4"/>',
+    ];
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        . ($paths[$name] ?? '') . '</svg>';
+}
+
+/**
+ * Shared landing shell for every screen of this page (login, "Siapa
+ * Anda?", logged-in, logged-out): top bar, blueprint background, the
+ * card ($cardHtml), the FA mascot (desktop only) and footer. Static
+ * assets live under the public api/assets/, never the deny-all api/app/.
+ */
+function renderShell(string $title, string $cardHtml, string $bubbleSmall = 'Siap produksi hari ini?'): void
+{
+    $v = LOGIN_ASSET_VERSION;
+    $titleEsc = esc($title);
+    $bubbleEsc = esc($bubbleSmall);
+    $year = date('Y');
+    $chart = loginSvg('chart');
     echo <<<HTML
 <!DOCTYPE html>
-<html lang="id"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow">
-<title>Amor Factory — Login Admin (Phase 1)</title>
-<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:420px;margin:3rem auto;padding:0 1rem;}
-label{display:block;margin:.6rem 0;} input{width:100%;padding:.5rem;box-sizing:border-box;}
-button{padding:.6rem 1.4rem;background:#0a5;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:bold;margin-top:1rem;}</style>
-</head><body>
-<h1>Login Admin — Phase 1 Tools</h1>
-<p style="color:#666;">Halaman sementara. Gunakan akun ADMIN yang sudah dibuat sewaktu Phase 0.5.</p>
-{$errorBlock}
-<form method="post">
-  <input type="hidden" name="action" value="login">
-  <label>Username <input type="text" name="username" required autocomplete="username"></label>
-  <label>Password <input type="password" name="password" required autocomplete="current-password"></label>
-  <button type="submit">Login</button>
-</form>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<title>{$titleEsc}</title>
+<link rel="stylesheet" href="/api/assets/css/login.css?v={$v}">
+</head><body class="lg">
+<header class="lg-top">
+  <span class="lg-icon">📦</span>
+  <div><div class="lg-top-title">Amor Factory System</div><div class="lg-top-sub">By FA — Amor Cakes &amp; Bakery</div></div>
+  <div class="lg-top-spacer"></div>
+  <span class="lg-badge">FACTORY</span>
+  <span class="lg-top-note">Sistem Produksi &amp; Distribusi</span>
+</header>
+<main class="lg-stage">
+  <div class="lg-tagline">PRODUKSI TERKENDALI<br>DISTRIBUSI LEBIH CEPAT</div>
+  <div class="lg-wrap">
+    <div class="lg-card">
+{$cardHtml}
+    </div>
+    <div class="lg-mascot">
+      <img src="/api/assets/img/fa-mascot.png?v={$v}" alt="Maskot FA" width="640" height="640">
+      <div class="lg-bubble">Halo!<small>{$bubbleEsc}</small></div>
+    </div>
+  </div>
+</main>
+<footer class="lg-foot">
+  <div><b>Amor Factory System &copy; {$year}</b><br>Satu Hati, Efisiensi</div>
+  <div style="display:flex;align-items:center;gap:10px;"><span style="width:22px;height:22px;display:inline-flex;">{$chart}</span>Akurat &bull; Terstruktur &bull; Bertumbuh</div>
+</footer>
 </body></html>
 HTML;
+}
+
+function cardHead(string $subtitle): string
+{
+    return '<span class="lg-icon">📦</span>'
+        . '<h1 class="lg-title">Amor <span>Factory</span></h1>'
+        . '<p class="lg-sub">' . $subtitle . '</p>';
+}
+
+function alertBlock(?string $message, string $kind = 'error'): string
+{
+    return $message !== null ? '<div class="lg-alert lg-alert-' . $kind . '">' . htmlspecialchars($message) . '</div>' : '';
+}
+
+function renderLoginForm(?string $error = null, ?string $return = null): void
+{
+    $returnField = $return !== null ? '<input type="hidden" name="return" value="' . esc($return) . '">' : '';
+    $user = loginSvg('user');
+    $lock = loginSvg('lock');
+    $shield = loginSvg('shield');
+    $server = loginSvg('server');
+    $card = cardHead('Kelola produksi, FG, dan pengiriman dengan lebih mudah, cepat, dan efisien.')
+        . '<p class="lg-kicker">Login Admin / Divisi</p>'
+        . alertBlock($error)
+        . <<<HTML
+<form method="post">
+  <input type="hidden" name="action" value="login">
+  {$returnField}
+  <div class="lg-field"><label for="lg-username">Username</label>
+    <div class="lg-input">{$user}<input id="lg-username" type="text" name="username" required autocomplete="username" autofocus></div></div>
+  <div class="lg-field"><label for="lg-password">Password</label>
+    <div class="lg-input">{$lock}<input id="lg-password" type="password" name="password" required autocomplete="current-password"></div></div>
+  <button type="submit" class="lg-btn">Masuk</button>
+</form>
+<div class="lg-or">untuk</div>
+<div class="lg-trust">
+  <div>{$shield}<span><b>Secure Login</b><small>Data Anda Terlindungi</small></span></div>
+  <div>{$server}<span><b>Login Divisi</b><small>Admin, PPIC &amp; Produksi</small></span></div>
+</div>
+HTML;
+    renderShell('Amor Factory — Login', $card);
+}
+
+/** "Siapa Anda?" — shared division accounts name the actual person (migration 0019). */
+function renderOperatorForm(?string $return, ?string $error = null, string $prefill = ''): void
+{
+    $returnField = $return !== null ? '<input type="hidden" name="return" value="' . esc($return) . '">' : '';
+    $csrf = esc((string) ($_SESSION['csrf_token'] ?? ''));
+    $account = esc((string) ($_SESSION['full_name'] ?? $_SESSION['username'] ?? ''));
+    $prefillEsc = esc($prefill);
+    $user = loginSvg('user');
+    $card = '<span class="lg-icon">📦</span>'
+        . '<h1 class="lg-title">Siapa Anda?</h1>'
+        . "<p class=\"lg-sub\">Akun <strong>{$account}</strong> dipakai bersama oleh satu divisi. Ketik nama Anda — nama ini dicatat di setiap input dan submit produksi selama sesi ini.</p>"
+        . alertBlock($error)
+        . <<<HTML
+<form method="post">
+  <input type="hidden" name="action" value="set_operator_name">
+  <input type="hidden" name="csrf_token" value="{$csrf}">
+  {$returnField}
+  <div class="lg-field"><label for="lg-operator">Nama Anda</label>
+    <div class="lg-input">{$user}<input id="lg-operator" type="text" name="operatorName" value="{$prefillEsc}" required maxlength="150" autocomplete="name" autofocus></div></div>
+  <button type="submit" class="lg-btn">Lanjut</button>
+</form>
+<div class="lg-or">bukan akun Anda?</div>
+<form class="logout" method="post"><input type="hidden" name="action" value="logout"><button type="submit" class="lg-btn lg-btn-danger">Logout</button></form>
+HTML;
+    renderShell('Amor Factory — Siapa Anda?', $card, 'Siapa yang bertugas hari ini?');
 }
 
 function renderLoggedIn(string $username): void
 {
-    echo <<<HTML
-<!DOCTYPE html>
-<html lang="id"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow">
-<title>Amor Factory — Login Admin (Phase 1)</title>
-<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:420px;margin:3rem auto;padding:0 1rem;}
-a.btn{display:block;padding:.7rem 1rem;margin:.6rem 0;background:#0a5;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;text-align:center;}
-form.logout button{padding:.5rem 1rem;background:#b00;color:#fff;border:none;border-radius:6px;cursor:pointer;margin-top:1.5rem;}</style>
-</head><body>
-<h1 style="color:#080;">Login berhasil sebagai ADMIN</h1>
-<p>Masuk sebagai: <strong>{$username}</strong></p>
-<a class="btn" href="../_upgrade/">Upgrade Database</a>
-<a class="btn" href="../_import-master/">Import Master</a>
-<form class="logout" method="post"><input type="hidden" name="action" value="logout"><button type="submit">Logout</button></form>
-</body></html>
+    $card = cardHead('Login berhasil sebagai ADMIN')
+        . "<p class=\"lg-kicker\">Masuk sebagai {$username}</p>"
+        . <<<HTML
+<div class="lg-links">
+  <a class="lg-btn" href="../_ui-preview/">Buka Amor Factory</a>
+  <a class="lg-btn lg-btn-ghost" href="../_upgrade/">Upgrade Database</a>
+  <a class="lg-btn lg-btn-ghost" href="../_import-master/">Import Master</a>
+  <a class="lg-btn lg-btn-ghost" href="../_users-uat/">Kelola User</a>
+</div>
+<div class="lg-or">selesai?</div>
+<form class="logout" method="post"><input type="hidden" name="action" value="logout"><button type="submit" class="lg-btn lg-btn-danger">Logout</button></form>
 HTML;
+    renderShell('Amor Factory — Login Admin', $card);
 }
 
-$action = $_SERVER['REQUEST_METHOD'] === 'POST' ? (string) ($_POST['action'] ?? '') : '';
+function renderLoggedOut(): void
+{
+    $card = cardHead('Sesi Anda sudah berakhir.')
+        . alertBlock('Sudah logout', 'ok')
+        . '<a class="lg-btn" href="./">Login lagi</a>';
+    renderShell('Amor Factory — Logout', $card, 'Sampai jumpa lagi!');
+}
 
-if ($action === 'logout') {
-    Auth::logout();
+/** Where a logged-in, fully-identified user goes next. */
+function finishLogin(?string $return): void
+{
+    if ($return !== null) {
+        header('Location: ' . $return, true, 302);
+        exit;
+    }
     header('Content-Type: text/html; charset=utf-8');
-    echo '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;max-width:420px;margin:3rem auto;">'
-        . '<h1>Sudah logout</h1><p><a href="./">Login lagi</a></p></body></html>';
+    if (in_array('ADMIN', Auth::currentRoles(), true)) {
+        renderLoggedIn(esc((string) $_SESSION['username']));
+        exit;
+    }
+    header('Location: /api/_ui-preview/', true, 302);
     exit;
 }
 
-if ($action === 'login') {
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$action = $method === 'POST' ? (string) ($_POST['action'] ?? '') : (string) ($_GET['action'] ?? '');
+$return = safeReturnUrl($method === 'POST' ? ($_POST['return'] ?? null) : ($_GET['return'] ?? null));
+$loggedIn = Auth::currentUserId() !== null && array_intersect(ALLOWED_ROLES, Auth::currentRoles()) !== [];
+
+if ($method === 'POST' && $action === 'logout') {
+    Auth::logout();
+    header('Content-Type: text/html; charset=utf-8');
+    renderLoggedOut();
+    exit;
+}
+
+if ($method === 'POST' && $action === 'set_operator_name') {
+    header('Content-Type: text/html; charset=utf-8');
+    if (!$loggedIn) {
+        renderLoginForm(null, $return);
+        exit;
+    }
+    $token = (string) ($_POST['csrf_token'] ?? '');
+    if ($token === '' || !hash_equals((string) ($_SESSION['csrf_token'] ?? ''), $token)) {
+        renderOperatorForm($return, 'Sesi tidak valid. Silakan coba lagi.');
+        exit;
+    }
+    $name = trim((string) ($_POST['operatorName'] ?? ''));
+    if (mb_strlen($name) < 2) {
+        renderOperatorForm($return, 'Nama wajib diisi (minimal 2 huruf).', $name);
+        exit;
+    }
+    Auth::setOperatorName($name);
+    finishLogin($return);
+}
+
+if ($method === 'POST' && $action === 'login') {
     $attempts = (int) ($_SESSION['login_attempts'] ?? 0);
     $lastAttempt = (int) ($_SESSION['login_last_attempt'] ?? 0);
     $requiredWait = $attempts >= 5 ? min(30, ($attempts - 4) * 5) : 0;
@@ -118,7 +293,7 @@ if ($action === 'login') {
 
     if ($requiredWait > 0 && (time() - $lastAttempt) < $requiredWait) {
         $remaining = $requiredWait - (time() - $lastAttempt);
-        renderLoginForm("Terlalu banyak percobaan gagal. Coba lagi dalam {$remaining} detik.");
+        renderLoginForm("Terlalu banyak percobaan gagal. Coba lagi dalam {$remaining} detik.", $return);
         exit;
     }
 
@@ -130,27 +305,43 @@ if ($action === 'login') {
         Auth::attemptLogin($username, $password);
     } catch (ApiException $e) {
         $_SESSION['login_attempts'] = $attempts + 1;
-        renderLoginForm('Username atau password salah.');
+        renderLoginForm('Username atau password salah.', $return);
         exit;
     }
 
     unset($_SESSION['login_attempts'], $_SESSION['login_last_attempt']);
 
-    if (!in_array('ADMIN', Auth::currentRoles(), true)) {
-        $notAdminUsername = (string) $_SESSION['username'];
+    if (array_intersect(ALLOWED_ROLES, Auth::currentRoles()) === []) {
+        $rejectedUsername = (string) $_SESSION['username'];
         Auth::logout();
-        renderLoginForm("Akun '{$notAdminUsername}' login berhasil, tapi bukan ADMIN. Halaman Phase 1 hanya untuk ADMIN.");
+        renderLoginForm("Akun '{$rejectedUsername}' login berhasil, tapi bukan ADMIN, PPIC, atau akun divisi Produksi. Driver login lewat Portal Driver.");
         exit;
     }
 
-    renderLoggedIn(esc((string) $_SESSION['username']));
-    exit;
+    if (Auth::needsOperatorName()) {
+        renderOperatorForm($return);
+        exit;
+    }
+    finishLogin($return);
 }
 
 // GET (or anything else): show current state.
 header('Content-Type: text/html; charset=utf-8');
-if (Auth::currentUserId() !== null && in_array('ADMIN', Auth::currentRoles(), true)) {
-    renderLoggedIn(esc((string) $_SESSION['username']));
-} else {
-    renderLoginForm();
+if (!$loggedIn) {
+    renderLoginForm(null, $return);
+    exit;
 }
+if ($action === 'change_operator' || Auth::needsOperatorName()) {
+    // "(ganti)" from the topbar: show the form again (prefilled). Nothing
+    // changes until the form is POSTed, so a GET can never alter state.
+    $isProductionShared = in_array('PRODUCTION', Auth::currentRoles(), true) && array_intersect(['ADMIN', 'PPIC'], Auth::currentRoles()) === [];
+    if ($isProductionShared) {
+        renderOperatorForm($return, null, (string) (Auth::currentOperatorName() ?? ''));
+        exit;
+    }
+}
+if (in_array('ADMIN', Auth::currentRoles(), true) && $return === null) {
+    renderLoggedIn(esc((string) $_SESSION['username']));
+    exit;
+}
+finishLogin($return);

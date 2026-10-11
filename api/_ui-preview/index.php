@@ -52,9 +52,18 @@ $pages = [
     'pengaturan' => ['title' => 'Pengaturan', 'subtitle' => 'Akun, preferensi tampilan, dan sesi.'],
 ];
 
-$page = (string) ($_GET['page'] ?? 'dashboard');
+// Role-scoped accounts (migration 0019): anyone without ADMIN/PPIC — a
+// PRODUCTION shared division login, FG_PACKING, or a DRIVER session from
+// the Driver Portal — may only open the pages ui_role_scoped_pages()
+// (app/ui/layout.php) lists for their roles; never Laporan (omset),
+// Master Data, Pesanan, DO, etc. ADMIN/PPIC are unaffected ($scopedPages
+// null).
+$scopedPages = ui_role_scoped_pages($ui['roles']);
+$defaultPage = $scopedPages === null ? 'dashboard' : $scopedPages[0];
+
+$page = (string) ($_GET['page'] ?? $defaultPage);
 if (!isset($pages[$page])) {
-    $page = 'dashboard';
+    $page = $defaultPage;
 }
 
 // FINAL PRE-DEPLOY PATCH — server-side page-level role gate. Runs BEFORE
@@ -101,6 +110,30 @@ if (isset($pageRoles[$page]) && array_intersect($pageRoles[$page], $ui['roles'])
         . '<h1 style="font-size:1.25rem;">403 — Akses Ditolak</h1>'
         . '<p>Anda tidak memiliki izin untuk mengakses halaman ini.</p>'
         . '</body></html>';
+    exit;
+}
+if ($scopedPages !== null && !in_array($page, $scopedPages, true)) {
+    http_response_code(403);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Akses Ditolak</title></head>'
+        . '<body style="font-family:system-ui,sans-serif;max-width:640px;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;">'
+        . '<h1 style="font-size:1.25rem;">403 — Akses Ditolak</h1>'
+        . '<p>Akun ini tidak memiliki akses ke halaman tersebut. '
+        . (in_array('DRIVER', $ui['roles'], true) ? '<a href="/api/_driver-uat/">Buka Portal Driver</a>' : '<a href="/api/_ui-preview/">Kembali</a>')
+        . '</p>'
+        . '</body></html>';
+    exit;
+}
+
+// "Siapa Anda?" gate (migration 0019). MUST stay here — AFTER both 403
+// gates above, never in app/ui/bootstrap.php (which runs before any
+// per-page role check): placed earlier, a role that should get a 403 is
+// instead bounced to the name prompt, which looks like "not logged in"
+// rather than "not allowed" (a real regression, REPL-AUTH-03..06, hit in
+// an earlier build of this feature).
+if (\Amor\Api\Auth::needsOperatorName()) {
+    $return = urlencode($_SERVER['REQUEST_URI'] ?? '/api/_ui-preview/');
+    header('Location: /api/_admin-login/?return=' . $return);
     exit;
 }
 

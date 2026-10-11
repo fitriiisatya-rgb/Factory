@@ -92,12 +92,14 @@ final class ProductionController
         $tanggal = self::requireDate($request->input('tanggal'));
         $divisionId = self::requireInt($request->input('divisionId'), 'divisionId');
 
-        Idempotency::handle($request, 'POST /api/production', function (PDO $pdo) use ($request, $userId, $tanggal, $divisionId) {
+        $operatorName = Auth::currentOperatorName();
+
+        Idempotency::handle($request, 'POST /api/production', function (PDO $pdo) use ($request, $userId, $tanggal, $divisionId, $operatorName) {
             $service = new ProductionService($pdo);
-            $dto = $service->createDraft($tanggal, $divisionId, $userId);
+            $dto = $service->createDraft($tanggal, $divisionId, $userId, $operatorName);
             Audit::write(
                 $pdo, $request->header('Idempotency-Key'), $userId, 'production.draft.create', 'production_run',
-                (string) $dto['productionRunId'], 'ok', null, $dto['version'], ['tanggal' => $tanggal, 'divisionId' => $divisionId]
+                (string) $dto['productionRunId'], 'ok', null, $dto['version'], ['tanggal' => $tanggal, 'divisionId' => $divisionId, 'operatorName' => $operatorName]
             );
             return [
                 'status' => 200,
@@ -116,9 +118,11 @@ final class ProductionController
         $items = (array) $request->input('items', []);
         $refreshTargets = (bool) $request->input('refreshTargets', false);
 
-        Idempotency::handle($request, 'PATCH /api/production/{id}', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $items, $refreshTargets) {
+        $operatorName = Auth::currentOperatorName();
+
+        Idempotency::handle($request, 'PATCH /api/production/{id}', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $items, $refreshTargets, $operatorName) {
             $service = new ProductionService($pdo);
-            $dto = $service->patchDraft($id, $expectedVersion, $items, $refreshTargets, $userId, $request->header('Idempotency-Key'));
+            $dto = $service->patchDraft($id, $expectedVersion, $items, $refreshTargets, $userId, $request->header('Idempotency-Key'), $operatorName);
             return [
                 'status' => 200,
                 'envelope' => ['ok' => true, 'data' => $dto],
@@ -134,9 +138,11 @@ final class ProductionController
         $id = (int) $request->routeParams['id'];
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
 
-        Idempotency::handle($request, 'POST /api/production/{id}/submit', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion) {
+        $operatorName = Auth::currentOperatorName();
+
+        Idempotency::handle($request, 'POST /api/production/{id}/submit', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $operatorName) {
             $service = new ProductionService($pdo);
-            $dto = $service->submit($id, $expectedVersion, $userId, $request->header('Idempotency-Key'));
+            $dto = $service->submit($id, $expectedVersion, $userId, $request->header('Idempotency-Key'), $operatorName);
             return [
                 'status' => 200,
                 'envelope' => ['ok' => true, 'data' => $dto],

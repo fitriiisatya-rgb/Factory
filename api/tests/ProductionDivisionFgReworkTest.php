@@ -3195,6 +3195,14 @@ runTest('REPL-AUTH-06 replacement-do-detail follows its own documented role matr
     expect($denied['status'] === 403, 'REPL-AUTH-06: expected 403 for DRIVER on replacement-do-detail, got ' . $denied['status']);
 
     login($httpProdOnly, 'repl_auth_prod_only', $prodOnlyPass);
+    // Migration 0019 (Shared Division Login): a PRODUCTION session must
+    // first answer "Siapa Anda?". On a page its role IS allowed, that is a
+    // 302 to the prompt — never a 403 (the 403 gates run first).
+    $unnamed = $httpProdOnly->request('GET', "/api/_ui-preview/?page=replacement-do-detail&doId={$replMainDoId}");
+    expect($unnamed['status'] === 302, 'REPL-AUTH-06: expected 302 to the operator-name prompt for an unnamed PRODUCTION session, got ' . $unnamed['status']);
+    $prompt = $httpProdOnly->request('GET', '/api/_admin-login/');
+    expect(preg_match('/name="csrf_token" value="([a-f0-9]+)"/', $prompt['body'], $m) === 1, 'REPL-AUTH-06: expected the Siapa Anda? form');
+    $httpProdOnly->requestMultipart('POST', '/api/_admin-login/', ['action' => 'set_operator_name', 'operatorName' => 'Operator REPL', 'csrf_token' => $m[1]], []);
     $allowed = $httpProdOnly->request('GET', "/api/_ui-preview/?page=replacement-do-detail&doId={$replMainDoId}");
     expect($allowed['status'] === 200, 'REPL-AUTH-06: expected 200 for PRODUCTION (in this page\'s own documented role matrix) on replacement-do-detail, got ' . $allowed['status']);
 });

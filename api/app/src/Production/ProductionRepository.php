@@ -109,15 +109,16 @@ final class ProductionRepository
         return $stmt->fetchAll();
     }
 
-    public function createRun(PDO $pdo, string $tanggal, int $divisionId, int $userId, ?int $sourcePoBatchVersion): array
+    public function createRun(PDO $pdo, string $tanggal, int $divisionId, int $userId, ?int $sourcePoBatchVersion, ?string $operatorName = null): array
     {
         try {
             $stmt = $pdo->prepare(
                 "INSERT INTO production_run
-                    (tanggal, division_id, status, created_by, version, source_po_batch_version, created_at)
-                 VALUES (?, ?, 'draft', ?, 1, ?, UTC_TIMESTAMP())"
+                    (tanggal, division_id, status, created_by, version, source_po_batch_version, created_at,
+                     created_by_operator_name, last_updated_by_operator_name)
+                 VALUES (?, ?, 'draft', ?, 1, ?, UTC_TIMESTAMP(), ?, ?)"
             );
-            $stmt->execute([$tanggal, $divisionId, $userId, $sourcePoBatchVersion]);
+            $stmt->execute([$tanggal, $divisionId, $userId, $sourcePoBatchVersion, $operatorName, $operatorName]);
         } catch (\PDOException $e) {
             if ((int) $e->getCode() === 23000) {
                 $row = $this->lockExistingRun($pdo, $tanggal, $divisionId);

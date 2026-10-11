@@ -76,7 +76,7 @@ foreach ($liveProducts as $p) {
 // division dashboard (Last Updated / Submitted By) — never used for any
 // business decision.
 $actualSql = "SELECT r.production_run_id, r.division_id, r.status, r.updated_at, r.submitted_at,
-                     u.full_name AS submitted_by_name, COALESCE(SUM(pi.aktual), 0) AS actual_sum,
+                     COALESCE(r.submitted_by_operator_name, u.full_name) AS submitted_by_name, COALESCE(SUM(pi.aktual), 0) AS actual_sum,
                      COALESCE(SUM(pi.reject), 0) AS reject_sum
               FROM production_run r
               INNER JOIN division d ON d.division_id = r.division_id
@@ -92,7 +92,7 @@ if ($statusParam !== null) {
     $actualSql .= ' AND r.status = ?';
     $actualParams[] = $statusParam;
 }
-$actualSql .= ' GROUP BY r.production_run_id, r.division_id, r.status, r.updated_at, r.submitted_at, u.full_name';
+$actualSql .= ' GROUP BY r.production_run_id, r.division_id, r.status, r.updated_at, r.submitted_at, r.submitted_by_operator_name, u.full_name';
 $actualStmt = $pdo->prepare($actualSql);
 $actualStmt->execute($actualParams);
 $runByDivision = [];
@@ -323,6 +323,26 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
   <?php endif; ?>
   <?php if (!empty($runDetail['reopenReason'])): ?>
   <div class="alert alert-warning">Alasan dibuka kembali: <?= ui_esc((string) $runDetail['reopenReason']) ?></div>
+  <?php endif; ?>
+  <?php
+    // Migration 0019 — "Siapa Anda?" names from the shared division login.
+    // "Terakhir diupdate oleh" only shows when it differs from the creator.
+    $opCreated = $runDetail['createdByOperatorName'] ?? null;
+    $opUpdated = $runDetail['lastUpdatedByOperatorName'] ?? null;
+    $opSubmitted = $runDetail['submittedByOperatorName'] ?? null;
+    $opParts = [];
+    if ($opCreated !== null) {
+        $opParts[] = 'Dibuat oleh: <strong>' . ui_esc((string) $opCreated) . '</strong>';
+    }
+    if ($opUpdated !== null && $opUpdated !== $opCreated && $opUpdated !== $opSubmitted) {
+        $opParts[] = 'Terakhir diupdate oleh: <strong>' . ui_esc((string) $opUpdated) . '</strong>';
+    }
+    if ($opSubmitted !== null) {
+        $opParts[] = 'Disubmit oleh: <strong>' . ui_esc((string) $opSubmitted) . '</strong>';
+    }
+  ?>
+  <?php if ($opParts !== []): ?>
+  <p class="run-operators" style="font-size:var(--text-sm);color:var(--text-muted);margin:0 0 var(--space-3);"><?= implode(' &middot; ', $opParts) ?></p>
   <?php endif; ?>
 
   <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;margin-bottom:var(--space-3);">

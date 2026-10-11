@@ -75,7 +75,7 @@ final class ProductionService
      * idempotent at the (tanggal,divisionId) identity level in addition to
      * whatever Idempotency-Key replay the caller also uses.
      */
-    public function createDraft(string $tanggal, int $divisionId, int $userId): array
+    public function createDraft(string $tanggal, int $divisionId, int $userId, ?string $operatorName = null): array
     {
         $division = $this->requireProductionScopedDivision($divisionId);
         $factoryId = (int) $division['factory_id'];
@@ -86,7 +86,7 @@ final class ProductionService
         }
 
         $poBatchVersion = $this->targets->currentPoBatchVersion($this->pdo, $tanggal, $factoryId);
-        $run = $this->repo->createRun($this->pdo, $tanggal, $divisionId, $userId, $poBatchVersion);
+        $run = $this->repo->createRun($this->pdo, $tanggal, $divisionId, $userId, $poBatchVersion, $operatorName);
 
         $liveTargets = $this->targets->targetsByProduct($this->pdo, $tanggal, $factoryId, $divisionId);
         foreach ($liveTargets as $productId => $t) {
@@ -122,7 +122,7 @@ final class ProductionService
      * touches actual_qty — an explicit, separate action from editing actuals,
      * so a target refresh can never silently discard operator input.
      */
-    public function patchDraft(int $runId, int $expectedVersion, array $items, bool $refreshTargets, int $userId, ?string $requestId): array
+    public function patchDraft(int $runId, int $expectedVersion, array $items, bool $refreshTargets, int $userId, ?string $requestId, ?string $operatorName = null): array
     {
         $run = $this->repo->lockRunById($this->pdo, $runId);
         if ($run === null) {
@@ -190,14 +190,14 @@ final class ProductionService
 
         $bumped = $this->repo->bumpVersion(
             $this->pdo, $runId, $expectedVersion,
-            'source_po_batch_version = ?', [$sourcePoBatchVersion]
+            'source_po_batch_version = ?, last_updated_by_operator_name = ?', [$sourcePoBatchVersion, $operatorName]
         );
         $this->assertVersionBumpSucceeded($runId, $expectedVersion, $bumped);
 
         \Amor\Api\Audit::write(
             $this->pdo, $requestId, $userId, 'production.draft.edit', 'production_run', (string) $runId,
             'ok', $expectedVersion, $expectedVersion + 1,
-            ['itemsTouched' => $touched, 'refreshTargets' => $refreshTargets]
+            ['itemsTouched' => $touched, 'refreshTargets' => $refreshTargets, 'operatorName' => $operatorName]
         );
 
         $run = $this->repo->findRunById($this->pdo, $runId);
@@ -213,7 +213,7 @@ final class ProductionService
      * was during the draft (a true point-in-time record of what the
      * operator was working against).
      */
-    public function submit(int $runId, int $expectedVersion, int $userId, ?string $requestId): array
+    public function submit(int $runId, int $expectedVersion, int $userId, ?string $requestId, ?string $operatorName = null): array
     {
         $run = $this->repo->lockRunById($this->pdo, $runId);
         if ($run === null) {
@@ -244,13 +244,14 @@ final class ProductionService
 
         $bumped = $this->repo->bumpVersion(
             $this->pdo, $runId, $expectedVersion,
-            "status = 'submitted', submitted_by = ?, submitted_at = UTC_TIMESTAMP()", [$userId]
+            "status = 'submitted', submitted_by = ?, submitted_at = UTC_TIMESTAMP(), submitted_by_operator_name = ?, last_updated_by_operator_name = ?",
+            [$userId, $operatorName, $operatorName]
         );
         $this->assertVersionBumpSucceeded($runId, $expectedVersion, $bumped);
 
         \Amor\Api\Audit::write(
             $this->pdo, $requestId, $userId, 'production.submit', 'production_run', (string) $runId,
-            'ok', $expectedVersion, $expectedVersion + 1, ['warnings' => $warnings]
+            'ok', $expectedVersion, $expectedVersion + 1, ['warnings' => $warnings, 'operatorName' => $operatorName]
         );
         if ($warnings['targetChanged'] !== []) {
             \Amor\Api\Audit::write($this->pdo, $requestId, $userId, 'production.target_changed_from_po_revision', 'production_run', (string) $runId, 'ok', null, null, $warnings['targetChanged']);
@@ -405,6 +406,12 @@ final class ProductionService
             'createdBy' => $run['created_by'] !== null ? (int) $run['created_by'] : null,
             'submittedBy' => $run['submitted_by'] !== null ? (int) $run['submitted_by'] : null,
             'submittedAt' => $run['submitted_at'],
+            // Migration 0019 — free-text "Siapa Anda?" names; NULL for
+            // runs written before 0019 or by an individually-logged-in
+            // ADMIN/PPIC (callers fall back to the account's own name).
+            'createdByOperatorName' => $run['created_by_operator_name'] ?? null,
+            'submittedByOperatorName' => $run['submitted_by_operator_name'] ?? null,
+            'lastUpdatedByOperatorName' => $run['last_updated_by_operator_name'] ?? null,
             'reopenedBy' => $run['reopened_by'] !== null ? (int) $run['reopened_by'] : null,
             'reopenedAt' => $run['reopened_at'],
             'reopenReason' => $run['reopen_reason'],
