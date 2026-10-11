@@ -267,10 +267,10 @@ final class ReplacementRepository
     }
 
     /** Snapshot semantics — REPLACES the stored value, matching special_order_item's own aktual_produksi/reject_produksi convention. */
-    public function updateProductionActual(PDO $pdo, int $demandId, float $aktual, float $reject): void
+    public function updateProductionActual(PDO $pdo, int $demandId, float $aktual, float $reject, ?string $operatorName = null): void
     {
-        $stmt = $pdo->prepare('UPDATE replacement_demand SET production_aktual = ?, production_reject = ? WHERE replacement_demand_id = ?');
-        $stmt->execute([$aktual, $reject, $demandId]);
+        $stmt = $pdo->prepare('UPDATE replacement_demand SET production_aktual = ?, production_reject = ?, production_actual_updated_by_operator_name = ? WHERE replacement_demand_id = ?');
+        $stmt->execute([$aktual, $reject, $operatorName, $demandId]);
     }
 
     /** Snapshot semantics — REPLACES fg_verified_qty, matching special_order_item's own updateFgVerifiedQty() convention. */

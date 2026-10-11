@@ -202,6 +202,7 @@ if ($runIdParam !== null) {
                 'aktual' => (float) $r['aktual_produksi'],
                 'reject' => (float) $r['reject_produksi'],
                 'catatan' => $r['special_note'],
+                'operatorName' => $r['actual_updated_by_operator_name'] ?? null,
                 'itemId' => (int) $r['special_order_item_id'],
                 'orderId' => (int) $r['special_order_id'],
                 'orderVersion' => (int) $r['order_version'],
@@ -338,7 +339,9 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
         $opParts[] = 'Terakhir diupdate oleh: <strong>' . ui_esc((string) $opUpdated) . '</strong>';
     }
     if ($opSubmitted !== null) {
-        $opParts[] = 'Disubmit oleh: <strong>' . ui_esc((string) $opSubmitted) . '</strong>';
+        // Reopen keeps submitted_by as history (existing behavior), so a
+        // reopened document says "Sebelumnya disubmit oleh".
+        $opParts[] = ($runDetail['status'] === 'reopened' ? 'Sebelumnya disubmit oleh' : 'Disubmit oleh') . ': <strong>' . ui_esc((string) $opSubmitted) . '</strong>';
     }
   ?>
   <?php if ($opParts !== []): ?>
@@ -403,7 +406,7 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
       </td>
       <td class="num"><input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" class="nr-reject" data-item-id="<?= $nr['itemId'] ?>" value="<?= ui_fmt_num($nr['reject']) ?>"></td>
       <td><?= $nr['aktual'] <= 0.0001 ? ui_badge('Belum Diproduksi') : ($nr['aktual'] + 0.0001 >= $nr['target'] ? ui_badge('Sesuai Target') : ui_badge('Belum Sesuai Target')) ?></td>
-      <td><?= $nr['catatan'] ? ui_esc((string) $nr['catatan']) : '-' ?></td>
+      <td><?= $nr['catatan'] ? ui_esc((string) $nr['catatan']) : '-' ?><?php if (!empty($nr['operatorName'])): ?><div class="nr-operator" style="font-size:var(--text-xs);color:var(--text-muted);">Diisi oleh: <?= ui_esc((string) $nr['operatorName']) ?></div><?php endif; ?></td>
     </tr>
     <?php endforeach; ?>
     </tbody>

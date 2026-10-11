@@ -3,8 +3,9 @@
 declare(strict_types=1);
 
 /**
- * Migration 0019: Shared Division Login + Operator Name — three NULLable
- * operator-name columns on the EXISTING production_run table.
+ * Migration 0019: Shared Division Login + Operator Name — NULLable
+ * operator-name columns on EXISTING tables (three on production_run, one
+ * on special_order_item, one on replacement_demand).
  *
  * See database/schema-v1-0019-production-operator-name.sql for the full
  * rationale. Purely additive (ADD COLUMN IF NOT EXISTS), no existing

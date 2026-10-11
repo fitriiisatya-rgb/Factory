@@ -154,9 +154,11 @@ final class SpecialOrderController
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
         $items = (array) $request->input('items', []);
 
-        Idempotency::handle($request, 'POST /api/special-orders/{id}/actual', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $items) {
+        $operatorName = Auth::currentOperatorName();
+
+        Idempotency::handle($request, 'POST /api/special-orders/{id}/actual', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion, $items, $operatorName) {
             $service = new SpecialOrderService($pdo);
-            $dto = $service->updateItemsActual($id, $expectedVersion, $items, $userId, $request->header('Idempotency-Key'));
+            $dto = $service->updateItemsActual($id, $expectedVersion, $items, $userId, $request->header('Idempotency-Key'), $operatorName);
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'special_order', 'recordKey' => (string) $id];
         });
     }

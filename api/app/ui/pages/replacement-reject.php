@@ -93,7 +93,7 @@ $statusLabels = [
       <td class="num"><?= ui_fmt_num($d['approvedQty']) ?></td>
       <td class="num"><?= ui_fmt_num($d['allocatedFromFg']) ?></td>
       <td class="num"><?= $d['productionNeed'] > 0.0001 ? '<strong style="color:var(--warning)">' . ui_fmt_num($d['productionNeed']) . '</strong>' : ui_fmt_num($d['productionNeed']) ?></td>
-      <td class="num"><?= ui_fmt_num($d['productionAktual']) ?></td>
+      <td class="num"><?= ui_fmt_num($d['productionAktual']) ?><?php if (!empty($d['productionActualUpdatedByOperatorName'])): ?><div class="repl-operator" style="font-size:var(--text-xs);color:var(--text-muted);font-weight:normal;">oleh <?= ui_esc((string) $d['productionActualUpdatedByOperatorName']) ?></div><?php endif; ?></td>
       <td class="num"><?= ui_fmt_num($d['productionReject']) ?></td>
       <td class="num"><?= ui_fmt_num($d['productionFgVerifiedQty']) ?></td>
       <td><?= ui_badge($statusLabels[$d['status']] ?? $d['status']) ?></td>

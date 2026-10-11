@@ -72,16 +72,16 @@ done
 
 SQL0019="$REPO_ROOT/database/schema-v1-0019-production-operator-name.sql"
 SQL0019_CODE="$(grep -vE '^[[:space:]]*--' "$SQL0019")"
-echo "--- sanity: confirm migration 0019 stays additive (only ADD COLUMN IF NOT EXISTS on production_run) ---"
+echo "--- sanity: confirm migration 0019 stays additive (only ADD COLUMN IF NOT EXISTS) ---"
 if echo "$SQL0019_CODE" | grep -qEi "DROP |TRUNCATE|CREATE TABLE|MODIFY |CHANGE |RENAME "; then
   echo "REFUSING TO BUILD: migration 0019 contains a destructive or non-additive statement." >&2
   exit 1
 fi
-if echo "$SQL0019_CODE" | grep -E "^ALTER TABLE" | grep -qv "^ALTER TABLE production_run$"; then
-  echo "REFUSING TO BUILD: migration 0019 alters a table other than production_run." >&2
+if echo "$SQL0019_CODE" | grep -E "^ALTER TABLE" | grep -qvE "^ALTER TABLE (production_run|special_order_item|replacement_demand)$"; then
+  echo "REFUSING TO BUILD: migration 0019 alters a table other than production_run/special_order_item/replacement_demand." >&2
   exit 1
 fi
-[ "$(echo "$SQL0019_CODE" | grep -c 'ADD COLUMN IF NOT EXISTS')" = "3" ] || { echo "REFUSING TO BUILD: migration 0019 must add exactly three columns, retry-safe."; exit 1; }
+[ "$(echo "$SQL0019_CODE" | grep -c 'ADD COLUMN IF NOT EXISTS')" = "5" ] || { echo "REFUSING TO BUILD: migration 0019 must add exactly five columns, retry-safe."; exit 1; }
 if echo "$SQL0019_CODE" | grep -qE "AFTER (created_by|submitted_by)[[:space:];]"; then
   echo "REFUSING TO BUILD: migration 0019 positions a column relative to a 0004-era column — it must anchor on updated_at (present since 0001)." >&2
   exit 1

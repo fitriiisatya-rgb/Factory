@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * Shared Division Login + Operator Name (migration 0019) — OPLOGIN-01..16.
+ * Shared Division Login + Operator Name (migration 0019) — OPLOGIN-01..17.
  *
  * Drives the REAL HTML login page (api/_admin-login/) with form posts, not
  * the JSON login API, because the "Siapa Anda?" prompt, the ?return=
@@ -420,6 +420,41 @@ runTest('OPLOGIN-16 A DRIVER session (Driver Portal login) can no longer open La
     }
     $portal = $h->get('/_driver-uat/index.php?tab=tersedia');
     expect($portal['status'] === 200, 'the Driver Portal itself must keep working, got ' . $portal['status']);
+});
+
+runTest('OPLOGIN-17 Pesanan Khusus Actual entered by a named division account records the operator name (ADMIN leaves it NULL)', function () use ($baseUrl, $adminUser, $adminPass, $pdo, $storeA, $products, $prodPass) {
+    $a = new HttpOp($baseUrl);
+    $a->form('/_admin-login/', ['action' => 'login', 'username' => $adminUser, 'password' => $adminPass]);
+    $acsrf = csrfOf($a);
+    $c = $a->json('POST', '/api/special-orders', [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeA, 'orderDate' => '2026-11-05', 'requiredDate' => '2026-11-06',
+        'items' => [['itemType' => 'existing_product', 'productId' => (int) $products[3], 'qty' => 4]],
+    ], array_merge(['X-CSRF-Token' => $acsrf], idemKey('op-so-create')));
+    expect($c['status'] === 200, 'special order create failed: ' . $c['body']);
+    $orderId = (int) $c['json']['data']['orderId'];
+    $cf = $a->json('POST', "/api/special-orders/{$orderId}/confirm", ['expectedVersion' => $c['json']['data']['version']], array_merge(['X-CSRF-Token' => $acsrf], idemKey('op-so-confirm')));
+    $sd = $a->json('POST', "/api/special-orders/{$orderId}/send-to-production", ['expectedVersion' => $cf['json']['data']['version']], array_merge(['X-CSRF-Token' => $acsrf], idemKey('op-so-send')));
+    expect($sd['status'] === 200, 'send-to-production failed: ' . $sd['body']);
+    $itemId = (int) $pdo->query("SELECT special_order_item_id FROM special_order_item WHERE special_order_id = {$orderId}")->fetchColumn();
+
+    $p = new HttpOp($baseUrl);
+    $p->form('/_admin-login/', ['action' => 'login', 'username' => 'divisi_roti', 'password' => $prodPass]);
+    $prompt = $p->get('/_admin-login/');
+    $p->form('/_admin-login/', ['action' => 'set_operator_name', 'operatorName' => 'Dewi', 'csrf_token' => formCsrf($prompt['body'])]);
+    $pcsrf = csrfOf($p);
+    $r = $p->json('POST', "/api/special-orders/{$orderId}/actual", ['expectedVersion' => $sd['json']['data']['version'], 'items' => [['itemId' => $itemId, 'aktualProduksi' => 4, 'rejectProduksi' => 0]]], array_merge(['X-CSRF-Token' => $pcsrf], idemKey('op-so-actual')));
+    expect($r['status'] === 200, 'actual entry failed: ' . $r['body']);
+    $name = $pdo->query("SELECT actual_updated_by_operator_name FROM special_order_item WHERE special_order_item_id = {$itemId}")->fetchColumn();
+    expect($name === 'Dewi', 'expected Dewi recorded on the special order item, got ' . var_export($name, true));
+
+    $r2 = $a->json('POST', "/api/special-orders/{$orderId}/actual", ['expectedVersion' => $r['json']['data']['version'], 'items' => [['itemId' => $itemId, 'aktualProduksi' => 4, 'rejectProduksi' => 0]]], array_merge(['X-CSRF-Token' => $acsrf], idemKey('op-so-actual-admin')));
+    expect($r2['status'] === 200, 'admin actual entry failed: ' . $r2['body']);
+    $name2 = $pdo->query("SELECT actual_updated_by_operator_name FROM special_order_item WHERE special_order_item_id = {$itemId}")->fetchColumn();
+    expect($name2 === null, 'expected NULL after an ADMIN write, got ' . var_export($name2, true));
+
+    $cols = $pdo->query("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = DATABASE()
+        AND column_name IN ('actual_updated_by_operator_name', 'production_actual_updated_by_operator_name')")->fetchAll();
+    expect(count($cols) === 2, 'expected both migration-0019 columns on special_order_item/replacement_demand, got ' . json_encode($cols));
 });
 
 // ---------------------------------------------------------------------

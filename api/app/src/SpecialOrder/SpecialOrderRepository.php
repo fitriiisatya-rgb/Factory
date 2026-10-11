@@ -341,13 +341,13 @@ final class SpecialOrderRepository
      * order's item by guessing an id; rowCount()>0 is the caller's signal
      * that the item genuinely belongs to this order.
      */
-    public function updateItemActualProduksi(PDO $pdo, int $orderId, int $itemId, float $aktual, float $reject): bool
+    public function updateItemActualProduksi(PDO $pdo, int $orderId, int $itemId, float $aktual, float $reject, ?string $operatorName = null): bool
     {
         $stmt = $pdo->prepare(
-            'UPDATE special_order_item SET aktual_produksi = ?, reject_produksi = ?
+            'UPDATE special_order_item SET aktual_produksi = ?, reject_produksi = ?, actual_updated_by_operator_name = ?
              WHERE special_order_item_id = ? AND special_order_id = ?'
         );
-        $stmt->execute([$aktual, $reject, $itemId, $orderId]);
+        $stmt->execute([$aktual, $reject, $operatorName, $itemId, $orderId]);
         return $stmt->rowCount() > 0;
     }
 
@@ -407,6 +407,7 @@ final class SpecialOrderRepository
     {
         $sql = "SELECT soi.special_order_item_id, soi.item_type, soi.item_name_snapshot, soi.qty, soi.charge,
                        soi.extra_packaging, soi.aktual_produksi, soi.reject_produksi, soi.fg_verified_qty,
+                       soi.actual_updated_by_operator_name,
                        soi.special_note, soi.division_id, d.name AS division_name,
                        d.factory_id AS item_factory_id, f.name AS item_factory_name, soi.product_id,
                        so.special_order_id, so.order_no, so.source_type, so.status, so.order_date, so.version AS order_version,

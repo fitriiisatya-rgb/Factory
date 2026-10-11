@@ -13,14 +13,16 @@
 --
 -- SAFETY
 -- ------
---   - Purely additive: three NULLable VARCHAR columns on the EXISTING
---     production_run table. No existing column/row is altered, dropped,
---     narrowed, or backfilled — every historical run simply keeps NULL
+--   - Purely additive: NULLable VARCHAR columns on EXISTING tables (three on
+--     production_run, one on special_order_item, one on
+--     replacement_demand). No existing column/row is altered, dropped,
+--     narrowed, or backfilled — every historical row simply keeps NULL
 --     (UI falls back to the account's full_name).
 --   - Retry-safe: ADD COLUMN IF NOT EXISTS (MariaDB).
---   - Positioned AFTER updated_at (present since migration 0001), NOT
---     after created_by/submitted_by (added by 0004) — so this file stays
---     valid regardless of any other migration's ordering.
+--   - production_run's columns are positioned AFTER updated_at (present
+--     since migration 0001), NOT after created_by/submitted_by (added by
+--     0004); the other two have no AFTER clause at all — so this file
+--     stays valid regardless of any other migration's ordering.
 -- ============================================================================
 
 ALTER TABLE production_run
@@ -31,3 +33,18 @@ ALTER TABLE production_run
 
 ALTER TABLE production_run
   ADD COLUMN IF NOT EXISTS last_updated_by_operator_name VARCHAR(150) NULL AFTER submitted_by_operator_name;
+
+-- ----------------------------------------------------------------------------
+-- The same shared division accounts also enter Actual/Reject Produksi for
+-- Pesanan Khusus / Non-Toko items (POST /api/special-orders/{id}/actual)
+-- and for Replacement demands (POST /api/replacement-demands/{id}/
+-- production-actual). One NULLable column each records the last
+-- "Siapa Anda?" name that wrote those numbers. No AFTER clause: appended
+-- at the end, so it never depends on another migration's column order.
+-- ----------------------------------------------------------------------------
+
+ALTER TABLE special_order_item
+  ADD COLUMN IF NOT EXISTS actual_updated_by_operator_name VARCHAR(150) NULL;
+
+ALTER TABLE replacement_demand
+  ADD COLUMN IF NOT EXISTS production_actual_updated_by_operator_name VARCHAR(150) NULL;

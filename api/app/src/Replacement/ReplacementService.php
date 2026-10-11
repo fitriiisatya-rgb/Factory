@@ -187,7 +187,7 @@ final class ReplacementService
      * mirroring SpecialOrderService::updateItemsActual()'s snapshot
      * semantics exactly (each call REPLACES the stored value).
      */
-    public function updateProductionActual(int $demandId, float $aktual, float $reject, int $userId, ?string $requestId): array
+    public function updateProductionActual(int $demandId, float $aktual, float $reject, int $userId, ?string $requestId, ?string $operatorName = null): array
     {
         if ($aktual < 0 || $reject < 0) {
             throw new ApiException(400, 'INVALID_QTY', 'aktual/reject cannot be negative');
@@ -200,8 +200,8 @@ final class ReplacementService
         if ($demand['status'] !== self::PRODUCTION_STATUS) {
             throw new ApiException(400, 'INVALID_STATUS', "Actual/Reject Produksi can only be entered while the demand still needs production (current status: {$demand['status']})");
         }
-        $this->repo->updateProductionActual($this->pdo, $demandId, $aktual, $reject);
-        Audit::write($this->pdo, $requestId, $userId, 'replacement.production_actual_updated', 'replacement_demand', (string) $demandId, 'ok', null, null, ['aktual' => $aktual, 'reject' => $reject]);
+        $this->repo->updateProductionActual($this->pdo, $demandId, $aktual, $reject, $operatorName);
+        Audit::write($this->pdo, $requestId, $userId, 'replacement.production_actual_updated', 'replacement_demand', (string) $demandId, 'ok', null, null, ['aktual' => $aktual, 'reject' => $reject, 'operatorName' => $operatorName]);
         return $this->getDemand($demandId);
     }
 
@@ -322,6 +322,9 @@ final class ReplacementService
             'allocatedFromFg' => $allocated,
             'productionAktual' => (float) $r['production_aktual'],
             'productionReject' => (float) $r['production_reject'],
+            // Migration 0019 — last "Siapa Anda?" name that entered the
+            // production actual (NULL for ADMIN/PPIC or pre-0019 rows).
+            'productionActualUpdatedByOperatorName' => $r['production_actual_updated_by_operator_name'] ?? null,
             'productionFgVerifiedQty' => $fgVerified,
             'productionNeed' => $productionNeed,
             'status' => $r['status'],

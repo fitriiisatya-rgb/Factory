@@ -366,7 +366,7 @@ final class SpecialOrderService
      *
      * @param array<int,array{itemId:int,aktualProduksi:float,rejectProduksi:float}> $items
      */
-    public function updateItemsActual(int $orderId, int $expectedVersion, array $items, int $userId, ?string $requestId): array
+    public function updateItemsActual(int $orderId, int $expectedVersion, array $items, int $userId, ?string $requestId, ?string $operatorName = null): array
     {
         $order = $this->repo->lockOrderById($this->pdo, $orderId);
         if ($order === null) {
@@ -390,7 +390,7 @@ final class SpecialOrderService
             if ($aktual < 0 || $reject < 0) {
                 throw new ApiException(400, 'INVALID_QTY', "Item #{$i}: aktualProduksi/rejectProduksi cannot be negative");
             }
-            $ok = $this->repo->updateItemActualProduksi($this->pdo, $orderId, $itemId, $aktual, $reject);
+            $ok = $this->repo->updateItemActualProduksi($this->pdo, $orderId, $itemId, $aktual, $reject, $operatorName);
             if (!$ok) {
                 throw new ApiException(400, 'UNKNOWN_ITEM_FOR_ORDER', "Item #{$i}: itemId {$itemId} does not belong to this order");
             }
@@ -398,7 +398,7 @@ final class SpecialOrderService
         }
 
         Versioning::update($this->pdo, 'special_order', 'special_order_id', $orderId, $expectedVersion, 'status = status', []);
-        Audit::write($this->pdo, $requestId, $userId, 'special_order.actual_updated', 'special_order', (string) $orderId, 'ok', $expectedVersion, $expectedVersion + 1, ['itemsTouched' => $touched]);
+        Audit::write($this->pdo, $requestId, $userId, 'special_order.actual_updated', 'special_order', (string) $orderId, 'ok', $expectedVersion, $expectedVersion + 1, ['itemsTouched' => $touched, 'operatorName' => $operatorName]);
 
         return $this->getOrder($orderId);
     }

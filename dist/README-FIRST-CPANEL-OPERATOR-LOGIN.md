@@ -4,8 +4,8 @@
 tidak familiar dengan database atau coding.
 
 **Paket ini MEMBUTUHKAN migrasi database baru (migrasi 0019).** Migrasi ini
-hanya **menambah 3 kolom baru** di tabel Produksi (`production_run`) untuk
-mencatat nama orang yang input — **tidak ada tabel yang dihapus, tidak ada
+hanya **menambah 5 kolom baru** (3 di tabel Produksi, 1 di item Pesanan
+Khusus/Non-Toko, 1 di Replacement) untuk mencatat nama orang yang input — **tidak ada tabel yang dihapus, tidak ada
 data yang dihapus, tidak ada kolom lama yang diubah (migrasi 0001–0018 sama
 sekali tidak disentuh).**
 
@@ -51,7 +51,9 @@ Karena satu akun dipakai beramai-ramai, setelah login akun divisi akan
 ditanya **"Siapa Anda?"**. Staf mengetik namanya sendiri (bebas, misalnya
 "Budi"). Nama itu:
 
-- Dicatat setiap kali **membuat**, **mengubah**, dan **submit** produksi.
+- Dicatat setiap kali **membuat**, **mengubah**, dan **submit** produksi,
+  dan juga saat mengisi **Actual Pesanan Khusus/Non-Toko** ("Diisi oleh: …")
+  dan **Actual Replacement**.
 - Tampil di halaman Produksi: "Dibuat oleh: Budi · Terakhir diupdate oleh:
   Siti · Disubmit oleh: Siti", dan di kolom **Disubmit Oleh** di tabel
   ringkasan divisi.

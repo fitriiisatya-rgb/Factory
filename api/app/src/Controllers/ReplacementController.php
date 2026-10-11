@@ -86,9 +86,11 @@ final class ReplacementController
         $aktual = (float) ($request->input('aktualProduksi') ?? 0);
         $reject = (float) ($request->input('rejectProduksi') ?? 0);
 
-        Idempotency::handle($request, 'POST /api/replacement-demands/{id}/production-actual', function (PDO $pdo) use ($userId, $id, $aktual, $reject, $request) {
+        $operatorName = Auth::currentOperatorName();
+
+        Idempotency::handle($request, 'POST /api/replacement-demands/{id}/production-actual', function (PDO $pdo) use ($userId, $id, $aktual, $reject, $request, $operatorName) {
             $service = new ReplacementService($pdo);
-            $dto = $service->updateProductionActual($id, $aktual, $reject, $userId, $request->header('Idempotency-Key'));
+            $dto = $service->updateProductionActual($id, $aktual, $reject, $userId, $request->header('Idempotency-Key'), $operatorName);
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'replacement_demand', 'recordKey' => (string) $id];
         });
     }
