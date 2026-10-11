@@ -26,8 +26,8 @@ declare(strict_types=1);
  * SAME browser session) — a deterrent, not a security control.
  * Amor\Api\Auth itself has no built-in throttling to hook into.
  *
- * Migration 0019 (Shared Division Login): no longer ADMIN-only — PPIC and
- * PRODUCTION accounts log in here too (ALLOWED_ROLES). A PRODUCTION shared
+ * Migration 0019 (Shared Division Login): no longer ADMIN-only — PPIC,
+ * PRODUCTION and FG_PACKING accounts log in here too (ALLOWED_ROLES). A PRODUCTION shared
  * division account is then asked "Siapa Anda?" (Auth::needsOperatorName())
  * before being sent back to ?return= (only /api/_ui-preview/... targets are
  * honoured — see safeReturnUrl()). Every ADMIN-only tool (_upgrade,
@@ -63,7 +63,7 @@ if ((bool) Config::get('SESSION_SECURE') && ($_SERVER['HTTPS'] ?? '') === '' && 
 
 Auth::bootSession();
 
-const ALLOWED_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION'];
+const ALLOWED_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING'];
 
 function esc(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 
@@ -314,7 +314,7 @@ if ($method === 'POST' && $action === 'login') {
     if (array_intersect(ALLOWED_ROLES, Auth::currentRoles()) === []) {
         $rejectedUsername = (string) $_SESSION['username'];
         Auth::logout();
-        renderLoginForm("Akun '{$rejectedUsername}' login berhasil, tapi bukan ADMIN, PPIC, atau akun divisi Produksi. Driver login lewat Portal Driver.");
+        renderLoginForm("Akun '{$rejectedUsername}' login berhasil, tapi bukan ADMIN, PPIC, akun divisi Produksi, atau akun FG. Driver login lewat Portal Driver.");
         exit;
     }
 

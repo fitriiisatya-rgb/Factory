@@ -168,7 +168,7 @@ $historyRows = $history->fetchAll();
     <tr>
       <td><?= ui_esc($h['tanggal']) ?></td>
       <td class="num"><?= (int) $h['version'] ?></td>
-      <td><?= ui_esc((string) ($h['updated_at'] ?? $h['created_at'])) ?></td>
+      <td><?= ui_esc(ui_fmt_datetime_id($h['updated_at'] ?? $h['created_at'] ?? null)) ?></td>
       <td><a class="btn btn-secondary btn-sm" href="/api/_ui-preview/?page=pesanan-toko&tanggal=<?= urlencode($h['tanggal']) ?>&factoryId=<?= $uiFactoryId ?>">Lihat</a></td>
     </tr>
     <?php endforeach; ?>

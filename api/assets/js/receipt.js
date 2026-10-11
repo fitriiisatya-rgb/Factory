@@ -15,6 +15,16 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  // UTC "YYYY-MM-DD HH:MM:SS" from the API -> "11 Okt 2026 · 20:14" (WIB).
+  function fmtWib(s) {
+    if (!s) return '-';
+    var d = new Date(String(s).replace(' ', 'T') + 'Z');
+    if (isNaN(d.getTime())) return String(s);
+    var w = new Date(d.getTime() + 7 * 3600 * 1000);
+    var bln = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    var hh = ('0' + w.getUTCHours()).slice(-2), mm = ('0' + w.getUTCMinutes()).slice(-2);
+    return w.getUTCDate() + ' ' + bln[w.getUTCMonth()] + ' ' + w.getUTCFullYear() + ' \u00b7 ' + hh + ':' + mm;
+  }
   function fmtNum(n) {
     n = Number(n) || 0;
     return (Math.round(n * 100) / 100).toString().replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
@@ -52,7 +62,7 @@
     head.innerHTML =
       '<div class="rc-card-title">SHP-' + sh.shipmentId + ' &middot; ' + esc(sh.shipmentGroup) + '</div>' +
       '<div class="rc-card-sub">Driver: ' + esc(sh.driverName || '-') + '</div>' +
-      '<div class="rc-card-sub">Berangkat: ' + esc(sh.departedAt || '-') + '</div>' +
+      '<div class="rc-card-sub">Berangkat: ' + esc(fmtWib(sh.departedAt)) + '</div>' +
       '<div style="margin-top:6px;">' + statusBadge(sh.receiptStatus) + '</div>';
     card.appendChild(head);
 

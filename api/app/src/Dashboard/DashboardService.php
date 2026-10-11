@@ -201,7 +201,7 @@ final class DashboardService
     private function recentActivity(int $limit): array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT h.event_at, h.action, h.record_type, h.record_key, h.status, u.username
+            'SELECT h.event_at, h.action, h.record_type, h.record_key, h.status, u.username, u.full_name
              FROM audit_log h LEFT JOIN users u ON u.user_id = h.user_id
              ORDER BY h.event_at DESC LIMIT ' . (int) $limit
         );

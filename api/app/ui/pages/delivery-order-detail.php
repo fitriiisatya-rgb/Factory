@@ -36,14 +36,14 @@ if ($do !== null) {
       <h2 class="card-title"><?= ui_esc($do['docNo']) ?></h2>
       <div class="page-subtitle" style="margin-top:4px;"><?= ui_esc((string) $do['storeName']) ?> &middot; <?= ui_esc($do['tanggal']) ?></div>
     </div>
-    <?= ui_badge(ui_do_status_label($do['status'])) ?>
+    <?= ui_badge(ui_do_status_display($do)) ?>
   </div>
 
   <?php if ($do['sourcePoChanged']): ?>
   <div class="alert alert-warning">PO sumber toko ini sudah berubah versi sejak DO dibuat/disegarkan terakhir kali. Item DO tidak diubah otomatis — gunakan "Segarkan dari PO" di bawah untuk menyamakan.</div>
   <?php endif; ?>
   <?php if ($do['cancelledAt'] !== null): ?>
-  <div class="alert alert-danger">Dibatalkan pada <?= ui_esc((string) $do['cancelledAt']) ?> — alasan: <?= ui_esc((string) $do['cancelReason']) ?></div>
+  <div class="alert alert-danger">Dibatalkan pada <?= ui_esc(ui_fmt_datetime_id($do['cancelledAt'] ?? null)) ?> — alasan: <?= ui_esc((string) $do['cancelReason']) ?></div>
   <?php endif; ?>
 
   <div class="kpi-grid" style="grid-template-columns:repeat(6,minmax(0,1fr));">
@@ -56,7 +56,7 @@ if ($do !== null) {
   </div>
 
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Produk</th><th>Divisi</th><th class="num">Planned</th><th class="num">Sudah Dikirim</th><th class="num">Sisa</th><th class="num">FG Available</th><th>Status</th></tr></thead>
+    <thead><tr><th>Produk</th><th>Divisi</th><th class="num">Planned</th><th class="num">Sudah Dikirim</th><th class="num">Sisa</th><th class="num">Stok FG Pabrik</th><th>Status</th></tr></thead>
     <tbody>
     <?php foreach ($do['items'] as $it): ?>
     <tr>
@@ -95,7 +95,7 @@ if ($do !== null) {
     <?= ui_empty_state('Belum ada pengiriman', 'Gunakan tombol "Buat Pengiriman" di atas untuk mengirim toko ini.') ?>
   <?php else: foreach ($shipments as $sh): ?>
   <div class="table-scroll" style="margin-bottom:var(--space-4);"><table class="data-table">
-    <thead><tr><th colspan="3">Shipment #<?= (int) $sh['shipment_id'] ?> &middot; Grup <?= ui_esc((string) $sh['shipment_group']) ?> &middot; <?= ui_badge(ui_shipment_status_label((string) $sh['status'])) ?> &middot; <?= ui_esc((string) $sh['shipped_at']) ?></th></tr>
+    <thead><tr><th colspan="3">Pengiriman SHP-<?= (int) $sh['shipment_id'] ?> &middot; Grup <?= ui_esc((string) $sh['shipment_group']) ?> &middot; <?= ui_badge(ui_shipment_status_label((string) $sh['status'])) ?> &middot; <?= ui_esc(ui_fmt_datetime_id($sh['shipped_at'] ?? null)) ?></th></tr>
     <tr><th>Produk</th><th class="num">Qty</th><th>Catatan</th></tr></thead>
     <tbody>
     <?php foreach ($sh['items'] as $it): ?>

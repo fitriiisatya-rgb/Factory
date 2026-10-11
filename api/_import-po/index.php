@@ -88,6 +88,23 @@ function fmtNum(float $n): string { return rtrim(rtrim(number_format($n, 2, ',',
 function ui_esc(string $s): string { return esc($s); }
 function ui_fmt_num(float $n): string { return fmtNum($n); }
 function ui_fmt_money(float $n): string { return 'Rp' . number_format($n, 0, ',', '.'); }
+if (!function_exists('ui_fmt_datetime_id')) {
+    /** UTC DATETIME -> "11 Okt 2026 · 20:14" (Asia/Jakarta), same as app/ui/bootstrap.php's helper. */
+    function ui_fmt_datetime_id(?string $utc): string
+    {
+        if ($utc === null || $utc === '') {
+            return '-';
+        }
+        try {
+            $dt = new \DateTime($utc, new \DateTimeZone('UTC'));
+            $dt->setTimezone(new \DateTimeZone('Asia/Jakarta'));
+        } catch (\Throwable $e) {
+            return $utc;
+        }
+        $bulan = [1 => 'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+        return $dt->format('j') . ' ' . $bulan[(int) $dt->format('n')] . ' ' . $dt->format('Y') . ' · ' . $dt->format('H:i');
+    }
+}
 
 // Minimal dark-themed gate screen (no sidebar/topbar — there is no logged-
 // in identity yet to show one for) for the pre-auth states below, so even
@@ -318,7 +335,7 @@ if ($action === 'confirm_import' && isset($_SESSION['po_staged'])) {
                 $d = $result['data'];
                 $skippedNote = !empty($d['skippedProductRows']) ? ' (' . count($d['skippedProductRows']) . ' produk dilewati, tidak diimpor).' : '';
                 $actionResult = ['ok' => true, 'title' => 'PO berhasil diimpor', 'message' =>
-                    "Batch #{$d['poBatchId']} ({$d['tanggal']}, {$d['factory']}) — {$d['linesWritten']} baris ditulis, target total " . fmtNum($d['targetTotal']) . '.' . $skippedNote,
+                    'PO ' . ($d['factory'] === 'cibadak' ? 'Cibadak' : 'Karangtengah') . " tanggal {$d['tanggal']} tersimpan dengan total target " . fmtNum($d['targetTotal']) . ' pcs.' . $skippedNote,
                     // Additive: feeds the richer "PO berhasil disimpan"
                     // success card (task's own success-page requirement) —
                     // never changes what $actionResult['message'] already
@@ -396,7 +413,7 @@ ui_page_head($ui, 'pesanan-toko', 'Import / Revisi PO Toko', 'Upload PO Awal ata
     <?= ui_kpi_card(['label' => 'Pabrik', 'value' => $d['factory'] === 'cibadak' ? 'Cibadak (Bolu)' : 'Karangtengah', 'icon' => 'building', 'color' => 'neutral', 'detail' => true]) ?>
     <?= ui_kpi_card(['label' => 'Tanggal', 'value' => $d['tanggal'], 'icon' => 'calendar', 'color' => 'neutral', 'detail' => true]) ?>
     <?= ui_kpi_card(['label' => 'Tipe', 'value' => $d['uploadType'] === 'initial' ? 'PO Awal' : 'PO Tambahan/Revisi', 'icon' => 'file', 'color' => 'neutral', 'detail' => true]) ?>
-    <?= ui_kpi_card(['label' => 'Jumlah Produk', 'value' => (string) $d['linesWritten'], 'icon' => 'box', 'color' => 'neutral', 'detail' => true]) ?>
+    <?= ui_kpi_card(['label' => 'Jumlah Produk', 'value' => (string) ($d['productCount'] ?? $d['linesWritten']), 'icon' => 'box', 'color' => 'neutral', 'detail' => true]) ?>
     <?= ui_kpi_card(['label' => 'Jumlah Toko', 'value' => (string) $d['storesMapped'], 'icon' => 'user', 'color' => 'neutral', 'detail' => true]) ?>
     <?= ui_kpi_card(['label' => 'Total PO Awal', 'value' => ui_fmt_num($d['committedPoAwal']), 'icon' => 'chart', 'color' => 'neutral', 'detail' => true]) ?>
     <?= ui_kpi_card(['label' => 'Total Revisi', 'value' => ui_fmt_num($d['committedPoRevisi']), 'icon' => 'chart', 'color' => 'neutral', 'detail' => true]) ?>
@@ -479,7 +496,7 @@ ui_page_head($ui, 'pesanan-toko', 'Import / Revisi PO Toko', 'Upload PO Awal ata
 
   <?php if ($plan['duplicateOf'] !== null): ?>
   <div class="alert alert-warning" style="margin-top:var(--space-3);"><strong>FILE SUDAH PERNAH DIUPLOAD</strong> — file dengan isi persis sama
-  sudah diimpor sebelumnya (<?= ui_esc($plan['duplicateOf']['uploaded_at']) ?>, tipe <?= ui_esc($plan['duplicateOf']['upload_type']) ?>).
+  sudah diimpor sebelumnya (<?= ui_esc(ui_fmt_datetime_id($plan['duplicateOf']['uploaded_at'] ?? null)) ?>, <?= ui_esc(($plan['duplicateOf']['upload_type'] ?? '') === 'initial' ? 'PO Awal' : 'PO Tambahan/Revisi') ?>).
   Mengimpor lagi aman (tidak akan menggandakan angka — lihat aturan snapshot revisi), tapi kemungkinan Anda tidak sengaja
   mengupload file yang sama dua kali.</div>
   <?php endif; ?>
@@ -497,14 +514,12 @@ ui_page_head($ui, 'pesanan-toko', 'Import / Revisi PO Toko', 'Upload PO Awal ata
   </div>
 
   <div class="table-scroll" style="margin-top:var(--space-4);"><table class="data-table">
-    <thead><tr><th>Ukuran Resolusi</th><th class="num">Jumlah</th></tr></thead>
+    <thead><tr><th>Pemeriksaan File</th><th class="num">Jumlah</th></tr></thead>
     <tbody>
-      <tr><td>Produk terpetakan</td><td class="num"><span class="badge badge-success"><?= $plan['productResolution']['mapped'] ?></span></td></tr>
-      <tr><td>Produk BELUM terpetakan</td><td class="num"><span class="badge <?= $plan['productResolution']['unresolved'] > 0 ? 'badge-danger' : 'badge-success' ?>"><?= $plan['productResolution']['unresolved'] ?></span></td></tr>
-      <tr><td>Toko unik terpetakan <span style="color:var(--text-faint);">(jumlah toko berbeda, bukan baris)</span></td><td class="num"><span class="badge badge-success"><?= $plan['storeResolution']['uniqueMapped'] ?></span></td></tr>
-      <tr><td>Toko unik BELUM terpetakan <span style="color:var(--text-faint);">(nama toko berbeda)</span></td><td class="num"><span class="badge <?= $plan['storeResolution']['uniqueUnresolved'] > 0 ? 'badge-danger' : 'badge-success' ?>"><?= $plan['storeResolution']['uniqueUnresolved'] ?></span></td></tr>
-      <tr><td>Kemunculan/baris toko terpetakan <span style="color:var(--text-faint);">(1 toko bisa muncul di banyak baris produk)</span></td><td class="num"><span class="badge badge-neutral"><?= $plan['storeResolution']['mapped'] ?></span></td></tr>
-      <tr><td>Kemunculan/baris toko BELUM terpetakan</td><td class="num"><span class="badge <?= $plan['storeResolution']['unresolved'] > 0 ? 'badge-danger' : 'badge-neutral' ?>"><?= $plan['storeResolution']['unresolved'] ?></span></td></tr>
+      <tr><td>Produk dikenali</td><td class="num"><span class="badge badge-success"><?= $plan['productResolution']['mapped'] ?></span></td></tr>
+      <tr><td>Produk belum dikenali</td><td class="num"><span class="badge <?= $plan['productResolution']['unresolved'] > 0 ? 'badge-danger' : 'badge-success' ?>"><?= $plan['productResolution']['unresolved'] ?></span></td></tr>
+      <tr><td>Toko dikenali</td><td class="num"><span class="badge badge-success"><?= $plan['storeResolution']['uniqueMapped'] ?></span></td></tr>
+      <tr><td>Toko belum dikenali</td><td class="num"><span class="badge <?= $plan['storeResolution']['uniqueUnresolved'] > 0 ? 'badge-danger' : 'badge-success' ?>"><?= $plan['storeResolution']['uniqueUnresolved'] ?></span></td></tr>
     </tbody>
   </table></div>
 
@@ -669,13 +684,13 @@ ui_page_head($ui, 'pesanan-toko', 'Import / Revisi PO Toko', 'Upload PO Awal ata
   <div style="padding:0 var(--space-4) var(--space-4);"><?= ui_empty_state('Belum ada PO yang tersimpan', '') ?></div>
   <?php else: ?>
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Tanggal</th><th>Pabrik</th><th>Tipe Upload Terakhir</th><th>File Terakhir</th><th class="num">Versi</th></tr></thead>
+    <thead><tr><th>Tanggal</th><th>Pabrik</th><th>Upload Terakhir</th><th>File Terakhir</th><th class="num">Versi</th></tr></thead>
     <tbody>
     <?php foreach (array_slice($recentBatches, 0, 20) as $b): ?>
     <tr>
       <td><?= ui_esc($b['tanggal']) ?></td>
       <td><?= ui_esc($b['factory_name']) ?></td>
-      <td><?= ui_esc($b['upload_type'] ?? '-') ?></td>
+      <td><?= ui_esc(match ($b['upload_type'] ?? null) { 'initial' => 'PO Awal', 'revision' => 'PO Tambahan/Revisi', default => '-' }) ?></td>
       <td><?= ui_esc($b['source_filename'] ?? '-') ?></td>
       <td class="num"><?= (int) $b['version'] ?></td>
     </tr>
@@ -683,17 +698,7 @@ ui_page_head($ui, 'pesanan-toko', 'Import / Revisi PO Toko', 'Upload PO Awal ata
     </tbody>
   </table></div>
   <?php endif; ?>
-  <p style="padding:0 var(--space-4) var(--space-4);color:var(--text-faint);font-size:var(--text-xs);">Untuk rincian per toko/produk, gunakan <code>GET /api/po/current</code> (bisa difilter
-  <code>date</code>, <code>factoryId</code>, <code>divisionId</code>, <code>storeId</code>, <code>poType</code>).</p>
-</div>
-
-<div class="card section">
-  <div class="card-head"><h2 class="card-title">Nonaktifkan Wizard Ini</h2></div>
-  <form method="post" onsubmit="return confirm('Nonaktifkan halaman import PO ini sekarang?');">
-    <input type="hidden" name="csrf" value="<?= ui_esc($csrfToken) ?>">
-    <input type="hidden" name="action" value="disable">
-    <button type="submit" class="btn btn-danger">Nonaktifkan Import PO Wizard</button>
-  </form>
+  <p style="padding:0 var(--space-4) var(--space-4);color:var(--text-faint);font-size:var(--text-xs);">Rincian per toko dan produk ada di menu <a href="/api/_ui-preview/?page=pesanan-toko">Pesanan Toko</a>.</p>
 </div>
 
 <?php ui_page_foot(); ?>

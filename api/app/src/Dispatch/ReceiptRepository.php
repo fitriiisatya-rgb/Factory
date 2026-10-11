@@ -137,8 +137,9 @@ final class ReceiptRepository
     public function findReceiptItems(PDO $pdo, int $receiptId): array
     {
         $stmt = $pdo->prepare(
-            'SELECT ri.*, COALESCE(p.name, ri.item_name_snapshot) AS product_name FROM shipment_receipt_item ri
+            'SELECT ri.*, COALESCE(p.name, ri.item_name_snapshot) AS product_name, d.name AS division_name FROM shipment_receipt_item ri
              LEFT JOIN product p ON p.product_id = ri.product_id
+             LEFT JOIN division d ON d.division_id = p.division_id
              WHERE ri.shipment_receipt_id = ? ORDER BY COALESCE(p.name, ri.item_name_snapshot)'
         );
         $stmt->execute([$receiptId]);

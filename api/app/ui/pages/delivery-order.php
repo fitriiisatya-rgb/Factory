@@ -95,8 +95,8 @@ foreach ($storesWithPo as $s) {
       <td class="num"><?= ui_fmt_num($d['totalPlanned']) ?></td>
       <td class="num"><?= ui_fmt_num($d['totalShipped']) ?></td>
       <td class="num"><?= ui_fmt_num($d['totalRemaining']) ?></td>
-      <td><?= ui_badge(ui_do_status_label($d['status'])) ?></td>
-      <td><?= $d['lastShipmentAt'] !== null ? ui_esc((string) $d['lastShipmentAt']) : '-' ?></td>
+      <td><?= ui_badge(ui_do_status_display($d)) ?></td>
+      <td><?= ui_esc(ui_fmt_datetime_id($d['lastShipmentAt'] ?? null)) ?></td>
       <td class="row-actions">
         <a class="btn btn-secondary btn-sm" href="/api/_ui-preview/?page=delivery-order-detail&doId=<?= (int) $d['doId'] ?>">Lihat</a>
         <a class="btn btn-secondary btn-sm" href="/api/_ui-preview/print-do.php?doId=<?= (int) $d['doId'] ?>" target="_blank">Print</a>

@@ -101,8 +101,8 @@ if [ -z "$GATE_LINE" ] || [ -z "$ROLES_LINE" ] || [ -z "$PROD_LINE" ] || [ "$GAT
   exit 1
 fi
 
-echo "--- sanity: confirm the login page widening is exactly ADMIN/PPIC/PRODUCTION with a safe ?return= ---"
-grep -qF "const ALLOWED_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION'];" "$STAGE/api/_admin-login/index.php" || { echo "REFUSING TO BUILD: _admin-login ALLOWED_ROLES is not exactly ADMIN/PPIC/PRODUCTION."; exit 1; }
+echo "--- sanity: confirm the login page widening is exactly ADMIN/PPIC/PRODUCTION/FG_PACKING with a safe ?return= ---"
+grep -qF "const ALLOWED_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING'];" "$STAGE/api/_admin-login/index.php" || { echo "REFUSING TO BUILD: _admin-login ALLOWED_ROLES is not exactly ADMIN/PPIC/PRODUCTION/FG_PACKING."; exit 1; }
 grep -qF "str_starts_with(\$raw, '/api/_ui-preview/')" "$STAGE/api/_admin-login/index.php" || { echo "REFUSING TO BUILD: _admin-login safeReturnUrl() no longer restricts ?return= to /api/_ui-preview/."; exit 1; }
 grep -q "hash_equals" "$STAGE/api/_admin-login/index.php" || { echo "REFUSING TO BUILD: the Siapa Anda? form lost its CSRF check."; exit 1; }
 grep -qF "unset(\$_SESSION['operator_name']);" "$STAGE/api/app/src/Auth.php" || { echo "REFUSING TO BUILD: Auth no longer clears the operator name."; exit 1; }

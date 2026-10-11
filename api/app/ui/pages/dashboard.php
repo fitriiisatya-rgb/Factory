@@ -89,7 +89,7 @@ $k = $summary['kpi'];
         <td class="num"><?= ui_fmt_num($d['totalPlanned']) ?></td>
         <td class="num"><?= ui_fmt_num($d['totalShipped']) ?></td>
         <td class="num"><?= ui_fmt_num($d['totalRemaining']) ?></td>
-        <td><?= ui_badge(ui_do_status_label($d['status'])) ?></td>
+        <td><?= ui_badge(ui_do_status_display($d)) ?></td>
       </tr>
       <?php endforeach; ?>
       </tbody>
@@ -116,19 +116,6 @@ $k = $summary['kpi'];
 
 <div class="card section">
   <div class="card-head"><h2 class="card-title">Aktivitas Terbaru</h2></div>
-  <?php
-    $actionLabels = [
-        'po.import' => 'PO diimpor/direvisi', 'po.product.create_from_import' => 'Produk baru dibuat dari import PO',
-        'product.create' => 'Produk ditambahkan', 'product.update' => 'Produk diperbarui', 'product.alias.create' => 'Alias produk ditambahkan',
-        'store.create' => 'Toko ditambahkan', 'store.update' => 'Toko diperbarui', 'store.alias.create' => 'Alias toko ditambahkan',
-        'production.draft.create' => 'Draft Produksi dibuat', 'production.draft.edit' => 'Draft Produksi disimpan',
-        'production.submit' => 'Produksi disubmit', 'production.reopen' => 'Produksi dibuka kembali',
-        'production.overproduction' => 'Overproduction tercatat', 'production.target_changed_from_po_revision' => 'Target produksi berubah (revisi PO)',
-        'fg.draft.create' => 'Draft FG dibuat', 'fg.draft.edit' => 'Draft FG disimpan',
-        'fg.submit' => 'FG disubmit', 'fg.reopen' => 'FG dibuka kembali', 'fg.source_inconsistency' => 'Ketidaksesuaian sumber FG',
-        'do.preprint' => 'DO dicetak (preprint)', 'do.refresh_from_po' => 'DO disegarkan dari PO', 'do.cancel' => 'DO dibatalkan', 'do.ship' => 'Pengiriman dikonfirmasi',
-    ];
-  ?>
   <?php if ($summary['recentActivity'] === []): ?>
     <?= ui_empty_state('Belum ada aktivitas', '') ?>
   <?php else: ?>
@@ -137,10 +124,10 @@ $k = $summary['kpi'];
     <div class="activity-item">
       <div class="activity-icon"><?= ui_icon('file') ?></div>
       <div>
-        <div class="activity-text"><?= ui_esc($actionLabels[$a['action']] ?? $a['action']) ?></div>
-        <div class="activity-meta"><?= ui_esc($a['record_type']) ?> #<?= ui_esc((string) $a['record_key']) ?><?= $a['username'] ? ' &middot; ' . ui_esc($a['username']) : '' ?></div>
+        <div class="activity-text"><?= ui_esc(ui_activity_label((string) $a['action'])) ?></div>
+        <div class="activity-meta"><?= ui_esc((string) (($a['full_name'] ?? '') !== '' ? $a['full_name'] : ($a['username'] ?? 'Toko / Sistem'))) ?></div>
       </div>
-      <div class="activity-time"><?= ui_esc((string) $a['event_at']) ?></div>
+      <div class="activity-time"><?= ui_esc(ui_fmt_datetime_id((string) $a['event_at'])) ?></div>
     </div>
     <?php endforeach; ?>
   </div>

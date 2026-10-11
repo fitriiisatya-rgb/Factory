@@ -14,7 +14,7 @@ try {
 } catch (ApiException $e) {
     $viewError = $e->getMessage();
 }
-$sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sales_executive' => 'Sales Executive', 'umum' => 'Umum'];
+$sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sales_executive' => 'Sales Eksekutif', 'umum' => 'Lainnya'];
 ?>
 <?php if ($viewError !== null): ?>
 <div class="alert alert-danger"><?= ui_esc($viewError) ?></div>

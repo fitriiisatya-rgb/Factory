@@ -216,7 +216,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   </label>
   <div class="btn-group" style="margin-top:var(--space-3);">
     <button type="button" class="btn btn-primary" id="btn-save-fg">Simpan Draft</button>
-    <button type="button" class="btn btn-success" id="btn-submit-fg">Submit FG</button>
+    <button type="button" class="btn btn-success" id="btn-submit-fg">Lanjut ke Packing &rarr;</button>
   </div>
   <?php elseif ($batchView['status'] === 'submitted'): ?>
   <div class="btn-group" style="margin-top:var(--space-3);">
@@ -262,6 +262,16 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   // into an HTML string (never a partial/inconsistent .replace()).
   // Numeric-only values (ids, target/verified/packed quantities) are
   // never passed through this — they cannot carry markup.
+  // UTC "YYYY-MM-DD HH:MM:SS" from the API -> "11 Okt 2026 · 20:14" (WIB).
+  function fmtWib(s) {
+    if (!s) return '-';
+    var d = new Date(String(s).replace(' ', 'T') + 'Z');
+    if (isNaN(d.getTime())) return String(s);
+    var w = new Date(d.getTime() + 7 * 3600 * 1000);
+    var bln = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    var hh = ('0' + w.getUTCHours()).slice(-2), mm = ('0' + w.getUTCMinutes()).slice(-2);
+    return w.getUTCDate() + ' ' + bln[w.getUTCMonth()] + ' ' + w.getUTCFullYear() + ' \u00b7 ' + hh + ':' + mm;
+  }
   function escHtml(value) {
     return String(value === null || value === undefined ? '' : value)
       .replace(/&/g, '&amp;')
@@ -477,28 +487,91 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     var form = document.getElementById('fg-form');
     var refreshBox = document.getElementById('fg-refresh-source');
 
+    // Packing and stock are per Toko (a store's ready FG can only ship to
+    // that store), so a verified product with PO store targets must end up
+    // split per Toko before it can be packed. Done automatically where the
+    // split is unambiguous: Sesuai with production == SUM(store targets)
+    // takes each store's own target; a product with exactly ONE target
+    // store takes the whole verified qty. Anything else (verified differs
+    // from the store targets across several stores) is never guessed —
+    // the operator splits it in Breakdown Toko.
+    async function buildVerifikasiPayload() {
+      var items = [], storeItems = [], manual = [];
+      var lines = collectItems();
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.fgVerified <= 0.0001) { items.push(line); continue; }
+        var data = await fetchStoreData(line.productId);
+        var stores = (data.stores || []).filter(function (st) { return Number(st.target) > 0.0001; });
+        if (stores.length === 0) { items.push(line); continue; }
+        var sumTarget = stores.reduce(function (a, st) { return a + Number(st.target); }, 0);
+        var rows = null;
+        if (stores.length === 1) {
+          var matchesTarget = Math.abs(line.fgVerified - Number(stores[0].target)) < 0.01;
+          rows = [{ storeId: stores[0].storeId, fgVerified: line.fgVerified, sesuaiVerified: matchesTarget }];
+          // FG confirmed the production result (Sesuai) but production
+          // itself is short/over the PO: record why, so FG never has to
+          // type a note for a gap that is Production's, not FG's.
+          if (!matchesTarget && line.sesuaiVerified && !line.notes) {
+            line.notes = 'Sesuai hasil produksi (' + line.fgVerified.toLocaleString('id-ID') + '); target PO toko ' + Number(stores[0].target).toLocaleString('id-ID');
+          }
+        } else if (Math.abs(line.fgVerified - sumTarget) < 0.01) {
+          rows = stores.map(function (st) { return { storeId: st.storeId, fgVerified: Number(st.target), sesuaiVerified: true }; });
+        }
+        if (rows === null) {
+          var card = document.querySelector('.fg-card[data-product-id="' + line.productId + '"] .fg-card-title');
+          manual.push({ productId: line.productId, name: card ? card.textContent : ('Produk ' + line.productId) });
+          continue;
+        }
+        rows.forEach(function (r, idx) {
+          r.packed = 0;
+          r.reject = idx === 0 ? line.reject : 0;
+          r.hilang = idx === 0 ? line.hilang : 0;
+          r.notes = idx === 0 ? line.notes : '';
+        });
+        storeItems.push({ productId: line.productId, rows: rows });
+      }
+      return { items: items, storeItems: storeItems, manual: manual };
+    }
+
+    async function saveVerifikasi() {
+      var payload = await buildVerifikasiPayload();
+      if (payload.manual.length > 0) {
+        var names = payload.manual.map(function (m) { return m.name; }).join(', ');
+        throw new Error('Jumlah FG ' + names + ' berbeda dari target per toko. Bagi jumlahnya per toko di "Breakdown Toko" dulu.');
+      }
+      var data = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, items: payload.items, storeItems: payload.storeItems, refreshSource: refreshBox && refreshBox.checked } });
+      version = data.version;
+      form.setAttribute('data-expected-version', version);
+      return data;
+    }
+
     var saveBtn = document.getElementById('btn-save-fg');
     if (saveBtn) saveBtn.addEventListener('click', async function () {
       saveBtn.disabled = true;
       try {
-        var data = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, items: collectItems(), refreshSource: refreshBox && refreshBox.checked } });
-        Amor.toast('Draft FG disimpan.', 'success');
-        version = data.version;
-        form.setAttribute('data-expected-version', version);
-      } catch (e) { Amor.toast(e.message, 'danger'); }
-      saveBtn.disabled = false;
+        await saveVerifikasi();
+        Amor.toast('Verifikasi FG disimpan.', 'success');
+        setTimeout(function () { location.reload(); }, 600);
+      } catch (e) { Amor.toast(e.message, 'danger'); saveBtn.disabled = false; }
     });
 
+    // "Lanjut ke Packing": saves the verification, then moves to the
+    // Packing step. Stock is only added by the final Submit FG there,
+    // once every Toko is packed.
     var submitBtn = document.getElementById('btn-submit-fg');
     if (submitBtn) submitBtn.addEventListener('click', async function () {
-      var ok = await Amor.confirmModal({ title: 'Submit FG?', body: 'Stok FG akan bertambah sesuai angka Packed yang disubmit. Pastikan sudah benar.', confirmLabel: 'Ya, Submit' });
-      if (!ok) return;
       submitBtn.disabled = true;
       try {
-        var saved = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, items: collectItems(), refreshSource: refreshBox && refreshBox.checked } });
-        await Amor.apiFetch('/api/fg/' + batchId + '/submit', { method: 'POST', body: { expectedVersion: saved.version } });
-        Amor.toast('FG berhasil disubmit.', 'success');
-        setTimeout(function () { location.reload(); }, 600);
+        var saved = await saveVerifikasi();
+        var needsPacking = (saved.items || []).some(function (it) { return Number(it.fgVerified) > 0.0001; });
+        if (needsPacking) {
+          Amor.toast('Verifikasi tersimpan. Lanjutkan packing per toko.', 'success');
+          setTimeout(function () { location.href = <?= json_encode(fgStepUrl('packing', $uiTanggal, $uiFactoryId)) ?>; }, 500);
+          return;
+        }
+        Amor.toast('Belum ada FG terverifikasi untuk dipacking.', 'warning');
+        submitBtn.disabled = false;
       } catch (e) { Amor.toast(e.message, 'danger'); submitBtn.disabled = false; }
     });
 
@@ -764,7 +837,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   function packingSubmissionMetaHtml(group, status) {
     if (!group.packingSubmittedAt || !group.packingSubmittedBy) return '';
     var prefix = status.code === 'perlu_submit_ulang' ? 'Terakhir disubmit' : 'Disubmit';
-    return '<div class="fg-card-sub" style="margin-bottom:var(--space-3);">' + escHtml(prefix) + ' oleh: <b>' + escHtml(group.packingSubmittedBy) + '</b> &middot; Waktu Submit: ' + escHtml(group.packingSubmittedAt) + '</div>';
+    return '<div class="fg-card-sub" style="margin-bottom:var(--space-3);">' + escHtml(prefix) + ' oleh: <b>' + escHtml(group.packingSubmittedBy) + '</b> &middot; Waktu Submit: ' + escHtml(fmtWib(group.packingSubmittedAt)) + '</div>';
   }
 
   // Builds the per-store action area from the server's OWN persisted
@@ -990,7 +1063,20 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
 
   var submitAllBtn = document.getElementById('btn-submit-fg-packing');
   if (submitAllBtn) submitAllBtn.addEventListener('click', async function () {
-    var ok = await Amor.confirmModal({ title: 'Submit FG?', body: 'Stok FG akan bertambah sesuai angka Packed yang sudah disimpan per Toko. Pastikan semua Toko sudah benar.', confirmLabel: 'Ya, Submit' });
+    // Every verified piece must be packed and every Toko submitted first —
+    // otherwise Submit FG would add less stock than was verified and the
+    // missing pieces could never be shipped.
+    var pending = storeGroups.filter(function (g) {
+      var st = storeStatus(g);
+      var ready = 0, packed = 0;
+      g.rows.forEach(function (r) { if (r.exploded) { ready += r.fgVerified; packed += r.packed; } });
+      return ready > 0.0001 && (st.code !== 'sudah_disubmit' || packed + 0.0001 < ready);
+    }).map(function (g) { return g.storeName; });
+    if (pending.length > 0) {
+      Amor.toast('Packing belum selesai untuk: ' + pending.join(', ') + '. Selesaikan dan Submit Packing per toko dulu.', 'danger');
+      return;
+    }
+    var ok = await Amor.confirmModal({ title: 'Submit FG?', body: 'Semua toko sudah dipacking. Stok FG siap kirim akan bertambah sesuai jumlah Packed.', confirmLabel: 'Ya, Submit' });
     if (!ok) return;
     submitAllBtn.disabled = true;
     try {

@@ -51,7 +51,7 @@ $tabs = ['waiting_admin_verification' => 'Menunggu Verifikasi', 'verified' => 'T
       <td><?= ui_esc((string) $r['storeName']) ?></td>
       <td><?= ui_esc((string) $r['productName']) ?></td>
       <td class="num"><?= ui_fmt_num($r['qty']) ?></td>
-      <td><?= ui_esc((string) $r['reason'] ?? '-') ?></td>
+      <td><?= ui_esc((string) (($r['reason'] ?? '') !== '' ? $r['reason'] : '-')) ?></td>
       <td><?= ui_esc((string) $r['returDate']) ?></td>
       <td><?= ui_badge($statusLabels[$r['status']] ?? $r['status']) ?></td>
       <td>

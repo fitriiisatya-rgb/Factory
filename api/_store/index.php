@@ -66,16 +66,38 @@ $titles = [
 // other UAT page's own filter <select>, e.g. Pesanan Toko's $factories).
 $lookupProducts = [];
 $lookupStores = [];
-if (in_array($tab, ['khusus', 'retur', 'mutasi'], true)) {
+if ($tab === 'khusus') {
+    // Pesanan Khusus may order anything in the active catalog.
     $productRows = (new ProductRepository())->findAll(Database::pdo(), null, null, true);
     $lookupProducts = array_map(static fn ($p) => ['productId' => (int) $p['product_id'], 'name' => $p['name']], $productRows);
+} elseif (in_array($tab, ['retur', 'mutasi'], true)) {
+    // Retur / Mutasi only ever concern goods this store actually received
+    // in good condition (a delivered shipment, or a completed incoming
+    // Mutasi) — not the whole ~470-item catalog.
+    $stmt = Database::pdo()->prepare(
+        "SELECT DISTINCT p.product_id, p.name FROM product p
+         WHERE p.product_id IN (
+             SELECT ri.product_id FROM shipment_receipt_item ri
+             INNER JOIN shipment_receipt r ON r.shipment_receipt_id = ri.shipment_receipt_id
+             INNER JOIN shipment s ON s.shipment_id = r.shipment_id
+             WHERE s.store_id = ? AND ri.received_good_qty > 0
+             UNION
+             SELECT m.product_id FROM mutasi_request m
+             WHERE m.destination_store_id = ? AND m.status = 'completed'
+         )
+         ORDER BY p.name"
+    );
+    $stmt->execute([$storeIdentity['storeId'], $storeIdentity['storeId']]);
+    $lookupProducts = array_map(static fn ($p) => ['productId' => (int) $p['product_id'], 'name' => $p['name']], $stmt->fetchAll());
 }
 if ($tab === 'mutasi') {
+    // Real bakeries only: never this store itself, never the synthetic
+    // "NON-OUTLET / PERORANGAN" placeholder (not a place goods can move to).
     $storeRows = (new StoreRepository())->findAll(Database::pdo(), null, null, true);
     $lookupStores = array_values(array_filter(array_map(
         static fn ($s) => ['storeId' => (int) $s['store_id'], 'name' => $s['canonical_name']],
         $storeRows
-    ), fn ($s) => $s['storeId'] !== $storeIdentity['storeId']));
+    ), fn ($s) => $s['storeId'] !== $storeIdentity['storeId'] && $s['name'] !== 'NON-OUTLET / PERORANGAN'));
 }
 
 $focusShipmentId = isset($_GET['shipment']) ? (int) $_GET['shipment'] : null;

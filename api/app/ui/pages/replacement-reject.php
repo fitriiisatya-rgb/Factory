@@ -58,7 +58,7 @@ $statusLabels = [
       <td><?= ui_esc((string) ($p['productName'] ?? '-')) ?></td>
       <td class="num"><?= ui_fmt_num($p['shippedQty']) ?></td>
       <td class="num"><strong style="color:var(--danger)"><?= ui_fmt_num($p['reportedRejectQty']) ?></strong></td>
-      <td><?= ui_esc((string) ($p['reason'] ?? '-')) ?></td>
+      <td><?= ui_esc((string) (($p['reason'] ?? '') !== '' ? $p['reason'] : (($p['storeNote'] ?? '') !== '' ? $p['storeNote'] : '-'))) ?></td>
       <td>
         <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;">
           <input type="number" class="input-approved-qty" style="width:90px;" step="0.01" min="0" max="<?= ui_esc((string) $p['reportedRejectQty']) ?>" value="<?= ui_esc((string) $p['reportedRejectQty']) ?>" title="Qty Reject Disetujui">

@@ -9,7 +9,7 @@ final class ErrorHandler
     public static function handle(\Throwable $e): void
     {
         if ($e instanceof ApiException) {
-            Response::error($e->status, $e->errorCode, $e->getMessage(), $e->extra);
+            Response::error($e->status, $e->errorCode, ErrorMessages::localize($e->status, $e->errorCode, $e->getMessage()), $e->extra);
             return;
         }
 
@@ -26,6 +26,6 @@ final class ErrorHandler
             error_log($e->getTraceAsString());
         }
 
-        Response::error(500, 'INTERNAL_ERROR', 'An unexpected error occurred');
+        Response::error(500, 'INTERNAL_ERROR', 'Terjadi kesalahan pada sistem. Coba lagi beberapa saat lagi.');
     }
 }

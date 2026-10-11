@@ -24,6 +24,16 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  // UTC "YYYY-MM-DD HH:MM:SS" from the API -> "11 Okt 2026 · 20:14" (WIB).
+  function fmtWib(s) {
+    if (!s) return '-';
+    var d = new Date(String(s).replace(' ', 'T') + 'Z');
+    if (isNaN(d.getTime())) return String(s);
+    var w = new Date(d.getTime() + 7 * 3600 * 1000);
+    var bln = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    var hh = ('0' + w.getUTCHours()).slice(-2), mm = ('0' + w.getUTCMinutes()).slice(-2);
+    return w.getUTCDate() + ' ' + bln[w.getUTCMonth()] + ' ' + w.getUTCFullYear() + ' \u00b7 ' + hh + ':' + mm;
+  }
   function fmtNum(n) {
     n = Number(n) || 0;
     return (Math.round(n * 100) / 100).toString().replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
@@ -167,6 +177,7 @@
   // KONFIRMASI PENERIMAAN (Reject lives here — never a standalone menu)
   // ===================================================================
   var RECEIPT_STATUS_MAP = {
+    pending: ['warning', 'Belum Dikonfirmasi'],
     belum_dikonfirmasi: ['warning', 'Belum Dikonfirmasi'],
     confirmed_ok: ['success', 'Diterima Sesuai'],
     confirmed_discrepancy: ['danger', 'Ada Selisih'],
@@ -205,7 +216,7 @@
       var head = card(
         '<div class="driver-card-title">' + esc(sh.docNo || ('SHP-' + shipmentId)) + ' &middot; ' + esc(sh.shipmentGroup || '') + '</div>' +
         '<div class="driver-card-sub">Driver: ' + esc(sh.driverName || '-') + '</div>' +
-        '<div class="driver-card-sub">Berangkat: ' + esc(sh.departedAt || '-') + '</div>' +
+        '<div class="driver-card-sub">Berangkat: ' + esc(fmtWib(sh.departedAt)) + '</div>' +
         '<div style="margin-top:6px;">' + receiptBadge(sh.receiptStatus) + '</div>'
       );
       root.appendChild(head);
@@ -537,6 +548,11 @@
   function buildReturForm(onSuccess) {
     var wrap = document.createElement('div');
     wrap.className = 'driver-card';
+    if (LOOKUP_PRODUCTS.length === 0) {
+      wrap.innerHTML = '<div class="driver-card-title" style="margin-bottom:6px;">Ajukan Retur</div>' +
+        '<div class="store-field-hint">Belum ada barang yang diterima toko ini, jadi belum ada yang bisa diajukan.</div>';
+      return wrap;
+    }
     var productOptions = '<option value="">Pilih produk...</option>' + LOOKUP_PRODUCTS.map(function (p) {
       return '<option value="' + p.productId + '">' + esc(p.name) + '</option>';
     }).join('');
@@ -648,6 +664,11 @@
   function buildMutasiForm(onSuccess) {
     var wrap = document.createElement('div');
     wrap.className = 'driver-card';
+    if (LOOKUP_PRODUCTS.length === 0) {
+      wrap.innerHTML = '<div class="driver-card-title" style="margin-bottom:6px;">Ajukan Mutasi</div>' +
+        '<div class="store-field-hint">Belum ada barang yang diterima toko ini, jadi belum ada yang bisa diajukan.</div>';
+      return wrap;
+    }
     var productOptions = '<option value="">Pilih produk...</option>' + LOOKUP_PRODUCTS.map(function (p) {
       return '<option value="' + p.productId + '">' + esc(p.name) + '</option>';
     }).join('');

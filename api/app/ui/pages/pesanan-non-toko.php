@@ -21,7 +21,7 @@ $picUsers = $pdo->query("SELECT user_id, full_name FROM users WHERE active = 1 O
 $statusFilter = (string) ($_GET['status'] ?? '');
 $orders = $service->listOrders(array_filter(['sourceType' => 'non_toko', 'status' => $statusFilter !== '' ? $statusFilter : null]));
 
-$sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sales_executive' => 'Sales Executive', 'umum' => 'Umum'];
+$sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sales_executive' => 'Sales Eksekutif', 'umum' => 'Lainnya'];
 ?>
 <?= ui_pesanan_tabs('pesanan-non-toko', $uiTanggal, $uiFactoryId) ?>
 
@@ -34,7 +34,7 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
       <div class="field"><label>Sumber Pesanan</label>
         <select id="pnt-source" required>
           <option value="">— Pilih Sumber —</option>
-          <?php foreach ($sourceLabels as $val => $label): ?>
+          <?php foreach ($sourceLabels as $val => $label): if ($val === 'konsumen_langsung') { continue; } ?>
           <option value="<?= $val ?>"><?= ui_esc($label) ?></option>
           <?php endforeach; ?>
         </select>

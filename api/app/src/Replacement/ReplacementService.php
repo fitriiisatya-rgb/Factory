@@ -58,6 +58,10 @@ final class ReplacementService
                 'shippedQty' => (float) $r['shipped_qty'],
                 'reportedRejectQty' => (float) $r['reject_qty'],
                 'reason' => $r['reason'],
+                // The store's own note from Konfirmasi Penerimaan (receipt
+                // level) — what Admin reads as "Catatan Toko" when the line
+                // itself carries no reason.
+                'storeNote' => $r['receipt_note'] ?? null,
                 'verifiedAt' => $r['verified_at'],
             ];
         }, $this->repo->findPendingDispositionItems($this->pdo, $tanggal));

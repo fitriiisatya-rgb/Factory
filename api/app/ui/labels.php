@@ -36,6 +36,107 @@ function ui_do_status_label(string $status): string
     ][$status] ?? ucfirst($status);
 }
 
+/**
+ * DO status as Admin should read it. A partial shipment deliberately
+ * leaves delivery_order.status at draft/preprinted (ShipmentService only
+ * flips it to 'shipped' once fully fulfilled), so "Draft" alone would hide
+ * that goods already left — shown as "Sebagian Dikirim" instead. Display
+ * only; the stored status is never changed here.
+ * @param array{status:string,totalShipped?:float|int|string} $do
+ */
+function ui_do_status_display(array $do): string
+{
+    $status = (string) $do['status'];
+    if (in_array($status, ['draft', 'preprinted'], true) && (float) ($do['totalShipped'] ?? 0) > 0.0001) {
+        return 'Sebagian Dikirim';
+    }
+    return ui_do_status_label($status);
+}
+
+/** audit_log.action -> what Admin reads in "Aktivitas Terbaru" (never the raw code). */
+function ui_activity_label(string $action): string
+{
+    return [
+        'po.import' => 'PO diimpor/direvisi',
+        'po.product.create_from_import' => 'Produk baru dari import PO',
+        'product.create' => 'Produk ditambahkan',
+        'product.update' => 'Produk diperbarui',
+        'product.alias.create' => 'Alias produk ditambahkan',
+        'store.create' => 'Toko ditambahkan',
+        'store.update' => 'Toko diperbarui',
+        'store.alias.create' => 'Alias toko ditambahkan',
+        'production.draft.create' => 'Draft produksi dibuat',
+        'production.draft.edit' => 'Hasil produksi disimpan',
+        'production.submit' => 'Produksi disubmit',
+        'production.reopen' => 'Produksi dibuka kembali',
+        'production.overproduction' => 'Produksi melebihi target',
+        'production.target_changed_from_po_revision' => 'Target produksi berubah (revisi PO)',
+        'fg.draft.create' => 'Draft FG dibuat',
+        'fg.draft.edit' => 'Verifikasi FG disimpan',
+        'fg.packing.submit_store' => 'Packing per toko disubmit',
+        'fg.submit' => 'FG disubmit (stok siap kirim)',
+        'fg.reopen' => 'FG dibuka kembali',
+        'fg.source_inconsistency' => 'Sumber produksi FG berubah',
+        'fg.source_refresh' => 'Sumber produksi FG disegarkan',
+        'do.preprint' => 'DO dicetak',
+        'do.refresh_from_po' => 'DO disegarkan dari PO',
+        'do.cancel' => 'DO dibatalkan',
+        'do.ship' => 'Pengiriman dibuat',
+        'dispatch.claimed' => 'Driver mengambil tugas kirim',
+        'dispatch.released' => 'Driver melepas tugas kirim',
+        'dispatch.route_reordered' => 'Driver mengatur rute',
+        'dispatch.departed' => 'Driver berangkat',
+        'dispatch.claim_resolved' => 'Tugas kirim diselesaikan',
+        'receipt.confirmed' => 'Toko konfirmasi penerimaan',
+        'receipt.verified' => 'Selisih penerimaan diverifikasi',
+        'shipment.email.sent' => 'Email pengiriman terkirim',
+        'shipment.email.failed' => 'Email pengiriman gagal',
+        'shipment.email.skipped' => 'Email pengiriman dilewati',
+        'reject.finalized' => 'Reject diputuskan final',
+        'replacement.created' => 'Kirim ulang reject dibuat',
+        'replacement.fg_allocated' => 'Kirim ulang: stok FG dialokasikan',
+        'replacement.production_needed' => 'Kirim ulang: perlu produksi',
+        'replacement.production_actual_updated' => 'Kirim ulang: hasil produksi diisi',
+        'replacement.fg_verified' => 'Kirim ulang: FG diverifikasi',
+        'replacement.do_created' => 'DO kirim ulang dibuat',
+        'replacement.shipped' => 'Kirim ulang dikirim',
+        'replacement.received' => 'Kirim ulang diterima toko',
+        'replacement.completed' => 'Kirim ulang selesai',
+        'retur.created' => 'Toko mengajukan retur',
+        'retur.verified' => 'Retur diverifikasi',
+        'retur.rejected' => 'Retur ditolak',
+        'mutasi.created' => 'Toko mengajukan mutasi',
+        'mutasi.confirmed' => 'Toko tujuan konfirmasi mutasi',
+        'mutasi.admin_reviewed' => 'Mutasi diputuskan Admin',
+        'invoice.generated' => 'Invoice dibuat',
+        'invoice.voided' => 'Invoice dibatalkan',
+        'special_order.created' => 'Pesanan khusus dibuat',
+        'special_order.confirmed' => 'Pesanan khusus dikonfirmasi',
+        'special_order.sent_to_production' => 'Pesanan khusus dikirim ke produksi',
+        'special_order.status_changed' => 'Status pesanan khusus berubah',
+        'special_order.actual_updated' => 'Hasil produksi pesanan khusus diisi',
+        'special_order.fg_verified' => 'FG pesanan khusus diverifikasi',
+        'special_order.cancelled' => 'Pesanan khusus dibatalkan',
+        'special_order_do.create' => 'DO pesanan khusus dibuat',
+        'special_order_do.claim' => 'Driver mengambil DO pesanan khusus',
+        'special_order_do.release' => 'Driver melepas DO pesanan khusus',
+        'special_order_do.depart' => 'Pesanan khusus diberangkatkan',
+        'special_order_do.courier_handover' => 'Pesanan khusus diserahkan ke kurir',
+        'special_order_do.delivery_method_changed' => 'Metode kirim pesanan khusus diubah',
+        'special_order_do.cancel' => 'DO pesanan khusus dibatalkan',
+        'store_portal.token_issued' => 'Link Portal Bakery dibuat',
+        'store_portal.token_revoked' => 'Link Portal Bakery dicabut',
+        'user.created' => 'User dibuat',
+        'user.updated' => 'User diperbarui',
+        'user.activated' => 'User diaktifkan',
+        'user.deactivated' => 'User dinonaktifkan',
+        'user.password_reset' => 'Password user direset',
+        'user.role_changed' => 'Peran user diubah',
+        'user.division_access_changed' => 'Akses divisi user diubah',
+        'user.factory_access_changed' => 'Akses pabrik user diubah',
+    ][$action] ?? 'Aktivitas sistem';
+}
+
 /** shipment.status. */
 function ui_shipment_status_label(string $status): string
 {

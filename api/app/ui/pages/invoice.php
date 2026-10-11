@@ -77,7 +77,7 @@ $defaultDateTo = date('Y-m-d');
       <td><?= ui_esc($inv['tanggal']) ?></td>
       <td><?= ui_esc($inv['storeName']) ?></td>
       <td class="num"><?= ui_fmt_money($inv['total']) ?></td>
-      <td><?= ui_esc($inv['createdAt']) ?></td>
+      <td><?= ui_esc(ui_fmt_datetime_id($inv['createdAt'] ?? null)) ?></td>
       <td class="row-actions">
         <a class="btn btn-secondary btn-sm" href="/api/_ui-preview/?page=invoice-detail&invoiceId=<?= (int) $inv['invoiceId'] ?>">Lihat</a>
         <a class="btn btn-secondary btn-sm" href="/api/_ui-preview/print-invoice.php?invoiceId=<?= (int) $inv['invoiceId'] ?>" target="_blank">Print</a>

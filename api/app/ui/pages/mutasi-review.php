@@ -20,9 +20,11 @@ if (array_intersect(['ADMIN', 'PPIC'], $ui['roles']) === []) {
 }
 
 $service = new MutasiService($pdo);
-$statusFilter = (string) ($_GET['status'] ?? 'discrepancy');
+// Default "Semua": every Mutasi is visible to Admin the moment a store
+// submits it; the tabs narrow it down (Selisih = needs a decision).
+$statusFilter = (string) ($_GET['status'] ?? '');
 if (!in_array($statusFilter, ['waiting_destination_confirmation', 'discrepancy', 'completed', 'cancelled', ''], true)) {
-    $statusFilter = 'discrepancy';
+    $statusFilter = '';
 }
 $rows = $service->adminList($statusFilter === '' ? null : $statusFilter);
 $statusLabels = [
@@ -31,7 +33,7 @@ $statusLabels = [
     'completed' => 'Selesai',
     'cancelled' => 'Dibatalkan',
 ];
-$tabs = ['discrepancy' => 'Selisih (Perlu Keputusan)', 'waiting_destination_confirmation' => 'Menunggu Tujuan', 'completed' => 'Selesai', 'cancelled' => 'Dibatalkan', '' => 'Semua'];
+$tabs = ['' => 'Semua', 'discrepancy' => 'Selisih (Perlu Keputusan)', 'waiting_destination_confirmation' => 'Menunggu Tujuan', 'completed' => 'Selesai', 'cancelled' => 'Dibatalkan'];
 ?>
 <div class="filter-bar">
   <?php foreach ($tabs as $key => $label): ?>

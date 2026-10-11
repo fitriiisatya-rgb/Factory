@@ -748,6 +748,7 @@ final class ReceiptService
                     'receiptItemId' => (int) $it['shipment_receipt_item_id'],
                     'productId' => $it['product_id'] !== null ? (int) $it['product_id'] : null,
                     'productName' => $it['product_name'],
+                    'divisionName' => $it['division_name'] ?? null,
                     'shippedQty' => (float) $it['shipped_qty'],
                     'receivedGoodQty' => (float) $it['received_good_qty'],
                     'rejectQty' => (float) $it['reject_qty'],

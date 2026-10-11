@@ -31,7 +31,7 @@ function rc_esc(string $s): string
 // whenever either asset changes so a real device serving a stale cached
 // copy always fetches the new one instead of an old giant-preview/
 // stuck-button version.
-const RECEIPT_ASSET_VERSION = '20260921-photo-submit-ux-hotfix';
+const RECEIPT_ASSET_VERSION = '20261012-e2e-hardening';
 
 try {
     Config::load();

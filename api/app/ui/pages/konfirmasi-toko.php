@@ -64,7 +64,7 @@ $statusOptions = [
       <td class="num"><?= $r['totalShortage'] > 0.0001 ? '<strong style="color:var(--danger)">' . ui_fmt_num($r['totalShortage']) . '</strong>' : ui_fmt_num($r['totalShortage']) ?></td>
       <td><?= ui_badge(ui_email_status_label($r['emailStatus'])) ?></td>
       <td><?= ui_badge(ui_receipt_status_label((string) $r['status'])) ?></td>
-      <td><?= ui_esc((string) ($r['confirmedAt'] ?? '-')) ?><?= $r['receiverName'] ? ' &middot; ' . ui_esc((string) $r['receiverName']) : '' ?></td>
+      <td><?= ui_esc(ui_fmt_datetime_id($r['confirmedAt'] ?? null)) ?><?= $r['receiverName'] ? ' &middot; ' . ui_esc((string) $r['receiverName']) : '' ?></td>
       <td>
         <a class="btn btn-secondary btn-sm" href="<?= ui_esc($detailUrl) ?>">Lihat Detail &rsaquo;</a>
       </td>

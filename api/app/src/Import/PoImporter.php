@@ -188,6 +188,9 @@ final class PoImporter
             'committedPoAwal' => $plan['committedPoAwal'],
             'committedPoRevisi' => $plan['committedPoRevisi'],
             'storesMapped' => $plan['storeResolution']['uniqueMapped'],
+            // Distinct products in the file (linesWritten counts product x
+            // store lines, which is not what "Jumlah Produk" means).
+            'productCount' => $plan['parsedRowCount'],
         ]];
     }
 

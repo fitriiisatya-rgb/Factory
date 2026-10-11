@@ -132,7 +132,7 @@ final class ReplacementRepository
      */
     public function findPendingDispositionItems(PDO $pdo, ?string $tanggal): array
     {
-        $sql = "SELECT ri.*, r.verified_at, r.shipment_id, sh.store_id, sh.tanggal, sh.source_type,
+        $sql = "SELECT ri.*, r.verified_at, r.shipment_id, r.note AS receipt_note, sh.store_id, sh.tanggal, sh.source_type,
                        s.canonical_name AS store_name,
                        COALESCE(p.name, ri.item_name_snapshot) AS product_name,
                        o.doc_no, rdo.doc_no AS replacement_doc_no, sodo.doc_no AS special_doc_no

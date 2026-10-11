@@ -91,7 +91,7 @@ function report_row(string $label, string $left, string $leftVal, string $right,
       <thead><tr><th>Toko</th><th>DO No</th><th class="num">Shipped</th><th>Status</th></tr></thead>
       <tbody>
       <?php foreach ($s['deliveryOrders'] as $d): ?>
-      <tr><td><?= ui_esc($d['storeName']) ?></td><td><?= ui_esc($d['docNo']) ?></td><td class="num"><?= ui_fmt_num($d['totalShipped']) ?></td><td><?= ui_badge(ui_do_status_label($d['status'])) ?></td></tr>
+      <tr><td><?= ui_esc($d['storeName']) ?></td><td><?= ui_esc($d['docNo']) ?></td><td class="num"><?= ui_fmt_num($d['totalShipped']) ?></td><td><?= ui_badge(ui_do_status_display($d)) ?></td></tr>
       <?php endforeach; ?>
       </tbody>
     </table></div>
@@ -128,6 +128,25 @@ $omzetStmt = $pdo->prepare(
 );
 $omzetStmt->execute([$omzetDateFrom, $omzetDateTo]);
 $omzetRows = $omzetStmt->fetchAll();
+
+// Omset per Pabrik: every invoice line belongs to the factory that makes
+// the product (product -> division -> factory), so a store invoice that
+// mixes Karangtengah and Cibadak goods is split correctly. Uses the
+// invoiced qty/subtotal (Reject and Mutasi already applied), never DO qty.
+$omzetFactoryStmt = $pdo->prepare(
+    "SELECT COALESCE(f.name, 'Tanpa Pabrik') AS factory_name,
+            SUM(it.qty_invoice) AS qty_terjual, SUM(it.subtotal) AS total_omset
+     FROM invoice i
+     INNER JOIN invoice_item it ON it.invoice_id = i.invoice_id
+     LEFT JOIN product p ON p.product_id = it.product_id
+     LEFT JOIN division d ON d.division_id = p.division_id
+     LEFT JOIN factory f ON f.factory_id = d.factory_id
+     WHERE i.tanggal BETWEEN ? AND ?
+     GROUP BY COALESCE(f.name, 'Tanpa Pabrik')
+     ORDER BY total_omset DESC"
+);
+$omzetFactoryStmt->execute([$omzetDateFrom, $omzetDateTo]);
+$omzetFactoryRows = $omzetFactoryStmt->fetchAll();
 $omzetTotal = 0.0;
 $omzetInvoiceCount = 0;
 foreach ($omzetRows as $r) {
@@ -136,8 +155,8 @@ foreach ($omzetRows as $r) {
 }
 ?>
 <div class="card section">
-  <div class="card-head"><h2 class="card-title">Laporan Omset / Penjualan per Toko &amp; Periode</h2></div>
-  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Dihitung dari Invoice yang sudah di-generate (migration 0018) — bukan ekstrapolasi dari DO/Shipment.</p>
+  <div class="card-head"><h2 class="card-title">Laporan Omset / Penjualan per Periode</h2></div>
+  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Dihitung dari Invoice yang sudah dibuat.</p>
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;margin-bottom:var(--space-4);">
     <input type="hidden" name="page" value="laporan">
     <input type="hidden" name="tanggal" value="<?= ui_esc($uiTanggal) ?>">
@@ -153,8 +172,22 @@ foreach ($omzetRows as $r) {
   </div>
 
   <?php if ($omzetRows === []): ?>
-    <?= ui_empty_state('Belum ada Invoice', 'Belum ada invoice yang di-generate untuk periode ini.') ?>
+    <?= ui_empty_state('Belum ada Invoice', 'Belum ada invoice yang dibuat untuk periode ini.') ?>
   <?php else: ?>
+  <h3 style="font-size:var(--text-md);margin:0 0 var(--space-2);">Per Pabrik</h3>
+  <div class="table-scroll" style="margin-bottom:var(--space-4);"><table class="data-table" id="omset-per-pabrik">
+    <thead><tr><th>Pabrik</th><th class="num">Qty Terjual</th><th class="num">Total Omset</th></tr></thead>
+    <tbody>
+    <?php foreach ($omzetFactoryRows as $r): ?>
+    <tr>
+      <td><?= ui_esc((string) $r['factory_name']) ?></td>
+      <td class="num"><?= ui_fmt_num((float) $r['qty_terjual']) ?></td>
+      <td class="num"><?= ui_fmt_money((float) $r['total_omset']) ?></td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table></div>
+  <h3 style="font-size:var(--text-md);margin:0 0 var(--space-2);">Per Toko</h3>
   <div class="table-scroll"><table class="data-table">
     <thead><tr><th>Toko</th><th class="num">Jumlah Invoice</th><th class="num">Total Omset</th></tr></thead>
     <tbody>
@@ -165,6 +198,107 @@ foreach ($omzetRows as $r) {
       <td class="num"><?= ui_fmt_money((float) $r['total_omset']) ?></td>
     </tr>
     <?php endforeach; ?>
+    </tbody>
+  </table></div>
+  <?php endif; ?>
+</div>
+
+<?php
+// Arus Barang per Produk — one row per product, following the goods from
+// PO to Retur over a period, for one factory. Every column is read from
+// the table that is the single source of truth for that step (nothing is
+// re-derived), and only finished steps count: submitted production,
+// active (non-void) shipments, invoiced qty, verified retur.
+$flowDateFrom = isset($_GET['flowDateFrom']) && $_GET['flowDateFrom'] !== '' ? (string) $_GET['flowDateFrom'] : date('Y-m-01');
+$flowDateTo = isset($_GET['flowDateTo']) && $_GET['flowDateTo'] !== '' ? (string) $_GET['flowDateTo'] : date('Y-m-d');
+$flowFactoryId = isset($_GET['flowFactoryId']) && $_GET['flowFactoryId'] !== '' ? (int) $_GET['flowFactoryId'] : $uiFactoryId;
+$flowStmt = $pdo->prepare(
+    "SELECT p.product_id, p.name AS product_name, d.name AS division_name,
+            COALESCE(po.qty, 0) AS po_qty, COALESCE(pr.aktual, 0) AS produksi, COALESCE(pr.reject, 0) AS reject_produksi,
+            COALESCE(sh.qty, 0) AS dikirim, COALESCE(rc.reject, 0) AS reject_toko,
+            COALESCE(iv.qty, 0) AS terjual, COALESCE(rt.qty, 0) AS retur
+     FROM product p
+     INNER JOIN division d ON d.division_id = p.division_id
+     LEFT JOIN (SELECT pi.product_id, SUM(pi.po_awal + pi.po_revisi) AS qty FROM po_item pi
+                INNER JOIN po_batch b ON b.po_batch_id = pi.po_batch_id
+                WHERE b.tanggal BETWEEN ? AND ? AND b.factory_id = ? GROUP BY pi.product_id) po ON po.product_id = p.product_id
+     LEFT JOIN (SELECT it.product_id, SUM(it.aktual) AS aktual, SUM(it.reject) AS reject FROM production_item it
+                INNER JOIN production_run r ON r.production_run_id = it.production_run_id
+                WHERE r.tanggal BETWEEN ? AND ? AND r.status IN ('submitted','verified_fg') GROUP BY it.product_id) pr ON pr.product_id = p.product_id
+     LEFT JOIN (SELECT si.product_id, SUM(si.qty) AS qty FROM shipment_item si
+                INNER JOIN shipment s ON s.shipment_id = si.shipment_id
+                WHERE s.tanggal BETWEEN ? AND ? AND s.status <> 'void' GROUP BY si.product_id) sh ON sh.product_id = p.product_id
+     LEFT JOIN (SELECT ri.product_id, SUM(ri.reject_qty) AS reject FROM shipment_receipt_item ri
+                INNER JOIN shipment_receipt r ON r.shipment_receipt_id = ri.shipment_receipt_id
+                INNER JOIN shipment s ON s.shipment_id = r.shipment_id
+                WHERE s.tanggal BETWEEN ? AND ? GROUP BY ri.product_id) rc ON rc.product_id = p.product_id
+     LEFT JOIN (SELECT ii.product_id, SUM(ii.qty_invoice) AS qty FROM invoice_item ii
+                INNER JOIN invoice i ON i.invoice_id = ii.invoice_id
+                WHERE i.tanggal BETWEEN ? AND ? GROUP BY ii.product_id) iv ON iv.product_id = p.product_id
+     LEFT JOIN (SELECT product_id, SUM(qty) AS qty FROM retur_request
+                WHERE status = 'verified' AND retur_date BETWEEN ? AND ? GROUP BY product_id) rt ON rt.product_id = p.product_id
+     WHERE d.factory_id = ?
+       AND (po.qty IS NOT NULL OR pr.aktual IS NOT NULL OR sh.qty IS NOT NULL OR iv.qty IS NOT NULL OR rt.qty IS NOT NULL)
+     ORDER BY d.name, p.name"
+);
+$flowStmt->execute([
+    $flowDateFrom, $flowDateTo, $flowFactoryId,
+    $flowDateFrom, $flowDateTo,
+    $flowDateFrom, $flowDateTo,
+    $flowDateFrom, $flowDateTo,
+    $flowDateFrom, $flowDateTo,
+    $flowDateFrom, $flowDateTo,
+    $flowFactoryId,
+]);
+$flowRows = $flowStmt->fetchAll();
+$flowTotals = ['po_qty' => 0.0, 'produksi' => 0.0, 'reject_produksi' => 0.0, 'dikirim' => 0.0, 'reject_toko' => 0.0, 'terjual' => 0.0, 'retur' => 0.0];
+foreach ($flowRows as $r) {
+    foreach ($flowTotals as $k => $_) {
+        $flowTotals[$k] += (float) $r[$k];
+    }
+}
+?>
+<div class="card section">
+  <div class="card-head"><h2 class="card-title">Arus Barang per Produk</h2></div>
+  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Dari PO masuk sampai produksi, reject, terjual (invoice), dan retur toko.</p>
+  <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;margin-bottom:var(--space-4);">
+    <input type="hidden" name="page" value="laporan">
+    <input type="hidden" name="tanggal" value="<?= ui_esc($uiTanggal) ?>">
+    <input type="hidden" name="factoryId" value="<?= $uiFactoryId ?>">
+    <div class="field"><label>Dari Tanggal</label><input type="date" name="flowDateFrom" value="<?= ui_esc($flowDateFrom) ?>"></div>
+    <div class="field"><label>Sampai Tanggal</label><input type="date" name="flowDateTo" value="<?= ui_esc($flowDateTo) ?>"></div>
+    <div class="field"><label>Pabrik</label>
+      <select name="flowFactoryId">
+        <?php foreach ($factories as $f): ?>
+        <option value="<?= (int) $f['factory_id'] ?>" <?= $flowFactoryId === (int) $f['factory_id'] ? 'selected' : '' ?>><?= ui_esc($f['name']) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Terapkan</button>
+  </form>
+  <?php if ($flowRows === []): ?>
+    <?= ui_empty_state('Belum ada arus barang', 'Belum ada PO, produksi, pengiriman, atau penjualan pada periode ini.') ?>
+  <?php else: ?>
+  <div class="table-scroll"><table class="data-table" id="arus-barang">
+    <thead><tr><th>Produk</th><th>Divisi</th><th class="num">PO</th><th class="num">Produksi</th><th class="num">Reject Produksi</th><th class="num">Dikirim</th><th class="num">Reject Toko</th><th class="num">Terjual</th><th class="num">Retur</th></tr></thead>
+    <tbody>
+    <?php foreach ($flowRows as $r): ?>
+    <tr>
+      <td><?= ui_esc((string) $r['product_name']) ?></td>
+      <td><?= ui_esc((string) $r['division_name']) ?></td>
+      <td class="num"><?= ui_fmt_num((float) $r['po_qty']) ?></td>
+      <td class="num"><?= ui_fmt_num((float) $r['produksi']) ?></td>
+      <td class="num"><?= ui_fmt_num((float) $r['reject_produksi']) ?></td>
+      <td class="num"><?= ui_fmt_num((float) $r['dikirim']) ?></td>
+      <td class="num"><?= ui_fmt_num((float) $r['reject_toko']) ?></td>
+      <td class="num"><?= ui_fmt_num((float) $r['terjual']) ?></td>
+      <td class="num"><?= ui_fmt_num((float) $r['retur']) ?></td>
+    </tr>
+    <?php endforeach; ?>
+    <tr style="font-weight:600;">
+      <td colspan="2">Total</td>
+      <?php foreach ($flowTotals as $v): ?><td class="num"><?= ui_fmt_num($v) ?></td><?php endforeach; ?>
+    </tr>
     </tbody>
   </table></div>
   <?php endif; ?>
@@ -233,8 +367,8 @@ foreach ($rejectRows as $r) {
     <?= ui_kpi_card(['label' => 'Qty Reject Dilaporkan', 'value' => ui_fmt_num($rejectTotalQty), 'icon' => 'box', 'color' => 'danger']) ?>
   </div>
 
-  <div class="grid-2">
-    <div>
+  <div style="display:grid;gap:var(--space-5);">
+    <div style="min-width:0;">
       <h3 style="margin-bottom:var(--space-3);">Retur per Toko</h3>
       <?php if ($returRows === []): ?>
         <?= ui_empty_state('Belum ada Retur', 'Tidak ada pengajuan Retur pada periode ini.') ?>
@@ -255,7 +389,7 @@ foreach ($rejectRows as $r) {
       </table></div>
       <?php endif; ?>
     </div>
-    <div>
+    <div style="min-width:0;">
       <h3 style="margin-bottom:var(--space-3);">Reject per Toko</h3>
       <?php if ($rejectRows === []): ?>
         <?= ui_empty_state('Belum ada Reject', 'Tidak ada reject yang dilaporkan toko pada periode ini.') ?>

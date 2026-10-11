@@ -275,6 +275,9 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .kpi-delta.down { color: var(--danger); }
 
 .grid-2 { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-4); }
+/* Grid children default to min-width:auto, which lets a wide table push its
+   column past the card instead of scrolling inside .table-scroll. */
+.grid-2 > * { min-width: 0; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
 .section { margin-bottom: var(--space-5); }
 

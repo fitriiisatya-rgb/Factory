@@ -389,7 +389,7 @@ runTest('OPLOGIN-14 Sidebar: ADMIN gets "Kelola User" -> /api/_users-uat/; a pro
     expect($users['status'] === 403 || str_contains($users['body'], 'Akses ditolak'), 'the users tool itself must still deny a production account');
 });
 
-runTest('OPLOGIN-15 Migration 0019 columns are NULLable VARCHAR(150) after updated_at; FG_PACKING is still refused at login', function () use ($pdo, $baseUrl, $fgPass) {
+runTest('OPLOGIN-15 Migration 0019 columns are NULLable VARCHAR(150) after updated_at; FG_PACKING logs in to FG only; other roles still refused', function () use ($pdo, $baseUrl, $fgPass) {
     $cols = $pdo->query("SELECT column_name, is_nullable, character_maximum_length, ordinal_position FROM information_schema.columns
                          WHERE table_schema = DATABASE() AND table_name = 'production_run' ORDER BY ordinal_position")->fetchAll();
     $byName = [];
@@ -402,10 +402,21 @@ runTest('OPLOGIN-15 Migration 0019 columns are NULLable VARCHAR(150) after updat
     }
     expect((int) $byName['created_by_operator_name']['ordinal_position'] === (int) $byName['updated_at']['ordinal_position'] + 1, 'expected created_by_operator_name right after updated_at');
 
+    // FG_PACKING logs in (no "Siapa Anda?" prompt) and lands on FG & Packing only.
     $h = new HttpOp($baseUrl);
     $r = $h->form('/_admin-login/', ['action' => 'login', 'username' => 'oplogin_fg', 'password' => $fgPass]);
-    expect($r['status'] === 200 && str_contains($r['body'], 'bukan ADMIN'), 'expected FG_PACKING to be refused');
-    $me = $h->json('GET', '/api/auth/me', null);
+    expect($r['status'] === 302 && $r['location'] === '/api/_ui-preview/', 'expected FG_PACKING to be admitted, got ' . $r['status'] . ' ' . $r['location']);
+    $fgHome = $h->get('/api/_ui-preview/');
+    expect($fgHome['status'] === 200 && str_contains($fgHome['body'], '?page=fg-packing'), 'expected FG & Packing as the FG account home, got ' . $fgHome['status']);
+    expect($h->get('/api/_ui-preview/?page=produksi')['status'] === 403, 'FG account must not open Produksi');
+    expect($h->get('/api/_ui-preview/?page=laporan')['status'] === 403, 'FG account must not open Laporan');
+
+    // A role that is still not admitted (MANAGEMENT_VIEWER) is refused and logged out.
+    makeUser($pdo, 'oplogin_viewer', 'Viewer Satu', 'ViewerOpLogin#2026', ['MANAGEMENT_VIEWER']);
+    $v = new HttpOp($baseUrl);
+    $r = $v->form('/_admin-login/', ['action' => 'login', 'username' => 'oplogin_viewer', 'password' => 'ViewerOpLogin#2026']);
+    expect($r['status'] === 200 && str_contains($r['body'], 'bukan ADMIN'), 'expected MANAGEMENT_VIEWER to be refused');
+    $me = $v->json('GET', '/api/auth/me', null);
     expect($me['status'] === 401, 'expected the refused account to be logged out');
 });
 

@@ -199,6 +199,7 @@ final class ReturService
             'storeName' => $r['store_name'] ?? null,
             'productName' => $r['product_name'],
             'qty' => (float) $r['qty'],
+            'reason' => $r['reason'] ?? null,
             'returDate' => $r['retur_date'],
             'status' => $r['status'],
             'createdAt' => $r['created_at'],

@@ -851,7 +851,7 @@ final class SpecialOrderService
         if ($r['source_type'] === 'toko_khusus') {
             return (string) ($r['store_name'] ?? '-');
         }
-        $labels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sales_executive' => 'Sales Executive', 'umum' => 'Umum'];
+        $labels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sales_executive' => 'Sales Eksekutif', 'umum' => 'Lainnya'];
         $sourceLabel = $labels[$r['non_store_source']] ?? (string) $r['non_store_source'];
         return $sourceLabel . ' — ' . ($r['customer_name'] ?? '-');
     }

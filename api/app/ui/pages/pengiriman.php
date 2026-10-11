@@ -44,7 +44,7 @@ if ($doIdParam !== null) {
       </div>
 
       <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Produk</th><th class="num">Sisa DO</th><th class="num">FG Available</th><th class="num">Ready Toko Ini</th><th class="num">Qty Kirim</th><th>Catatan</th></tr></thead>
+        <thead><tr><th>Produk</th><th class="num">Sisa DO</th><th class="num">Stok FG Pabrik</th><th class="num">Siap untuk Toko Ini</th><th class="num">Qty Kirim</th><th>Catatan</th></tr></thead>
         <tbody>
         <?php foreach ($do['items'] as $it): if ((float) $it['remainingToShip'] <= 0.0001) continue;
           $available = $it['fgAvailable'] !== null ? (float) $it['fgAvailable'] : 0.0;
@@ -272,7 +272,7 @@ $kpi['doParsial'] = (int) $partialDo->fetchColumn();
       <td><?= ui_esc($sh['shipment_group']) ?></td>
       <td class="num"><?= ui_fmt_num($sh['qty_total']) ?></td>
       <td><?= ui_badge(ui_shipment_status_label($sh['status'])) ?></td>
-      <td><?= ui_esc((string) $sh['created_at']) ?></td>
+      <td><?= ui_esc(ui_fmt_datetime_id($sh['created_at'] ?? null)) ?></td>
       <td><?= ui_esc((string) ($sh['shipped_by_name'] ?? '-')) ?></td>
       <td><?= $sh['delivery_order_id'] !== null ? '<a class="btn btn-secondary btn-sm" href="/api/_ui-preview/?page=delivery-order-detail&doId=' . (int) $sh['delivery_order_id'] . '">Lihat DO</a>' : '' ?></td>
     </tr>

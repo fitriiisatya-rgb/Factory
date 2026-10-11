@@ -153,13 +153,13 @@ runTest('V2-04 _admin-login accepts correct ADMIN credentials and shows Upgrade/
     expect(str_contains($r['body'], '../_import-master/'), 'expected a link to the import-master wizard');
 });
 
-runTest('V2-05 _admin-login rejects a successfully-authenticated account whose role is not allowed there (FG_PACKING — PPIC/PRODUCTION are allowed since migration 0019) and logs it back out', function () use ($baseUrl, $pdo) {
-    $hash = password_hash('FgPackPassV2_123456', PASSWORD_DEFAULT);
-    $pdo->prepare("INSERT INTO users (username, password_hash, full_name, active, created_at) VALUES ('v2_fgpack', ?, 'V2 FG Packing', 1, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)")->execute([$hash]);
-    $pdo->exec("INSERT IGNORE INTO user_roles (user_id, role_id) SELECT (SELECT user_id FROM users WHERE username='v2_fgpack'), role_id FROM roles WHERE code='FG_PACKING'");
+runTest('V2-05 _admin-login rejects a successfully-authenticated account whose role is not allowed there (MANAGEMENT_VIEWER — PPIC/PRODUCTION/FG_PACKING are allowed since migration 0019) and logs it back out', function () use ($baseUrl, $pdo) {
+    $hash = password_hash('MgmtViewPassV2_123456', PASSWORD_DEFAULT);
+    $pdo->prepare("INSERT INTO users (username, password_hash, full_name, active, created_at) VALUES ('v2_mgmtview', ?, 'V2 Management Viewer', 1, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)")->execute([$hash]);
+    $pdo->exec("INSERT IGNORE INTO user_roles (user_id, role_id) SELECT (SELECT user_id FROM users WHERE username='v2_mgmtview'), role_id FROM roles WHERE code='MANAGEMENT_VIEWER'");
 
     $http = new HttpV2($baseUrl);
-    $r = $http->postForm('/_admin-login/', ['action' => 'login', 'username' => 'v2_fgpack', 'password' => 'FgPackPassV2_123456']);
+    $r = $http->postForm('/_admin-login/', ['action' => 'login', 'username' => 'v2_mgmtview', 'password' => 'MgmtViewPassV2_123456']);
     expect(str_contains($r['body'], 'bukan ADMIN'), 'expected the "authenticated but not ADMIN" message');
 
     $r2 = $http->get('/_upgrade/');
