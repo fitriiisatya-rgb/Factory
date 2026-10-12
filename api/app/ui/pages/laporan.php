@@ -147,16 +147,71 @@ $omzetFactoryStmt = $pdo->prepare(
 );
 $omzetFactoryStmt->execute([$omzetDateFrom, $omzetDateTo]);
 $omzetFactoryRows = $omzetFactoryStmt->fetchAll();
-$omzetTotal = 0.0;
+
+// Omset Non-Toko (CS / Sales Eksekutif / Lainnya / Konsumen Langsung):
+// these orders never go through a store invoice, so they are counted from
+// the order itself — the line subtotals (qty x harga + biaya + kemasan)
+// of every order marked "Selesai", dated by its tanggal kebutuhan.
+// Cancelled and still-open orders never count. Factory = the product's
+// division factory, else the order's own factory (special catalog items).
+$nonTokoFactoryStmt = $pdo->prepare(
+    "SELECT COALESCE(f.name, fo.name, 'Tanpa Pabrik') AS factory_name,
+            SUM(it.qty) AS qty_terjual, SUM(it.subtotal) AS total_omset
+     FROM special_order so
+     INNER JOIN special_order_item it ON it.special_order_id = so.special_order_id
+     LEFT JOIN product p ON p.product_id = it.product_id
+     LEFT JOIN division d ON d.division_id = p.division_id
+     LEFT JOIN factory f ON f.factory_id = d.factory_id
+     LEFT JOIN factory fo ON fo.factory_id = so.factory_id
+     WHERE so.source_type = 'non_toko' AND so.status = 'completed'
+       AND so.required_date BETWEEN ? AND ?
+     GROUP BY COALESCE(f.name, fo.name, 'Tanpa Pabrik')"
+);
+$nonTokoFactoryStmt->execute([$omzetDateFrom, $omzetDateTo]);
+$nonTokoSourceStmt = $pdo->prepare(
+    "SELECT so.non_store_source, COUNT(DISTINCT so.special_order_id) AS order_count, SUM(it.subtotal) AS total_omset
+     FROM special_order so
+     INNER JOIN special_order_item it ON it.special_order_id = so.special_order_id
+     WHERE so.source_type = 'non_toko' AND so.status = 'completed'
+       AND so.required_date BETWEEN ? AND ?
+     GROUP BY so.non_store_source
+     ORDER BY total_omset DESC"
+);
+$nonTokoSourceStmt->execute([$omzetDateFrom, $omzetDateTo]);
+$nonTokoSourceRows = $nonTokoSourceStmt->fetchAll();
+$nonTokoSourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sales_executive' => 'Sales Eksekutif', 'umum' => 'Lainnya'];
+
+// One row per factory: store invoices + non-toko orders side by side.
+$omzetByFactory = [];
+foreach ($omzetFactoryRows as $r) {
+    $k = (string) $r['factory_name'];
+    $omzetByFactory[$k] = ['factory_name' => $k, 'qty' => (float) $r['qty_terjual'], 'toko' => (float) $r['total_omset'], 'nonToko' => 0.0];
+}
+foreach ($nonTokoFactoryStmt->fetchAll() as $r) {
+    $k = (string) $r['factory_name'];
+    $omzetByFactory[$k] ??= ['factory_name' => $k, 'qty' => 0.0, 'toko' => 0.0, 'nonToko' => 0.0];
+    $omzetByFactory[$k]['qty'] += (float) $r['qty_terjual'];
+    $omzetByFactory[$k]['nonToko'] += (float) $r['total_omset'];
+}
+uasort($omzetByFactory, static fn ($a, $b) => ($b['toko'] + $b['nonToko']) <=> ($a['toko'] + $a['nonToko']));
+
+$omzetTokoTotal = 0.0;
 $omzetInvoiceCount = 0;
 foreach ($omzetRows as $r) {
-    $omzetTotal += (float) $r['total_omset'];
+    $omzetTokoTotal += (float) $r['total_omset'];
     $omzetInvoiceCount += (int) $r['invoice_count'];
 }
+$omzetNonTokoTotal = 0.0;
+$omzetNonTokoCount = 0;
+foreach ($nonTokoSourceRows as $r) {
+    $omzetNonTokoTotal += (float) $r['total_omset'];
+    $omzetNonTokoCount += (int) $r['order_count'];
+}
+$omzetTotal = $omzetTokoTotal + $omzetNonTokoTotal;
 ?>
 <div class="card section">
   <div class="card-head"><h2 class="card-title">Laporan Omset / Penjualan per Periode</h2></div>
-  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Dihitung dari Invoice yang sudah dibuat.</p>
+  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Toko: dari Invoice yang sudah dibuat. Non-Toko: dari Pesanan Non-Toko berstatus Selesai (menurut tanggal kebutuhan).</p>
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;margin-bottom:var(--space-4);">
     <input type="hidden" name="page" value="laporan">
     <input type="hidden" name="tanggal" value="<?= ui_esc($uiTanggal) ?>">
@@ -166,28 +221,48 @@ foreach ($omzetRows as $r) {
     <button type="submit" class="btn btn-primary">Terapkan</button>
   </form>
 
-  <div class="kpi-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:var(--space-4);">
+  <div class="kpi-grid kpi-grid-4" style="margin-bottom:var(--space-4);">
     <?= ui_kpi_card(['label' => 'Total Omset', 'value' => ui_fmt_money($omzetTotal), 'icon' => 'box', 'color' => 'success']) ?>
-    <?= ui_kpi_card(['label' => 'Jumlah Invoice', 'value' => (string) $omzetInvoiceCount, 'icon' => 'file', 'color' => 'primary']) ?>
+    <?= ui_kpi_card(['label' => 'Omset Toko', 'value' => ui_fmt_money($omzetTokoTotal), 'icon' => 'cart', 'color' => 'primary']) ?>
+    <?= ui_kpi_card(['label' => 'Omset Non-Toko', 'value' => ui_fmt_money($omzetNonTokoTotal), 'icon' => 'user', 'color' => 'primary']) ?>
+    <?= ui_kpi_card(['label' => 'Invoice / Pesanan Non-Toko', 'value' => $omzetInvoiceCount . ' / ' . $omzetNonTokoCount, 'icon' => 'file', 'color' => 'neutral']) ?>
   </div>
 
-  <?php if ($omzetRows === []): ?>
-    <?= ui_empty_state('Belum ada Invoice', 'Belum ada invoice yang dibuat untuk periode ini.') ?>
+  <?php if ($omzetRows === [] && $nonTokoSourceRows === []): ?>
+    <?= ui_empty_state('Belum ada omset', 'Belum ada invoice atau pesanan non-toko selesai pada periode ini.') ?>
   <?php else: ?>
   <h3 style="font-size:var(--text-md);margin:0 0 var(--space-2);">Per Pabrik</h3>
   <div class="table-scroll" style="margin-bottom:var(--space-4);"><table class="data-table" id="omset-per-pabrik">
-    <thead><tr><th>Pabrik</th><th class="num">Qty Terjual</th><th class="num">Total Omset</th></tr></thead>
+    <thead><tr><th>Pabrik</th><th class="num">Qty Terjual</th><th class="num">Omset Toko</th><th class="num">Omset Non-Toko</th><th class="num">Total Omset</th></tr></thead>
     <tbody>
-    <?php foreach ($omzetFactoryRows as $r): ?>
+    <?php foreach ($omzetByFactory as $r): ?>
     <tr>
-      <td><?= ui_esc((string) $r['factory_name']) ?></td>
-      <td class="num"><?= ui_fmt_num((float) $r['qty_terjual']) ?></td>
+      <td><?= ui_esc($r['factory_name']) ?></td>
+      <td class="num"><?= ui_fmt_num($r['qty']) ?></td>
+      <td class="num"><?= ui_fmt_money($r['toko']) ?></td>
+      <td class="num"><?= ui_fmt_money($r['nonToko']) ?></td>
+      <td class="num"><strong><?= ui_fmt_money($r['toko'] + $r['nonToko']) ?></strong></td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table></div>
+  <?php if ($nonTokoSourceRows !== []): ?>
+  <h3 style="font-size:var(--text-md);margin:0 0 var(--space-2);">Non-Toko per Sumber</h3>
+  <div class="table-scroll" style="margin-bottom:var(--space-4);"><table class="data-table" id="omset-non-toko">
+    <thead><tr><th>Sumber</th><th class="num">Jumlah Pesanan</th><th class="num">Total Omset</th></tr></thead>
+    <tbody>
+    <?php foreach ($nonTokoSourceRows as $r): ?>
+    <tr>
+      <td><?= ui_esc($nonTokoSourceLabels[(string) $r['non_store_source']] ?? 'Lainnya') ?></td>
+      <td class="num"><?= (int) $r['order_count'] ?></td>
       <td class="num"><?= ui_fmt_money((float) $r['total_omset']) ?></td>
     </tr>
     <?php endforeach; ?>
     </tbody>
   </table></div>
-  <h3 style="font-size:var(--text-md);margin:0 0 var(--space-2);">Per Toko</h3>
+  <?php endif; ?>
+  <?php if ($omzetRows !== []): ?>
+  <h3 style="font-size:var(--text-md);margin:0 0 var(--space-2);">Per Toko (Invoice)</h3>
   <div class="table-scroll"><table class="data-table">
     <thead><tr><th>Toko</th><th class="num">Jumlah Invoice</th><th class="num">Total Omset</th></tr></thead>
     <tbody>
@@ -200,6 +275,7 @@ foreach ($omzetRows as $r) {
     <?php endforeach; ?>
     </tbody>
   </table></div>
+  <?php endif; ?>
   <?php endif; ?>
 </div>
 

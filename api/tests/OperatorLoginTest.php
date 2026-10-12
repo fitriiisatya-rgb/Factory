@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * Shared Division Login + Operator Name (migration 0019) — OPLOGIN-01..18.
+ * Shared Division Login + Operator Name (migration 0019) — OPLOGIN-01..19.
  *
  * Drives the REAL HTML login page (api/_admin-login/) with form posts, not
  * the JSON login API, because the "Siapa Anda?" prompt, the ?return=
@@ -493,6 +493,37 @@ runTest('OPLOGIN-18 Riwayat: a division account sees only its own divisions\' pr
     $d = new HttpOp($baseUrl);
     $d->form('/_driver-uat/login.php', ['username' => 'oplogin_driver', 'password' => 'DriverOpLogin#2026', 'return' => 'index.php']);
     expect($d->get('/api/_ui-preview/?page=riwayat')['status'] === 403, 'a DRIVER uses the Driver Portal Riwayat, not this page');
+});
+
+runTest('OPLOGIN-19 Laporan Omset: a finished (Selesai) Pesanan Non-Toko counts as omset; an unfinished one does not', function () use ($baseUrl, $adminUser, $adminPass, $products) {
+    $a = new HttpOp($baseUrl);
+    $a->form('/_admin-login/', ['action' => 'login', 'username' => $adminUser, 'password' => $adminPass]);
+    $csrf = csrfOf($a);
+    $make = function (string $source, float $qty, bool $finish) use ($a, $csrf, $products): void {
+        $c = $a->json('POST', '/api/special-orders', [
+            'sourceType' => 'non_toko', 'nonStoreSource' => $source, 'customerName' => 'Omset ' . $source,
+            'fulfillmentType' => 'pickup', 'orderDate' => '2026-12-01', 'requiredDate' => '2026-12-05',
+            'items' => [['itemType' => 'existing_product', 'productId' => (int) $products[3], 'qty' => $qty, 'unitPrice' => 10000, 'charge' => 2500]],
+        ], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-create')));
+        expect($c['status'] === 200, 'non-toko order create failed: ' . $c['body']);
+        $id = (int) $c['json']['data']['orderId'];
+        $cf = $a->json('POST', "/api/special-orders/{$id}/confirm", ['expectedVersion' => $c['json']['data']['version']], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-confirm')));
+        $sd = $a->json('POST', "/api/special-orders/{$id}/send-to-production", ['expectedVersion' => $cf['json']['data']['version']], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-send')));
+        expect($sd['status'] === 200, 'send-to-production failed: ' . $sd['body']);
+        if ($finish) {
+            $st = $a->json('POST', "/api/special-orders/{$id}/status", ['expectedVersion' => $sd['json']['data']['version'], 'status' => 'completed'], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-done')));
+            expect($st['status'] === 200, 'marking the order Selesai failed: ' . $st['body']);
+        }
+    };
+    $make('cs', 3, true);                 // 3 x 10.000 + 2.500 = Rp32.500, counted
+    $make('sales_executive', 5, false);   // still open, never counted
+
+    $page = $a->get('/api/_ui-preview/?page=laporan&omzetDateFrom=2026-12-01&omzetDateTo=2026-12-31');
+    expect($page['status'] === 200, "expected 200, got {$page['status']}");
+    expect(str_contains($page['body'], 'Omset Non-Toko') && str_contains($page['body'], 'id="omset-non-toko"'), 'expected the Non-Toko omset block');
+    expect(preg_match('/Omset Non-Toko<\/div>\s*<div class="kpi-value">Rp32\.500</', $page['body']) === 1 || str_contains($page['body'], 'Rp32.500'), 'expected Rp32.500 non-toko omset');
+    expect(str_contains($page['body'], '<td>CS</td>'), 'expected the CS row');
+    expect(!str_contains($page['body'], '<td>Sales Eksekutif</td>'), 'an unfinished order must never count as omset');
 });
 
 // ---------------------------------------------------------------------
