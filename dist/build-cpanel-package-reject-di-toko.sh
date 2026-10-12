@@ -99,7 +99,7 @@ fi
 SQL0020="$REPO_ROOT/database/schema-v1-0020-reject-di-toko.sql"
 SQL0020_CODE="$(grep -vE '^[[:space:]]*--' "$SQL0020")"
 echo "--- sanity: confirm migration 0020 stays additive (retur_request only, retry-safe) ---"
-if echo "$SQL0020_CODE" | grep -qEi "DROP |TRUNCATE|CREATE TABLE|MODIFY |CHANGE |RENAME |DELETE |UPDATE "; then
+if echo "$SQL0020_CODE" | sed "s/ON DELETE SET NULL//" | grep -qEi "DROP |TRUNCATE|CREATE TABLE|MODIFY |CHANGE |RENAME |DELETE |UPDATE "; then
   echo "REFUSING TO BUILD: migration 0020 contains a destructive or non-additive statement." >&2
   exit 1
 fi
