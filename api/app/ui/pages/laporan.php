@@ -292,7 +292,7 @@ $flowStmt = $pdo->prepare(
     "SELECT p.product_id, p.name AS product_name, d.name AS division_name,
             COALESCE(po.qty, 0) AS po_qty, COALESCE(pr.aktual, 0) AS produksi, COALESCE(pr.reject, 0) AS reject_produksi,
             COALESCE(sh.qty, 0) AS dikirim, COALESCE(rc.reject, 0) AS reject_toko,
-            COALESCE(iv.qty, 0) AS terjual, COALESCE(rt.qty, 0) AS retur
+            COALESCE(iv.qty, 0) AS terjual, COALESCE(rt.qty, 0) AS retur, COALESCE(rj.qty, 0) AS reject_di_toko
      FROM product p
      INNER JOIN division d ON d.division_id = p.division_id
      LEFT JOIN (SELECT pi.product_id, SUM(pi.po_awal + pi.po_revisi) AS qty FROM po_item pi
@@ -312,9 +312,11 @@ $flowStmt = $pdo->prepare(
                 INNER JOIN invoice i ON i.invoice_id = ii.invoice_id
                 WHERE i.tanggal BETWEEN ? AND ? GROUP BY ii.product_id) iv ON iv.product_id = p.product_id
      LEFT JOIN (SELECT product_id, SUM(qty) AS qty FROM retur_request
-                WHERE status = 'verified' AND retur_date BETWEEN ? AND ? GROUP BY product_id) rt ON rt.product_id = p.product_id
+                WHERE jenis = 'retur' AND status = 'verified' AND retur_date BETWEEN ? AND ? GROUP BY product_id) rt ON rt.product_id = p.product_id
+     LEFT JOIN (SELECT product_id, SUM(qty) AS qty FROM retur_request
+                WHERE jenis = 'reject_toko' AND status = 'verified' AND retur_date BETWEEN ? AND ? GROUP BY product_id) rj ON rj.product_id = p.product_id
      WHERE d.factory_id = ?
-       AND (po.qty IS NOT NULL OR pr.aktual IS NOT NULL OR sh.qty IS NOT NULL OR iv.qty IS NOT NULL OR rt.qty IS NOT NULL)
+       AND (po.qty IS NOT NULL OR pr.aktual IS NOT NULL OR sh.qty IS NOT NULL OR iv.qty IS NOT NULL OR rt.qty IS NOT NULL OR rj.qty IS NOT NULL)
      ORDER BY d.name, p.name"
 );
 $flowStmt->execute([
@@ -324,10 +326,11 @@ $flowStmt->execute([
     $flowDateFrom, $flowDateTo,
     $flowDateFrom, $flowDateTo,
     $flowDateFrom, $flowDateTo,
+    $flowDateFrom, $flowDateTo,
     $flowFactoryId,
 ]);
 $flowRows = $flowStmt->fetchAll();
-$flowTotals = ['po_qty' => 0.0, 'produksi' => 0.0, 'reject_produksi' => 0.0, 'dikirim' => 0.0, 'reject_toko' => 0.0, 'terjual' => 0.0, 'retur' => 0.0];
+$flowTotals = ['po_qty' => 0.0, 'produksi' => 0.0, 'reject_produksi' => 0.0, 'dikirim' => 0.0, 'reject_toko' => 0.0, 'reject_di_toko' => 0.0, 'terjual' => 0.0, 'retur' => 0.0];
 foreach ($flowRows as $r) {
     foreach ($flowTotals as $k => $_) {
         $flowTotals[$k] += (float) $r[$k];
@@ -336,7 +339,7 @@ foreach ($flowRows as $r) {
 ?>
 <div class="card section">
   <div class="card-head"><h2 class="card-title">Arus Barang per Produk</h2></div>
-  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Dari PO masuk sampai produksi, reject, terjual (invoice), dan retur toko.</p>
+  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Dari PO masuk sampai produksi, reject, terjual (invoice), dan retur toko. <b>Reject</b> = tanggungan pabrik (sudah dipotong dari Terjual); <b>Retur</b> = tanggungan toko, hanya catatan.</p>
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;margin-bottom:var(--space-4);">
     <input type="hidden" name="page" value="laporan">
     <input type="hidden" name="tanggal" value="<?= ui_esc($uiTanggal) ?>">
@@ -356,7 +359,7 @@ foreach ($flowRows as $r) {
     <?= ui_empty_state('Belum ada arus barang', 'Belum ada PO, produksi, pengiriman, atau penjualan pada periode ini.') ?>
   <?php else: ?>
   <div class="table-scroll"><table class="data-table" id="arus-barang">
-    <thead><tr><th>Produk</th><th>Divisi</th><th class="num">PO</th><th class="num">Produksi</th><th class="num">Reject Produksi</th><th class="num">Dikirim</th><th class="num">Reject Toko</th><th class="num">Terjual</th><th class="num">Retur</th></tr></thead>
+    <thead><tr><th>Produk</th><th>Divisi</th><th class="num">PO</th><th class="num">Produksi</th><th class="num">Reject Produksi</th><th class="num">Dikirim</th><th class="num">Reject saat Terima</th><th class="num">Reject di Toko</th><th class="num">Terjual</th><th class="num">Retur (catatan)</th></tr></thead>
     <tbody>
     <?php foreach ($flowRows as $r): ?>
     <tr>
@@ -367,6 +370,7 @@ foreach ($flowRows as $r) {
       <td class="num"><?= ui_fmt_num((float) $r['reject_produksi']) ?></td>
       <td class="num"><?= ui_fmt_num((float) $r['dikirim']) ?></td>
       <td class="num"><?= ui_fmt_num((float) $r['reject_toko']) ?></td>
+      <td class="num"><?= ui_fmt_num((float) $r['reject_di_toko']) ?></td>
       <td class="num"><?= ui_fmt_num((float) $r['terjual']) ?></td>
       <td class="num"><?= ui_fmt_num((float) $r['retur']) ?></td>
     </tr>
@@ -392,7 +396,7 @@ $returStmt = $pdo->prepare(
             SUM(CASE WHEN r.status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count
      FROM retur_request r
      INNER JOIN store s ON s.store_id = r.store_id
-     WHERE r.retur_date BETWEEN ? AND ?
+     WHERE r.jenis = 'retur' AND r.retur_date BETWEEN ? AND ?
      GROUP BY s.store_id, s.canonical_name
      ORDER BY verified_qty DESC"
 );
@@ -416,6 +420,31 @@ $rejectStmt = $pdo->prepare(
 $rejectStmt->execute([$returDateFrom, $returDateTo]);
 $rejectRows = $rejectStmt->fetchAll();
 
+// Reject di Toko (migration 0020): spoiled before expiry, factory burden.
+$rejectTokoStmt = $pdo->prepare(
+    "SELECT s.store_id, s.canonical_name AS store_name,
+            SUM(CASE WHEN r.status = 'verified' THEN r.qty ELSE 0 END) AS verified_qty,
+            SUM(CASE WHEN r.status = 'verified' THEN r.qty * p.harga ELSE 0 END) AS verified_nilai,
+            SUM(CASE WHEN r.status = 'verified' AND r.tindak_lanjut = 'potong' THEN r.qty ELSE 0 END) AS potong_qty,
+            SUM(CASE WHEN r.status = 'verified' AND r.tindak_lanjut = 'ganti' THEN r.qty ELSE 0 END) AS ganti_qty,
+            SUM(CASE WHEN r.status = 'waiting_admin_verification' THEN r.qty ELSE 0 END) AS waiting_qty,
+            SUM(CASE WHEN r.status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count
+     FROM retur_request r
+     INNER JOIN store s ON s.store_id = r.store_id
+     INNER JOIN product p ON p.product_id = r.product_id
+     WHERE r.jenis = 'reject_toko' AND r.retur_date BETWEEN ? AND ?
+     GROUP BY s.store_id, s.canonical_name
+     ORDER BY verified_nilai DESC"
+);
+$rejectTokoStmt->execute([$returDateFrom, $returDateTo]);
+$rejectTokoRows = $rejectTokoStmt->fetchAll();
+$rejectTokoQty = 0.0;
+$rejectTokoNilai = 0.0;
+foreach ($rejectTokoRows as $r) {
+    $rejectTokoQty += (float) $r['verified_qty'];
+    $rejectTokoNilai += (float) $r['verified_nilai'];
+}
+
 $returTotalQty = 0.0;
 foreach ($returRows as $r) {
     $returTotalQty += (float) $r['verified_qty'];
@@ -438,14 +467,39 @@ foreach ($rejectRows as $r) {
     <button type="submit" class="btn btn-primary">Terapkan</button>
   </form>
 
-  <div class="kpi-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:var(--space-4);">
-    <?= ui_kpi_card(['label' => 'Qty Retur Terverifikasi', 'value' => ui_fmt_num($returTotalQty), 'icon' => 'box', 'color' => 'warning']) ?>
-    <?= ui_kpi_card(['label' => 'Qty Reject Dilaporkan', 'value' => ui_fmt_num($rejectTotalQty), 'icon' => 'box', 'color' => 'danger']) ?>
+  <p style="color:var(--text-faint);font-size:.85rem;margin:-8px 0 var(--space-3);"><b>Reject</b> (saat terima &amp; di toko) = tanggungan pabrik, mengurangi invoice. <b>Retur</b> = barang tidak laku, tanggungan toko, hanya dicatat.</p>
+  <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:var(--space-4);">
+    <?= ui_kpi_card(['label' => 'Reject saat Terima (qty)', 'value' => ui_fmt_num($rejectTotalQty), 'icon' => 'alert', 'color' => 'warning']) ?>
+    <?= ui_kpi_card(['label' => 'Reject di Toko (qty / nilai)', 'value' => ui_fmt_num($rejectTokoQty) . ' · ' . ui_fmt_money($rejectTokoNilai), 'icon' => 'alert', 'color' => 'warning']) ?>
+    <?= ui_kpi_card(['label' => 'Retur — catatan (qty)', 'value' => ui_fmt_num($returTotalQty), 'icon' => 'box', 'color' => 'neutral']) ?>
   </div>
 
   <div style="display:grid;gap:var(--space-5);">
     <div style="min-width:0;">
-      <h3 style="margin-bottom:var(--space-3);">Retur per Toko</h3>
+      <h3 style="margin-bottom:var(--space-3);">⚠️ Reject di Toko per Toko <small style="font-weight:400;color:var(--text-faint);">— rusak/jamur sebelum expired, tanggungan pabrik</small></h3>
+      <?php if ($rejectTokoRows === []): ?>
+        <?= ui_empty_state('Belum ada Reject di Toko', 'Tidak ada laporan Reject di Toko pada periode ini.') ?>
+      <?php else: ?>
+      <div class="table-scroll"><table class="data-table" id="reject-di-toko">
+        <thead><tr><th>Toko</th><th class="num">Disetujui (qty)</th><th class="num">Nilai</th><th class="num">Potong</th><th class="num">Ganti</th><th class="num">Menunggu</th><th class="num">Ditolak</th></tr></thead>
+        <tbody>
+        <?php foreach ($rejectTokoRows as $r): ?>
+        <tr>
+          <td><?= ui_esc($r['store_name']) ?></td>
+          <td class="num"><?= ui_fmt_num((float) $r['verified_qty']) ?></td>
+          <td class="num"><?= ui_fmt_money((float) $r['verified_nilai']) ?></td>
+          <td class="num"><?= ui_fmt_num((float) $r['potong_qty']) ?></td>
+          <td class="num"><?= ui_fmt_num((float) $r['ganti_qty']) ?></td>
+          <td class="num"><?= ui_fmt_num((float) $r['waiting_qty']) ?></td>
+          <td class="num"><?= (int) $r['rejected_count'] ?></td>
+        </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table></div>
+      <?php endif; ?>
+    </div>
+    <div style="min-width:0;">
+      <h3 style="margin-bottom:var(--space-3);">↩️ Retur per Toko <small style="font-weight:400;color:var(--text-faint);">— hanya catatan, tidak memotong invoice</small></h3>
       <?php if ($returRows === []): ?>
         <?= ui_empty_state('Belum ada Retur', 'Tidak ada pengajuan Retur pada periode ini.') ?>
       <?php else: ?>
@@ -466,7 +520,7 @@ foreach ($rejectRows as $r) {
       <?php endif; ?>
     </div>
     <div style="min-width:0;">
-      <h3 style="margin-bottom:var(--space-3);">Reject per Toko</h3>
+      <h3 style="margin-bottom:var(--space-3);">⚠️ Reject saat Terima per Toko</h3>
       <?php if ($rejectRows === []): ?>
         <?= ui_empty_state('Belum ada Reject', 'Tidak ada reject yang dilaporkan toko pada periode ini.') ?>
       <?php else: ?>

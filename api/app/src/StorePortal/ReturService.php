@@ -8,24 +8,30 @@ use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Repositories\ProductRepository;
 use Amor\Api\Services\DocumentSequenceService;
+use Amor\Api\SpecialOrder\SpecialOrderService;
 use PDO;
 
 /**
- * Permanent Bakery Portal — "Retur" menu (migration 0017). "Barang sudah
- * diterima BAIK, belakangan tidak terjual" — reported later by the store.
- * NOT reject/shortage/production-reject (those stay inside Konfirmasi
- * Penerimaan / Replacement Reject, entirely untouched by this class).
+ * Permanent Bakery Portal — "Lapor Barang" menu (migrations 0017 + 0020).
+ * Two kinds of after-receipt report share this table, told apart by
+ * `jenis`, and their financial rules are OPPOSITE:
  *
- * TWO RULES ARE LOCKED BY THE TASK and enforced here simply by what this
- * class never does:
- *   - FINANCIAL: 100% store burden. This class never reads or writes any
- *     invoice/billing table (none even exists on this branch yet) — there
- *     is no code path here that could reduce an invoice or create a
- *     credit note.
- *   - STOCK: operational record only. This class never calls StockLedger
- *     or touches stock_balance — Factory FG stock can never be auto-
- *     increased by a Retur submission. A later PHYSICAL return would be a
- *     SEPARATE, explicit receipt/QC event this class has no part in.
+ *   - 'retur' — "Barang sudah diterima BAIK, belakangan tidak terjual".
+ *     100% store burden, record only: never reduces an invoice, never
+ *     touches stock.
+ *   - 'reject_toko' — goods that spoiled in the store BEFORE their expiry
+ *     date (e.g. mold). Factory burden: once Admin verifies it (choosing
+ *     'potong' or 'ganti'), InvoiceService deducts qty x harga from the
+ *     store's next invoice (retur_request.invoice_id marks it consumed).
+ *     'ganti' additionally creates a Pesanan Khusus Toko replacement,
+ *     billed normally on receipt — so the store pays once for goods it
+ *     could actually sell.
+ *
+ * Neither kind ever touches StockLedger / stock_balance — the spoiled or
+ * unsold goods never return to Factory FG stock.
+ *
+ * Reject AT RECEIPT (barang datang rusak) is NOT handled here — it stays in
+ * Konfirmasi Penerimaan / Replacement Reject.
  *
  * Photo evidence is MANDATORY (>=1) at submission — enforced here, same
  * "app-layer invariant over DB CHECK constraint" convention as every
@@ -34,6 +40,15 @@ use PDO;
  */
 final class ReturService
 {
+    /** Allowed "kondisi" values for a Reject di Toko — label shown to Admin and in reports. */
+    public const KONDISI = [
+        'jamur' => 'Berjamur',
+        'basi' => 'Basi / bau / asam',
+        'keras' => 'Keras / kering',
+        'rusak' => 'Rusak / penyok / bocor',
+        'lainnya' => 'Lainnya',
+    ];
+
     private ReturRepository $repo;
     private ProductRepository $productRepo;
 
@@ -49,8 +64,15 @@ final class ReturService
      */
     public function createForStorePortal(int $storeId, array $input, array $evidenceFiles, ?int $submittedViaTokenId, ?string $requestId): array
     {
+        $jenis = (string) ($input['jenis'] ?? 'retur');
+        if (!in_array($jenis, ['retur', 'reject_toko'], true)) {
+            throw new ApiException(400, 'INVALID_JENIS', 'Jenis laporan tidak dikenal');
+        }
+        $isReject = $jenis === 'reject_toko';
+        $label = $isReject ? 'Reject' : 'Retur';
+
         if ($evidenceFiles === []) {
-            throw new ApiException(400, 'EVIDENCE_REQUIRED', 'Foto bukti wajib diunggah untuk pengajuan Retur');
+            throw new ApiException(400, 'EVIDENCE_REQUIRED', "Foto bukti wajib diunggah untuk pengajuan {$label}");
         }
 
         $productId = (int) ($input['productId'] ?? 0);
@@ -61,23 +83,47 @@ final class ReturService
 
         $qty = (float) ($input['qty'] ?? 0);
         if ($qty <= 0) {
-            throw new ApiException(400, 'INVALID_QTY', 'Jumlah retur harus lebih dari 0');
+            throw new ApiException(400, 'INVALID_QTY', 'Jumlah harus lebih dari 0');
+        }
+
+        $today = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d');
+        $returDate = isset($input['returDate']) && trim((string) $input['returDate']) !== ''
+            ? (string) $input['returDate']
+            : $today;
+
+        $kondisi = null;
+        $expDate = null;
+        if ($isReject) {
+            $kondisi = (string) ($input['kondisi'] ?? '');
+            if (!isset(self::KONDISI[$kondisi])) {
+                throw new ApiException(400, 'KONDISI_REQUIRED', 'Pilih kondisi barang (berjamur, basi, dll.)');
+            }
+            $expDate = trim((string) ($input['expDate'] ?? ''));
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $expDate)) {
+                throw new ApiException(400, 'EXP_DATE_REQUIRED', 'Tanggal expired di kemasan wajib diisi');
+            }
+            // Spoiled AFTER its expiry date is not a factory defect — the
+            // goods simply weren't sold in time, which is a Retur.
+            if ($expDate < $returDate) {
+                throw new ApiException(400, 'ALREADY_EXPIRED', 'Barang sudah lewat tanggal expired — ini bukan Reject. Laporkan sebagai Retur.');
+            }
         }
 
         $reason = trim((string) ($input['reason'] ?? ''));
+        if ($reason === '' && $isReject) {
+            $reason = self::KONDISI[$kondisi];
+        }
         if ($reason === '') {
             throw new ApiException(400, 'REASON_REQUIRED', 'Alasan retur wajib diisi');
         }
 
         $notes = isset($input['notes']) && trim((string) $input['notes']) !== '' ? trim((string) $input['notes']) : null;
-        $returDate = isset($input['returDate']) && trim((string) $input['returDate']) !== ''
-            ? (string) $input['returDate']
-            : (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d');
 
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-        $docNo = sprintf('RETUR-%s-%03d', $now->format('Ymd'), DocumentSequenceService::allocate($this->pdo, 'RETUR', (int) $now->format('Y'), (int) $now->format('n')));
+        $prefix = $isReject ? 'RJT' : 'RETUR';
+        $docNo = sprintf('%s-%s-%03d', $prefix, $now->format('Ymd'), DocumentSequenceService::allocate($this->pdo, $prefix, (int) $now->format('Y'), (int) $now->format('n')));
 
-        $returId = $this->repo->insert($this->pdo, $docNo, $storeId, $productId, $qty, $reason, $notes, $returDate, $submittedViaTokenId);
+        $returId = $this->repo->insert($this->pdo, $docNo, $storeId, $productId, $qty, $reason, $notes, $returDate, $submittedViaTokenId, $jenis, $kondisi, $expDate);
         foreach ($evidenceFiles as $ev) {
             $this->repo->insertEvidence($this->pdo, $returId, $ev['filePath'], $ev['mimeType'], $ev['fileSize'], $ev['originalName']);
         }
@@ -87,8 +133,8 @@ final class ReturService
         // actor" discipline as every public receipt path (Dispatch\
         // ReceiptService). storeId is captured in the payload instead.
         Audit::write(
-            $this->pdo, $requestId, null, 'retur.created', 'retur_request', (string) $returId,
-            'ok', null, 1, ['storeId' => $storeId, 'productId' => $productId, 'qty' => $qty, 'docNo' => $docNo]
+            $this->pdo, $requestId, null, $isReject ? 'reject_toko.created' : 'retur.created', 'retur_request', (string) $returId,
+            'ok', null, 1, ['storeId' => $storeId, 'productId' => $productId, 'qty' => $qty, 'docNo' => $docNo, 'jenis' => $jenis]
         );
 
         return $this->buildDto($this->repo->findById($this->pdo, $returId));
@@ -111,10 +157,13 @@ final class ReturService
         return array_map(fn ($r) => $this->buildSummaryDto($r), $rows);
     }
 
-    /** Admin review queue (ADMIN/PPIC) — every store, optional status filter. */
-    public function adminList(?string $status): array
+    /** Admin review queue (ADMIN/PPIC) — every store, optional status / jenis filter. */
+    public function adminList(?string $status, ?string $jenis = null): array
     {
-        $rows = $this->repo->listForAdmin($this->pdo, $status);
+        if ($jenis !== null && !in_array($jenis, ['retur', 'reject_toko'], true)) {
+            $jenis = null;
+        }
+        $rows = $this->repo->listForAdmin($this->pdo, $status, $jenis);
         return array_map(fn ($r) => $this->buildSummaryDto($r), $rows);
     }
 
@@ -127,18 +176,59 @@ final class ReturService
         return $this->buildDto($row);
     }
 
-    /** @throws ApiException 404 NOT_FOUND | 409 INVALID_RETUR_STATUS */
-    public function adminVerify(int $returId, int $adminUserId, ?string $requestId): array
+    /**
+     * Retur: just marks it verified (record only).
+     * Reject di Toko: $tindakLanjut is REQUIRED — 'potong' (deduct from the
+     * next invoice) or 'ganti' (deduct AND create a Pesanan Khusus Toko
+     * replacement, confirmed and sent to Production so it can be produced
+     * or allocated from Stok Sisa on its detail page).
+     *
+     * @throws ApiException 400 TINDAK_LANJUT_REQUIRED | 404 NOT_FOUND | 409 INVALID_RETUR_STATUS
+     */
+    public function adminVerify(int $returId, int $adminUserId, ?string $requestId, ?string $tindakLanjut = null, ?string $requiredDate = null): array
     {
         $row = $this->repo->lockById($this->pdo, $returId);
         if ($row === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Pengajuan retur tidak ditemukan');
         }
         if ($row['status'] !== 'waiting_admin_verification') {
-            throw new ApiException(409, 'INVALID_RETUR_STATUS', 'Pengajuan retur ini sudah diproses sebelumnya');
+            throw new ApiException(409, 'INVALID_RETUR_STATUS', 'Pengajuan ini sudah diproses sebelumnya');
         }
-        $this->repo->markVerified($this->pdo, $returId, $adminUserId);
-        Audit::write($this->pdo, $requestId, $adminUserId, 'retur.verified', 'retur_request', (string) $returId, 'ok', 1, 2, null);
+
+        if (($row['jenis'] ?? 'retur') !== 'reject_toko') {
+            $this->repo->markVerified($this->pdo, $returId, $adminUserId);
+            Audit::write($this->pdo, $requestId, $adminUserId, 'retur.verified', 'retur_request', (string) $returId, 'ok', 1, 2, null);
+            return $this->buildDto($this->repo->findById($this->pdo, $returId));
+        }
+
+        if (!in_array($tindakLanjut, ['potong', 'ganti'], true)) {
+            throw new ApiException(400, 'TINDAK_LANJUT_REQUIRED', 'Pilih tindak lanjut: Potong invoice atau Ganti barang');
+        }
+
+        $orderId = null;
+        if ($tindakLanjut === 'ganti') {
+            $date = $requiredDate !== null && preg_match('/^\d{4}-\d{2}-\d{2}$/', $requiredDate)
+                ? $requiredDate
+                : (new \DateTimeImmutable('tomorrow', new \DateTimeZone('Asia/Jakarta')))->format('Y-m-d');
+            $orders = new SpecialOrderService($this->pdo);
+            $order = $orders->createOrder([
+                'sourceType' => 'toko_khusus',
+                'storeId' => (int) $row['store_id'],
+                'orderDate' => $date,
+                'requiredDate' => $date,
+                'generalNote' => 'Pengganti Reject di Toko ' . $row['doc_no'],
+                'items' => [['itemType' => 'existing_product', 'productId' => (int) $row['product_id'], 'qty' => (float) $row['qty']]],
+            ], $adminUserId, $requestId);
+            $order = $orders->confirmOrder((int) $order['orderId'], (int) $order['version'], $adminUserId, $requestId);
+            $order = $orders->sendToProduction((int) $order['orderId'], (int) $order['version'], $adminUserId, $requestId);
+            $orderId = (int) $order['orderId'];
+        }
+
+        $this->repo->markRejectTokoVerified($this->pdo, $returId, $adminUserId, $tindakLanjut, $orderId);
+        Audit::write(
+            $this->pdo, $requestId, $adminUserId, 'reject_toko.verified', 'retur_request', (string) $returId, 'ok', 1, 2,
+            ['tindakLanjut' => $tindakLanjut, 'penggantiOrderId' => $orderId]
+        );
         return $this->buildDto($this->repo->findById($this->pdo, $returId));
     }
 
@@ -154,7 +244,7 @@ final class ReturService
             throw new ApiException(404, 'NOT_FOUND', 'Pengajuan retur tidak ditemukan');
         }
         if ($row['status'] !== 'waiting_admin_verification') {
-            throw new ApiException(409, 'INVALID_RETUR_STATUS', 'Pengajuan retur ini sudah diproses sebelumnya');
+            throw new ApiException(409, 'INVALID_RETUR_STATUS', 'Pengajuan ini sudah diproses sebelumnya');
         }
         $this->repo->markRejected($this->pdo, $returId, $reason, $adminUserId);
         Audit::write($this->pdo, $requestId, $adminUserId, 'retur.rejected', 'retur_request', (string) $returId, 'ok', 1, 2, ['reason' => $reason]);
@@ -173,6 +263,16 @@ final class ReturService
             'productName' => $r['product_name'],
             'qty' => (float) $r['qty'],
             'reason' => $r['reason'],
+            'jenis' => $r['jenis'] ?? 'retur',
+            'kondisi' => $r['kondisi'] ?? null,
+            'kondisiLabel' => isset($r['kondisi']) ? (self::KONDISI[$r['kondisi']] ?? $r['kondisi']) : null,
+            'expDate' => $r['exp_date'] ?? null,
+            'tindakLanjut' => $r['tindak_lanjut'] ?? null,
+            'penggantiOrderId' => isset($r['pengganti_order_id']) ? (int) $r['pengganti_order_id'] : null,
+            'penggantiOrderNo' => $r['pengganti_order_no'] ?? null,
+            'invoiceId' => isset($r['invoice_id']) ? (int) $r['invoice_id'] : null,
+            'invoiceNo' => $r['invoice_no'] ?? null,
+            'harga' => isset($r['harga']) ? (float) $r['harga'] : null,
             'notes' => $r['notes'],
             'returDate' => $r['retur_date'],
             'status' => $r['status'],
@@ -200,6 +300,13 @@ final class ReturService
             'productName' => $r['product_name'],
             'qty' => (float) $r['qty'],
             'reason' => $r['reason'] ?? null,
+            'jenis' => $r['jenis'] ?? 'retur',
+            'kondisiLabel' => isset($r['kondisi']) ? (self::KONDISI[$r['kondisi']] ?? $r['kondisi']) : null,
+            'expDate' => $r['exp_date'] ?? null,
+            'tindakLanjut' => $r['tindak_lanjut'] ?? null,
+            'penggantiOrderNo' => $r['pengganti_order_no'] ?? null,
+            'invoiceNo' => $r['invoice_no'] ?? null,
+            'rejectReason' => $r['reject_reason'] ?? null,
             'returDate' => $r['retur_date'],
             'status' => $r['status'],
             'createdAt' => $r['created_at'],

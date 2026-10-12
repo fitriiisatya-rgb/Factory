@@ -54,7 +54,7 @@ if (!in_array($tab, $tabs, true)) {
 $titles = [
     'konfirmasi' => 'Konfirmasi Penerimaan',
     'khusus' => 'Pesanan Khusus',
-    'retur' => 'Retur',
+    'retur' => 'Lapor Barang',
     'mutasi' => 'Mutasi Produk',
     'riwayat' => 'Riwayat',
 ];

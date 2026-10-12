@@ -41,12 +41,13 @@ $pages = [
     'pengiriman' => ['title' => 'Pengiriman', 'subtitle' => 'Kelola pengiriman aktual dan pengiriman bertahap.'],
     'konfirmasi-toko' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Tinjau konfirmasi penerimaan barang dari toko dan verifikasi selisih.'],
     'konfirmasi-toko-detail' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Detail konfirmasi penerimaan satu pengiriman.'],
-    'replacement-reject' => ['title' => 'Replacement Reject', 'subtitle' => 'Tindak lanjut reject yang sudah diverifikasi: Reject Final atau Kirim Ulang / Ganti Produk.'],
+    'replacement-reject' => ['title' => 'Reject saat Terima', 'subtitle' => 'Barang rusak saat datang (dilaporkan di Konfirmasi Penerimaan): Reject Final atau Kirim Ulang / Ganti Produk.'],
+    'reject-toko' => ['title' => 'Reject di Toko', 'subtitle' => 'Barang rusak/berjamur di toko sebelum expired — tanggungan pabrik: potong invoice atau ganti barang.'],
     'replacement-do-detail' => ['title' => 'Replacement Reject', 'subtitle' => 'Detail DO Replacement — pengiriman make-good tanpa harga.'],
     'bakery-portal-tokens' => ['title' => 'Portal Bakery', 'subtitle' => 'Kelola link permanen Portal Bakery per toko (generate/regenerate/revoke).'],
     'invoice' => ['title' => 'Invoice', 'subtitle' => 'Generate dan kelola invoice dari data pengiriman dan mutasi yang sudah terkonfirmasi.'],
     'invoice-detail' => ['title' => 'Invoice', 'subtitle' => 'Detail satu invoice.'],
-    'retur-review' => ['title' => 'Retur', 'subtitle' => 'Tinjau dan verifikasi pengajuan Retur dari Portal Bakery.'],
+    'retur-review' => ['title' => 'Retur (catatan)', 'subtitle' => 'Barang tidak laku — hanya dicatat, tanggungan toko, tidak memotong invoice.'],
     'mutasi-review' => ['title' => 'Mutasi Produk', 'subtitle' => 'Tinjau Mutasi antar toko dan putuskan kasus selisih.'],
     'master-data' => ['title' => 'Master Data', 'subtitle' => 'Produk, toko, divisi, dan pabrik.'],
     'laporan' => ['title' => 'Laporan', 'subtitle' => 'Ringkasan lintas tahap, dari PO sampai pengiriman.'],
@@ -96,6 +97,7 @@ $pageRoles = [
     // only, never PPIC (same reasoning the page file's own docblock gives).
     'bakery-portal-tokens' => ['ADMIN'],
     'retur-review' => ['ADMIN', 'PPIC'],
+    'reject-toko' => ['ADMIN', 'PPIC'],
     'stok-sisa' => ['ADMIN', 'PPIC'],
     'mutasi-review' => ['ADMIN', 'PPIC'],
     // Invoice generation is ADMIN-only end to end (InvoiceController's own

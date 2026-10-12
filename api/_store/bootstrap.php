@@ -68,7 +68,7 @@ require_once __DIR__ . '/../app/ui/components.php'; // ui_icon() only — pure f
  * DRIVER_ASSET_VERSION/RECEIPT_ASSET_VERSION. Bump on every patch that
  * touches either file.
  */
-const STORE_ASSET_VERSION = '20261014-compact';
+const STORE_ASSET_VERSION = '20261015-lapor';
 
 /**
  * Opens the mobile Portal HTML shell: header (bakery name, prominent per
@@ -108,7 +108,7 @@ function store_page_foot(string $token, string $active): void
     $tabs = [
         ['key' => 'konfirmasi', 'label' => 'Konfirmasi', 'icon' => 'truck'],
         ['key' => 'khusus', 'label' => 'Pesanan Khusus', 'icon' => 'cart'],
-        ['key' => 'retur', 'label' => 'Retur', 'icon' => 'box'],
+        ['key' => 'retur', 'label' => 'Lapor Barang', 'icon' => 'alert'],
         ['key' => 'mutasi', 'label' => 'Mutasi', 'icon' => 'bolt'],
         ['key' => 'riwayat', 'label' => 'Riwayat', 'icon' => 'chart'],
     ];

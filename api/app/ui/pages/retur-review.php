@@ -24,7 +24,7 @@ $statusFilter = (string) ($_GET['status'] ?? 'waiting_admin_verification');
 if (!in_array($statusFilter, ['waiting_admin_verification', 'verified', 'rejected', ''], true)) {
     $statusFilter = 'waiting_admin_verification';
 }
-$rows = $service->adminList($statusFilter === '' ? null : $statusFilter);
+$rows = $service->adminList($statusFilter === '' ? null : $statusFilter, 'retur');
 $statusLabels = [
     'waiting_admin_verification' => 'Menunggu Verifikasi',
     'verified' => 'Terverifikasi',
@@ -32,6 +32,11 @@ $statusLabels = [
 ];
 $tabs = ['waiting_admin_verification' => 'Menunggu Verifikasi', 'verified' => 'Terverifikasi', 'rejected' => 'Ditolak', '' => 'Semua'];
 ?>
+<div class="alert" style="display:flex;gap:var(--space-3);align-items:flex-start;border:2px dashed var(--border);background:transparent;">
+  <span style="font-size:1.6rem;line-height:1;">↩️</span>
+  <div><strong>Retur = barang tidak laku, hanya dicatat.</strong> Tanggungan toko — tidak memotong invoice dan tidak menambah stok pabrik.
+  Barang rusak/berjamur sebelum expired adalah <a href="/api/_ui-preview/?page=reject-toko">Reject di Toko</a>.</div>
+</div>
 <div class="filter-bar">
   <?php foreach ($tabs as $key => $label): ?>
   <a class="btn btn-sm <?= $statusFilter === $key ? 'btn-primary' : 'btn-secondary' ?>" href="?page=retur-review&status=<?= urlencode($key) ?>"><?= ui_esc($label) ?></a>

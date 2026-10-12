@@ -127,6 +127,50 @@ final class InvoiceRepository
         return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
     }
 
+    /**
+     * Verified Reject di Toko (migration 0020) for this store not yet
+     * deducted on any invoice. No lower date bound on purpose: a reject
+     * verified after its delivery's invoice was already issued is carried
+     * into the store's NEXT invoice instead of being lost.
+     *
+     * @return array<int,array{returId:int,productId:int,productName:string,qty:float,docNo:string}>
+     */
+    public function findEligibleRejectToko(PDO $pdo, int $storeId, string $dateTo): array
+    {
+        $stmt = $pdo->prepare(
+            "SELECT rr.retur_request_id, rr.product_id, p.name AS product_name, rr.qty, rr.doc_no
+             FROM retur_request rr
+             INNER JOIN product p ON p.product_id = rr.product_id
+             WHERE rr.store_id = ? AND rr.jenis = 'reject_toko' AND rr.status = 'verified'
+               AND rr.invoice_id IS NULL AND DATE(rr.verified_at) <= ?
+             ORDER BY rr.retur_request_id"
+        );
+        $stmt->execute([$storeId, $dateTo]);
+        return array_map(static fn ($r) => [
+            'returId' => (int) $r['retur_request_id'], 'productId' => (int) $r['product_id'],
+            'productName' => (string) $r['product_name'], 'qty' => (float) $r['qty'], 'docNo' => (string) $r['doc_no'],
+        ], $stmt->fetchAll());
+    }
+
+    /** Marks a Reject di Toko as deducted on this invoice. invoice_id IS NULL guard keeps it exactly-once. */
+    public function linkRejectToko(PDO $pdo, int $invoiceId, int $returId): void
+    {
+        $pdo->prepare('UPDATE retur_request SET invoice_id = ?, updated_at = UTC_TIMESTAMP() WHERE retur_request_id = ? AND invoice_id IS NULL')
+            ->execute([$invoiceId, $returId]);
+    }
+
+    /** @return array<int,array> Reject di Toko deducted on this invoice */
+    public function findRejectTokoForInvoice(PDO $pdo, int $invoiceId): array
+    {
+        $stmt = $pdo->prepare(
+            'SELECT rr.doc_no, rr.qty, rr.kondisi, rr.tindak_lanjut, rr.retur_date, p.name AS product_name
+             FROM retur_request rr INNER JOIN product p ON p.product_id = rr.product_id
+             WHERE rr.invoice_id = ? ORDER BY rr.doc_no'
+        );
+        $stmt->execute([$invoiceId]);
+        return $stmt->fetchAll();
+    }
+
     /** @return array{id:int} */
     public function insertInvoice(PDO $pdo, string $invoiceNo, string $tanggal, int $storeId, float $total): int
     {
@@ -240,7 +284,7 @@ final class InvoiceRepository
         return $stmt->fetchAll();
     }
 
-    /** Hard delete — cascades to invoice_item/invoice_shipment/invoice_mutasi, releasing their rows back to the eligible pool. See this migration's own schema docblock for why this is safe (nothing references a generated Invoice yet). */
+    /** Hard delete — cascades to invoice_item/invoice_shipment/invoice_mutasi (and retur_request.invoice_id is SET NULL by its FK), releasing their rows back to the eligible pool. See this migration's own schema docblock for why this is safe (nothing references a generated Invoice yet). */
     public function deleteInvoice(PDO $pdo, int $invoiceId): void
     {
         $pdo->prepare('DELETE FROM invoice WHERE invoice_id = ?')->execute([$invoiceId]);

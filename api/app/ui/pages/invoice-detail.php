@@ -96,6 +96,30 @@ try {
   <?php endif; ?>
 </div>
 
+<?php $rejectToko = $invoice['rejectToko'] ?? []; ?>
+<div class="card section">
+  <div class="card-head"><h2 class="card-title">Potongan Reject di Toko</h2></div>
+  <?php if ($rejectToko === []): ?>
+    <?= ui_empty_state('Tidak ada potongan reject', 'Tidak ada Reject di Toko yang dipotong pada invoice ini.') ?>
+  <?php else: ?>
+  <p class="page-subtitle" style="margin:0 0 var(--space-3);">Barang rusak/jamur sebelum expired (tanggungan pabrik). Jumlahnya sudah dikurangkan dari Qty Invoice di atas.</p>
+  <div class="table-scroll"><table class="data-table">
+    <thead><tr><th>No. Dokumen</th><th>Tanggal</th><th>Produk</th><th class="num">Qty dipotong</th><th>Tindak lanjut</th></tr></thead>
+    <tbody>
+    <?php foreach ($rejectToko as $rj): ?>
+    <tr>
+      <td><?= ui_esc($rj['docNo']) ?></td>
+      <td><?= ui_esc($rj['tanggal']) ?></td>
+      <td><?= ui_esc($rj['productName']) ?></td>
+      <td class="num">&minus;<?= ui_fmt_num($rj['qty']) ?></td>
+      <td><?= ui_badge($rj['tindakLanjut'] === 'ganti' ? 'Ganti barang' : 'Potong invoice') ?></td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table></div>
+  <?php endif; ?>
+</div>
+
 <script>
 (function () {
   var card = document.getElementById('invoice-card');

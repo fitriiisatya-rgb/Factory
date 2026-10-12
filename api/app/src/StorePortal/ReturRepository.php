@@ -7,23 +7,23 @@ namespace Amor\Api\StorePortal;
 use PDO;
 
 /**
- * Persistence for retur_request / retur_request_evidence (migration
- * 0017). "Barang sudah diterima BAIK, belakangan tidak terjual" — reported
- * later by the store, never auto-created by any other flow. See that
- * migration's own docblock for the LOCKED financial/stock rules this
- * table's shape enforces by omission (no invoice/billing link at all, no
- * stock_ledger write path anywhere in this class).
+ * Persistence for retur_request / retur_request_evidence (migrations 0017
+ * + 0020). Holds both store after-receipt reports: jenis='retur' (record
+ * only, store burden) and jenis='reject_toko' (factory burden, deducted
+ * from the next invoice via invoice_id — that write lives in
+ * InvoiceRepository, never here). No stock_ledger write path anywhere in
+ * this class.
  */
 final class ReturRepository
 {
-    public function insert(PDO $pdo, string $docNo, int $storeId, int $productId, float $qty, string $reason, ?string $notes, string $returDate, ?int $submittedViaTokenId): int
+    public function insert(PDO $pdo, string $docNo, int $storeId, int $productId, float $qty, string $reason, ?string $notes, string $returDate, ?int $submittedViaTokenId, string $jenis = 'retur', ?string $kondisi = null, ?string $expDate = null): int
     {
         $stmt = $pdo->prepare(
             'INSERT INTO retur_request
-                (doc_no, store_id, product_id, qty, reason, notes, retur_date, status, submitted_via_token_id, version, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, \'waiting_admin_verification\', ?, 1, UTC_TIMESTAMP())'
+                (doc_no, store_id, product_id, qty, reason, notes, retur_date, status, submitted_via_token_id, jenis, kondisi, exp_date, version, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, \'waiting_admin_verification\', ?, ?, ?, ?, 1, UTC_TIMESTAMP())'
         );
-        $stmt->execute([$docNo, $storeId, $productId, $qty, $reason, $notes, $returDate, $submittedViaTokenId]);
+        $stmt->execute([$docNo, $storeId, $productId, $qty, $reason, $notes, $returDate, $submittedViaTokenId, $jenis, $kondisi, $expDate]);
         return (int) $pdo->lastInsertId();
     }
 
@@ -40,11 +40,13 @@ final class ReturRepository
     public function findById(PDO $pdo, int $id): ?array
     {
         $stmt = $pdo->prepare(
-            'SELECT rr.*, p.name AS product_name, s.canonical_name AS store_name, u.full_name AS verified_by_name
+            'SELECT rr.*, p.name AS product_name, s.canonical_name AS store_name, u.full_name AS verified_by_name, p.harga, so.order_no AS pengganti_order_no, inv.invoice_no
              FROM retur_request rr
              INNER JOIN product p ON p.product_id = rr.product_id
              INNER JOIN store s ON s.store_id = rr.store_id
              LEFT JOIN users u ON u.user_id = rr.verified_by
+             LEFT JOIN special_order so ON so.special_order_id = rr.pengganti_order_id
+             LEFT JOIN invoice inv ON inv.invoice_id = rr.invoice_id
              WHERE rr.retur_request_id = ?'
         );
         $stmt->execute([$id]);
@@ -80,9 +82,11 @@ final class ReturRepository
     public function listForStore(PDO $pdo, int $storeId): array
     {
         $stmt = $pdo->prepare(
-            'SELECT rr.*, p.name AS product_name
+            'SELECT rr.*, p.name AS product_name, p.harga, so.order_no AS pengganti_order_no, inv.invoice_no
              FROM retur_request rr
              INNER JOIN product p ON p.product_id = rr.product_id
+             LEFT JOIN special_order so ON so.special_order_id = rr.pengganti_order_id
+             LEFT JOIN invoice inv ON inv.invoice_id = rr.invoice_id
              WHERE rr.store_id = ?
              ORDER BY rr.retur_request_id DESC'
         );
@@ -91,17 +95,23 @@ final class ReturRepository
     }
 
     /** Admin review queue — every store, optional status filter. */
-    public function listForAdmin(PDO $pdo, ?string $status): array
+    public function listForAdmin(PDO $pdo, ?string $status, ?string $jenis = null): array
     {
-        $sql = 'SELECT rr.*, p.name AS product_name, s.canonical_name AS store_name
+        $sql = 'SELECT rr.*, p.name AS product_name, s.canonical_name AS store_name, p.harga, so.order_no AS pengganti_order_no, inv.invoice_no
                 FROM retur_request rr
                 INNER JOIN product p ON p.product_id = rr.product_id
                 INNER JOIN store s ON s.store_id = rr.store_id
+                LEFT JOIN special_order so ON so.special_order_id = rr.pengganti_order_id
+                LEFT JOIN invoice inv ON inv.invoice_id = rr.invoice_id
                 WHERE 1=1';
         $params = [];
         if ($status !== null) {
             $sql .= ' AND rr.status = ?';
             $params[] = $status;
+        }
+        if ($jenis !== null) {
+            $sql .= ' AND rr.jenis = ?';
+            $params[] = $jenis;
         }
         $sql .= ' ORDER BY rr.retur_request_id DESC';
         $stmt = $pdo->prepare($sql);
@@ -117,6 +127,17 @@ final class ReturRepository
              WHERE retur_request_id = ?"
         );
         $stmt->execute([$adminUserId, $id]);
+    }
+
+    public function markRejectTokoVerified(PDO $pdo, int $id, int $adminUserId, string $tindakLanjut, ?int $penggantiOrderId): void
+    {
+        $stmt = $pdo->prepare(
+            "UPDATE retur_request SET status = 'verified', verified_by = ?, verified_at = UTC_TIMESTAMP(),
+                    tindak_lanjut = ?, pengganti_order_id = ?,
+                    version = version + 1, updated_at = UTC_TIMESTAMP()
+             WHERE retur_request_id = ?"
+        );
+        $stmt->execute([$adminUserId, $tindakLanjut, $penggantiOrderId, $id]);
     }
 
     public function markRejected(PDO $pdo, int $id, string $rejectReason, int $adminUserId): void

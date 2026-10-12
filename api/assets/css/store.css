@@ -116,3 +116,62 @@ input[type="file"]::file-selector-button {
 .store-issue-btn { border: 1px solid rgba(245,158,11,.6); background: transparent; color: #fbbf24; border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
 .store-issue-btn.active { background: rgba(245,158,11,.2); }
 .store-item-issue { padding: 6px 0 2px; }
+
+/* ---------------------------------------------------------------
+   Lapor Barang — REJECT (red, ⚠️) vs RETUR (grey dashed, ↩️).
+   Deliberately loud: bakery staff kept confusing the two.
+   --------------------------------------------------------------- */
+.lb-q-title { margin: 4px 0 4px; font-size: 18px; }
+.lb-q-sub { color: var(--text-faint, #9fb0dd); font-size: 13px; margin: 0 0 14px; }
+.lb-big { display: flex; flex-direction: column; align-items: flex-start; text-align: left; width: 100%; border-radius: 18px; padding: 18px; margin-bottom: 14px; color: #eef2ff; font: inherit; cursor: pointer; }
+.lb-big-ic { font-size: 34px; line-height: 1; }
+.lb-big-t { font-size: 20px; font-weight: 800; margin: 8px 0 4px; }
+.lb-big-d { font-size: 14px; line-height: 1.45; }
+.lb-tag { display: inline-block; margin-top: 10px; font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 999px; }
+.lb-ex { font-size: 12px; color: #9fb0dd; margin-top: 6px; }
+.lb-big.rej { background: linear-gradient(160deg, #3b0d16, #1f0a14); border: 2px solid #ef4444; }
+.lb-big.rej .lb-big-t { color: #fca5a5; }
+.lb-big.rej .lb-tag { background: #ef4444; color: #fff; }
+.lb-big.ret { background: #151c33; border: 2px dashed #475569; }
+.lb-big.ret .lb-big-t { color: #cbd5e1; }
+.lb-big.ret .lb-tag { background: #334155; color: #e2e8f0; }
+
+.lb-form.rej { border: 2px solid #ef4444; }
+.lb-form.ret { border: 2px dashed #475569; }
+.lb-hdr { border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; display: flex; gap: 10px; align-items: center; }
+.lb-hdr-ic { font-size: 26px; }
+.lb-hdr b { font-size: 16px; display: block; }
+.lb-hdr small { font-size: 12px; }
+.lb-hdr.rej { background: #ef4444; color: #fff; }
+.lb-hdr.ret { background: #334155; color: #e2e8f0; }
+.lb-form.rej .lb-req, .lb-form.rej .lb-photo-rej .store-evidence-input { border-color: #ef4444 !important; }
+.lb-expired-warn { background: #3a2a06; border: 1px solid #f59e0b; color: #fde68a; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin: 6px 0 10px; }
+.lb-note { border-radius: 12px; padding: 10px 12px; font-size: 13px; margin-top: 12px; line-height: 1.45; }
+.lb-note.rej { background: #2a0f17; border: 1px solid #7f1d1d; color: #fecaca; }
+.lb-note.ret { background: #111827; border: 1px solid #334155; color: #cbd5e1; }
+.lb-link { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.driver-btn.lb-btn-rej { background: #ef4444; border-color: #ef4444; color: #fff; font-weight: 800; margin-top: 14px; }
+.driver-btn.lb-btn-ret { background: #475569; border-color: #475569; color: #fff; font-weight: 800; margin-top: 14px; }
+
+.lb-sum { border: 2px solid #ef4444; background: #2a0f17; border-radius: 16px; padding: 16px; }
+.lb-sum-t { font-size: 19px; font-weight: 800; color: #fca5a5; margin: 6px 0 10px; }
+.lb-sum-row { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; padding: 6px 0; border-bottom: 1px dashed #3f2330; }
+.lb-sum-p { font-size: 13px; color: #fecaca; margin: 12px 0 0; }
+
+.lb-item { border-radius: 12px; padding: 12px; margin-bottom: 10px; display: flex; gap: 10px; align-items: flex-start; }
+.lb-item.rej { background: #2a0f17; border-left: 5px solid #ef4444; }
+.lb-item.ret { background: #151c33; border-left: 5px solid #64748b; }
+.lb-item-ic { font-size: 22px; }
+.lb-badge { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 999px; }
+.lb-badge.rej { background: #ef4444; color: #fff; }
+.lb-badge.ret { background: #334155; color: #e2e8f0; }
+.lb-doc { font-size: 11px; color: #9fb0dd; }
+.lb-item-title { display: block; margin-top: 6px; font-size: 14px; }
+.lb-item small { display: block; color: #9fb0dd; font-size: 12px; margin-top: 2px; }
+.lb-item.rej .lb-status { color: #fca5a5; }
+
+/* Konfirmasi: reject at arrival is also RED. */
+.store-issue-btn { border-color: rgba(239,68,68,.7); color: #fca5a5; }
+.store-issue-btn.active { background: rgba(239,68,68,.2); }
+.store-field-reject label { color: #fca5a5; }
+.store-field-reject input { border-color: #ef4444 !important; }

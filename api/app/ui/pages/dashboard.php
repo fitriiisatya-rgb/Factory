@@ -35,6 +35,15 @@ $sisaPcs = array_sum(array_column($sisaRows, 'sisa'));
   <a class="btn btn-sm btn-primary" href="/api/_ui-preview/?page=stok-sisa">Lihat &amp; tindak lanjuti</a>
 </div>
 <?php endif; ?>
+<?php
+$rejectTokoWaiting = (int) $pdo->query("SELECT COUNT(*) FROM retur_request WHERE jenis = 'reject_toko' AND status = 'waiting_admin_verification'")->fetchColumn();
+?>
+<?php if ($rejectTokoWaiting > 0): ?>
+<div class="alert alert-danger" style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap;">
+  <span><strong>⚠️ Reject di Toko:</strong> <?= $rejectTokoWaiting ?> laporan barang rusak/jamur menunggu keputusan (potong invoice / ganti barang).</span>
+  <a class="btn btn-sm btn-danger" href="/api/_ui-preview/?page=reject-toko">Putuskan</a>
+</div>
+<?php endif; ?>
 <div class="kpi-grid">
   <?= ui_kpi_card(['label' => 'PO Target', 'value' => ui_fmt_num($k['poTarget']), 'icon' => 'cart', 'color' => 'primary']) ?>
   <?= ui_kpi_card(['label' => 'Produksi Aktual', 'value' => ui_fmt_num($k['productionActual']), 'icon' => 'factory', 'color' => 'primary', 'progressPct' => $k['productionActualPct'], 'foot' => 'dari PO Target']) ?>

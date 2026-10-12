@@ -97,9 +97,17 @@ $defaultDateTo = date('Y-m-d');
   var generateBtn = document.getElementById('btn-generate-invoice');
   var box = document.getElementById('invoice-preview-box');
 
+  function escInv(t) { var d = document.createElement('div'); d.textContent = String(t); return d.innerHTML; }
+
   function renderPreview(data) {
     var html = '<div class="alert alert-' + (data.items.length > 0 ? 'success' : 'warning') + '">'
-      + data.shipmentCount + ' pengiriman, ' + data.mutasiOutCount + ' mutasi keluar, ' + data.mutasiInCount + ' mutasi masuk ditemukan untuk ' + data.storeName + '.</div>';
+      + data.shipmentCount + ' pengiriman, ' + data.mutasiOutCount + ' mutasi keluar, ' + data.mutasiInCount + ' mutasi masuk'
+      + ((data.rejectToko || []).length ? ', ' + data.rejectToko.length + ' reject di toko' : '')
+      + ' ditemukan untuk ' + data.storeName + '.</div>';
+    if ((data.rejectToko || []).length) {
+      html += '<div class="alert alert-danger"><strong>Potongan Reject di Toko: ' + Amor.fmtRupiah(data.rejectTokoTotal) + '</strong> (sudah dikurangkan dari Qty Invoice)<br>'
+        + data.rejectToko.map(function (r) { return escInv(r.docNo + ' · ' + r.productName + ' −' + r.qty); }).join('<br>') + '</div>';
+    }
     if (data.items.length === 0) {
       html += '<p>Tidak ada yang bisa ditagihkan untuk toko dan periode ini.</p>';
     } else {

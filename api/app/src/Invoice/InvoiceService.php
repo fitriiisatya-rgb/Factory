@@ -20,6 +20,11 @@ use PDO;
  *    Mutasi movement: a completed Mutasi moves its qty_received fully
  *    from the SOURCE store's own billable pool to the DESTINATION
  *    store's — never double-billed, never dropped, on either side.
+ *  - A verified Reject di Toko (migration 0020 — goods that spoiled in the
+ *    store before expiry; factory burden) is deducted as qty x harga from
+ *    the store's next invoice, folded into that product's net line and
+ *    listed separately as "Potongan Reject di Toko". A Retur (unsold
+ *    goods, store burden) is NEVER deducted.
  *  - rate_pct/rate_source/override_reason exist on the underlying Phase 1
  *    tables (schema-v1.sql) but are explicitly NOT used by this phase —
  *    every row this class writes carries rate_pct=100.00 (full price, no
@@ -72,6 +77,8 @@ final class InvoiceService
             'shipmentCount' => count($shipmentIds),
             'mutasiOutCount' => count($mutasiOutIds),
             'mutasiInCount' => count($mutasiInIds),
+            'rejectToko' => $lines['rejectToko'],
+            'rejectTokoTotal' => $lines['rejectTokoTotal'],
         ];
     }
 
@@ -92,7 +99,7 @@ final class InvoiceService
         $pdo = $this->pdo;
         $lines = $this->computeLines($storeId, $dateFrom, $dateTo);
         if ($lines['items'] === []) {
-            throw new ApiException(400, 'EMPTY_INVOICE', 'Tidak ada pengiriman/mutasi yang bisa ditagihkan untuk toko dan periode ini.');
+            throw new ApiException(400, 'EMPTY_INVOICE', 'Tidak ada pengiriman/mutasi/reject yang bisa ditagihkan untuk toko dan periode ini.');
         }
 
         $invoiceNo = $this->repo->allocateInvoiceNumber($pdo, $dateTo);
@@ -112,6 +119,9 @@ final class InvoiceService
         }
         foreach ($this->fetchMutasiRows($pdo, 'destination_store_id', $storeId, $dateFrom, $dateTo, 'in') as $m) {
             $this->repo->linkMutasi($pdo, $invoiceId, $m['mutasi_request_id'], 'in', (float) $m['qty_received']);
+        }
+        foreach ($lines['rejectToko'] as $rj) {
+            $this->repo->linkRejectToko($pdo, $invoiceId, $rj['returId']);
         }
 
         Audit::write(
@@ -191,13 +201,14 @@ final class InvoiceService
      * stock received and already invoiced in an earlier period) is kept
      * as a legitimate credit line — this is never blocked, only surfaced.
      *
-     * @return array{items:array,total:float}
+     * @return array{items:array,total:float,rejectToko:array,rejectTokoTotal:float}
      */
     private function computeLines(int $storeId, string $dateFrom, string $dateTo): array
     {
         $shipmentRows = $this->repo->findEligibleShipmentQtyByProduct($this->pdo, $storeId, $dateFrom, $dateTo);
         $mutasiOutRows = $this->repo->findEligibleMutasiOutByProduct($this->pdo, $storeId, $dateFrom, $dateTo);
         $mutasiInRows = $this->repo->findEligibleMutasiInByProduct($this->pdo, $storeId, $dateFrom, $dateTo);
+        $rejectRows = $this->repo->findEligibleRejectToko($this->pdo, $storeId, $dateTo);
 
         $qtyDo = [];
         $names = [];
@@ -206,6 +217,7 @@ final class InvoiceService
         $net = $qtyDo;
         foreach ($mutasiOutRows as $r) { $net[$r['productId']] = ($net[$r['productId']] ?? 0.0) - $r['qty']; $names[$r['productId']] = $r['productName']; }
         foreach ($mutasiInRows as $r) { $net[$r['productId']] = ($net[$r['productId']] ?? 0.0) + $r['qty']; $names[$r['productId']] = $r['productName']; }
+        foreach ($rejectRows as $r) { $net[$r['productId']] = ($net[$r['productId']] ?? 0.0) - $r['qty']; $names[$r['productId']] = $r['productName']; }
 
         $hargaStmt = $this->pdo->prepare('SELECT harga FROM product WHERE product_id = ?');
 
@@ -230,7 +242,17 @@ final class InvoiceService
         }
         usort($items, static fn ($a, $b) => strcmp($a['productName'], $b['productName']));
 
-        return ['items' => $items, 'total' => round($total, 2)];
+        $rejectToko = [];
+        $rejectTotal = 0.0;
+        foreach ($rejectRows as $r) {
+            $hargaStmt->execute([$r['productId']]);
+            $harga = (float) $hargaStmt->fetchColumn();
+            $nilai = round($r['qty'] * $harga, 2);
+            $rejectToko[] = $r + ['harga' => $harga, 'nilai' => $nilai];
+            $rejectTotal += $nilai;
+        }
+
+        return ['items' => $items, 'total' => round($total, 2), 'rejectToko' => $rejectToko, 'rejectTokoTotal' => round($rejectTotal, 2)];
     }
 
     private function fetchMutasiRows(PDO $pdo, string $storeColumn, int $storeId, string $dateFrom, string $dateTo, string $direction): array
@@ -255,6 +277,7 @@ final class InvoiceService
         $items = $this->repo->findItemsForInvoice($pdo, $invoiceId);
         $shipments = $this->repo->findShipmentsForInvoice($pdo, $invoiceId);
         $mutasi = $this->repo->findMutasiForInvoice($pdo, $invoiceId);
+        $rejectToko = $this->repo->findRejectTokoForInvoice($pdo, $invoiceId);
 
         $reference = [];
         if (count($shipments) === 1) {
@@ -282,6 +305,10 @@ final class InvoiceService
                 'direction' => (string) $m['direction'], 'docNo' => (string) $m['doc_no'], 'qty' => (float) $m['qty'],
                 'productName' => (string) $m['product_name'], 'sourceStoreName' => (string) $m['source_store_name'], 'destinationStoreName' => (string) $m['destination_store_name'],
             ], $mutasi),
+            'rejectToko' => array_map(static fn ($r) => [
+                'docNo' => (string) $r['doc_no'], 'qty' => (float) $r['qty'], 'productName' => (string) $r['product_name'],
+                'tindakLanjut' => $r['tindak_lanjut'], 'tanggal' => (string) $r['retur_date'],
+            ], $rejectToko),
             'summary' => ['subtotal' => (float) $invoice['total'], 'discount' => 0.0, 'total' => (float) $invoice['total']],
             'metadata' => ['printedAt' => date('Y-m-d H:i'), 'generatedBy' => 'Amor Factory System', 'createdAt' => (string) $invoice['created_at']],
         ];

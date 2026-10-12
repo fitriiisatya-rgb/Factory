@@ -86,7 +86,7 @@ final class StorePortalAdminController
     {
         Auth::requireRole(...self::ADMIN_ROLES);
         $service = new ReturService(Database::pdo());
-        Response::json($service->adminList($request->query('status')));
+        Response::json($service->adminList($request->query('status'), $request->query('jenis')));
     }
 
     public static function returShow(Request $request): void
@@ -101,9 +101,15 @@ final class StorePortalAdminController
     {
         $userId = Auth::requireRole(...self::ADMIN_ROLES);
         $id = (int) $request->routeParams['id'];
-        Idempotency::handle($request, 'POST /api/admin/retur/{id}/verify', function (PDO $pdo) use ($userId, $id, $request) {
+        $tindakLanjut = $request->input('tindakLanjut');
+        $requiredDate = $request->input('requiredDate');
+        Idempotency::handle($request, 'POST /api/admin/retur/{id}/verify', function (PDO $pdo) use ($userId, $id, $request, $tindakLanjut, $requiredDate) {
             $service = new ReturService($pdo);
-            $dto = $service->adminVerify($id, $userId, $request->header('Idempotency-Key'));
+            $dto = $service->adminVerify(
+                $id, $userId, $request->header('Idempotency-Key'),
+                is_string($tindakLanjut) ? $tindakLanjut : null,
+                is_string($requiredDate) ? $requiredDate : null
+            );
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'retur_request', 'recordKey' => (string) $id];
         });
     }
@@ -141,7 +147,7 @@ final class StorePortalAdminController
     {
         Auth::requireRole(...self::ADMIN_ROLES);
         $service = new MutasiService(Database::pdo());
-        Response::json($service->adminList($request->query('status')));
+        Response::json($service->adminList($request->query('status'), $request->query('jenis')));
     }
 
     public static function mutasiShow(Request $request): void

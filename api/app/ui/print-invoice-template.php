@@ -108,6 +108,13 @@ function ui_render_invoice_print_document(array $invoice, int $pageNum = 1, int 
     </tbody>
   </table>
 
+  <?php if (!empty($invoice['rejectToko'])): ?>
+  <div style="margin-top:8px;font-size:11px;">
+    <strong>Potongan Reject di Toko</strong> (sudah dikurangkan dari jumlah di atas):
+    <?php foreach ($invoice['rejectToko'] as $j => $rj): ?><?= $j > 0 ? '; ' : ' ' ?><?= ui_esc($rj['docNo']) ?> &middot; <?= ui_esc($rj['productName']) ?> &minus;<?= ui_fmt_num((float) $rj['qty']) ?><?php endforeach; ?>
+  </div>
+  <?php endif; ?>
+
   <div class="inv-summary-wrap">
     <div class="inv-summary-box">
       <div class="inv-summary-row"><span>Subtotal</span><span><?= ui_fmt_rupiah((float) ($summary['subtotal'] ?? 0)) ?></span></div>
