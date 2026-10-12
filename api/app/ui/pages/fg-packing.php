@@ -319,7 +319,10 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       var input = document.querySelector('#fg-form [data-field="fgVerified"][data-product-id="' + pid + '"]');
       if (input) wireSesuaiGroup(group, input, function () { return group.getAttribute('data-target'); });
     });
-    Amor.compactList({ list: document.getElementById('fg-perproduk-wrap'), rowSel: '.fg-card', groupSel: '.fg-verified-sesuai-group', nameSel: '.fg-card-title', bulkLabel: 'Isi semua yang belum diisi = Sesuai hasil produksi' });
+    // app.js loads after this inline script — run once it is there.
+    document.addEventListener('DOMContentLoaded', function () {
+      Amor.compactList({ list: document.getElementById('fg-perproduk-wrap'), rowSel: '.fg-card', groupSel: '.fg-verified-sesuai-group', nameSel: '.fg-card-title', bulkLabel: 'Isi semua yang belum diisi = Sesuai hasil produksi' });
+    });
 
     var modeProduk = document.getElementById('fg-mode-produk');
     var modeToko = document.getElementById('fg-mode-toko');

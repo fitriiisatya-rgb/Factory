@@ -152,6 +152,22 @@ $pdo = $ui['pdo'];
 $factories = $pdo->query('SELECT factory_id, code, name FROM factory ORDER BY factory_id')->fetchAll();
 $uiTanggal = (string) ($_GET['tanggal'] ?? date('Y-m-d'));
 $uiFactoryId = isset($_GET['factoryId']) && $_GET['factoryId'] !== '' ? (int) $_GET['factoryId'] : (int) ($factories[0]['factory_id'] ?? 0);
+// A divisi / FG account opens on ITS OWN factory (a Cibadak Bolu account
+// used to land on Karangtengah and see an empty page).
+if ((!isset($_GET['factoryId']) || $_GET['factoryId'] === '') && $scopedPages !== null) {
+    $ownFactoryId = null;
+    $divIds = \Amor\Api\Auth::currentDivisionIds();
+    if ($divIds !== []) {
+        $st = $pdo->prepare('SELECT factory_id FROM division WHERE division_id = ?');
+        $st->execute([(int) $divIds[0]]);
+        $ownFactoryId = $st->fetchColumn() ?: null;
+    } elseif (\Amor\Api\Auth::currentFactoryIds() !== []) {
+        $ownFactoryId = \Amor\Api\Auth::currentFactoryIds()[0];
+    }
+    if ($ownFactoryId !== null) {
+        $uiFactoryId = (int) $ownFactoryId;
+    }
+}
 $uiFactoryName = '-';
 foreach ($factories as $f) {
     if ((int) $f['factory_id'] === $uiFactoryId) {
