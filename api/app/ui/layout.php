@@ -12,7 +12,7 @@ require_once __DIR__ . '/labels.php';
 // could keep serving an old version indefinitely, e.g. masking the
 // evidence-thumbnail sizing fix. Bump this string whenever any of the
 // three assets change.
-const ADMIN_ASSET_VERSION = '20261012-e2e-hardening';
+const ADMIN_ASSET_VERSION = '20261013-mobile';
 
 /**
  * Nav item list — the single source of truth for the sidebar. Every item
@@ -68,6 +68,9 @@ function ui_nav_items(array $roles = []): array
     $scoped = $roles !== [] ? ui_role_scoped_pages($roles) : null;
     if ($scoped !== null) {
         $items = array_values(array_filter($items, static fn ($i) => in_array($i['key'], $scoped, true)));
+        if (in_array('riwayat', $scoped, true)) {
+            $items[] = ['key' => 'riwayat', 'label' => 'Riwayat', 'icon' => 'clock'];
+        }
     }
     return $items;
 }
@@ -110,8 +113,8 @@ function ui_role_scoped_pages(array $roles): ?array
         return null;
     }
     $byRole = [
-        'PRODUCTION' => ['produksi', 'produksi-demand', 'produksi-task-per-divisi', 'fg-packing', 'fg-khusus-non-toko', 'replacement-do-detail'],
-        'FG_PACKING' => ['fg-packing', 'fg-khusus-non-toko'],
+        'PRODUCTION' => ['produksi', 'produksi-demand', 'produksi-task-per-divisi', 'fg-packing', 'fg-khusus-non-toko', 'replacement-do-detail', 'riwayat'],
+        'FG_PACKING' => ['fg-packing', 'fg-khusus-non-toko', 'riwayat'],
     ];
     $pages = [];
     foreach ($roles as $role) {
@@ -154,7 +157,7 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
 <link rel="stylesheet" href="/api/assets/css/tokens.css?v=<?= ADMIN_ASSET_VERSION ?>">
 <link rel="stylesheet" href="/api/assets/css/app.css?v=<?= ADMIN_ASSET_VERSION ?>">
 </head>
-<body>
+<body class="<?= ui_role_scoped_pages($ui['roles']) !== null ? 'is-field' : 'is-office' ?>">
 <div class="app-shell">
   <aside class="sidebar">
     <div class="sidebar-brand">
@@ -187,6 +190,7 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
   <div class="main">
     <header class="topbar">
       <button type="button" class="topbar-toggle" data-action="toggle-sidebar" aria-label="Buka/tutup menu"><?= ui_icon('dashboard') ?></button>
+      <span class="topbar-brand" aria-hidden="true"><span class="topbar-brand-mark">&#128230;</span> Amor Factory</span>
       <div class="topbar-search">
         <span class="topbar-search-icon"><?= ui_icon('search') ?></span>
         <input type="search" placeholder="Cari produk, toko, atau nomor dokumen..." title="Pencarian global — segera hadir sepenuhnya; saat ini gunakan filter pada masing-masing halaman.">

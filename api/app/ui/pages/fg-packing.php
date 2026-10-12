@@ -130,7 +130,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   <?php endif; ?>
 
   <?php if ($batchView['summary']['jumlahMelebihiProduksi'] > 0): ?>
-  <div class="alert alert-danger"><strong>Diblokir untuk Submit</strong> — <?= $batchView['summary']['jumlahMelebihiProduksi'] ?> produk punya FG Terverifikasi melebihi Production Actual terbaru (lihat status "Melebihi Produksi"). Turunkan FG Terverifikasi produk tersebut dulu sebelum submit — sistem tidak pernah menurunkannya secara otomatis.</div>
+  <div class="alert alert-danger"><strong>Diblokir untuk Submit</strong> — <?= $batchView['summary']['jumlahMelebihiProduksi'] ?> produk punya FG Terverifikasi melebihi Hasil Produksi terbaru (lihat status "Melebihi Produksi"). Turunkan FG Terverifikasi produk tersebut dulu sebelum submit — sistem tidak pernah menurunkannya secara otomatis.</div>
   <?php endif; ?>
 
   <div style="display:flex;gap:var(--space-2);align-items:center;margin-bottom:var(--space-3);">
@@ -584,7 +584,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         var changed = (data.refreshChangedSnapshots || []).length;
         var blocking = (data.verifiedExceedsProductionBlocking || []).length;
         var msg = 'Sumber Produksi disegarkan. ' + changed + ' produk diperbarui angkanya.';
-        if (blocking > 0) msg += ' PERINGATAN: ' + blocking + ' produk sekarang punya FG Terverifikasi melebihi Production Actual terbaru.';
+        if (blocking > 0) msg += ' PERINGATAN: ' + blocking + ' produk sekarang punya FG Terverifikasi melebihi Hasil Produksi terbaru.';
         Amor.toast(msg, blocking > 0 ? 'warning' : 'success');
         setTimeout(function () { location.reload(); }, 800);
       } catch (e) { Amor.toast(e.message, 'danger'); refreshSourceBtn.disabled = false; }
@@ -765,7 +765,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       var packingSesuai = editableHere && Math.abs(r.packed - r.fgVerified) < 0.01 && r.packed > 0;
       var body = '<div class="fg-card fg-packing-row" data-product-id="' + r.productId + '" data-exploded="' + (r.exploded ? '1' : '0') + '">'
         + '<div class="fg-card-title">' + escHtml(r.productName) + '</div>'
-        + '<div class="fg-card-sub">Target Toko: ' + r.target.toLocaleString('id-ID') + ' &middot; Ready Verified: ' + r.fgVerified.toLocaleString('id-ID') + '</div>';
+        + '<div class="fg-card-sub">Target Toko: ' + r.target.toLocaleString('id-ID') + ' &middot; FG Terverifikasi: ' + r.fgVerified.toLocaleString('id-ID') + '</div>';
       if (!r.exploded) {
         // Still verified in default Per Produk mode — no real per-store
         // FG Verified exists yet, so there is nothing this store can
@@ -779,7 +779,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
           + '</div>';
       }
       if (!editableHere || locked) {
-        body += '<div class="fg-card-row"><span class="fg-card-row-label">Actual Packing</span><span>' + r.packed.toLocaleString('id-ID') + '</span></div>'
+        body += '<div class="fg-card-row"><span class="fg-card-row-label">Jumlah Dipacking</span><span>' + r.packed.toLocaleString('id-ID') + '</span></div>'
           + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><span>' + r.reject.toLocaleString('id-ID') + '</span></div>'
           + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><span>' + r.hilang.toLocaleString('id-ID') + '</span></div>'
           + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><span>' + escHtml(r.notes || '') + '</span></div>'
@@ -794,12 +794,12 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       // unchanged, pre-existing rule) is what actually enforces this; the
       // auto-fill below simply mirrors it so a real over-target tap can never
       // even be typed by clicking "Sesuai".
-      body += '<div class="fg-card-row"><span class="fg-card-row-label">Packing Result</span>'
+      body += '<div class="fg-card-row"><span class="fg-card-row-label">Hasil Packing</span>'
         + '<div class="btn-group pk-sesuai" data-sesuai="' + (packingSesuai ? '1' : '0') + '">'
         +   '<button type="button" class="btn btn-sm ' + (packingSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
         +   '<button type="button" class="btn btn-sm ' + (!packingSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'
         + '</div></div>'
-        + '<div class="fg-card-row"><span class="fg-card-row-label">Actual Packing</span><input type="number" step="0.01" min="0" max="' + r.fgVerified + '" class="fg-card-input" data-pk-field="packed" value="' + r.packed + '" ' + (packingSesuai ? 'disabled' : '') + '></div>'
+        + '<div class="fg-card-row"><span class="fg-card-row-label">Jumlah Dipacking</span><input type="number" step="0.01" min="0" max="' + r.fgVerified + '" class="fg-card-input" data-pk-field="packed" value="' + r.packed + '" ' + (packingSesuai ? 'disabled' : '') + '></div>'
         + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><input type="number" step="0.01" min="0" class="fg-card-input" data-pk-field="reject" value="' + r.reject + '"></div>'
         + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><input type="number" step="0.01" min="0" class="fg-card-input" data-pk-field="hilang" value="' + r.hilang + '"></div>'
         + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-pk-field="notes" value="' + escHtml(r.notes || '') + '"></div>'
@@ -1102,12 +1102,12 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
 
 <?php elseif ($targetView !== null): ?>
 <div class="card section">
-  <div class="card-head"><h2 class="card-title">Produksi Submitted Tersedia</h2></div>
+  <div class="card-head"><h2 class="card-title">Hasil Produksi Siap Diverifikasi</h2></div>
   <?php if ($targetView['items'] === []): ?>
-    <?= ui_empty_state('Belum ada Produksi SUBMITTED', 'Buka halaman Produksi dan submit produksinya dulu untuk tanggal & pabrik ini.') ?>
+    <?= ui_empty_state('Belum ada produksi yang disubmit', 'Tunggu divisi produksi submit hasilnya untuk tanggal & pabrik ini.') ?>
   <?php else: ?>
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Produk</th><th class="num">Production Actual</th></tr></thead>
+    <thead><tr><th>Produk</th><th class="num">Hasil Produksi</th></tr></thead>
     <tbody>
     <?php foreach ($targetView['items'] as $it): ?>
     <tr><td><?= ui_esc($it['productName']) ?></td><td class="num"><?= ui_fmt_num($it['actual']) ?></td></tr>

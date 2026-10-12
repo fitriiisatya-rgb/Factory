@@ -99,3 +99,9 @@
 .store-qty-compare .lbl { font-size: var(--text-xs); color: var(--text-muted); }
 
 .store-attachment-note { font-size: var(--text-xs); color: var(--text-muted); margin-top: -2px; margin-bottom: var(--space-2); }
+
+/* Photo picker: a big, obvious button instead of the tiny native one. */
+input[type="file"]::file-selector-button {
+  margin-right: 10px; padding: 10px 14px; border: 0; border-radius: 10px; cursor: pointer;
+  font: inherit; font-weight: 700; color: #fff; background: #3b82f6;
+}

@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * Shared Division Login + Operator Name (migration 0019) — OPLOGIN-01..17.
+ * Shared Division Login + Operator Name (migration 0019) — OPLOGIN-01..18.
  *
  * Drives the REAL HTML login page (api/_admin-login/) with form posts, not
  * the JSON login API, because the "Siapa Anda?" prompt, the ?return=
@@ -466,6 +466,33 @@ runTest('OPLOGIN-17 Pesanan Khusus Actual entered by a named division account re
     $cols = $pdo->query("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = DATABASE()
         AND column_name IN ('actual_updated_by_operator_name', 'production_actual_updated_by_operator_name')")->fetchAll();
     expect(count($cols) === 2, 'expected both migration-0019 columns on special_order_item/replacement_demand, got ' . json_encode($cols));
+});
+
+runTest('OPLOGIN-18 Riwayat: a division account sees only its own divisions\' production history, FG sees FG history, a driver is refused', function () use ($pdo, $baseUrl, $prodPass, $fgPass) {
+    $basicId = (int) $pdo->query("SELECT division_id FROM division WHERE name = 'Basic'")->fetchColumn();
+    expect($basicId > 0, 'expected the Basic division seeded');
+    $pdo->prepare("INSERT INTO production_run (tanggal, division_id, status, version, created_at) VALUES ('2026-11-20', ?, 'draft', 1, UTC_TIMESTAMP())")->execute([$basicId]);
+    $range = '&from=2000-01-01&to=2099-12-31';
+
+    $p = new HttpOp($baseUrl);
+    $p->form('/_admin-login/', ['action' => 'login', 'username' => 'divisi_roti', 'password' => $prodPass]);
+    $prompt = $p->get('/_admin-login/');
+    $p->form('/_admin-login/', ['action' => 'set_operator_name', 'operatorName' => 'Rudi', 'csrf_token' => formCsrf($prompt['body'])]);
+    $r = $p->get('/api/_ui-preview/?page=riwayat' . $range);
+    expect($r['status'] === 200, "expected 200 for the division Riwayat, got {$r['status']}");
+    expect(str_contains($r['body'], 'Riwayat Produksi') && !str_contains($r['body'], 'Riwayat FG'), 'a division account sees production history only');
+    expect(str_contains($r['body'], '<td>Roti &amp; Bollen</td>'), 'expected its own division rows');
+    expect(!str_contains($r['body'], '<td>Basic</td>'), 'must never list another division\'s documents');
+    expect(str_contains($r['body'], '?page=riwayat'), 'expected Riwayat in the division nav');
+
+    $f = new HttpOp($baseUrl);
+    $f->form('/_admin-login/', ['action' => 'login', 'username' => 'oplogin_fg', 'password' => $fgPass]);
+    $fr = $f->get('/api/_ui-preview/?page=riwayat' . $range);
+    expect($fr['status'] === 200 && str_contains($fr['body'], 'Riwayat FG') && !str_contains($fr['body'], 'Riwayat Produksi'), 'an FG account sees FG history only, got ' . $fr['status']);
+
+    $d = new HttpOp($baseUrl);
+    $d->form('/_driver-uat/login.php', ['username' => 'oplogin_driver', 'password' => 'DriverOpLogin#2026', 'return' => 'index.php']);
+    expect($d->get('/api/_ui-preview/?page=riwayat')['status'] === 403, 'a DRIVER uses the Driver Portal Riwayat, not this page');
 });
 
 // ---------------------------------------------------------------------

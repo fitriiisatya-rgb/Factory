@@ -42,28 +42,35 @@ function driver_login_esc(string $s): string
 function driver_login_render_form(?string $error = null): void
 {
     $return = driver_login_esc((string) ($_GET['return'] ?? $_POST['return'] ?? 'index.php'));
-    $errorBlock = $error !== null ? '<p class="rc-error-math" style="display:block;">' . driver_login_esc($error) . '</p>' : '';
+    $errorBlock = $error !== null ? '<div class="lg-alert lg-alert-error">' . driver_login_esc($error) . '</div>' : '';
+    // Same look as api/_admin-login/ (login.css), compact for a phone.
     echo <<<HTML
 <!DOCTYPE html>
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#0a1846">
 <title>Login Driver — Amor Factory</title>
-<link rel="stylesheet" href="/api/assets/css/receipt.css">
-</head><body class="rc-body">
-<div class="rc-shell">
-  <div class="rc-header">
-    <img src="/api/assets/img/amor-logo.png" alt="Amor" width="36" height="36">
-    <div><div class="rc-header-title">Login Driver</div><div class="rc-header-sub">Amor Factory System</div></div>
-  </div>
-  <div class="rc-card">
+<link rel="stylesheet" href="/api/assets/css/login.css?v=20261013-mobile">
+</head><body class="lg">
+<header class="lg-top">
+  <span class="lg-icon">&#128230;</span>
+  <div><div class="lg-top-title">Amor Factory System</div><div class="lg-top-sub">Portal Driver</div></div>
+</header>
+<main class="lg-stage">
+  <div class="lg-card">
+    <span class="lg-icon">&#128666;</span>
+    <h1 class="lg-title">Login <span>Driver</span></h1>
+    <p class="lg-sub">Ambil tugas kirim, cek muatan, lalu konfirmasi berangkat.</p>
     {$errorBlock}
     <form method="post">
       <input type="hidden" name="return" value="{$return}">
-      <div class="rc-field"><label>Username</label><input type="text" name="username" required autocomplete="username"></div>
-      <div class="rc-field"><label>Password</label><input type="password" name="password" required autocomplete="current-password"></div>
-      <button type="submit" class="rc-btn primary">Masuk</button>
+      <div class="lg-field"><label for="drv-username">Username</label>
+        <div class="lg-input"><input id="drv-username" type="text" name="username" required autocomplete="username" style="padding-left:14px;"></div></div>
+      <div class="lg-field"><label for="drv-password">Password</label>
+        <div class="lg-input"><input id="drv-password" type="password" name="password" required autocomplete="current-password" style="padding-left:14px;"></div></div>
+      <button type="submit" class="lg-btn">Masuk</button>
     </form>
   </div>
-</div>
+</main>
 </body></html>
 HTML;
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared Division Login + Operator Name integration test orchestrator
-# (OPLOGIN-01..17, migration 0019), followed by the full existing
+# (OPLOGIN-01..18, migration 0019), followed by the full existing
 # regression suite.
 #
 # Spins up a DISPOSABLE, local-only MariaDB instance (never the real
@@ -159,7 +159,7 @@ else
 fi
 
 echo ""
-if [ $INV_RESULT -eq 0 ]; then echo "Operator Login suite (OPLOGIN-01..17): PASSED"; else echo "Operator Login suite (OPLOGIN-01..17): FAILED"; fi
+if [ $INV_RESULT -eq 0 ]; then echo "Operator Login suite (OPLOGIN-01..18): PASSED"; else echo "Operator Login suite (OPLOGIN-01..18): FAILED"; fi
 if [ $REGRESSION_RESULT -eq 0 ]; then echo "Full prior regression (Invoice + Bakery Portal + Phase 0-5.5 + UI + Print + Production/FG rework): PASSED"; else echo "Full prior regression (Invoice + Bakery Portal + Phase 0-5.5 + UI + Print + Production/FG rework): FAILED"; fi
 
 if [ $INV_RESULT -eq 0 ] && [ $REGRESSION_RESULT -eq 0 ]; then

@@ -94,3 +94,20 @@ function ui_fmt_datetime_id(?string $utcDatetime): string
         7 => 'Jul', 8 => 'Agu', 9 => 'Sep', 10 => 'Okt', 11 => 'Nov', 12 => 'Des'];
     return $dt->format('j') . ' ' . $bulan[(int) $dt->format('n')] . ' ' . $dt->format('Y') . ' · ' . $dt->format('H:i');
 }
+
+/**
+ * Display-only formatter for a plain DATE (no timezone shift — a business
+ * date is already local): "Sen, 12 Okt 2026". Returns the input unchanged
+ * when it isn't a Y-m-d date.
+ */
+function ui_fmt_date_id(?string $date): string
+{
+    if ($date === null || preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $date, $m) !== 1) {
+        return (string) $date;
+    }
+    static $bulan = [1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'Mei', 6 => 'Jun',
+        7 => 'Jul', 8 => 'Agu', 9 => 'Sep', 10 => 'Okt', 11 => 'Nov', 12 => 'Des'];
+    static $hari = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+    $ts = mktime(12, 0, 0, (int) $m[2], (int) $m[3], (int) $m[1]);
+    return $hari[(int) date('w', $ts)] . ', ' . (int) $m[3] . ' ' . $bulan[(int) $m[2]] . ' ' . $m[1];
+}

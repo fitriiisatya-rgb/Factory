@@ -135,3 +135,9 @@ html, body.rc-body {
   .rc-table td[data-label="Produk"]::before { content: ''; display: none; }
   .rc-table .rc-num-input { width: 88px; }
 }
+
+/* Photo picker: a big, obvious button instead of the tiny native one. */
+input[type="file"]::file-selector-button {
+  margin-right: 10px; padding: 10px 14px; border: 0; border-radius: 10px; cursor: pointer;
+  font: inherit; font-weight: 700; color: #fff; background: #3b82f6;
+}

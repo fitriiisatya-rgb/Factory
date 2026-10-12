@@ -768,10 +768,42 @@
     createAutocomplete: createAutocomplete,
     createOrderItemGrid: createOrderItemGrid,
     fmtRupiah: fmtRupiah,
+    labelTables: labelTables,
   };
+
+  // -----------------------------------------------------------------
+  // Phone card view: copies each column header onto its cells as
+  // data-label, so app.css can stack a table row into a labelled card on
+  // a small screen. Re-runs when a page renders rows later.
+  // -----------------------------------------------------------------
+  function labelTables(root) {
+    (root || document).querySelectorAll('table.data-table').forEach(function (table) {
+      const heads = Array.prototype.map.call(table.querySelectorAll('thead th'), function (th) {
+        return th.textContent.replace(/\s+/g, ' ').trim();
+      });
+      if (heads.length === 0) return;
+      table.querySelectorAll('tbody tr').forEach(function (tr) {
+        let col = 0;
+        Array.prototype.forEach.call(tr.children, function (td) {
+          if (!td.hasAttribute('data-label') && heads[col] !== undefined) td.setAttribute('data-label', heads[col]);
+          col += td.colSpan || 1;
+        });
+      });
+    });
+  }
+  let labelTimer = null;
+  function watchTables() {
+    labelTables();
+    if (!('MutationObserver' in window)) return;
+    new MutationObserver(function () {
+      clearTimeout(labelTimer);
+      labelTimer = setTimeout(function () { labelTables(); }, 60);
+    }).observe(document.body, { childList: true, subtree: true });
+  }
 
   document.addEventListener('DOMContentLoaded', function () {
     applyStoredSidebar();
+    watchTables();
     const toggleBtn = document.querySelector('[data-action="toggle-sidebar"]');
     if (toggleBtn) toggleBtn.addEventListener('click', toggleSidebar);
     const themeBtn = document.querySelector('[data-action="toggle-theme"]');

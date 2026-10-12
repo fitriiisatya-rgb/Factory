@@ -69,7 +69,7 @@ if (array_intersect($driverRoles, $ui['roles']) === []) {
  * logout paths on code audit), it is a deployment-safety net. Bump this
  * value again the next time driver.css/driver.js/app.js change.
  */
-const DRIVER_ASSET_VERSION = '20260921-nav-hotfix';
+const DRIVER_ASSET_VERSION = '20261013-mobile';
 
 /**
  * Opens the mobile driver-portal HTML shell: header + <main> + bottom tab
