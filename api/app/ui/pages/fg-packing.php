@@ -1084,12 +1084,24 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
     // Every verified piece must be packed and every Toko submitted first —
     // otherwise Submit FG would add less stock than was verified and the
     // missing pieces could never be shipped.
-    var pending = storeGroups.filter(function (g) {
-      var st = storeStatus(g);
-      var ready = 0, packed = 0;
-      g.rows.forEach(function (r) { if (r.exploded) { ready += r.fgVerified; packed += r.packed; } });
-      return ready > 0.0001 && (st.code !== 'sudah_disubmit' || packed + 0.0001 < ready);
-    }).map(function (g) { return g.storeName; });
+    function pendingStores() {
+      return storeGroups.filter(function (g) {
+        var st = storeStatus(g);
+        var ready = 0, packed = 0;
+        g.rows.forEach(function (r) { if (r.exploded) { ready += r.fgVerified; packed += r.packed; } });
+        return ready > 0.0001 && (st.code !== 'sudah_disubmit' || packed + 0.0001 < ready);
+      }).map(function (g) { return g.storeName; });
+    }
+    var pending = pendingStores();
+    if (pending.length > 0) {
+      // The list may still be refreshing after the last "Submit Packing"
+      // (one request per product) — re-check against the server before
+      // telling the operator a store is unfinished.
+      submitAllBtn.disabled = true;
+      try { await reloadStoreGroups(); renderHeader(); renderChips(); } catch (e) { /* keep the old list */ }
+      submitAllBtn.disabled = false;
+      pending = pendingStores();
+    }
     if (pending.length > 0) {
       Amor.toast('Packing belum selesai untuk: ' + pending.join(', ') + '. Selesaikan dan Submit Packing per toko dulu.', 'danger');
       return;
