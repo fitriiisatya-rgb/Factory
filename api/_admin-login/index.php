@@ -178,7 +178,7 @@ function renderLoginForm(?string $error = null, ?string $return = null): void
 <div class="lg-or">untuk</div>
 <div class="lg-trust">
   <div>{$shield}<span><b>Secure Login</b><small>Data Anda Terlindungi</small></span></div>
-  <div>{$server}<span><b>Login Divisi</b><small>Admin, PPIC &amp; Produksi</small></span></div>
+  <div>{$server}<span><b>Login Divisi</b><small>Admin, Divisi &amp; FG</small></span></div>
 </div>
 HTML;
     renderShell('Amor Factory — Login', $card);
