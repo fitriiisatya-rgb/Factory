@@ -169,6 +169,16 @@ foreach ($displayDivisions as $d) {
 $activeDivisionCount = count(array_filter($divisionSummaryRows, static fn ($r) => $r['hasTarget']));
 $kpi['remaining'] = max(0.0, $kpi['target'] - $kpi['actual']);
 
+// A shared division account (one division, not ADMIN/PPIC) gets the short
+// version of this page: no factory/division/status filters, no KPI grid,
+// no per-division table — just its own day and its own worksheet, which
+// opens by itself when that day's document already exists.
+$fieldSimple = !$isUnscopedRole && count($divisionRows) === 1;
+$fieldRow = $fieldSimple ? ($divisionSummaryRows[0] ?? null) : null;
+if ($fieldSimple && $runIdParam === null && $fieldRow !== null && $fieldRow['runId'] !== null) {
+    $runIdParam = (int) $fieldRow['runId'];
+}
+
 $runDetail = null;
 $runDetailError = null;
 $nonRegularRows = [];
@@ -213,10 +223,38 @@ if ($runIdParam !== null) {
     }
 }
 ?>
+<?php if ($fieldSimple): ?>
+<div class="card section day-card">
+  <form method="get" class="day-card-date">
+    <input type="hidden" name="page" value="produksi">
+    <input type="hidden" name="factoryId" value="<?= $uiFactoryId ?>">
+    <label for="day-date">Tanggal produksi</label>
+    <input type="date" id="day-date" name="tanggal" value="<?= ui_esc($uiTanggal) ?>" onchange="this.form.submit()">
+  </form>
+  <div class="day-card-title"><?= ui_esc((string) $divisionRows[0]['name']) ?></div>
+  <?php if ($fieldRow !== null): ?>
+  <div class="day-card-stats">
+    <div><span>Target</span><strong><?= ui_fmt_num($fieldRow['target']) ?></strong></div>
+    <div><span>Hasil</span><strong><?= ui_fmt_num($fieldRow['actual']) ?></strong></div>
+    <div><span>Reject</span><strong><?= ui_fmt_num($fieldRow['reject'] ?? 0) ?></strong></div>
+    <div><span>Status</span><?= $fieldRow['hasTarget'] ? ui_badge($fieldRow['statusLabel']) : ui_badge('No Target') ?></div>
+  </div>
+  <?php if ($fieldRow['runId'] === null): ?>
+    <?php if ($fieldRow['hasTarget']): ?>
+    <button type="button" class="btn btn-primary btn-block" data-action="create-run" data-division-id="<?= (int) $fieldRow['divisionId'] ?>">Mulai Isi Produksi</button>
+    <?php else: ?>
+    <p class="day-card-note">Tidak ada PO untuk divisi ini pada tanggal tersebut.</p>
+    <?php endif; ?>
+  <?php endif; ?>
+  <?php endif; ?>
+</div>
+<?php else: ?>
 <?= ui_produksi_tabs('produksi', $uiTanggal, $uiFactoryId) ?>
+<?php endif; ?>
 <?php if ($noDivisionAssignment): ?>
 <div class="alert alert-danger">User belum memiliki assignment divisi produksi. Hubungi Admin untuk mendapatkan akses ke divisi produksi Anda.</div>
 <?php endif; ?>
+<?php if (!$fieldSimple): ?>
 <div class="filter-bar">
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;">
     <input type="hidden" name="page" value="produksi">
@@ -295,6 +333,8 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
   </table></div>
 </div>
 
+<?php endif; ?>
+
 <?php if ($runIdParam !== null): ?>
 <div class="card section" id="run-detail">
   <?php if ($runDetailError !== null): ?>
@@ -348,13 +388,25 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
   <p class="run-operators" style="font-size:var(--text-sm);color:var(--text-muted);margin:0 0 var(--space-3);"><?= implode(' &middot; ', $opParts) ?></p>
   <?php endif; ?>
 
-  <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;margin-bottom:var(--space-3);">
-    <input type="text" id="rd-search" placeholder="Cari produk..." style="min-width:200px;">
-    <select id="rd-source-filter">
-      <option value="">Semua</option>
-      <option value="po_reguler">Toko Reguler (PO Awal + Revisi)</option>
-      <option value="non_reguler">Non Reguler (Pesanan)</option>
-    </select>
+  <div class="ws-toolbar">
+    <div class="ws-progress"><span><strong id="ws-filled">0</strong> / <span id="ws-total">0</span> produk terisi</span><div class="ws-bar"><span id="ws-bar-fill"></span></div></div>
+    <div class="ws-search">
+      <input type="search" id="rd-search" placeholder="Cari produk...">
+      <select id="rd-source-filter"<?= $nonRegularRows === [] ? ' hidden' : '' ?>>
+        <option value="">Semua sumber</option>
+        <option value="po_reguler">Toko Reguler</option>
+        <option value="non_reguler">Pesanan Khusus / Non-Toko</option>
+      </select>
+    </div>
+    <div class="ws-chips" role="tablist">
+      <button type="button" class="ws-chip active" data-chip="">Semua</button>
+      <button type="button" class="ws-chip" data-chip="empty">Belum diisi</button>
+      <button type="button" class="ws-chip" data-chip="short">Kurang / Reject</button>
+      <button type="button" class="ws-chip" data-chip="ok">Sesuai</button>
+    </div>
+    <?php if ($editable): ?>
+    <button type="button" class="btn btn-secondary btn-block" id="btn-all-sesuai">&#10003; Isi semua yang belum diisi = Sesuai target</button>
+    <?php endif; ?>
   </div>
 
   <form id="run-form" data-run-id="<?= (int) $runDetail['productionRunId'] ?>" data-expected-version="<?= (int) $runDetail['version'] ?>">
@@ -371,7 +423,7 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
         <?php if ($editable): ?>
         <div class="btn-group rd-sesuai-group" data-product-id="<?= (int) $it['productId'] ?>" data-target="<?= ui_esc((string) $it['liveTarget']) ?>">
           <button type="button" class="btn btn-sm rd-sesuai-btn <?= abs($it['actual'] - $it['liveTarget']) < 0.01 && $it['actual'] > 0 ? 'btn-primary' : 'btn-secondary' ?>" data-value="sesuai">Sesuai</button>
-          <button type="button" class="btn btn-sm rd-sesuai-btn <?= !(abs($it['actual'] - $it['liveTarget']) < 0.01 && $it['actual'] > 0) ? 'btn-danger' : 'btn-secondary' ?>" data-value="tidak_sesuai">Tidak Sesuai</button>
+          <button type="button" class="btn btn-sm rd-sesuai-btn <?= !(abs($it['actual'] - $it['liveTarget']) < 0.01 && $it['actual'] > 0) && ($it['actual'] > 0 || $it['reject'] > 0) ? 'btn-danger' : 'btn-secondary' ?>" data-value="tidak_sesuai">Tidak Sesuai</button>
         </div>
         <?php else: ?><span style="color:var(--text-faint);">-</span><?php endif; ?>
       </td>
@@ -398,7 +450,7 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
       <td>
         <div class="btn-group nr-sesuai-group" data-item-id="<?= $nr['itemId'] ?>" data-target="<?= ui_esc((string) $nr['target']) ?>">
           <button type="button" class="btn btn-sm nr-sesuai-btn <?= abs($nr['aktual'] - $nr['target']) < 0.01 && $nr['aktual'] > 0 ? 'btn-primary' : 'btn-secondary' ?>" data-value="sesuai">Sesuai</button>
-          <button type="button" class="btn btn-sm nr-sesuai-btn <?= !(abs($nr['aktual'] - $nr['target']) < 0.01 && $nr['aktual'] > 0) ? 'btn-danger' : 'btn-secondary' ?>" data-value="tidak_sesuai">Tidak Sesuai</button>
+          <button type="button" class="btn btn-sm nr-sesuai-btn <?= !(abs($nr['aktual'] - $nr['target']) < 0.01 && $nr['aktual'] > 0) && ($nr['aktual'] > 0 || $nr['reject'] > 0) ? 'btn-danger' : 'btn-secondary' ?>" data-value="tidak_sesuai">Tidak Sesuai</button>
         </div>
       </td>
       <td class="num">
@@ -442,12 +494,16 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
   // unlocks manual entry. Applies to both the PO Reguler rows (rd-*) and
   // the merged Non-Regular rows (nr-*) — same UX, two different save paths.
   function wireSesuaiGroup(group, actualInput) {
-    group.querySelectorAll('.rd-sesuai-btn, .nr-sesuai-btn').forEach(function (btn) {
+    // Keep the buttons' own rd-/nr-sesuai-btn class: it used to be wiped by
+    // a className reset on the first click, after which switching between
+    // Sesuai and Tidak Sesuai no longer restyled the other button.
+    var buttons = group.querySelectorAll('.rd-sesuai-btn, .nr-sesuai-btn');
+    buttons.forEach(function (btn) {
       btn.addEventListener('click', function () {
         var isSesuai = btn.getAttribute('data-value') === 'sesuai';
-        group.querySelectorAll('.rd-sesuai-btn, .nr-sesuai-btn').forEach(function (b) {
-          var bIsSesuai = b.getAttribute('data-value') === 'sesuai';
-          b.className = 'btn btn-sm ' + (b === btn ? (isSesuai ? 'btn-primary' : 'btn-danger') : 'btn-secondary');
+        buttons.forEach(function (b) {
+          b.classList.remove('btn-primary', 'btn-danger', 'btn-secondary');
+          b.classList.add(b === btn ? (isSesuai ? 'btn-primary' : 'btn-danger') : 'btn-secondary');
         });
         group.setAttribute('data-sesuai', isSesuai ? '1' : '0');
         if (isSesuai) {
@@ -470,21 +526,65 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
     if (actualInput) { wireSesuaiGroup(group, actualInput); }
   });
 
-  // Cari Produk / Sumber filters (client-side, same pattern as Task per
-  // Divisi's own filter bar) over the already-rendered combined rows.
+  // Row state for the toolbar: ok = Sesuai chosen, short = a number was
+  // typed that is not the target (or a reject), empty = not filled yet.
+  // Purely a view of what is on screen; saving is unchanged.
+  function rowState(tr) {
+    var group = tr.querySelector('.rd-sesuai-group, .nr-sesuai-group');
+    var actual = tr.querySelector('[data-field="actual"], .nr-actual');
+    var reject = tr.querySelector('[data-field="reject"], .nr-reject');
+    if (!group || !actual) return 'done';
+    var sesuaiBtn = group.querySelector('[data-value="sesuai"]');
+    if (sesuaiBtn && sesuaiBtn.classList.contains('btn-primary')) return 'ok';
+    var a = parseFloat(actual.value || '0'), r = parseFloat(reject && reject.value || '0');
+    var open = group.querySelector('[data-value="tidak_sesuai"]').classList.contains('btn-danger');
+    if (a > 0 || r > 0 || open) return 'short';
+    return 'empty';
+  }
   var searchEl = document.getElementById('rd-search');
   var sourceEl = document.getElementById('rd-source-filter');
+  var chip = '';
   function applyFilters() {
-    var q = (searchEl.value || '').toLowerCase().trim();
-    var src = sourceEl.value;
+    var q = searchEl ? (searchEl.value || '').toLowerCase().trim() : '';
+    var src = sourceEl ? sourceEl.value : '';
+    var filled = 0, total = 0;
     document.querySelectorAll('#rd-table tbody tr.rd-row').forEach(function (tr) {
+      var st = rowState(tr);
+      tr.setAttribute('data-state', st);
+      tr.classList.toggle('is-open', st === 'short');
+      if (st !== 'done') { total++; if (st !== 'empty') filled++; }
       var rowSrc = tr.getAttribute('data-source');
       var matchQ = q === '' || tr.getAttribute('data-search').indexOf(q) !== -1;
       var matchSrc = src === '' || (src === 'non_reguler' ? rowSrc !== 'po_reguler' : rowSrc === src);
-      tr.style.display = (matchQ && matchSrc) ? '' : 'none';
+      var matchChip = chip === '' || st === chip;
+      tr.style.display = (matchQ && matchSrc && matchChip) ? '' : 'none';
     });
+    var f = document.getElementById('ws-filled'), t = document.getElementById('ws-total'), bar = document.getElementById('ws-bar-fill');
+    if (f) { f.textContent = filled; t.textContent = total; bar.style.width = (total ? Math.round(filled * 100 / total) : 0) + '%'; }
   }
   if (searchEl) { searchEl.addEventListener('input', applyFilters); sourceEl.addEventListener('change', applyFilters); }
+  document.querySelectorAll('.ws-chip').forEach(function (c) {
+    c.addEventListener('click', function () {
+      document.querySelectorAll('.ws-chip').forEach(function (x) { x.classList.toggle('active', x === c); });
+      chip = c.getAttribute('data-chip'); applyFilters();
+    });
+  });
+  var rdTable = document.getElementById('rd-table');
+  if (rdTable) {
+    rdTable.addEventListener('click', function (e) { if (e.target.closest('.rd-sesuai-btn, .nr-sesuai-btn')) setTimeout(applyFilters, 0); });
+    rdTable.addEventListener('input', function () { applyFilters(); });
+  }
+  var allBtn = document.getElementById('btn-all-sesuai');
+  if (allBtn) allBtn.addEventListener('click', async function () {
+    var rows = Array.prototype.filter.call(document.querySelectorAll('#rd-table tbody tr.rd-row'), function (tr) { return rowState(tr) === 'empty'; });
+    if (rows.length === 0) { Amor.toast('Semua produk sudah terisi.', 'info'); return; }
+    var ok = await Amor.confirmModal({ title: 'Tandai Sesuai target?', body: rows.length + ' produk yang belum diisi akan diisi sama dengan targetnya. Produk yang kurang tetap bisa diubah satu per satu sebelum disimpan.' });
+    if (!ok) return;
+    rows.forEach(function (tr) { var b = tr.querySelector('[data-value="sesuai"]'); if (b) b.click(); });
+    applyFilters();
+    Amor.toast(rows.length + ' produk ditandai Sesuai. Jangan lupa Simpan.', 'success');
+  });
+  applyFilters();
 
   function collectItems() {
     var items = [];

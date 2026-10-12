@@ -228,18 +228,28 @@
       table.className = 'driver-table-plain';
       var rowsHtml = sh.items.map(function (it) {
         if (editable) {
-          return '<div class="store-item-row" data-shipment-item-id="' + it.shipmentItemId + '" data-shipped="' + it.shippedQty + '">' +
-            '<div class="driver-row"><b>' + esc(it.productName) + '</b><span>Dikirim: ' + fmtNum(it.shippedQty) + '</span></div>' +
-            '<div class="store-field"><label>Diterima Baik</label><input type="number" min="0" step="0.01" class="rc-field-good" value="' + it.shippedQty + '"></div>' +
-            '<div class="store-field"><label>Reject</label><input type="number" min="0" step="0.01" class="rc-field-reject" value="0"></div>' +
-            '<div class="store-field"><label>Kurang</label><input type="number" min="0" step="0.01" class="rc-field-shortage" value="0"></div>' +
+          // One line per product: everything counts as received in good
+          // condition; "Ada masalah" opens Reject/Kurang for that product
+          // only, and Diterima Baik follows as Dikirim - Reject - Kurang.
+          return '<div class="store-item-row" data-shipment-item-id="' + it.shipmentItemId + '" data-shipped="' + it.shippedQty + '" data-search="' + esc(String(it.productName).toLowerCase()) + '">' +
+            '<div class="driver-row store-item-line"><b>' + esc(it.productName) + '</b><span>' + fmtNum(it.shippedQty) + ' pcs <button type="button" class="store-issue-btn">Ada masalah</button></span></div>' +
+            '<div class="store-item-issue" hidden>' +
+            '<div class="store-field"><label>Reject (rusak)</label><input type="number" min="0" step="0.01" class="rc-field-reject" value="0"></div>' +
+            '<div class="store-field"><label>Kurang (tidak ada)</label><input type="number" min="0" step="0.01" class="rc-field-shortage" value="0"></div>' +
+            '<div class="store-field"><label>Diterima Baik</label><input type="number" min="0" step="0.01" class="rc-field-good" value="' + it.shippedQty + '" readonly></div>' +
+            '</div>' +
             '</div>';
         }
         return '<div class="driver-row"><b>' + esc(it.productName) + '</b></div>' +
           '<div class="driver-row"><span>Dikirim</span><span>' + fmtNum(it.shippedQty) + '</span></div>' +
           '<div class="driver-row"><span>Baik / Reject / Kurang</span><span>' + fmtNum(it.receivedGoodQty) + ' / ' + fmtNum(it.rejectQty) + ' / ' + fmtNum(it.shortageQty) + '</span></div>';
-      }).join('<hr style="border-color:var(--border);opacity:.4;margin:10px 0;">');
-      formCard.innerHTML = '<div class="store-section-title">Produk</div>' + rowsHtml;
+      }).join(editable ? '' : '<hr style="border-color:var(--border);opacity:.4;margin:10px 0;">');
+      formCard.innerHTML = editable
+        ? '<div class="store-section-title">Produk (' + sh.items.length + ')</div>'
+          + '<p class="store-hint">Semua produk dianggap <b>diterima baik</b>. Tekan <b>Ada masalah</b> hanya pada produk yang rusak atau kurang.</p>'
+          + '<input type="search" class="driver-search store-item-search" placeholder="Cari produk...">'
+          + rowsHtml
+        : '<div class="store-section-title">Produk</div>' + rowsHtml;
       root.appendChild(formCard);
 
       if (!editable) {
@@ -296,6 +306,27 @@
         btn.disabled = !ok || !evidenceOk;
         return ok && evidenceOk;
       }
+      formCard.addEventListener('click', function (e) {
+        var b = e.target.closest('.store-issue-btn');
+        if (!b) return;
+        var box = b.closest('.store-item-row').querySelector('.store-item-issue');
+        box.hidden = !box.hidden;
+        b.classList.toggle('active', !box.hidden);
+      });
+      formCard.addEventListener('input', function (e) {
+        var row = e.target.closest('.store-item-row');
+        if (row && (e.target.classList.contains('rc-field-reject') || e.target.classList.contains('rc-field-shortage'))) {
+          var shipped = parseFloat(row.dataset.shipped) || 0;
+          var r = parseFloat(row.querySelector('.rc-field-reject').value) || 0;
+          var k = parseFloat(row.querySelector('.rc-field-shortage').value) || 0;
+          row.querySelector('.rc-field-good').value = Math.max(0, Math.round((shipped - r - k) * 100) / 100);
+          row.classList.toggle('has-issue', r > 0 || k > 0);
+        }
+        if (e.target.classList.contains('store-item-search')) {
+          var q = e.target.value.trim().toLowerCase();
+          formCard.querySelectorAll('.store-item-row').forEach(function (rw) { rw.style.display = !q || rw.dataset.search.indexOf(q) !== -1 ? '' : 'none'; });
+        }
+      });
       formCard.addEventListener('input', validate);
       evidence.onChange(validate);
       validate();

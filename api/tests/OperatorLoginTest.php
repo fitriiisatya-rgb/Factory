@@ -314,7 +314,10 @@ runTest('OPLOGIN-09 Submit stamps submitted_by operator name; summary "Disubmit 
     $row = runRow($pdo, $runId);
     expect($row['submitted_by_operator_name'] === 'Siti', 'expected submitted_by_operator_name=Siti');
     $page = $prod->get("/api/_ui-preview/?page=produksi&tanggal={$tanggal}&factoryId={$karangtengahId}");
-    expect(preg_match('#<td[^>]*>Siti</td>#', $page['body']) === 1, 'expected "Siti" in the Disubmit Oleh column');
+    // A single-division account gets the short page: its own day card, and
+    // that day's document opens by itself (no per-division summary table).
+    expect(str_contains($page['body'], 'class="card section day-card"'), 'expected the division day card');
+    expect(str_contains($page['body'], 'Disubmit oleh: <strong>Siti</strong>'), 'expected the day\'s document to open by itself with its submitter');
     $detail = $prod->get("/api/_ui-preview/?page=produksi&tanggal={$tanggal}&factoryId={$karangtengahId}&runId={$runId}");
     expect(str_contains($detail['body'], 'Disubmit oleh: <strong>Siti</strong>'), 'expected submitter line on the detail card');
 });

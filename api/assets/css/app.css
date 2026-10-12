@@ -716,3 +716,84 @@ html { overflow-x: hidden; }
 .ac-option { padding: 10px 12px; font-size: var(--text-sm); cursor: pointer; }
 .ac-option.active, .ac-option:hover { background: var(--primary-soft); color: var(--primary); }
 .ac-empty { padding: 10px 12px; font-size: var(--text-sm); color: var(--text-muted); }
+
+/* ---------------------------------------------------------------------
+   Produksi worksheet — toolbar (all users) + compact one-line rows for
+   divisi accounts (hundreds of SKUs: a row is name + target + buttons;
+   the number fields only open for a row that is short or has a reject).
+--------------------------------------------------------------------- */
+.day-card { display: grid; gap: var(--space-3); }
+.day-card-date { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.day-card-date label { font-size: var(--text-sm); color: var(--text-muted); font-weight: 600; }
+.day-card-date input { height: var(--control-height); border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); padding: 0 var(--space-3); }
+.day-card-title { font-size: var(--text-xl); font-weight: 800; }
+.day-card-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); }
+.day-card-stats > div { background: var(--surface-2); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.day-card-stats span { font-size: var(--text-xs); color: var(--text-muted); }
+.day-card-stats strong { font-size: var(--text-lg); }
+.day-card-note { color: var(--text-muted); margin: 0; }
+.btn-block { width: 100%; justify-content: center; }
+
+.ws-toolbar { display: grid; gap: var(--space-2); margin-bottom: var(--space-3); }
+.ws-progress { display: flex; flex-direction: column; gap: 6px; font-size: var(--text-sm); color: var(--text-muted); }
+.ws-progress strong { color: var(--text); }
+.ws-bar { height: 6px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.ws-bar > span { display: block; height: 100%; width: 0; background: var(--success); transition: width .2s; }
+.ws-search { display: flex; gap: var(--space-2); }
+.ws-search input { flex: 1 1 auto; min-width: 0; height: var(--control-height); border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); padding: 0 var(--space-3); }
+.ws-search select { flex: 0 1 180px; min-width: 0; height: var(--control-height); border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); padding: 0 var(--space-2); }
+.ws-chips { display: flex; gap: var(--space-2); overflow-x: auto; padding-bottom: 2px; }
+.ws-chip { flex: none; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: var(--text-sm); font-weight: 600; cursor: pointer; }
+.ws-chip.active { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+
+body.is-field #run-detail .table-scroll { overflow: visible; }
+body.is-field table#rd-table { display: block; min-width: 0; width: 100%; }
+body.is-field table#rd-table thead { display: none; }
+body.is-field table#rd-table tbody { display: block; padding: 0; }
+body.is-field table#rd-table tr.rd-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-3); row-gap: 4px; align-items: center;
+  margin: 0; padding: 10px 4px 10px 12px; border: 0; border-bottom: 1px solid var(--border); border-left: 4px solid transparent; border-radius: 0; background: transparent;
+}
+body.is-field table#rd-table tr.rd-row[data-state="ok"] { border-left-color: var(--success); }
+body.is-field table#rd-table tr.rd-row[data-state="short"] { border-left-color: var(--warning); background: var(--surface-2); }
+body.is-field table#rd-table tr.rd-row > td { display: none; padding: 0; border: 0; height: auto; min-height: 0; text-align: left; }
+body.is-field table#rd-table tr.rd-row > td::before { content: none; }
+/* 2 = Produk, 4 = Target, 5 = Sesuai/Tidak Sesuai buttons */
+body.is-field table#rd-table tr.rd-row > td:nth-child(2) { display: block; grid-column: 1; grid-row: 1; font-weight: 700; font-size: var(--text-sm); line-height: 1.3; }
+body.is-field table#rd-table tr.rd-row > td:nth-child(4) { display: block; grid-column: 1; grid-row: 2; font-size: var(--text-xs); color: var(--text-muted); }
+body.is-field table#rd-table tr.rd-row > td:nth-child(4)::before { content: "Target "; }
+body.is-field table#rd-table tr.rd-row > td:nth-child(5) { display: block; grid-column: 2; grid-row: 1 / span 2; }
+body.is-field table#rd-table tr.rd-row > td:nth-child(5) .btn { min-height: 38px; padding: 0 10px; font-size: var(--text-xs); }
+body.is-field table#rd-table tr.rd-row:not([data-source="po_reguler"]) > td:nth-child(3) { display: block; grid-column: 1; grid-row: 3; }
+/* Number fields only for a row that is short / has a reject. */
+body.is-field table#rd-table tr.rd-row.is-open > td:nth-child(6),
+body.is-field table#rd-table tr.rd-row.is-open > td:nth-child(7),
+body.is-field table#rd-table tr.rd-row.is-open > td:nth-child(9) {
+  display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: var(--space-3); padding-top: 4px;
+}
+body.is-field table#rd-table tr.rd-row.is-open > td:nth-child(6)::before { content: "Hasil jadi"; }
+body.is-field table#rd-table tr.rd-row.is-open > td:nth-child(7)::before { content: "Reject"; }
+body.is-field table#rd-table tr.rd-row.is-open > td:nth-child(9)::before { content: "Catatan"; }
+body.is-field table#rd-table tr.rd-row.is-open > td::before { font-size: var(--text-xs); color: var(--text-muted); font-weight: 600; }
+body.is-field table#rd-table tr.rd-row.is-open > td input { width: 9rem !important; max-width: 60%; text-align: right; }
+.ws-toolbar, .ws-toolbar > * { min-width: 0; }
+.ws-search { flex-wrap: wrap; }
+.ws-search select { flex: 1 1 100%; }
+.ws-toolbar .btn-block { white-space: normal; height: auto; min-height: 44px; padding: 8px 12px; line-height: 1.3; }
+@media (max-width: 640px) {
+  .day-card-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .day-card-stats .badge { white-space: normal; }
+}
+
+/* Compact checklist rows (Amor.compactList) for divisi/FG accounts. */
+body.is-field .fg-card-list-2col { grid-template-columns: 1fr; }
+body.is-field .fg-card.cw-row { padding: 10px 12px; border-left: 4px solid transparent; box-shadow: none; }
+body.is-field .fg-card.cw-row[data-state="ok"] { border-left-color: var(--success); }
+body.is-field .fg-card.cw-row[data-state="short"] { border-left-color: var(--warning); background: var(--surface-2); }
+body.is-field .fg-card.cw-row .fg-card-title { font-size: var(--text-sm); }
+body.is-field .fg-card.cw-row .fg-card-sub { margin-bottom: 4px; }
+body.is-field .fg-card.cw-row:not(.is-open) .fg-card-row:not(:has(.fg-verified-sesuai-group, .pk-sesuai)),
+body.is-field .fg-card.cw-row:not(.is-open) .fg-card-actions { display: none; }
+body.is-field .fg-card.cw-row .fg-card-row:has(.fg-verified-sesuai-group, .pk-sesuai) { border-bottom: 0; padding: 2px 0; }
+body.is-field .fg-card.cw-row .fg-card-row:has(.fg-verified-sesuai-group, .pk-sesuai) .fg-card-row-label { display: none; }
+body.is-field .fg-card.cw-row .fg-card-row:has(.fg-verified-sesuai-group, .pk-sesuai) .btn-group { margin-left: auto; }

@@ -769,6 +769,7 @@
     createOrderItemGrid: createOrderItemGrid,
     fmtRupiah: fmtRupiah,
     labelTables: labelTables,
+    compactList: compactList,
   };
 
   // -----------------------------------------------------------------
@@ -791,6 +792,81 @@
       });
     });
   }
+  // -----------------------------------------------------------------
+  // Compact checklist for long product lists (FG Verifikasi / Packing):
+  // adds progress, search, state chips and "isi semua yang belum = Sesuai"
+  // above `list`. Each row is a card holding a Sesuai/Tidak Sesuai group;
+  // the row's number fields open only when it is not simply Sesuai (CSS
+  // .cw-row / .is-open). View-only — saving stays with the page.
+  // -----------------------------------------------------------------
+  function compactList(opts) {
+    const list = opts.list;
+    if (!list || list.getAttribute('data-cw') === '1') return;
+    list.setAttribute('data-cw', '1');
+    const rows = Array.prototype.filter.call(list.querySelectorAll(opts.rowSel), function (r) { return r.querySelector(opts.groupSel); });
+    if (rows.length === 0) return;
+    const bar = document.createElement('div');
+    bar.className = 'ws-toolbar';
+    bar.innerHTML = '<div class="ws-progress"><span><strong class="cw-filled">0</strong> / <span class="cw-total">0</span> produk terisi</span><div class="ws-bar"><span class="cw-fill"></span></div></div>'
+      + '<div class="ws-search"><input type="search" class="cw-q" placeholder="Cari produk..."></div>'
+      + '<div class="ws-chips"><button type="button" class="ws-chip active" data-chip="">Semua</button><button type="button" class="ws-chip" data-chip="empty">Belum diisi</button><button type="button" class="ws-chip" data-chip="short">Kurang / Reject</button><button type="button" class="ws-chip" data-chip="ok">Sesuai</button></div>'
+      + (opts.editable === false ? '' : '<button type="button" class="btn btn-secondary btn-block cw-all">&#10003; ' + (opts.bulkLabel || 'Isi semua yang belum diisi = Sesuai') + '</button>');
+    list.parentNode.insertBefore(bar, list);
+    let chip = '';
+    function state(row) {
+      const g = row.querySelector(opts.groupSel);
+      if (g.querySelector('[data-value="sesuai"]').classList.contains('btn-primary')) return 'ok';
+      if (g.getAttribute('data-touched') === '1') return 'short';
+      const nums = row.querySelectorAll('input[type="number"]');
+      for (let i = 0; i < nums.length; i++) { if (parseFloat(nums[i].value || '0') > 0) return 'short'; }
+      return 'empty';
+    }
+    function refresh() {
+      const q = (bar.querySelector('.cw-q').value || '').toLowerCase().trim();
+      let filled = 0;
+      rows.forEach(function (row) {
+        const st = state(row);
+        row.classList.add('cw-row');
+        row.setAttribute('data-state', st);
+        row.classList.toggle('is-open', st === 'short');
+        const no = row.querySelector('[data-value="tidak_sesuai"]');
+        if (st === 'empty' && no) { no.classList.remove('btn-danger'); no.classList.add('btn-secondary'); }
+        if (st !== 'empty') filled++;
+        const name = (row.querySelector(opts.nameSel) || row).textContent.toLowerCase();
+        row.style.display = (q === '' || name.indexOf(q) !== -1) && (chip === '' || st === chip) ? '' : 'none';
+      });
+      bar.querySelector('.cw-filled').textContent = filled;
+      bar.querySelector('.cw-total').textContent = rows.length;
+      bar.querySelector('.cw-fill').style.width = Math.round(filled * 100 / rows.length) + '%';
+    }
+    list.addEventListener('click', function (e) {
+      const b = e.target.closest(opts.groupSel + ' [data-value]');
+      if (!b) return;
+      const g = b.closest(opts.groupSel);
+      g.setAttribute('data-touched', b.getAttribute('data-value') === 'tidak_sesuai' ? '1' : '0');
+      setTimeout(refresh, 0);
+    });
+    list.addEventListener('input', refresh);
+    bar.querySelector('.cw-q').addEventListener('input', refresh);
+    bar.querySelectorAll('.ws-chip').forEach(function (c) {
+      c.addEventListener('click', function () {
+        bar.querySelectorAll('.ws-chip').forEach(function (x) { x.classList.toggle('active', x === c); });
+        chip = c.getAttribute('data-chip'); refresh();
+      });
+    });
+    const all = bar.querySelector('.cw-all');
+    if (all) all.addEventListener('click', async function () {
+      const todo = rows.filter(function (r) { return state(r) === 'empty'; });
+      if (todo.length === 0) { toast('Semua produk sudah terisi.', 'info'); return; }
+      const ok = await confirmModal({ title: 'Tandai Sesuai?', body: todo.length + ' produk yang belum diisi akan diisi sesuai jumlahnya. Yang kurang tetap bisa diubah satu per satu sebelum disimpan.' });
+      if (!ok) return;
+      todo.forEach(function (r) { const b = r.querySelector(opts.groupSel + ' [data-value="sesuai"]'); if (b) b.click(); });
+      setTimeout(refresh, 0);
+      toast(todo.length + ' produk ditandai Sesuai.', 'success');
+    });
+    refresh();
+  }
+
   let labelTimer = null;
   function watchTables() {
     labelTables();

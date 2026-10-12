@@ -116,11 +116,30 @@
 
     var allItems = [];
 
+    // One card per store/DO (a real PO is ~2.000 product lines): one tick
+    // takes the whole store at its full ready qty; "Rincian" opens the
+    // per-product qty fields for a partial pickup.
+    var selectAllWrap = document.createElement('label');
+    selectAllWrap.className = 'driver-select-all';
+    selectAllWrap.innerHTML = '<input type="checkbox" id="driver-select-all"> <span>Pilih semua toko yang tampil</span>';
+    root.insertBefore(selectAllWrap, list);
+
+    function groupKey(it) { return it.storeName + '|' + it.docNo; }
     function updateStickyBar() {
-      var checked = list.querySelectorAll('input[type=checkbox]:checked');
+      var checked = list.querySelectorAll('input.driver-group-cb:checked');
       stickyBar.style.display = checked.length > 0 ? 'block' : 'none';
+      var pcs = 0, lines = 0;
+      checked.forEach(function (cb) { collectGroup(cb.closest('.driver-card')).forEach(function (l) { pcs += l.qty; lines++; }); });
       var btn = stickyBar.querySelector('#btn-ambil');
-      if (btn) btn.textContent = 'Ambil Pengiriman (' + checked.length + ' dipilih)';
+      if (btn) btn.textContent = 'Ambil ' + checked.length + ' toko (' + fmtNum(pcs) + ' pcs)';
+    }
+    var groupsByKey = {};
+    function collectGroup(card) {
+      var items = groupsByKey[card.getAttribute('data-key')] || [];
+      return items.map(function (it) {
+        var input = card.querySelector('input[data-qty-for="' + it.doItemId + '"]');
+        return { doItemId: it.doItemId, qty: input ? (parseFloat(input.value) || 0) : it.availableToClaim };
+      }).filter(function (l) { return l.qty > 0; });
     }
 
     function draw() {
@@ -130,32 +149,60 @@
         if (q && (it.storeName + ' ' + it.productName).toLowerCase().indexOf(q) === -1) return false;
         return true;
       });
+      document.getElementById('driver-select-all').checked = false;
       if (filtered.length === 0) {
         list.innerHTML = emptyState('Tidak ada pengiriman tersedia.');
         updateStickyBar();
         return;
       }
-      list.innerHTML = filtered.map(function (it) {
+      groupsByKey = {};
+      var order = [];
+      filtered.forEach(function (it) {
+        var k = groupKey(it);
+        if (!groupsByKey[k]) { groupsByKey[k] = []; order.push(k); }
+        groupsByKey[k].push(it);
+      });
+      list.innerHTML = order.map(function (k) {
+        var items = groupsByKey[k];
+        var pcs = items.reduce(function (a, it) { return a + it.availableToClaim; }, 0);
+        var groupsHere = items.map(function (it) { return it.suggestedGroup; }).filter(function (g, i, a) { return a.indexOf(g) === i; });
         return '' +
-          '<div class="driver-card">' +
-          '<div class="driver-select-row">' +
-          '<input type="checkbox" data-do-item-id="' + it.doItemId + '" data-max="' + it.availableToClaim + '">' +
+          '<div class="driver-card" data-key="' + esc(k) + '">' +
+          '<label class="driver-select-row">' +
+          '<input type="checkbox" class="driver-group-cb">' +
           '<div style="flex:1">' +
-          '<div class="driver-card-title">' + esc(it.storeName) + '</div>' +
-          '<div class="driver-card-sub">' + esc(it.docNo) + '</div>' +
+          '<div class="driver-card-title">' + esc(items[0].storeName) + '</div>' +
+          '<div class="driver-card-sub">' + esc(items[0].docNo) + ' &middot; ' + items.length + ' produk &middot; <b>' + fmtNum(pcs) + ' pcs</b></div>' +
           '</div>' +
-          '<span class="driver-badge ' + groupBadgeClass(it.suggestedGroup) + '">' + esc(it.suggestedGroup) + '</span>' +
-          '</div>' +
-          '<div class="driver-row"><span>' + esc(it.productName) + '</span><b>Tersedia: ' + fmtNum(it.availableToClaim) + '</b></div>' +
-          '<div class="driver-row" style="align-items:center;margin-top:6px;"><span>Qty Ambil</span>' +
-          '<input type="number" class="driver-qty-input" data-qty-for="' + it.doItemId + '" min="0" max="' + it.availableToClaim + '" step="0.01" value="' + it.availableToClaim + '"></div>' +
+          groupsHere.map(function (g) { return '<span class="driver-badge ' + groupBadgeClass(g) + '">' + esc(g) + '</span>'; }).join(' ') +
+          '</label>' +
+          '<button type="button" class="driver-link-btn driver-detail-toggle">Rincian &amp; ubah jumlah</button>' +
+          '<div class="driver-group-detail" hidden></div>' +
           '</div>';
       }).join('');
-      list.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
-        cb.addEventListener('change', updateStickyBar);
-      });
       updateStickyBar();
     }
+
+    list.addEventListener('change', function (e) { if (e.target.classList.contains('driver-group-cb')) updateStickyBar(); });
+    list.addEventListener('input', function (e) { if (e.target.classList.contains('driver-qty-input')) updateStickyBar(); });
+    list.addEventListener('click', function (e) {
+      var t = e.target.closest('.driver-detail-toggle');
+      if (!t) return;
+      var card = t.closest('.driver-card');
+      var box = card.querySelector('.driver-group-detail');
+      if (box.hidden && box.innerHTML === '') {
+        box.innerHTML = (groupsByKey[card.getAttribute('data-key')] || []).map(function (it) {
+          return '<div class="driver-row" style="align-items:center;margin-top:6px;"><span>' + esc(it.productName) + ' <small>(siap ' + fmtNum(it.availableToClaim) + ')</small></span>' +
+            '<input type="number" class="driver-qty-input" data-qty-for="' + it.doItemId + '" min="0" max="' + it.availableToClaim + '" step="0.01" value="' + it.availableToClaim + '"></div>';
+        }).join('');
+      }
+      box.hidden = !box.hidden;
+      t.textContent = box.hidden ? 'Rincian & ubah jumlah' : 'Tutup rincian';
+    });
+    document.getElementById('driver-select-all').addEventListener('change', function (e) {
+      list.querySelectorAll('input.driver-group-cb').forEach(function (cb) { cb.checked = e.target.checked; });
+      updateStickyBar();
+    });
 
     filterRow.addEventListener('click', function (e) {
       var chip = e.target.closest('.driver-chip');
@@ -169,11 +216,8 @@
     stickyBar.addEventListener('click', function (e) {
       if (!e.target.closest('#btn-ambil')) return;
       var lines = [];
-      list.querySelectorAll('input[type=checkbox]:checked').forEach(function (cb) {
-        var doItemId = parseInt(cb.dataset.doItemId, 10);
-        var qtyInput = list.querySelector('input[data-qty-for="' + doItemId + '"]');
-        var qty = parseFloat(qtyInput ? qtyInput.value : '0') || 0;
-        if (qty > 0) lines.push({ doItemId: doItemId, qty: qty });
+      list.querySelectorAll('input.driver-group-cb:checked').forEach(function (cb) {
+        collectGroup(cb.closest('.driver-card')).forEach(function (l) { lines.push({ doItemId: parseInt(l.doItemId, 10), qty: l.qty }); });
       });
       if (lines.length === 0) return;
       Amor.apiFetch('/api/dispatch/claim', { method: 'POST', body: { lines: lines } }).then(function () {

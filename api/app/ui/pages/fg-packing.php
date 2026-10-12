@@ -319,6 +319,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       var input = document.querySelector('#fg-form [data-field="fgVerified"][data-product-id="' + pid + '"]');
       if (input) wireSesuaiGroup(group, input, function () { return group.getAttribute('data-target'); });
     });
+    Amor.compactList({ list: document.getElementById('fg-perproduk-wrap'), rowSel: '.fg-card', groupSel: '.fg-verified-sesuai-group', nameSel: '.fg-card-title', bulkLabel: 'Isi semua yang belum diisi = Sesuai hasil produksi' });
 
     var modeProduk = document.getElementById('fg-mode-produk');
     var modeToko = document.getElementById('fg-mode-toko');
@@ -823,6 +824,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         var readyInput = card.querySelector('[data-pk-field="fgVerified"]');
         wireSesuaiGroup(group2, packedInput, function () { return readyInput.value || '0'; });
       });
+      Amor.compactList({ list: detail.querySelector('.fg-card-list'), rowSel: '.fg-packing-row', groupSel: '.pk-sesuai', nameSel: '.fg-card-title', bulkLabel: 'Isi semua yang belum diisi = Sesuai (dipacking semua)' });
     }
 
     wirePackingActions(group, detail, status, locked, editingCorrection);
