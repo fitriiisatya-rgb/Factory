@@ -260,12 +260,19 @@ final class DoService
 
         $created = 0;
         $alreadyExisted = 0;
+        $refreshed = 0;
         $errors = [];
         foreach ($stores as $s) {
             try {
                 $existing = $this->repo->lockExistingDo($this->pdo, $tanggal, $s['storeId']);
                 if ($existing !== null) {
                     $alreadyExisted++;
+                    // Re-pulling DOs after FG submitted brings an existing,
+                    // not-yet-departed DO in line with what FG packed.
+                    if (in_array($existing['status'], ['draft', 'preprinted'], true)) {
+                        $this->refreshFromPo((int) $existing['delivery_order_id'], (int) $existing['version'], $userId, null);
+                        $refreshed++;
+                    }
                     continue;
                 }
                 $this->createDraft($tanggal, $s['storeId'], $userId);
@@ -281,6 +288,7 @@ final class DoService
             'factoryName' => $factory['name'],
             'created' => $created,
             'alreadyExisted' => $alreadyExisted,
+            'refreshed' => $refreshed,
             'errors' => $errors,
             'storesConsidered' => count($stores),
         ];

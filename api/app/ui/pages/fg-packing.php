@@ -244,6 +244,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
 </div>
 
 <script>
+var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unallocatedStoreId($pdo) ?>;
 (function () {
   var batchId = <?= (int) $batchView['fgBatchId'] ?>;
   var version = <?= (int) $batchView['version'] ?>;
@@ -507,20 +508,25 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         if (line.fgVerified <= 0.0001) { items.push(line); continue; }
         var data = await fetchStoreData(line.productId);
         var stores = (data.stores || []).filter(function (st) { return Number(st.target) > 0.0001; });
-        if (stores.length === 0) { items.push(line); continue; }
+        // Nobody ordered it: the whole verified result is Stok Sisa
+        // (packed = verified so it is posted to stock with the batch).
+        if (stores.length === 0) { line.packed = line.fgVerified; items.push(line); continue; }
         var sumTarget = stores.reduce(function (a, st) { return a + Number(st.target); }, 0);
-        var rows = null;
+        var rows = null, surplus = 0;
         if (stores.length === 1) {
-          var matchesTarget = Math.abs(line.fgVerified - Number(stores[0].target)) < 0.01;
-          rows = [{ storeId: stores[0].storeId, fgVerified: line.fgVerified, sesuaiVerified: matchesTarget }];
+          var storeQty = Math.min(line.fgVerified, Number(stores[0].target));
+          surplus = line.fgVerified - storeQty;
+          rows = [{ storeId: stores[0].storeId, fgVerified: storeQty, sesuaiVerified: Math.abs(storeQty - Number(stores[0].target)) < 0.01 }];
           // FG confirmed the production result (Sesuai) but production
-          // itself is short/over the PO: record why, so FG never has to
+          // itself is short of the PO: record why, so FG never has to
           // type a note for a gap that is Production's, not FG's.
-          if (!matchesTarget && line.sesuaiVerified && !line.notes) {
+          if (storeQty < Number(stores[0].target) - 0.01 && line.sesuaiVerified && !line.notes) {
             line.notes = 'Sesuai hasil produksi (' + line.fgVerified.toLocaleString('id-ID') + '); target PO toko ' + Number(stores[0].target).toLocaleString('id-ID');
           }
-        } else if (Math.abs(line.fgVerified - sumTarget) < 0.01) {
+        } else if (line.fgVerified >= sumTarget - 0.01) {
+          // Every store gets its PO; what is left over is Stok Sisa.
           rows = stores.map(function (st) { return { storeId: st.storeId, fgVerified: Number(st.target), sesuaiVerified: true }; });
+          surplus = line.fgVerified - sumTarget;
         }
         if (rows === null) {
           var card = document.querySelector('.fg-card[data-product-id="' + line.productId + '"] .fg-card-title');
@@ -533,6 +539,9 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
           r.hilang = idx === 0 ? line.hilang : 0;
           r.notes = idx === 0 ? line.notes : '';
         });
+        if (surplus > 0.0001) {
+          rows.push({ storeId: UNALLOCATED_STORE_ID, fgVerified: surplus, packed: surplus, reject: 0, hilang: 0, notes: 'Stok Sisa produksi' });
+        }
         storeItems.push({ productId: line.productId, rows: rows });
       }
       return { items: items, storeItems: storeItems, manual: manual };
@@ -619,6 +628,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   // that is a deliberate limitation, not an oversight.
   // ---------------------------------------------------------------------
   var storeGroups = [];
+  var surplusTotal = 0;
   var currentStoreId = null;
   // LIVE UAT UX FIX — a store whose Packing already has a real
   // submission record (submitted OR stale) renders its fields LOCKED
@@ -723,7 +733,9 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     var pct = targetSum > 0 ? Math.min(100, Math.round((packedSum / targetSum) * 100)) : 0;
     header.innerHTML = '<div class="fg-card-row"><span class="fg-card-row-label">Toko Selesai</span><b>' + doneStores + ' / ' + totalStores + ' toko</b></div>'
       + '<div class="fg-card-row"><span class="fg-card-row-label">Packed pcs</span><b>' + packedSum.toLocaleString('id-ID') + ' / ' + targetSum.toLocaleString('id-ID') + ' pcs</b></div>'
-      + '<div class="fg-progress-track"><div class="fg-progress-fill" style="width:' + pct + '%;"></div></div>';
+      + '<div class="fg-progress-track"><div class="fg-progress-fill" style="width:' + pct + '%;"></div></div>'
+      + (surplusTotal > 0.0001 ? '<div class="fg-card-row"><span class="fg-card-row-label">Stok Sisa (lebih dari PO)</span><b>' + surplusTotal.toLocaleString('id-ID') + ' pcs</b></div>'
+        + '<div style="font-size:var(--text-xs);color:var(--text-muted);">Disisihkan di gudang. Admin bisa mengirimnya susulan ke toko atau menjualnya ke non-toko (menu Stok Sisa).</div>' : '');
   }
 
   function renderChips() {
@@ -1041,6 +1053,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   async function reloadStoreGroups() {
     var results = await fetchAllStoreRows();
     storeGroups = groupByStore(results);
+    surplusTotal = results.reduce(function (a, r) { return a + (Number(r.data.surplus) || 0); }, 0);
     if (currentStoreId === null && storeGroups.length > 0) currentStoreId = storeGroups[0].storeId;
   }
 

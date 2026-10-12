@@ -111,7 +111,7 @@ final class SpecialOrderFgAllocationService
         $balanceRow = $this->doRepo->lockBalance($this->pdo, $productId, $locationId);
         $physical = $balanceRow !== null ? (float) $balanceRow['qty_on_hand'] : 0.0;
         $reservedByAnyOrder = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
-        $trueFree = max(0.0, $physical - $reservedByAnyOrder);
+        $trueFree = max(0.0, $physical - $reservedByAnyOrder - $this->storeCommitted($productId, $factoryId, false));
 
         $committed = $this->allocRepo->sumCommittedForItem($this->pdo, $itemId);
         $goodActualSpecialProduction = (float) $item['fg_verified_qty'];
@@ -345,7 +345,10 @@ final class SpecialOrderFgAllocationService
         $factoryId = (int) $item['item_factory_id'];
         $physical = $this->orderRepo->findStockOnHand($this->pdo, $productId, $factoryId);
         $reservedByAnyOrder = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
-        $trueFree = max(0.0, $physical - $reservedByAnyOrder);
+        // FG already packed for a store (not yet shipped to it) is that
+        // store's, never free — the same rule Replacement's own allocator
+        // applies. Only Stok Sisa / unsplit FG can go to a special order.
+        $trueFree = max(0.0, $physical - $reservedByAnyOrder - $this->storeCommitted($productId, $factoryId, true));
 
         $committed = $this->allocRepo->sumCommittedForItem($this->pdo, $itemId);
         $goodActualSpecialProduction = (float) $item['fg_verified_qty'];
@@ -382,5 +385,15 @@ final class SpecialOrderFgAllocationService
             return 'Sebagian FG / Perlu Produksi';
         }
         return 'Perlu Produksi';
+    }
+
+    /** FG packed for stores and not yet shipped to them (0 if the product was never split per store). */
+    private function storeCommitted(int $productId, int $factoryId, bool $forUpdate): float
+    {
+        $unallocatedStoreId = $this->fgRepo->unallocatedStoreId($this->pdo);
+        if (!$this->doRepo->hasAnyStoreAllocation($this->pdo, $productId, $factoryId, $unallocatedStoreId, $forUpdate)) {
+            return 0.0;
+        }
+        return $this->doRepo->sumStoreCommittedRemainingAcrossAllStores($this->pdo, $productId, $factoryId, $unallocatedStoreId, $forUpdate);
     }
 }

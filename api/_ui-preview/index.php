@@ -33,6 +33,7 @@ $pages = [
     'produksi-task-per-divisi' => ['title' => 'Produksi', 'subtitle' => 'Task per Divisi — target, realisasi, dan reject produksi lintas sumber demand.'],
     'fg-packing' => ['title' => 'FG & Packing', 'subtitle' => 'Verifikasi hasil produksi dan pantau proses packing.'],
     'fg-khusus-non-toko' => ['title' => 'FG Sumber Khusus / Non-Toko', 'subtitle' => 'Verifikasi FG untuk Pesanan Khusus Toko dan Pesanan Non-Toko — terpisah dari FG PO Reguler.'],
+    'stok-sisa' => ['title' => 'Stok Sisa', 'subtitle' => 'Kelebihan produksi yang belum milik toko mana pun — kirim susulan ke toko atau jual ke non-toko.'],
     'delivery-order' => ['title' => 'Delivery Order', 'subtitle' => 'Kelola DO toko, dokumen pengiriman, dan fulfillment.'],
     'delivery-order-detail' => ['title' => 'Delivery Order', 'subtitle' => 'Detail dokumen dan pengiriman bertahap.'],
     'delivery-order-khusus-non-toko' => ['title' => 'DO Pesanan Khusus / Non-Toko', 'subtitle' => 'DO terpisah per sumber untuk Pesanan Khusus Toko dan Pesanan Non-Toko.'],
@@ -95,6 +96,7 @@ $pageRoles = [
     // only, never PPIC (same reasoning the page file's own docblock gives).
     'bakery-portal-tokens' => ['ADMIN'],
     'retur-review' => ['ADMIN', 'PPIC'],
+    'stok-sisa' => ['ADMIN', 'PPIC'],
     'mutasi-review' => ['ADMIN', 'PPIC'],
     // Invoice generation is ADMIN-only end to end (InvoiceController's own
     // Auth::requireRole('ADMIN') gate) — hiding the nav link and the page

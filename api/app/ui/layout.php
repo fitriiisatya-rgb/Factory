@@ -40,6 +40,7 @@ function ui_nav_items(array $roles = []): array
         ['key' => 'pesanan-toko', 'label' => 'Pesanan Toko', 'icon' => 'cart'],
         ['key' => 'produksi', 'label' => 'Produksi', 'icon' => 'factory'],
         ['key' => 'fg-packing', 'label' => 'FG & Packing', 'icon' => 'box'],
+        ['key' => 'stok-sisa', 'label' => 'Stok Sisa', 'icon' => 'database'],
         ['key' => 'delivery-order', 'label' => 'Delivery Order', 'icon' => 'file'],
         ['key' => 'pengiriman', 'label' => 'Pengiriman', 'icon' => 'truck'],
         ['key' => 'konfirmasi-toko', 'label' => 'Konfirmasi Toko', 'icon' => 'user'],
@@ -54,7 +55,7 @@ function ui_nav_items(array $roles = []): array
     // Permanent Bakery Portal admin pages (migration 0017), each gated
     // identically to api/_ui-preview/index.php's own $pageRoles.
     if ($roles !== [] && array_intersect(['ADMIN', 'PPIC'], $roles) === []) {
-        $hidden = ['replacement-reject', 'retur-review', 'mutasi-review', 'bakery-portal-tokens', 'invoice'];
+        $hidden = ['replacement-reject', 'retur-review', 'mutasi-review', 'bakery-portal-tokens', 'invoice', 'stok-sisa'];
         $items = array_values(array_filter($items, static fn ($i) => !in_array($i['key'], $hidden, true)));
     } elseif ($roles !== [] && !in_array('ADMIN', $roles, true)) {
         // bakery-portal-tokens and invoice are ADMIN-only (token mgmt is

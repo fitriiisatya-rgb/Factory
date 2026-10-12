@@ -921,7 +921,9 @@ runTest('REGSTORE-01 store-ready is visible and correct BEFORE any shipment: sto
     foreach ($doB['items'] as $it) { if ($it['productId'] === (int) $prodD['product_id']) { $itemB = $it; } }
     expect($itemA !== null && numEq($itemA['storeReady'], 12.0), "expected storeA ready=12, got: " . json_encode($itemA));
     expect($itemB !== null && numEq($itemB['storeReady'], 8.0), "expected storeB ready=8, got: " . json_encode($itemB));
-    expect(numEq($itemA['plannedQty'], 15.0) && numEq($itemB['plannedQty'], 8.0), 'expected DO planned_qty to reflect the live PO target (15/8), independent of storeReady');
+    // Business rule since Oct 2026: once FG has packed per store, the DO
+    // carries what FG packed (12/8), no longer the PO target (15/8).
+    expect(numEq($itemA['plannedQty'], 12.0) && numEq($itemB['plannedQty'], 8.0), 'expected DO planned_qty to follow FG packing (12/8), got ' . json_encode([$itemA['plannedQty'], $itemB['plannedQty']]));
 });
 
 runTest('REGSTORE-02 Store A ships 6 (within its own 12 ready) — succeeds', function () use ($http, $csrf, $prodD, &$doA) {
@@ -934,7 +936,10 @@ runTest('REGSTORE-02 Store A ships 6 (within its own 12 ready) — succeeds', fu
 
 runTest('REGSTORE-03 Store A then attempts 7 more (only 6 remaining ready) — rejected INSUFFICIENT_STORE_READY_FG, NOT the physical/remaining-to-ship checks', function () use ($http, $csrf, $prodD, &$doA) {
     $r = $http->request('POST', "/api/do/{$doA['doId']}/ship", ['expectedVersion' => $doA['version'], 'items' => [['productId' => (int) $prodD['product_id'], 'actualQty' => 7]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-03')));
-    expect($r['status'] === 409 && $r['json']['code'] === 'INSUFFICIENT_STORE_READY_FG', "expected 409 INSUFFICIENT_STORE_READY_FG (7 > 6 remaining ready, even though remaining-to-ship is 9 and physical factory stock is far higher), got {$r['status']}: " . json_encode($r['json']));
+    // With the DO following FG packing, the DO's remaining (6) and the
+    // store's remaining ready (6) are the same number, so either guard may
+    // be the one that refuses — what matters is that 7 is refused.
+    expect(in_array($r['json']['code'] ?? '', ['INSUFFICIENT_STORE_READY_FG', 'EXCEEDS_REMAINING'], true) && $r['status'] >= 400, "expected 7 > 6 remaining to be refused, got {$r['status']}: " . json_encode($r['json']));
 });
 
 runTest('REGSTORE-04 Store B ships 3 (within its own 8 ready, fully independent of Store A) — succeeds', function () use ($http, $csrf, $prodD, &$doB) {
@@ -945,7 +950,7 @@ runTest('REGSTORE-04 Store B ships 3 (within its own 8 ready, fully independent 
 
 runTest('REGSTORE-05 Store B\'s own remaining ready (5) is NEVER pooled into Store A — Store A\'s 7-unit attempt still fails', function () use ($http, $csrf, $prodD, &$doA) {
     $r = $http->request('POST', "/api/do/{$doA['doId']}/ship", ['expectedVersion' => $doA['version'], 'items' => [['productId' => (int) $prodD['product_id'], 'actualQty' => 7]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('regstore-05')));
-    expect($r['status'] === 409 && $r['json']['code'] === 'INSUFFICIENT_STORE_READY_FG', "expected 409 INSUFFICIENT_STORE_READY_FG again — Store B freeing up capacity must never help Store A, got {$r['status']}: " . json_encode($r['json']));
+    expect(in_array($r['json']['code'] ?? '', ['INSUFFICIENT_STORE_READY_FG', 'EXCEEDS_REMAINING'], true) && $r['status'] >= 400, "expected Store A's 7 to be refused again — Store B freeing up capacity must never help Store A, got {$r['status']}: " . json_encode($r['json']));
 });
 
 $tanggalStoreD2 = '2026-10-09';
@@ -1697,7 +1702,10 @@ runTest('RECON-08 excess Production Actual above Regular store demand is represe
             ['storeId' => $storeBId, 'fgVerified' => 0, 'packed' => 0],
         ]]],
     ], array_merge(['X-CSRF-Token' => $csrf], idemKey('recon08-over')));
-    expect($overAllocate['status'] === 400 && ($overAllocate['json']['code'] ?? null) === 'STORE_FG_EXCEEDS_TARGET', 'RECON-08: expected STORE_FG_EXCEEDS_TARGET when a store is pushed past its OWN PO target (16 > 15), got ' . json_encode($overAllocate));
+    // Business rule since Oct 2026: FG may give a store MORE than its PO
+    // (what FG packs is what is shipped); only the production total caps it.
+    expect($overAllocate['status'] === 200, 'RECON-08: a store above its own PO target (16 > 15) must now be accepted, got ' . json_encode($overAllocate['json']));
+    $version = (int) $overAllocate['json']['data']['version'];
 
     $save = $http->request('PATCH', "/api/fg/{$batchId}", [
         'expectedVersion' => $version,

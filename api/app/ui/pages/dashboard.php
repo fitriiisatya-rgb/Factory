@@ -25,6 +25,16 @@ $k = $summary['kpi'];
   </form>
 </div>
 
+<?php
+$sisaRows = (new \Amor\Api\Fg\StokSisaService($pdo))->list(null);
+$sisaPcs = array_sum(array_column($sisaRows, 'sisa'));
+?>
+<?php if ($sisaRows !== []): ?>
+<div class="alert alert-warning" style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap;">
+  <span><strong>Stok Sisa produksi:</strong> <?= ui_fmt_num($sisaPcs) ?> pcs dari <?= count($sisaRows) ?> produk belum milik toko mana pun.</span>
+  <a class="btn btn-sm btn-primary" href="/api/_ui-preview/?page=stok-sisa">Lihat &amp; tindak lanjuti</a>
+</div>
+<?php endif; ?>
 <div class="kpi-grid">
   <?= ui_kpi_card(['label' => 'PO Target', 'value' => ui_fmt_num($k['poTarget']), 'icon' => 'cart', 'color' => 'primary']) ?>
   <?= ui_kpi_card(['label' => 'Produksi Aktual', 'value' => ui_fmt_num($k['productionActual']), 'icon' => 'factory', 'color' => 'primary', 'progressPct' => $k['productionActualPct'], 'foot' => 'dari PO Target']) ?>

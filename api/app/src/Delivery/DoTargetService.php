@@ -90,6 +90,63 @@ final class DoTargetService
                 'planned' => $poAwal + $poRevisi,
             ];
         }
+
+        // Business rule: what FG packed for this store is what goes on the
+        // DO — it may be above the PO (a whole cake for 4 ordered slices)
+        // or below it (production short). Once a product has been split
+        // per store in a SUBMITTED FG document of this date, its planned
+        // qty is that store's packed qty (0 if FG packed nothing for it);
+        // products FG has not split yet keep the PO number.
+        foreach ($this->packedForStore($pdo, $tanggal, $storeId) as $productId => $p) {
+            if (!isset($out[$productId])) {
+                $out[$productId] = [
+                    'productId' => $productId,
+                    'productName' => $p['product_name'],
+                    'divisionId' => $p['division_id'] !== null ? (int) $p['division_id'] : null,
+                    'divisionName' => $p['division_name'],
+                    'factoryId' => (int) $p['factory_id'],
+                    'factoryName' => $p['factory_name'],
+                    'poAwal' => 0.0,
+                    'poRevisi' => 0.0,
+                    'planned' => 0.0,
+                ];
+            }
+            $out[$productId]['planned'] = (float) $p['packed'];
+            $out[$productId]['fromPacking'] = true;
+        }
+        return array_filter($out, static fn ($d) => $d['planned'] > 0.0001);
+    }
+
+    /**
+     * Packed qty per product for one store on one date, from SUBMITTED FG
+     * documents, for every product that FG split per store there (a
+     * product with at least one real-store row). Products whose rows
+     * exist but hold 0 for this store come back as 0 — FG decided this
+     * store gets none of it.
+     *
+     * @return array<int,array{packed:float,product_name:string,division_id:?int,division_name:?string,factory_id:int,factory_name:string}>
+     */
+    public function packedForStore(PDO $pdo, string $tanggal, int $storeId): array
+    {
+        $stmt = $pdo->prepare(
+            "SELECT fi.product_id, p.name AS product_name, p.division_id, d.name AS division_name,
+                    b.factory_id, f.name AS factory_name,
+                    COALESCE(SUM(CASE WHEN fi.store_id = ? THEN fi.posted_packed_qty ELSE 0 END), 0) AS packed
+             FROM fg_item fi
+             INNER JOIN fg_batch b ON b.fg_batch_id = fi.fg_batch_id
+             INNER JOIN product p ON p.product_id = fi.product_id
+             LEFT JOIN division d ON d.division_id = p.division_id
+             INNER JOIN factory f ON f.factory_id = b.factory_id
+             INNER JOIN store s ON s.store_id = fi.store_id
+             WHERE b.tanggal = ? AND b.status = 'submitted'
+             GROUP BY fi.product_id, p.name, p.division_id, d.name, b.factory_id, f.name
+             HAVING SUM(CASE WHEN s.canonical_name <> 'NON-OUTLET / PERORANGAN' THEN 1 ELSE 0 END) > 0"
+        );
+        $stmt->execute([$storeId, $tanggal]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $r) {
+            $out[(int) $r['product_id']] = $r;
+        }
         return $out;
     }
 
@@ -109,9 +166,16 @@ final class DoTargetService
              INNER JOIN po_batch b ON b.po_batch_id = i.po_batch_id
              INNER JOIN store s ON s.store_id = si.store_id
              WHERE b.tanggal = ? AND b.factory_id = ? AND (si.po_awal + si.po_revisi) > 0
-             ORDER BY s.canonical_name'
+             UNION
+             SELECT s.store_id, s.canonical_name
+             FROM fg_item fi
+             INNER JOIN fg_batch fb ON fb.fg_batch_id = fi.fg_batch_id
+             INNER JOIN store s ON s.store_id = fi.store_id
+             WHERE fb.tanggal = ? AND fb.factory_id = ? AND fb.status = \'submitted\'
+               AND fi.posted_packed_qty > 0 AND s.canonical_name <> \'NON-OUTLET / PERORANGAN\'
+             ORDER BY canonical_name'
         );
-        $stmt->execute([$tanggal, $factoryId]);
+        $stmt->execute([$tanggal, $factoryId, $tanggal, $factoryId]);
         return array_map(static fn ($r) => [
             'storeId' => (int) $r['store_id'],
             'storeName' => $r['canonical_name'],

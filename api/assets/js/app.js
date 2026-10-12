@@ -122,7 +122,9 @@
         '</div></div>';
       backdrop.querySelector('.modal-title').textContent = opts.title || 'Konfirmasi';
       const bodyEl = backdrop.querySelector('.modal-body');
-      bodyEl.textContent = opts.body || 'Lanjutkan?';
+      // bodyHtml: page-built form fields (callers escape their own data).
+      if (opts.bodyHtml) bodyEl.innerHTML = opts.bodyHtml;
+      else bodyEl.textContent = opts.body || 'Lanjutkan?';
       bodyEl.style.whiteSpace = 'pre-line';
 
       const summaryEl = backdrop.querySelector('.modal-summary');

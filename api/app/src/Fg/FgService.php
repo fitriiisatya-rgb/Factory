@@ -340,6 +340,21 @@ final class FgService
             foreach ($targetRows as $t) {
                 $targetByStore[$t['storeId']] = $t;
             }
+            // "Stok Sisa": production above what the stores get is kept on
+            // the unallocated row next to the store rows, so it is posted
+            // to stock with the batch and stays visible (sold non-toko or
+            // sent later to a store) instead of silently disappearing.
+            $unallocatedStoreId = $this->repo->unallocatedStoreId($this->pdo);
+            foreach ($rows as $row) {
+                if ((int) ($row['storeId'] ?? 0) === $unallocatedStoreId) {
+                    $targetByStore[$unallocatedStoreId] = ['storeId' => $unallocatedStoreId, 'storeName' => 'Stok Sisa', 'target' => 0.0, 'surplus' => true];
+                    $have = array_filter($this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId), static fn ($r) => (int) $r['store_id'] === $unallocatedStoreId);
+                    if ($have === []) {
+                        $this->repo->insertItem($this->pdo, $batchId, $productId, $unallocatedStoreId, $snapshot);
+                    }
+                    break;
+                }
+            }
             $rawRows = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
             $rawByStore = [];
             foreach ($rawRows as $r) {
@@ -361,6 +376,18 @@ final class FgService
             // applied to SUM(store rows) instead of a single row's value.
             $afterRows = $this->repo->findItemRowsForProduct($this->pdo, $batchId, $productId);
             $totalVerified = array_sum(array_map(static fn ($r) => (float) $r['qty'], $afterRows));
+            // A store given MORE than before comes out of Stok Sisa first
+            // (unless this same call set Stok Sisa explicitly).
+            $setSurplus = array_filter($rows, static fn ($row) => (int) ($row['storeId'] ?? 0) === $unallocatedStoreId) !== [];
+            if ($totalVerified > $snapshot + 0.0001 && !$setSurplus) {
+                foreach ($afterRows as $r) {
+                    if ((int) $r['store_id'] === $unallocatedStoreId && (float) $r['qty'] > 0) {
+                        $newSurplus = max(0.0, (float) $r['qty'] - ($totalVerified - $snapshot));
+                        $this->repo->updateItemValues($this->pdo, (int) $r['fg_item_id'], $newSurplus, min((float) $r['packed_qty'], $newSurplus), (float) $r['reject_qty'], (float) $r['hilang_qty'], $r['keterangan']);
+                        $totalVerified -= (float) $r['qty'] - $newSurplus;
+                    }
+                }
+            }
             if ($totalVerified > $snapshot + 0.0001) {
                 throw new ApiException(400, 'FG_EXCEEDS_PRODUCTION', "Product {$productId}: total FG verified across stores ({$totalVerified}) cannot exceed production actual ({$snapshot})");
             }
@@ -429,10 +456,11 @@ final class FgService
         if ($packed > $fgVerified) {
             throw new ApiException(400, 'PACKED_EXCEEDS_VERIFIED', "Produk {$product['product_name']} / Toko {$storeName}: packed ({$packed}) cannot exceed FG verified ({$fgVerified})");
         }
-        if ($fgVerified > $target + 0.0001) {
-            throw new ApiException(400, 'STORE_FG_EXCEEDS_TARGET', "Produk {$product['product_name']} / Toko {$storeName}: FG verified ({$fgVerified}) cannot exceed store target ({$target})");
-        }
-        $sesuaiVerified = $row['sesuaiVerified'] ?? null;
+        // A store may be packed ABOVE its PO (business rule: what FG packs
+        // is what gets shipped); only the product's total stays capped by
+        // the production result (FG_EXCEEDS_PRODUCTION, checked by callers).
+        $isSurplus = !empty($targetByStore[$storeId]['surplus']);
+        $sesuaiVerified = $isSurplus ? null : ($row['sesuaiVerified'] ?? null);
         $sesuaiPacking = $row['sesuaiPacking'] ?? null;
         if ($sesuaiVerified === true && abs($fgVerified - $target) > 0.01) {
             throw new ApiException(400, 'SESUAI_VERIFIED_MISMATCH', "Produk {$product['product_name']} / Toko {$storeName}: status Sesuai requires FG Verified ({$fgVerified}) to equal Target Toko ({$target})");
@@ -1023,10 +1051,15 @@ final class FgService
             ];
         }
 
+        $surplusRow = $exploded ? ($byStore[$unallocatedStoreId] ?? null) : null;
         return [
             'fgBatchId' => $batchId,
             'productId' => $productId,
             'exploded' => $exploded,
+            'unallocatedStoreId' => $unallocatedStoreId,
+            // Stok Sisa of this product in this batch (production kept
+            // aside, not packed for any store).
+            'surplus' => $surplusRow !== null ? (float) $surplusRow['qty'] : 0.0,
             'stores' => $rows,
             'totalTarget' => array_sum(array_column($rows, 'target')),
             'totalVerified' => array_sum(array_column($rows, 'fgVerified')),
