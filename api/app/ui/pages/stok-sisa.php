@@ -127,7 +127,7 @@ foreach ($rows as $r) {
       await Amor.apiFetch('/api/special-orders/items/' + order.items[0].itemId + '/allocate-fg', { method: 'POST', body: { qty: qty } });
       Amor.toast('Pesanan ' + order.orderNo + ' dibuat dan diambil dari Stok Sisa.', 'success');
       setTimeout(function () {
-        location.href = '/api/_ui-preview/?page=' + (kind === 'toko' ? 'pesanan-khusus-toko-detail' : 'pesanan-non-toko-detail') + '&orderId=' + order.orderId;
+        location.href = '/api/_ui-preview/?page=' + (kind === 'toko' ? 'pesanan-khusus-toko-detail' : 'pesanan-non-toko-detail') + '&id=' + order.orderId;
       }, 700);
     } catch (e) { Amor.toast(e.message, 'danger'); }
   }
