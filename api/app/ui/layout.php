@@ -12,7 +12,7 @@ require_once __DIR__ . '/labels.php';
 // could keep serving an old version indefinitely, e.g. masking the
 // evidence-thumbnail sizing fix. Bump this string whenever any of the
 // three assets change.
-const ADMIN_ASSET_VERSION = '20261014-compact';
+const ADMIN_ASSET_VERSION = '20261016-logout';
 
 /**
  * Nav item list — the single source of truth for the sidebar. Every item
@@ -214,6 +214,7 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
             <div class="user-role"><?= ui_esc($primaryRole) ?><?php if ($operatorName !== null): ?> &middot; <?= ui_esc($operatorName) ?> <a href="/api/_admin-login/?action=change_operator&amp;return=<?= urlencode((string) ($_SERVER['REQUEST_URI'] ?? '/api/_ui-preview/')) ?>" style="color:inherit;text-decoration:underline;">(ganti)</a><?php endif; ?></div>
           </div>
         </div>
+        <button type="button" class="icon-btn logout-btn" data-action="logout" title="Keluar / ganti akun" aria-label="Keluar"><?= ui_icon('logout') ?><span class="logout-label">Keluar</span></button>
       </div>
     </header>
     <main class="page">

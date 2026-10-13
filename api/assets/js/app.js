@@ -884,6 +884,13 @@
     watchTables();
     const toggleBtn = document.querySelector('[data-action="toggle-sidebar"]');
     if (toggleBtn) toggleBtn.addEventListener('click', toggleSidebar);
+    const logoutBtn = document.querySelector('[data-action="logout"]');
+    if (logoutBtn) logoutBtn.addEventListener('click', async function () {
+      const ok = await confirmModal({ title: 'Keluar?', body: 'Anda akan keluar dari akun ini dan kembali ke halaman login.', confirmLabel: 'Ya, Keluar' });
+      if (!ok) return;
+      try { await apiFetch('/api/auth/logout', { method: 'POST' }); } catch (e) { /* still leave */ }
+      location.href = '/api/_admin-login/';
+    });
     const themeBtn = document.querySelector('[data-action="toggle-theme"]');
     if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
 

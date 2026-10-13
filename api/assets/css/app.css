@@ -797,3 +797,9 @@ body.is-field .fg-card.cw-row:not(.is-open) .fg-card-actions { display: none; }
 body.is-field .fg-card.cw-row .fg-card-row:has(.fg-verified-sesuai-group, .pk-sesuai) { border-bottom: 0; padding: 2px 0; }
 body.is-field .fg-card.cw-row .fg-card-row:has(.fg-verified-sesuai-group, .pk-sesuai) .fg-card-row-label { display: none; }
 body.is-field .fg-card.cw-row .fg-card-row:has(.fg-verified-sesuai-group, .pk-sesuai) .btn-group { margin-left: auto; }
+
+/* Keluar / ganti akun — always visible, also on phones (the other topbar
+   icon buttons are hidden there). */
+.logout-btn { display: inline-flex !important; align-items: center; gap: 6px; width: auto; padding: 0 10px; }
+.logout-label { font-size: var(--text-sm); font-weight: 600; }
+@media (max-width: 640px) { .logout-label { display: none; } .logout-btn { padding: 0 8px; } }
