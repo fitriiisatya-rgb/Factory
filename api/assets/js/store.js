@@ -576,6 +576,7 @@
     ['jamur', 'Berjamur'], ['basi', 'Basi / bau / asam'], ['keras', 'Keras / kering'],
     ['rusak', 'Rusak / penyok / bocor'], ['lainnya', 'Lainnya'],
   ];
+  function fmtRp(n) { return 'Rp' + Math.round(Number(n) || 0).toLocaleString('id-ID'); }
   function todayLocal() {
     var d = new Date();
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -600,8 +601,8 @@
     if (r.jenis === 'reject_toko') {
       if (r.status === 'waiting_admin_verification') return 'Menunggu dicek pabrik';
       if (r.status === 'rejected') return 'Ditolak' + (r.rejectReason ? ': ' + r.rejectReason : '');
-      var t = r.tindakLanjut === 'ganti' ? 'Disetujui → Diganti' + (r.penggantiOrderNo ? ' (' + r.penggantiOrderNo + ')' : '') : 'Disetujui → Tagihan dipotong';
-      return t + (r.invoiceNo ? ' · ' + r.invoiceNo : ' · invoice berikutnya');
+      var t = r.tindakLanjut === 'ganti' ? 'Disetujui → Diganti' + (r.penggantiOrderNo ? ' (' + r.penggantiOrderNo + ')' : '') + ' + dipotong' : 'Disetujui → Tagihan dipotong';
+      return t + (r.notaNo ? ' · Nota ' + r.notaNo + (r.notaTotal ? ' (−' + fmtRp(r.notaTotal) + ')' : '') : '');
     }
     if (r.status === 'waiting_admin_verification') return 'Dicatat · menunggu admin · tagihan tetap';
     if (r.status === 'rejected') return 'Ditolak' + (r.rejectReason ? ': ' + r.rejectReason : '');

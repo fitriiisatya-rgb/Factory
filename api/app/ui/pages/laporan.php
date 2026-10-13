@@ -129,6 +129,35 @@ $omzetStmt = $pdo->prepare(
 $omzetStmt->execute([$omzetDateFrom, $omzetDateTo]);
 $omzetRows = $omzetStmt->fetchAll();
 
+// Nota Potongan (migration 0021) reduce what a store owes. A nota counts in
+// the period of the invoice it credits (the goods' own period), or its own
+// date while that delivery is not invoiced yet.
+$notaStoreStmt = $pdo->prepare(
+    'SELECT n.store_id, COUNT(*) AS nota_count, SUM(n.total) AS nota_total
+     FROM nota_potongan n
+     LEFT JOIN invoice i ON i.invoice_id = n.invoice_id
+     WHERE COALESCE(i.tanggal, n.tanggal) BETWEEN ? AND ?
+     GROUP BY n.store_id'
+);
+$notaStoreStmt->execute([$omzetDateFrom, $omzetDateTo]);
+$notaByStore = [];
+foreach ($notaStoreStmt->fetchAll() as $r) {
+    $notaByStore[(int) $r['store_id']] = ['count' => (int) $r['nota_count'], 'total' => (float) $r['nota_total']];
+}
+$storeNames = [];
+foreach ($omzetRows as $i => $r) {
+    $n = $notaByStore[(int) $r['store_id']] ?? ['count' => 0, 'total' => 0.0];
+    $omzetRows[$i]['nota_total'] = $n['total'];
+    $omzetRows[$i]['nota_count'] = $n['count'];
+    unset($notaByStore[(int) $r['store_id']]);
+}
+foreach ($notaByStore as $sid => $n) {
+    // A store with notas but no invoice in this period still shows up.
+    $nm = $pdo->prepare('SELECT canonical_name FROM store WHERE store_id = ?');
+    $nm->execute([$sid]);
+    $omzetRows[] = ['store_id' => $sid, 'store_name' => (string) $nm->fetchColumn(), 'invoice_count' => 0, 'total_omset' => 0.0, 'nota_total' => $n['total'], 'nota_count' => $n['count']];
+}
+
 // Omset per Pabrik: every invoice line belongs to the factory that makes
 // the product (product -> division -> factory), so a store invoice that
 // mixes Karangtengah and Cibadak goods is split correctly. Uses the
@@ -147,6 +176,18 @@ $omzetFactoryStmt = $pdo->prepare(
 );
 $omzetFactoryStmt->execute([$omzetDateFrom, $omzetDateTo]);
 $omzetFactoryRows = $omzetFactoryStmt->fetchAll();
+$notaFactoryStmt = $pdo->prepare(
+    "SELECT COALESCE(f.name, 'Tanpa Pabrik') AS factory_name, SUM(it.qty) AS qty, SUM(it.subtotal) AS total
+     FROM nota_potongan n
+     INNER JOIN nota_potongan_item it ON it.nota_potongan_id = n.nota_potongan_id
+     LEFT JOIN invoice i ON i.invoice_id = n.invoice_id
+     LEFT JOIN product p ON p.product_id = it.product_id
+     LEFT JOIN division d ON d.division_id = p.division_id
+     LEFT JOIN factory f ON f.factory_id = d.factory_id
+     WHERE COALESCE(i.tanggal, n.tanggal) BETWEEN ? AND ?
+     GROUP BY COALESCE(f.name, 'Tanpa Pabrik')"
+);
+$notaFactoryStmt->execute([$omzetDateFrom, $omzetDateTo]);
 
 // Omset Non-Toko (CS / Sales Eksekutif / Lainnya / Konsumen Langsung):
 // these orders never go through a store invoice, so they are counted from
@@ -187,6 +228,12 @@ foreach ($omzetFactoryRows as $r) {
     $k = (string) $r['factory_name'];
     $omzetByFactory[$k] = ['factory_name' => $k, 'qty' => (float) $r['qty_terjual'], 'toko' => (float) $r['total_omset'], 'nonToko' => 0.0];
 }
+foreach ($notaFactoryStmt->fetchAll() as $r) {
+    $k = (string) $r['factory_name'];
+    $omzetByFactory[$k] ??= ['factory_name' => $k, 'qty' => 0.0, 'toko' => 0.0, 'nonToko' => 0.0];
+    $omzetByFactory[$k]['qty'] -= (float) $r['qty'];
+    $omzetByFactory[$k]['toko'] -= (float) $r['total'];
+}
 foreach ($nonTokoFactoryStmt->fetchAll() as $r) {
     $k = (string) $r['factory_name'];
     $omzetByFactory[$k] ??= ['factory_name' => $k, 'qty' => 0.0, 'toko' => 0.0, 'nonToko' => 0.0];
@@ -197,10 +244,13 @@ uasort($omzetByFactory, static fn ($a, $b) => ($b['toko'] + $b['nonToko']) <=> (
 
 $omzetTokoTotal = 0.0;
 $omzetInvoiceCount = 0;
+$omzetNotaTotal = 0.0;
 foreach ($omzetRows as $r) {
-    $omzetTokoTotal += (float) $r['total_omset'];
+    $omzetTokoTotal += (float) $r['total_omset'] - (float) $r['nota_total'];
+    $omzetNotaTotal += (float) $r['nota_total'];
     $omzetInvoiceCount += (int) $r['invoice_count'];
 }
+usort($omzetRows, static fn ($a, $b) => ((float) $b['total_omset'] - (float) $b['nota_total']) <=> ((float) $a['total_omset'] - (float) $a['nota_total']));
 $omzetNonTokoTotal = 0.0;
 $omzetNonTokoCount = 0;
 foreach ($nonTokoSourceRows as $r) {
@@ -211,7 +261,7 @@ $omzetTotal = $omzetTokoTotal + $omzetNonTokoTotal;
 ?>
 <div class="card section">
   <div class="card-head"><h2 class="card-title">Laporan Omset / Penjualan per Periode</h2></div>
-  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Toko: dari Invoice yang sudah dibuat. Non-Toko: dari Pesanan Non-Toko berstatus Selesai (menurut tanggal kebutuhan).</p>
+  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Toko: Invoice yang sudah dibuat dikurangi Nota Potongan (reject di toko, mutasi keluar). Non-Toko: dari Pesanan Non-Toko berstatus Selesai (menurut tanggal kebutuhan).</p>
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;margin-bottom:var(--space-4);">
     <input type="hidden" name="page" value="laporan">
     <input type="hidden" name="tanggal" value="<?= ui_esc($uiTanggal) ?>">
@@ -223,7 +273,7 @@ $omzetTotal = $omzetTokoTotal + $omzetNonTokoTotal;
 
   <div class="kpi-grid kpi-grid-4" style="margin-bottom:var(--space-4);">
     <?= ui_kpi_card(['label' => 'Total Omset', 'value' => ui_fmt_money($omzetTotal), 'icon' => 'box', 'color' => 'success']) ?>
-    <?= ui_kpi_card(['label' => 'Omset Toko', 'value' => ui_fmt_money($omzetTokoTotal), 'icon' => 'cart', 'color' => 'primary']) ?>
+    <?= ui_kpi_card(['label' => 'Omset Toko (invoice − nota)', 'value' => ui_fmt_money($omzetTokoTotal), 'icon' => 'cart', 'color' => 'primary']) ?>
     <?= ui_kpi_card(['label' => 'Omset Non-Toko', 'value' => ui_fmt_money($omzetNonTokoTotal), 'icon' => 'user', 'color' => 'primary']) ?>
     <?= ui_kpi_card(['label' => 'Invoice / Pesanan Non-Toko', 'value' => $omzetInvoiceCount . ' / ' . $omzetNonTokoCount, 'icon' => 'file', 'color' => 'neutral']) ?>
   </div>
@@ -262,15 +312,17 @@ $omzetTotal = $omzetTokoTotal + $omzetNonTokoTotal;
   </table></div>
   <?php endif; ?>
   <?php if ($omzetRows !== []): ?>
-  <h3 style="font-size:var(--text-md);margin:0 0 var(--space-2);">Per Toko (Invoice)</h3>
-  <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Toko</th><th class="num">Jumlah Invoice</th><th class="num">Total Omset</th></tr></thead>
+  <h3 style="font-size:var(--text-md);margin:0 0 var(--space-2);">Per Toko (Invoice &minus; Nota Potongan)</h3>
+  <div class="table-scroll"><table class="data-table" id="omset-per-toko">
+    <thead><tr><th>Toko</th><th class="num">Jumlah Invoice</th><th class="num">Total Invoice</th><th class="num">Nota Potongan</th><th class="num">Tagihan Bersih</th></tr></thead>
     <tbody>
     <?php foreach ($omzetRows as $r): ?>
     <tr>
       <td><?= ui_esc($r['store_name']) ?></td>
       <td class="num"><?= (int) $r['invoice_count'] ?></td>
       <td class="num"><?= ui_fmt_money((float) $r['total_omset']) ?></td>
+      <td class="num"><?= (float) $r['nota_total'] > 0 ? '&minus;' . ui_fmt_money((float) $r['nota_total']) . ' (' . (int) $r['nota_count'] . ')' : '-' ?></td>
+      <td class="num"><b><?= ui_fmt_money((float) $r['total_omset'] - (float) $r['nota_total']) ?></b></td>
     </tr>
     <?php endforeach; ?>
     </tbody>
@@ -308,9 +360,15 @@ $flowStmt = $pdo->prepare(
                 INNER JOIN shipment_receipt r ON r.shipment_receipt_id = ri.shipment_receipt_id
                 INNER JOIN shipment s ON s.shipment_id = r.shipment_id
                 WHERE s.tanggal BETWEEN ? AND ? GROUP BY ri.product_id) rc ON rc.product_id = p.product_id
-     LEFT JOIN (SELECT ii.product_id, SUM(ii.qty_invoice) AS qty FROM invoice_item ii
-                INNER JOIN invoice i ON i.invoice_id = ii.invoice_id
-                WHERE i.tanggal BETWEEN ? AND ? GROUP BY ii.product_id) iv ON iv.product_id = p.product_id
+     LEFT JOIN (SELECT x.product_id, SUM(x.qty) AS qty FROM (
+                    SELECT ii.product_id, ii.qty_invoice AS qty FROM invoice_item ii
+                    INNER JOIN invoice i ON i.invoice_id = ii.invoice_id WHERE i.tanggal BETWEEN ? AND ?
+                    UNION ALL
+                    SELECT nit.product_id, -nit.qty FROM nota_potongan_item nit
+                    INNER JOIN nota_potongan n ON n.nota_potongan_id = nit.nota_potongan_id
+                    LEFT JOIN invoice ni ON ni.invoice_id = n.invoice_id
+                    WHERE COALESCE(ni.tanggal, n.tanggal) BETWEEN ? AND ?
+                ) x GROUP BY x.product_id) iv ON iv.product_id = p.product_id
      LEFT JOIN (SELECT product_id, SUM(qty) AS qty FROM retur_request
                 WHERE jenis = 'retur' AND status = 'verified' AND retur_date BETWEEN ? AND ? GROUP BY product_id) rt ON rt.product_id = p.product_id
      LEFT JOIN (SELECT product_id, SUM(qty) AS qty FROM retur_request
@@ -321,6 +379,7 @@ $flowStmt = $pdo->prepare(
 );
 $flowStmt->execute([
     $flowDateFrom, $flowDateTo, $flowFactoryId,
+    $flowDateFrom, $flowDateTo,
     $flowDateFrom, $flowDateTo,
     $flowDateFrom, $flowDateTo,
     $flowDateFrom, $flowDateTo,

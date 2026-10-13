@@ -111,6 +111,11 @@ final class App
         $router->post('/api/do/{id}/shipment-preview', [DoController::class, 'shipmentPreview']);
         $router->post('/api/do/{id}/ship', [DoController::class, 'ship']);
 
+        $router->get('/api/invoices/ready', [InvoiceController::class, 'ready']);
+        $router->post('/api/invoices/generate-ready', [InvoiceController::class, 'generateReady']);
+        $router->get('/api/nota-potongan', [InvoiceController::class, 'notaList']);
+        $router->get('/api/nota-potongan/{id}', [InvoiceController::class, 'notaShow']);
+        $router->post('/api/nota-potongan/{id}/void', [InvoiceController::class, 'notaVoid']);
         $router->get('/api/invoices/preview', [InvoiceController::class, 'preview']);
         $router->get('/api/invoices', [InvoiceController::class, 'index']);
         $router->post('/api/invoices', [InvoiceController::class, 'generate']);
@@ -245,6 +250,7 @@ final class App
         $router->get('/api/admin/retur/{id}', [StorePortalAdminController::class, 'returShow']);
         $router->post('/api/admin/retur/{id}/verify', [StorePortalAdminController::class, 'returVerify']);
         $router->post('/api/admin/retur/{id}/reject', [StorePortalAdminController::class, 'returReject']);
+        $router->post('/api/admin/retur/{id}/nota', [StorePortalAdminController::class, 'returIssueNota']);
         $router->get('/api/admin/mutasi', [StorePortalAdminController::class, 'mutasiList']);
         $router->get('/api/admin/mutasi/evidence/{id}', [StorePortalAdminController::class, 'mutasiEvidence']);
         $router->get('/api/admin/mutasi/{id}', [StorePortalAdminController::class, 'mutasiShow']);

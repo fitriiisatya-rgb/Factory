@@ -6,6 +6,7 @@ namespace Amor\Api\StorePortal;
 
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
+use Amor\Api\Invoice\NotaPotonganService;
 use Amor\Api\Repositories\ProductRepository;
 use Amor\Api\Services\DocumentSequenceService;
 use Amor\Api\SpecialOrder\SpecialOrderService;
@@ -21,8 +22,8 @@ use PDO;
  *     touches stock.
  *   - 'reject_toko' — goods that spoiled in the store BEFORE their expiry
  *     date (e.g. mold). Factory burden: once Admin verifies it (choosing
- *     'potong' or 'ganti'), InvoiceService deducts qty x harga from the
- *     store's next invoice (retur_request.invoice_id marks it consumed).
+ *     'potong' or 'ganti'), a Nota Potongan (migration 0021) credits
+ *     qty x harga against the invoice of the delivery the goods came from.
  *     'ganti' additionally creates a Pesanan Khusus Toko replacement,
  *     billed normally on receipt — so the store pays once for goods it
  *     could actually sell.
@@ -225,10 +226,35 @@ final class ReturService
         }
 
         $this->repo->markRejectTokoVerified($this->pdo, $returId, $adminUserId, $tindakLanjut, $orderId);
+        (new NotaPotonganService($this->pdo))->createForRejectToko($this->repo->lockById($this->pdo, $returId), $adminUserId, $requestId);
         Audit::write(
             $this->pdo, $requestId, $adminUserId, 'reject_toko.verified', 'retur_request', (string) $returId, 'ok', 1, 2,
             ['tindakLanjut' => $tindakLanjut, 'penggantiOrderId' => $orderId]
         );
+        return $this->buildDto($this->repo->findById($this->pdo, $returId));
+    }
+
+    /**
+     * Re-issues the Nota Potongan of an approved Reject di Toko whose nota was
+     * voided (e.g. to correct it).
+     *
+     * @throws ApiException 404 NOT_FOUND | 409 INVALID_RETUR_STATUS | NOTA_EXISTS
+     */
+    public function issueNota(int $returId, int $adminUserId, ?string $requestId): array
+    {
+        $row = $this->repo->lockById($this->pdo, $returId);
+        if ($row === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'Pengajuan tidak ditemukan');
+        }
+        if (($row['jenis'] ?? '') !== 'reject_toko' || $row['status'] !== 'verified') {
+            throw new ApiException(409, 'INVALID_RETUR_STATUS', 'Nota potongan hanya untuk Reject di Toko yang sudah disetujui');
+        }
+        $has = $this->pdo->prepare('SELECT COUNT(*) FROM nota_potongan WHERE retur_request_id = ?');
+        $has->execute([$returId]);
+        if ((int) $has->fetchColumn() > 0) {
+            throw new ApiException(409, 'NOTA_EXISTS', 'Nota potongan untuk reject ini sudah ada');
+        }
+        (new NotaPotonganService($this->pdo))->createForRejectToko($row, $adminUserId, $requestId);
         return $this->buildDto($this->repo->findById($this->pdo, $returId));
     }
 
@@ -270,7 +296,9 @@ final class ReturService
             'tindakLanjut' => $r['tindak_lanjut'] ?? null,
             'penggantiOrderId' => isset($r['pengganti_order_id']) ? (int) $r['pengganti_order_id'] : null,
             'penggantiOrderNo' => $r['pengganti_order_no'] ?? null,
-            'invoiceId' => isset($r['invoice_id']) ? (int) $r['invoice_id'] : null,
+            'notaId' => isset($r['nota_id']) ? (int) $r['nota_id'] : null,
+            'notaNo' => $r['nota_no'] ?? null,
+            'notaTotal' => isset($r['nota_total']) ? (float) $r['nota_total'] : null,
             'invoiceNo' => $r['invoice_no'] ?? null,
             'harga' => isset($r['harga']) ? (float) $r['harga'] : null,
             'notes' => $r['notes'],
@@ -305,6 +333,8 @@ final class ReturService
             'expDate' => $r['exp_date'] ?? null,
             'tindakLanjut' => $r['tindak_lanjut'] ?? null,
             'penggantiOrderNo' => $r['pengganti_order_no'] ?? null,
+            'notaNo' => $r['nota_no'] ?? null,
+            'notaTotal' => isset($r['nota_total']) ? (float) $r['nota_total'] : null,
             'invoiceNo' => $r['invoice_no'] ?? null,
             'rejectReason' => $r['reject_reason'] ?? null,
             'returDate' => $r['retur_date'],

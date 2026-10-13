@@ -126,6 +126,17 @@ final class StorePortalAdminController
         });
     }
 
+    /** POST /api/admin/retur/{id}/nota — re-issue the Nota Potongan of an approved Reject di Toko. */
+    public static function returIssueNota(Request $request): void
+    {
+        $userId = Auth::requireRole(...self::ADMIN_ROLES);
+        $id = (int) $request->routeParams['id'];
+        Idempotency::handle($request, 'POST /api/admin/retur/{id}/nota', function (PDO $pdo) use ($userId, $id, $request) {
+            $dto = (new ReturService($pdo))->issueNota($id, $userId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'retur_request', 'recordKey' => (string) $id];
+        });
+    }
+
     /** GET /api/admin/retur/evidence/{id} — streams one Retur evidence photo. Same discipline as ReceiptController::adminEvidence(): real filesystem path never exposed, no Admin-upload counterpart (evidence is STORE evidence only). */
     public static function returEvidence(Request $request): void
     {

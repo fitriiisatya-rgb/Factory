@@ -13,6 +13,13 @@ require __DIR__ . '/../app/ui/bootstrap.php';
 require_once __DIR__ . '/../app/ui/labels.php';
 require_once __DIR__ . '/../app/ui/print-invoice-template.php';
 
+if (!in_array('ADMIN', $ui['roles'], true)) {
+    http_response_code(403);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:600px;margin:2rem auto;"><h1>Akses Ditolak</h1></body></html>';
+    exit;
+}
+
 use Amor\Api\Invoice\InvoiceService;
 
 $invoiceId = isset($_GET['invoiceId']) ? (int) $_GET['invoiceId'] : 0;

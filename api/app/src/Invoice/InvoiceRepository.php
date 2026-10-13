@@ -106,9 +106,10 @@ final class InvoiceRepository
              WHERE mr.{$storeColumn} = ? AND mr.status = 'completed'
                AND DATE(mr.confirmed_at) BETWEEN ? AND ?
                AND mr.mutasi_request_id NOT IN (SELECT mutasi_request_id FROM invoice_mutasi WHERE direction = ?)
+               AND (? = 'in' OR mr.mutasi_request_id NOT IN (SELECT mutasi_request_id FROM nota_potongan WHERE mutasi_request_id IS NOT NULL))
              GROUP BY mr.product_id, p.name"
         );
-        $stmt->execute([$storeId, $dateFrom, $dateTo, $direction]);
+        $stmt->execute([$storeId, $dateFrom, $dateTo, $direction, $direction]);
         return array_map(static fn ($r) => [
             'productId' => (int) $r['product_id'], 'productName' => (string) $r['product_name'], 'qty' => (float) $r['qty'],
         ], $stmt->fetchAll());
@@ -121,68 +122,120 @@ final class InvoiceRepository
             "SELECT mutasi_request_id FROM mutasi_request mr
              WHERE mr.{$storeColumn} = ? AND mr.status = 'completed'
                AND DATE(mr.confirmed_at) BETWEEN ? AND ?
-               AND mr.mutasi_request_id NOT IN (SELECT mutasi_request_id FROM invoice_mutasi WHERE direction = ?)"
+               AND mr.mutasi_request_id NOT IN (SELECT mutasi_request_id FROM invoice_mutasi WHERE direction = ?)
+               AND (? = 'in' OR mr.mutasi_request_id NOT IN (SELECT mutasi_request_id FROM nota_potongan WHERE mutasi_request_id IS NOT NULL))"
         );
-        $stmt->execute([$storeId, $dateFrom, $dateTo, $direction]);
+        $stmt->execute([$storeId, $dateFrom, $dateTo, $direction, $direction]);
         return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
     }
 
     /**
-     * Verified Reject di Toko (migration 0020) for this store not yet
-     * deducted on any invoice. No lower date bound on purpose: a reject
-     * verified after its delivery's invoice was already issued is carried
-     * into the store's NEXT invoice instead of being lost.
+     * Deliveries (regular DO or special DO) that can be invoiced now: at
+     * least one not-yet-invoiced active shipment whose receipt is confirmed
+     * (confirmed_ok, or Admin-verified), and NO shipment of the same DO
+     * still waiting for the store or for Admin — so a DO normally gets
+     * exactly one invoice.
      *
-     * @return array<int,array{returId:int,productId:int,productName:string,qty:float,docNo:string}>
+     * @param string $column 'delivery_order_id' | 'special_order_do_id'
+     * @return array<int,array{refId:int,storeId:int}>
      */
-    public function findEligibleRejectToko(PDO $pdo, int $storeId, string $dateTo): array
+    public function findReadyDeliveries(PDO $pdo, string $column): array
+    {
+        $rows = $pdo->query(
+            "SELECT sh.{$column} AS ref_id, sh.store_id,
+                    SUM(CASE WHEN sr.status IN ('confirmed_ok','verified') THEN 1 ELSE 0 END) AS ok_count,
+                    SUM(CASE WHEN sr.status IN ('confirmed_ok','verified') THEN 0 ELSE 1 END) AS waiting_count
+             FROM shipment sh
+             LEFT JOIN shipment_receipt sr ON sr.shipment_id = sh.shipment_id
+             WHERE sh.status = 'active' AND sh.{$column} IS NOT NULL
+               AND sh.shipment_id NOT IN (SELECT shipment_id FROM invoice_shipment)
+             GROUP BY sh.{$column}, sh.store_id
+             HAVING ok_count > 0 AND waiting_count = 0
+             ORDER BY MIN(sh.tanggal), sh.{$column}"
+        )->fetchAll();
+        return array_map(static fn ($r) => ['refId' => (int) $r['ref_id'], 'storeId' => (int) $r['store_id']], $rows);
+    }
+
+    /** @return array<int,array{shipment_id:int,tanggal:string}> not-yet-invoiced confirmed shipments of one DO for one store */
+    public function findDeliveryShipments(PDO $pdo, string $column, int $refId, int $storeId): array
     {
         $stmt = $pdo->prepare(
-            "SELECT rr.retur_request_id, rr.product_id, p.name AS product_name, rr.qty, rr.doc_no
-             FROM retur_request rr
-             INNER JOIN product p ON p.product_id = rr.product_id
-             WHERE rr.store_id = ? AND rr.jenis = 'reject_toko' AND rr.status = 'verified'
-               AND rr.invoice_id IS NULL AND DATE(rr.verified_at) <= ?
-             ORDER BY rr.retur_request_id"
+            "SELECT sh.shipment_id, sh.tanggal FROM shipment sh
+             INNER JOIN shipment_receipt sr ON sr.shipment_id = sh.shipment_id
+             WHERE sh.{$column} = ? AND sh.store_id = ? AND sh.status = 'active'
+               AND sr.status IN ('confirmed_ok','verified')
+               AND sh.shipment_id NOT IN (SELECT shipment_id FROM invoice_shipment)
+             ORDER BY sh.tanggal, sh.shipment_id"
         );
-        $stmt->execute([$storeId, $dateTo]);
+        $stmt->execute([$refId, $storeId]);
+        return $stmt->fetchAll();
+    }
+
+    /** @return array<int,array{productId:int,productName:string,qty:float}> received-good qty per product across the given shipments */
+    public function findQtyByProductForShipments(PDO $pdo, array $shipmentIds): array
+    {
+        if ($shipmentIds === []) {
+            return [];
+        }
+        $in = implode(',', array_fill(0, count($shipmentIds), '?'));
+        $stmt = $pdo->prepare(
+            "SELECT sri.product_id, p.name AS product_name, SUM(sri.received_good_qty) AS qty
+             FROM shipment_receipt_item sri
+             INNER JOIN shipment_receipt sr ON sr.shipment_receipt_id = sri.shipment_receipt_id
+             INNER JOIN product p ON p.product_id = sri.product_id
+             WHERE sr.shipment_id IN ({$in}) AND sri.product_id IS NOT NULL
+             GROUP BY sri.product_id, p.name"
+        );
+        $stmt->execute(array_values($shipmentIds));
         return array_map(static fn ($r) => [
-            'returId' => (int) $r['retur_request_id'], 'productId' => (int) $r['product_id'],
-            'productName' => (string) $r['product_name'], 'qty' => (float) $r['qty'], 'docNo' => (string) $r['doc_no'],
+            'productId' => (int) $r['product_id'], 'productName' => (string) $r['product_name'], 'qty' => (float) $r['qty'],
         ], $stmt->fetchAll());
     }
 
-    /** Marks a Reject di Toko as deducted on this invoice. invoice_id IS NULL guard keeps it exactly-once. */
-    public function linkRejectToko(PDO $pdo, int $invoiceId, int $returId): void
+    /** Completed Mutasi not yet invoiced to the DESTINATION store. */
+    public function findMutasiReadyForInvoice(PDO $pdo): array
     {
-        $pdo->prepare('UPDATE retur_request SET invoice_id = ?, updated_at = UTC_TIMESTAMP() WHERE retur_request_id = ? AND invoice_id IS NULL')
-            ->execute([$invoiceId, $returId]);
+        return $pdo->query(
+            "SELECT mr.*, p.name AS product_name FROM mutasi_request mr
+             INNER JOIN product p ON p.product_id = mr.product_id
+             WHERE mr.status = 'completed' AND COALESCE(mr.qty_received, 0) > 0
+               AND mr.mutasi_request_id NOT IN (SELECT mutasi_request_id FROM invoice_mutasi WHERE direction = 'in')
+             ORDER BY mr.mutasi_request_id"
+        )->fetchAll();
     }
 
-    /** @return array<int,array> Reject di Toko deducted on this invoice */
-    public function findRejectTokoForInvoice(PDO $pdo, int $invoiceId): array
+    /** Completed Mutasi whose SOURCE store has neither a nota nor a period-invoice deduction yet. */
+    public function findMutasiReadyForNota(PDO $pdo): array
     {
-        $stmt = $pdo->prepare(
-            'SELECT rr.doc_no, rr.qty, rr.kondisi, rr.tindak_lanjut, rr.retur_date, p.name AS product_name
-             FROM retur_request rr INNER JOIN product p ON p.product_id = rr.product_id
-             WHERE rr.invoice_id = ? ORDER BY rr.doc_no'
-        );
+        return $pdo->query(
+            "SELECT mr.* FROM mutasi_request mr
+             WHERE mr.status = 'completed' AND COALESCE(mr.qty_received, 0) > 0
+               AND mr.mutasi_request_id NOT IN (SELECT mutasi_request_id FROM invoice_mutasi WHERE direction = 'out')
+               AND mr.mutasi_request_id NOT IN (SELECT mutasi_request_id FROM nota_potongan WHERE mutasi_request_id IS NOT NULL)
+             ORDER BY mr.mutasi_request_id"
+        )->fetchAll();
+    }
+
+    /** @return array<int,array> notas issued against this invoice */
+    public function findNotasForInvoice(PDO $pdo, int $invoiceId): array
+    {
+        $stmt = $pdo->prepare('SELECT * FROM nota_potongan WHERE invoice_id = ? ORDER BY nota_potongan_id');
         $stmt->execute([$invoiceId]);
         return $stmt->fetchAll();
     }
 
     /** @return array{id:int} */
-    public function insertInvoice(PDO $pdo, string $invoiceNo, string $tanggal, int $storeId, float $total): int
+    public function insertInvoice(PDO $pdo, string $invoiceNo, string $tanggal, int $storeId, float $total, string $sourceKind = 'periode', ?int $sourceRefId = null): int
     {
         $stmt = $pdo->prepare(
-            'INSERT INTO invoice (invoice_no, batch, tanggal, store_id, total, rate_pct, rate_source, sumber, legacy_fulfillment_status, version, created_at)
-             VALUES (?, ?, ?, ?, ?, 100.00, \'default\', \'kirim\', \'verified\', 1, UTC_TIMESTAMP())'
+            'INSERT INTO invoice (invoice_no, batch, tanggal, store_id, total, rate_pct, rate_source, sumber, legacy_fulfillment_status, source_kind, source_ref_id, version, created_at)
+             VALUES (?, ?, ?, ?, ?, 100.00, \'default\', \'kirim\', \'verified\', ?, ?, 1, UTC_TIMESTAMP())'
         );
         // batch reuses invoice_no verbatim (both already globally unique via
         // the same DocumentSequenceService allocation) — see this
         // migration's own schema-v1-0018-invoice.sql docblock for why this
         // never needed a second, separately-meaningful value.
-        $stmt->execute([$invoiceNo, $invoiceNo, $tanggal, $storeId, $total]);
+        $stmt->execute([$invoiceNo, $invoiceNo, $tanggal, $storeId, $total, $sourceKind, $sourceRefId]);
         return (int) $pdo->lastInsertId();
     }
 
@@ -242,10 +295,11 @@ final class InvoiceRepository
     public function findShipmentsForInvoice(PDO $pdo, int $invoiceId): array
     {
         $stmt = $pdo->prepare(
-            'SELECT sh.shipment_id, sh.tanggal, do2.doc_no AS do_doc_no
+            'SELECT sh.shipment_id, sh.tanggal, COALESCE(do2.doc_no, sdo.doc_no) AS do_doc_no
              FROM invoice_shipment iis
              INNER JOIN shipment sh ON sh.shipment_id = iis.shipment_id
              LEFT JOIN delivery_order do2 ON do2.delivery_order_id = sh.delivery_order_id
+             LEFT JOIN special_order_do sdo ON sdo.special_order_do_id = sh.special_order_do_id
              WHERE iis.invoice_id = ? ORDER BY sh.tanggal'
         );
         $stmt->execute([$invoiceId]);
@@ -272,7 +326,8 @@ final class InvoiceRepository
     /** @return array<int,array> newest first; $storeId/$dateFrom/$dateTo are optional filters. */
     public function listAll(PDO $pdo, ?int $storeId, ?string $dateFrom, ?string $dateTo): array
     {
-        $sql = 'SELECT i.invoice_id, i.invoice_no, i.tanggal, i.store_id, i.total, i.created_at, s.canonical_name AS store_name
+        $sql = 'SELECT i.invoice_id, i.invoice_no, i.tanggal, i.store_id, i.total, i.source_kind, i.created_at, s.canonical_name AS store_name,
+                       (SELECT COALESCE(SUM(n.total), 0) FROM nota_potongan n WHERE n.invoice_id = i.invoice_id) AS nota_total
                 FROM invoice i INNER JOIN store s ON s.store_id = i.store_id WHERE 1=1';
         $params = [];
         if ($storeId !== null) { $sql .= ' AND i.store_id = ?'; $params[] = $storeId; }
@@ -284,7 +339,7 @@ final class InvoiceRepository
         return $stmt->fetchAll();
     }
 
-    /** Hard delete — cascades to invoice_item/invoice_shipment/invoice_mutasi (and retur_request.invoice_id is SET NULL by its FK), releasing their rows back to the eligible pool. See this migration's own schema docblock for why this is safe (nothing references a generated Invoice yet). */
+    /** Hard delete — cascades to invoice_item/invoice_shipment/invoice_mutasi (InvoiceService::void() unlinks Nota Potongan first), releasing their rows back to the eligible pool. See this migration's own schema docblock for why this is safe (nothing references a generated Invoice yet). */
     public function deleteInvoice(PDO $pdo, int $invoiceId): void
     {
         $pdo->prepare('DELETE FROM invoice WHERE invoice_id = ?')->execute([$invoiceId]);

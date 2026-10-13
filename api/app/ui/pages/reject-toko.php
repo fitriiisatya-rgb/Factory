@@ -8,10 +8,10 @@ use Amor\Api\StorePortal\ReturService;
  * Admin "Reject di Toko" (migration 0020) — goods that spoiled in the
  * store BEFORE their expiry date (mold, stale…), reported later from the
  * Portal's "Lapor Barang" menu. FACTORY burden, unlike a Retur:
- *   - Potong invoice: qty x harga is deducted from the store's next
- *     invoice.
- *   - Ganti barang: the same deduction, plus a Pesanan Khusus Toko
- *     replacement (billed normally once received).
+ *   - Potong invoice: a Nota Potongan (qty x harga) is issued against the
+ *     invoice of the DO that delivered the goods.
+ *   - Ganti barang: the same nota, plus a Pesanan Khusus Toko replacement
+ *     (billed normally once received).
  * Every mutation goes through the real JSON API via Amor.apiFetch.
  */
 
@@ -44,11 +44,10 @@ foreach ($allRows as $r) {
         continue;
     }
     $d = $detail[$r['returId']] ?? $service->getForAdmin((int) $r['returId']);
-    $nilai = (float) $d['qty'] * (float) ($d['harga'] ?? 0);
-    if ($d['invoiceId'] === null) {
-        $pendingDeduct += $nilai;
+    if ($d['notaId'] === null) {
+        $pendingDeduct += (float) $d['qty'] * (float) ($d['harga'] ?? 0);
     } else {
-        $deducted += $nilai;
+        $deducted += (float) $d['notaTotal'];
     }
 }
 $tabs = ['waiting_admin_verification' => 'Menunggu Keputusan', 'verified' => 'Sudah Diproses', 'rejected' => 'Ditolak', '' => 'Semua'];
@@ -56,15 +55,15 @@ $tomorrow = (new DateTimeImmutable('tomorrow', new DateTimeZone('Asia/Jakarta'))
 ?>
 <div class="alert alert-danger" style="display:flex;gap:var(--space-3);align-items:flex-start;">
   <span style="font-size:1.6rem;line-height:1;">⚠️</span>
-  <div><strong>Reject di Toko = tanggungan pabrik.</strong> Barang rusak/berjamur <em>sebelum</em> tanggal expired. Setelah disetujui, nilainya
-  <strong>dipotong dari invoice toko berikutnya</strong>. Pilih <strong>Ganti barang</strong> bila toko perlu kiriman pengganti (pengganti ditagih normal).
+  <div><strong>Reject di Toko = tanggungan pabrik.</strong> Barang rusak/berjamur <em>sebelum</em> tanggal expired. Setelah disetujui, otomatis terbit
+  <strong>Nota Potongan</strong> atas invoice DO yang mengirim barang itu (invoice tidak diubah). Pilih <strong>Ganti barang</strong> bila toko perlu kiriman pengganti (pengganti ditagih normal).
   Barang tidak laku / lewat expired adalah <a href="/api/_ui-preview/?page=retur-review">Retur</a> (hanya dicatat, tidak memotong invoice).</div>
 </div>
 
 <div class="kpi-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));">
   <?= ui_kpi_card(['label' => 'Menunggu Keputusan', 'value' => (string) $waiting, 'icon' => 'bolt', 'color' => $waiting > 0 ? 'warning' : 'neutral']) ?>
-  <?= ui_kpi_card(['label' => 'Akan Dipotong (invoice berikutnya)', 'value' => ui_fmt_money($pendingDeduct), 'icon' => 'file', 'color' => 'warning']) ?>
-  <?= ui_kpi_card(['label' => 'Sudah Dipotong di Invoice', 'value' => ui_fmt_money($deducted), 'icon' => 'box', 'color' => 'neutral']) ?>
+  <?= ui_kpi_card(['label' => 'Nota Potongan Terbit', 'value' => ui_fmt_money($deducted), 'icon' => 'file', 'color' => 'neutral']) ?>
+  <?= ui_kpi_card(['label' => 'Disetujui, Nota Belum Terbit', 'value' => ui_fmt_money($pendingDeduct), 'icon' => 'box', 'color' => $pendingDeduct > 0 ? 'warning' : 'neutral']) ?>
 </div>
 
 <div class="filter-bar">
@@ -98,7 +97,12 @@ $tomorrow = (new DateTimeImmutable('tomorrow', new DateTimeZone('Asia/Jakarta'))
         <?php else: ?>
           <?= ui_badge($d['tindakLanjut'] === 'ganti' ? 'Ganti barang' : 'Potong invoice') ?>
           <div style="font-size:.8rem;color:var(--text-faint);">
-            <?= $d['invoiceNo'] !== null ? 'Dipotong di ' . ui_esc($d['invoiceNo']) : 'Dipotong di invoice berikutnya' ?>
+            <?php if ($d['notaId'] !== null): ?>
+              Nota <a target="_blank" href="/api/_ui-preview/print-nota.php?notaId=<?= (int) $d['notaId'] ?>"><?= ui_esc((string) $d['notaNo']) ?></a> &minus;<?= ui_fmt_money((float) $d['notaTotal']) ?>
+              <br>atas <?= $d['invoiceNo'] !== null ? ui_esc((string) $d['invoiceNo']) : 'invoice DO-nya (menyusul)' ?>
+            <?php else: ?>
+              Nota belum terbit <button type="button" class="btn btn-secondary btn-sm btn-issue-nota" style="margin-top:4px;">Terbitkan Nota</button>
+            <?php endif; ?>
             <?php if ($d['penggantiOrderId'] !== null): ?><br>Pengganti: <a href="/api/_ui-preview/?page=pesanan-khusus-toko-detail&id=<?= (int) $d['penggantiOrderId'] ?>"><?= ui_esc((string) $d['penggantiOrderNo']) ?></a><?php endif; ?>
           </div>
         <?php endif; ?>
@@ -163,8 +167,8 @@ $tomorrow = (new DateTimeImmutable('tomorrow', new DateTimeZone('Asia/Jakarta'))
       var row = rowOf(btn);
       var html =
         '<p style="margin:0 0 var(--space-3);"><strong>' + esc(row.dataset.label) + '</strong><br>Nilai: ' + esc(row.dataset.nilai) + '</p>' +
-        '<label class="rt-choice"><input type="radio" name="rt-tl" value="potong" checked> <span><strong>Potong invoice</strong><br><small>Nilai dikurangkan dari invoice toko berikutnya. Tidak ada kiriman pengganti.</small></span></label>' +
-        '<label class="rt-choice"><input type="radio" name="rt-tl" value="ganti"> <span><strong>Ganti barang</strong><br><small>Tetap dipotong, dan dibuat Pesanan Khusus Toko pengganti (ditagih normal setelah diterima). Bisa diproduksi atau diambil dari Stok Sisa.</small></span></label>' +
+        '<label class="rt-choice"><input type="radio" name="rt-tl" value="potong" checked> <span><strong>Potong invoice</strong><br><small>Terbit Nota Potongan atas invoice DO-nya. Tidak ada kiriman pengganti.</small></span></label>' +
+        '<label class="rt-choice"><input type="radio" name="rt-tl" value="ganti"> <span><strong>Ganti barang</strong><br><small>Tetap terbit Nota Potongan, dan dibuat Pesanan Khusus Toko pengganti (ditagih normal setelah diterima). Bisa diproduksi atau diambil dari Stok Sisa.</small></span></label>' +
         '<div class="field" id="rt-date-wrap" style="display:none;margin-top:var(--space-3);"><label>Tanggal kirim pengganti</label><input type="date" id="rt-date" value="' + TOMORROW + '"></div>';
       var result = null;
       var ok = await Amor.confirmModal({
@@ -180,7 +184,7 @@ $tomorrow = (new DateTimeImmutable('tomorrow', new DateTimeZone('Asia/Jakarta'))
         Amor.toast('Disetujui. Pesanan pengganti ' + result.penggantiOrderNo + ' dibuat.', 'success');
         setTimeout(function () { location.href = '/api/_ui-preview/?page=pesanan-khusus-toko-detail&id=' + result.penggantiOrderId; }, 800);
       } else {
-        Amor.toast('Disetujui. Akan dipotong di invoice berikutnya.', 'success');
+        Amor.toast('Disetujui. Nota potongan diterbitkan.', 'success');
         setTimeout(function () { location.reload(); }, 600);
       }
     });
@@ -190,6 +194,17 @@ $tomorrow = (new DateTimeImmutable('tomorrow', new DateTimeZone('Asia/Jakarta'))
       var w = document.getElementById('rt-date-wrap');
       if (w) w.style.display = e.target.value === 'ganti' ? '' : 'none';
     }
+  });
+
+  document.querySelectorAll('.btn-issue-nota').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      btn.disabled = true;
+      try {
+        await Amor.apiFetch('/api/admin/retur/' + rowOf(btn).dataset.retur + '/nota', { method: 'POST', body: {} });
+        Amor.toast('Nota potongan diterbitkan.', 'success');
+        location.reload();
+      } catch (e) { Amor.toast(e.message, 'danger'); btn.disabled = false; }
+    });
   });
 
   document.querySelectorAll('.btn-reject').forEach(function (btn) {

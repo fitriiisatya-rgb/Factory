@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * Reject di Toko integration suite (migration 0020) — RJT-01..11. Run
+ * Reject di Toko integration suite (migration 0020) — RJT-01..14. Run
  * via api/tests/run-reject-toko.sh, which stands up a disposable local
  * MariaDB, applies ALL migrations 0001-0020, bootstraps realistic master
  * data, then drives the real Portal "Lapor Barang" + admin + invoice API against
@@ -352,59 +352,70 @@ runTest('RJT-05 Approving a Reject di Toko requires a follow-up (potong/ganti)',
     expect($r['status'] === 400 && ($r['json']['code'] ?? null) === 'TINDAK_LANJUT_REQUIRED', 'got ' . json_encode($r['json']));
 });
 
-runTest('RJT-06 Verified Reject (potong) is deducted from the invoice; a verified Retur is NOT', function () use (&$rejectId, &$returId, $adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $tokenA, $pShipId, $today, $winFrom, $winTo) {
+function notaFor(PDO $pdo, int $returId): ?array
+{
+    $r = $pdo->query("SELECT * FROM nota_potongan WHERE retur_request_id = {$returId}")->fetch();
+    return $r ?: null;
+}
+function readyFor(HttpInv $http, int $storeId): array
+{
+    $r = $http->request('GET', '/api/invoices/ready');
+    expect($r['status'] === 200, 'ready failed: ' . json_encode($r['json']));
+    return $r['json']['data'];
+}
+
+runTest('RJT-06 Approving a Reject di Toko issues a Nota Potongan (pending its DO invoice); a verified Retur issues none', function () use (&$rejectId, &$returId, $adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $tokenA, $pShipId, $today) {
     shipAndConfirmClean($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $tokenA, $today, $pShipId, 10.0);
-    $before = lineFor(previewA($adminHttp, $storeA, $winFrom, $winTo), $pShipId);
-    expect($before !== null && (float) $before['qtyInvoice'] === 10.0, 'expected 10 billable before any decision, got ' . json_encode($before));
+    $ready = readyFor($adminHttp, $storeA);
+    expect(count(array_filter($ready['deliveries'], static fn ($d) => $d['storeId'] === $storeA && $d['kind'] === 'do')) === 1, 'expected the confirmed DO to be ready, got ' . json_encode($ready));
 
     $v = adminPost($adminHttp, $adminCsrf, "/api/admin/retur/{$rejectId}/verify", ['tindakLanjut' => 'potong']);
-    expect($v['status'] === 200 && $v['json']['data']['tindakLanjut'] === 'potong' && $v['json']['data']['penggantiOrderId'] === null, 'verify failed: ' . json_encode($v['json']));
-    $v2 = adminPost($adminHttp, $adminCsrf, "/api/admin/retur/{$returId}/verify", []);
-    expect($v2['status'] === 200, 'retur verify failed: ' . json_encode($v2['json']));
+    expect($v['status'] === 200 && $v['json']['data']['tindakLanjut'] === 'potong', 'verify failed: ' . json_encode($v['json']));
+    expect(str_starts_with((string) $v['json']['data']['notaNo'], 'NP/KRM/'), 'expected a nota number, got ' . json_encode($v['json']['data']));
+    $n = notaFor($pdo, $rejectId);
+    expect($n !== null && (float) $n['total'] === 10000.0 && $n['invoice_id'] === null && $n['shipment_id'] !== null, 'expected a 10.000 nota pending its invoice, got ' . json_encode($n));
 
-    $pv = previewA($adminHttp, $storeA, $winFrom, $winTo);
-    $line = lineFor($pv, $pShipId);
-    expect($line !== null && (float) $line['qtyInvoice'] === 8.0, 'expected 10 - 2 reject = 8 (retur 3 NOT deducted), got ' . json_encode($line));
-    expect((float) $line['subtotal'] === 40000.0, 'expected 8 x 5000, got ' . json_encode($line));
-    expect(count($pv['rejectToko']) === 1 && (float) $pv['rejectTokoTotal'] === 10000.0, 'expected one 10.000 reject deduction, got ' . json_encode($pv['rejectToko']));
+    $v2 = adminPost($adminHttp, $adminCsrf, "/api/admin/retur/{$returId}/verify", []);
+    expect($v2['status'] === 200 && notaFor($pdo, $returId) === null, 'a Retur must never get a nota');
 });
 
 $invId = null;
-runTest('RJT-07 Generate consumes the reject exactly once (invoice detail lists it, next preview does not)', function () use (&$invId, &$rejectId, $adminHttp, $adminCsrf, $pdo, $storeA, $winFrom, $winTo) {
-    $g = adminPost($adminHttp, $adminCsrf, '/api/invoices', ['storeId' => $storeA, 'dateFrom' => $winFrom, 'dateTo' => $winTo]);
-    expect($g['status'] === 200, 'generate failed: ' . json_encode($g['json']));
-    $invId = (int) $g['json']['data']['invoiceId'];
-    expect((float) $g['json']['data']['summary']['total'] === 40000.0, 'expected total 40.000, got ' . json_encode($g['json']['data']['summary']));
-    expect(count($g['json']['data']['rejectToko']) === 1, 'detail should list the reject');
-    $linked = (int) $pdo->query("SELECT invoice_id FROM retur_request WHERE retur_request_id = {$rejectId}")->fetchColumn();
-    expect($linked === $invId, 'reject should be linked to the invoice');
-    expect(previewA($adminHttp, $storeA, $winFrom, $winTo)['rejectToko'] === [], 'reject must not be deducted twice');
+runTest('RJT-07 "Terbitkan semua" bills the DO in full and links the waiting nota to that invoice (tagihan bersih = invoice − nota)', function () use (&$invId, &$rejectId, $adminHttp, $adminCsrf, $pdo, $storeA) {
+    $g = adminPost($adminHttp, $adminCsrf, '/api/invoices/generate-ready', []);
+    expect($g['status'] === 200, 'generate-ready failed: ' . json_encode($g['json']));
+    $mine = array_values(array_filter($g['json']['data']['invoices'], static fn ($i) => $i['sourceKind'] === 'do' && (float) $i['total'] === 50000.0));
+    expect(count($mine) === 1, 'expected one 50.000 DO invoice (10 x 5000, reject NOT folded in), got ' . json_encode($g['json']['data']));
+    $invId = $mine[0]['invoiceId'];
+    $n = notaFor($pdo, $rejectId);
+    expect((int) $n['invoice_id'] === $invId, 'nota should now point at the DO invoice');
+    $d = $adminHttp->request('GET', "/api/invoices/{$invId}")['json']['data'];
+    expect(count($d['notas']) === 1 && (float) $d['netTotal'] === 40000.0, 'detail should show the nota and net 40.000, got ' . json_encode(['notas' => $d['notas'], 'net' => $d['netTotal']]));
+    expect(readyFor($adminHttp, $storeA)['deliveries'] === [], 'nothing should be ready any more');
 });
 
-runTest('RJT-08 Voiding the invoice releases the reject back for the next invoice', function () use (&$invId, &$rejectId, $adminHttp, $adminCsrf, $pdo, $storeA, $winFrom, $winTo) {
-    $r = adminPost($adminHttp, $adminCsrf, "/api/invoices/{$invId}/void", ['reason' => 'tes']);
-    expect($r['status'] === 200, 'void failed: ' . json_encode($r['json']));
-    $linked = $pdo->query("SELECT invoice_id FROM retur_request WHERE retur_request_id = {$rejectId}")->fetchColumn();
-    expect($linked === null, 'invoice_id should be NULL after void, got ' . var_export($linked, true));
-    expect(count(previewA($adminHttp, $storeA, $winFrom, $winTo)['rejectToko']) === 1, 'reject should be eligible again');
-    $g = adminPost($adminHttp, $adminCsrf, '/api/invoices', ['storeId' => $storeA, 'dateFrom' => $winFrom, 'dateTo' => $winTo]);
-    expect($g['status'] === 200, 're-generate failed: ' . json_encode($g['json']));
-});
-
-runTest('RJT-09 Reject verified AFTER the invoice was issued carries into the next invoice (even with no new delivery)', function () use ($adminHttp, $adminCsrf, $storeA, $tokenA, $pShipId, $today, $future, $winFrom, $winTo) {
+runTest('RJT-08 A reject approved AFTER its DO was invoiced gets a nota linked to that invoice straight away', function () use (&$invId, $adminHttp, $adminCsrf, $pdo, $tokenA, $pShipId, $today, $future) {
     $r = lapor($tokenA, ['jenis' => 'reject_toko', 'productId' => $pShipId, 'qty' => 1, 'kondisi' => 'basi', 'expDate' => $future, 'returDate' => $today]);
-    expect($r['status'] === 200, 'create failed: ' . json_encode($r['json']));
     $id = (int) $r['json']['data']['returId'];
     $v = adminPost($adminHttp, $adminCsrf, "/api/admin/retur/{$id}/verify", ['tindakLanjut' => 'potong']);
     expect($v['status'] === 200, 'verify failed');
-    $pv = previewA($adminHttp, $storeA, $winFrom, $winTo);
-    $line = lineFor($pv, $pShipId);
-    expect($line !== null && (float) $line['qtyInvoice'] === -1.0 && (float) $pv['total'] === -5000.0, 'expected a -1 credit line, got ' . json_encode($pv));
-    $g = adminPost($adminHttp, $adminCsrf, '/api/invoices', ['storeId' => $storeA, 'dateFrom' => $winFrom, 'dateTo' => $winTo]);
-    expect($g['status'] === 200 && (float) $g['json']['data']['summary']['total'] === -5000.0, 'expected a credit invoice of -5.000, got ' . json_encode($g['json']));
+    $n = notaFor($pdo, $id);
+    expect((int) $n['invoice_id'] === $invId && (float) $n['total'] === 5000.0, 'expected a 5.000 nota on the issued invoice, got ' . json_encode($n));
+    $inv = (float) $pdo->query("SELECT total FROM invoice WHERE invoice_id = {$invId}")->fetchColumn();
+    expect($inv === 50000.0, 'the issued invoice itself must never change');
 });
 
-runTest('RJT-10 Ganti barang creates a Pesanan Khusus Toko replacement (sent to production) and is still deducted', function () use ($adminHttp, $adminCsrf, $storeA, $tokenA, $pShipId, $today, $future, $winFrom, $winTo, $pdo) {
+runTest('RJT-09 Voiding the DO invoice keeps its notas; re-issuing re-links them', function () use (&$invId, $adminHttp, $adminCsrf, $pdo, $storeA) {
+    $r = adminPost($adminHttp, $adminCsrf, "/api/invoices/{$invId}/void", ['reason' => 'tes']);
+    expect($r['status'] === 200, 'void failed: ' . json_encode($r['json']));
+    expect((int) $pdo->query("SELECT COUNT(*) FROM nota_potongan WHERE invoice_id IS NULL")->fetchColumn() === 2, 'both notas should be waiting again');
+    $g = adminPost($adminHttp, $adminCsrf, '/api/invoices/generate-ready', []);
+    $new = array_values(array_filter($g['json']['data']['invoices'], static fn ($i) => $i['sourceKind'] === 'do'));
+    expect(count($new) === 1, 'expected the DO to be re-invoiced, got ' . json_encode($g['json']));
+    $invId = $new[0]['invoiceId'];
+    expect((int) $pdo->query("SELECT COUNT(*) FROM nota_potongan WHERE invoice_id = {$invId}")->fetchColumn() === 2, 'both notas should re-link to the new invoice');
+});
+
+runTest('RJT-10 Ganti barang creates a Pesanan Khusus Toko replacement (sent to production) and still issues a nota', function () use ($adminHttp, $adminCsrf, $storeA, $tokenA, $pShipId, $today, $future, $pdo) {
     $r = lapor($tokenA, ['jenis' => 'reject_toko', 'productId' => $pShipId, 'qty' => 4, 'kondisi' => 'rusak', 'expDate' => $future, 'returDate' => $today]);
     $id = (int) $r['json']['data']['returId'];
     $v = adminPost($adminHttp, $adminCsrf, "/api/admin/retur/{$id}/verify", ['tindakLanjut' => 'ganti', 'requiredDate' => $future]);
@@ -413,11 +424,11 @@ runTest('RJT-10 Ganti barang creates a Pesanan Khusus Toko replacement (sent to 
     expect(is_int($orderId) && $orderId > 0 && str_starts_with((string) $v['json']['data']['penggantiOrderNo'], 'NPR-'), 'expected a linked replacement order, got ' . json_encode($v['json']['data']));
     $o = $pdo->query("SELECT so.source_type, so.store_id, so.status, so.required_date, si.qty FROM special_order so JOIN special_order_item si ON si.special_order_id = so.special_order_id WHERE so.special_order_id = {$orderId}")->fetch();
     expect($o['source_type'] === 'toko_khusus' && (int) $o['store_id'] === $storeA && $o['status'] === 'sent_to_production' && (float) $o['qty'] === 4.0 && $o['required_date'] === $future, 'bad replacement order ' . json_encode($o));
-    $pv = previewA($adminHttp, $storeA, $winFrom, $winTo);
-    expect(count($pv['rejectToko']) === 1 && (float) $pv['rejectToko'][0]['qty'] === 4.0, 'ganti must still deduct, got ' . json_encode($pv['rejectToko']));
+    $n = notaFor($pdo, $id);
+    expect($n !== null && (float) $n['total'] === 20000.0, 'ganti must still issue a 4 x 5000 nota, got ' . json_encode($n));
 });
 
-runTest('RJT-11 A decided report cannot be decided again; store Riwayat shows jenis + follow-up', function () use (&$rejectId, $adminHttp, $adminCsrf, $tokenA) {
+runTest('RJT-11 A decided report cannot be decided again; store Riwayat shows the nota', function () use (&$rejectId, $adminHttp, $adminCsrf, $tokenA) {
     $r = adminPost($adminHttp, $adminCsrf, "/api/admin/retur/{$rejectId}/verify", ['tindakLanjut' => 'ganti']);
     expect($r['status'] === 409, 'expected 409, got ' . json_encode($r['json']));
     $anon = new HttpInv($GLOBALS['baseUrl']);
@@ -425,7 +436,49 @@ runTest('RJT-11 A decided report cannot be decided again; store Riwayat shows je
     $jenis = array_count_values(array_column($list, 'jenis'));
     expect(($jenis['reject_toko'] ?? 0) === 3 && ($jenis['retur'] ?? 0) === 1, 'unexpected store list ' . json_encode($jenis));
     $mine = array_values(array_filter($list, static fn ($x) => $x['returId'] === $rejectId))[0];
-    expect($mine['tindakLanjut'] === 'potong' && $mine['invoiceNo'] !== null, 'store should see potong + invoice no, got ' . json_encode($mine));
+    expect($mine['tindakLanjut'] === 'potong' && str_starts_with((string) $mine['notaNo'], 'NP/') && $mine['invoiceNo'] !== null, 'store should see the nota + invoice no, got ' . json_encode($mine));
+});
+
+runTest('RJT-12 Voiding a nota lets Admin re-issue it exactly once', function () use (&$rejectId, $adminHttp, $adminCsrf, $pdo) {
+    $n = notaFor($pdo, $rejectId);
+    $v = adminPost($adminHttp, $adminCsrf, "/api/nota-potongan/{$n['nota_potongan_id']}/void", ['reason' => 'koreksi']);
+    expect($v['status'] === 200 && notaFor($pdo, $rejectId) === null, 'void failed: ' . json_encode($v['json']));
+    $i = adminPost($adminHttp, $adminCsrf, "/api/admin/retur/{$rejectId}/nota", []);
+    expect($i['status'] === 200 && notaFor($pdo, $rejectId) !== null, 're-issue failed: ' . json_encode($i['json']));
+    $i2 = adminPost($adminHttp, $adminCsrf, "/api/admin/retur/{$rejectId}/nota", []);
+    expect($i2['status'] === 409 && ($i2['json']['code'] ?? null) === 'NOTA_EXISTS', 'second re-issue must be refused, got ' . json_encode($i2['json']));
+});
+
+runTest('RJT-13 Mutasi: destination gets an invoice, source gets a Nota Potongan (never both deducted twice)', function () use ($adminHttp, $adminCsrf, $pdo, $storeA, $storeB, $tokenA, $tokenB, $pShipId) {
+    $anon = new HttpInv($GLOBALS['baseUrl']);
+    $c = $anon->requestMultipart('POST', "/api/store/{$tokenA}/mutasi", ['mutasi' => json_encode(['destinationStoreId' => $storeB, 'productId' => $pShipId, 'qty' => 2])], ['evidence[]' => fakeEvidenceImage()], idemKey('mut'));
+    expect($c['status'] === 200, 'mutasi create failed: ' . json_encode($c['json']));
+    $mid = (int) $c['json']['data']['mutasiId'];
+    $f = $anon->requestMultipart('POST', "/api/store/{$tokenB}/mutasi/{$mid}/confirm", ['confirmation' => json_encode(['qtyReceived' => 2])], ['evidence[]' => fakeEvidenceImage()], idemKey('mutc'));
+    expect($f['status'] === 200, 'mutasi confirm failed: ' . json_encode($f['json']));
+    $g = adminPost($adminHttp, $adminCsrf, '/api/invoices/generate-ready', []);
+    $mi = array_values(array_filter($g['json']['data']['invoices'], static fn ($i) => $i['sourceKind'] === 'mutasi'));
+    expect(count($mi) === 1 && (float) $mi[0]['total'] === 10000.0, 'expected a 10.000 mutasi invoice for the destination, got ' . json_encode($g['json']['data']));
+    $mn = array_values(array_filter($g['json']['data']['notas'], static fn ($n) => $n['alasan'] === 'mutasi_keluar'));
+    expect(count($mn) === 1 && $mn[0]['storeId'] === $storeA && (float) $mn[0]['total'] === 10000.0, 'expected a 10.000 nota for the source, got ' . json_encode($g['json']['data']['notas']));
+    $p = previewA($adminHttp, $storeA, '2026-01-01', '2099-12-31');
+    expect($p['mutasiOutCount'] === 0, 'a period invoice must not deduct the same mutasi again');
+    $g2 = adminPost($adminHttp, $adminCsrf, '/api/invoices/generate-ready', []);
+    expect($g2['json']['data']['invoices'] === [] && $g2['json']['data']['notas'] === [], 'nothing should be issued twice');
+});
+
+runTest('RJT-14 Laporan & Invoice pages show invoice − nota; nota prints as NOTA POTONGAN', function () use ($adminHttp, $pdo) {
+    $from = '2026-01-01'; $to = '2099-12-31';
+    $lap = $adminHttp->request('GET', "/api/_ui-preview/?page=laporan&omzetDateFrom={$from}&omzetDateTo={$to}&flowDateFrom={$from}&flowDateTo={$to}");
+    expect($lap['status'] === 200 && str_contains($lap['body'], 'id="omset-per-toko"') && str_contains($lap['body'], 'Tagihan Bersih'), 'laporan should show the net per-toko table');
+    expect(!preg_match('/SQLSTATE|Fatal error|Uncaught/', $lap['body']), 'laporan rendered an error');
+    $inv = $adminHttp->request('GET', '/api/_ui-preview/?page=invoice');
+    expect($inv['status'] === 200 && str_contains($inv['body'], 'id="nota-potongan"') && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $inv['body']), 'invoice page should list notas');
+    $nid = (int) $pdo->query('SELECT MAX(nota_potongan_id) FROM nota_potongan')->fetchColumn();
+    $pr = $adminHttp->request('GET', "/api/_ui-preview/print-nota.php?notaId={$nid}");
+    expect($pr['status'] === 200 && str_contains($pr['body'], 'NOTA POTONGAN'), 'nota print should render');
+    $rt = $adminHttp->request('GET', '/api/_ui-preview/?page=reject-toko&status=');
+    expect($rt['status'] === 200 && str_contains($rt['body'], 'NP/KRM/') && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $rt['body']), 'reject-toko page should show nota numbers');
 });
 
 $failed = array_filter($results, static fn ($ok) => !$ok);

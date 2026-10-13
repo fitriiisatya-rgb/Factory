@@ -96,25 +96,25 @@ try {
   <?php endif; ?>
 </div>
 
-<?php $rejectToko = $invoice['rejectToko'] ?? []; ?>
+<?php $invNotas = $invoice['notas'] ?? []; ?>
 <div class="card section">
-  <div class="card-head"><h2 class="card-title">Potongan Reject di Toko</h2></div>
-  <?php if ($rejectToko === []): ?>
-    <?= ui_empty_state('Tidak ada potongan reject', 'Tidak ada Reject di Toko yang dipotong pada invoice ini.') ?>
+  <div class="card-head"><h2 class="card-title">Nota Potongan atas Invoice Ini</h2></div>
+  <?php if ($invNotas === []): ?>
+    <?= ui_empty_state('Tidak ada nota potongan', 'Belum ada Reject di Toko atau mutasi keluar yang memotong invoice ini.') ?>
   <?php else: ?>
-  <p class="page-subtitle" style="margin:0 0 var(--space-3);">Barang rusak/jamur sebelum expired (tanggungan pabrik). Jumlahnya sudah dikurangkan dari Qty Invoice di atas.</p>
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>No. Dokumen</th><th>Tanggal</th><th>Produk</th><th class="num">Qty dipotong</th><th>Tindak lanjut</th></tr></thead>
+    <thead><tr><th>No. Nota</th><th>Tanggal</th><th>Alasan</th><th class="num">Potongan</th><th></th></tr></thead>
     <tbody>
-    <?php foreach ($rejectToko as $rj): ?>
+    <?php foreach ($invNotas as $n): ?>
     <tr>
-      <td><?= ui_esc($rj['docNo']) ?></td>
-      <td><?= ui_esc($rj['tanggal']) ?></td>
-      <td><?= ui_esc($rj['productName']) ?></td>
-      <td class="num">&minus;<?= ui_fmt_num($rj['qty']) ?></td>
-      <td><?= ui_badge($rj['tindakLanjut'] === 'ganti' ? 'Ganti barang' : 'Potong invoice') ?></td>
+      <td><?= ui_esc($n['notaNo']) ?></td>
+      <td><?= ui_esc($n['tanggal']) ?></td>
+      <td><?= ui_esc((string) $n['keterangan']) ?></td>
+      <td class="num">&minus;<?= ui_fmt_money($n['total']) ?></td>
+      <td><a class="btn btn-secondary btn-sm" target="_blank" href="/api/_ui-preview/print-nota.php?notaId=<?= (int) $n['notaId'] ?>">Print</a></td>
     </tr>
     <?php endforeach; ?>
+    <tr style="font-weight:600;"><td colspan="3">Tagihan bersih (invoice &minus; nota)</td><td class="num"><?= ui_fmt_money($invoice['netTotal']) ?></td><td></td></tr>
     </tbody>
   </table></div>
   <?php endif; ?>

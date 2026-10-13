@@ -20,11 +20,15 @@ use PDO;
  *    Mutasi movement: a completed Mutasi moves its qty_received fully
  *    from the SOURCE store's own billable pool to the DESTINATION
  *    store's — never double-billed, never dropped, on either side.
- *  - A verified Reject di Toko (migration 0020 — goods that spoiled in the
- *    store before expiry; factory burden) is deducted as qty x harga from
- *    the store's next invoice, folded into that product's net line and
- *    listed separately as "Potongan Reject di Toko". A Retur (unsold
- *    goods, store burden) is NEVER deducted.
+ *  - Invoices are normally issued PER DO (migration 0021, the owner's
+ *    "sesuai DO"): generateAllReady() bills every confirmed delivery (regular
+ *    DO or special DO) and every completed Mutasi's destination store.
+ *    Anything that later reduces what a store owes on an issued invoice —
+ *    an approved Reject di Toko, the SOURCE side of a Mutasi — is a separate
+ *    Nota Potongan (NotaPotonganService), never an edit of the invoice.
+ *    A Retur (unsold goods, store burden) is never credited.
+ *  - The per-store/period generate() below still exists (and still nets
+ *    Mutasi in/out itself, skipping any Mutasi a nota already covers).
  *  - rate_pct/rate_source/override_reason exist on the underlying Phase 1
  *    tables (schema-v1.sql) but are explicitly NOT used by this phase —
  *    every row this class writes carries rate_pct=100.00 (full price, no
@@ -77,8 +81,6 @@ final class InvoiceService
             'shipmentCount' => count($shipmentIds),
             'mutasiOutCount' => count($mutasiOutIds),
             'mutasiInCount' => count($mutasiInIds),
-            'rejectToko' => $lines['rejectToko'],
-            'rejectTokoTotal' => $lines['rejectTokoTotal'],
         ];
     }
 
@@ -99,7 +101,7 @@ final class InvoiceService
         $pdo = $this->pdo;
         $lines = $this->computeLines($storeId, $dateFrom, $dateTo);
         if ($lines['items'] === []) {
-            throw new ApiException(400, 'EMPTY_INVOICE', 'Tidak ada pengiriman/mutasi/reject yang bisa ditagihkan untuk toko dan periode ini.');
+            throw new ApiException(400, 'EMPTY_INVOICE', 'Tidak ada pengiriman/mutasi yang bisa ditagihkan untuk toko dan periode ini.');
         }
 
         $invoiceNo = $this->repo->allocateInvoiceNumber($pdo, $dateTo);
@@ -120,9 +122,7 @@ final class InvoiceService
         foreach ($this->fetchMutasiRows($pdo, 'destination_store_id', $storeId, $dateFrom, $dateTo, 'in') as $m) {
             $this->repo->linkMutasi($pdo, $invoiceId, $m['mutasi_request_id'], 'in', (float) $m['qty_received']);
         }
-        foreach ($lines['rejectToko'] as $rj) {
-            $this->repo->linkRejectToko($pdo, $invoiceId, $rj['returId']);
-        }
+        (new NotaPotonganService($pdo))->linkPendingToInvoice($invoiceId);
 
         Audit::write(
             $pdo, $requestId, $adminUserId, 'invoice.generated', 'invoice', (string) $invoiceId, 'ok', null, null,
@@ -130,6 +130,74 @@ final class InvoiceService
         );
 
         return $this->buildDetailDto($pdo, $invoiceId);
+    }
+
+    /**
+     * What generateAllReady() would issue right now — read-only.
+     *
+     * @return array{deliveries:array,mutasiInvoices:array,mutasiNotas:array}
+     */
+    public function readySummary(): array
+    {
+        $deliveries = [];
+        foreach (['do' => 'delivery_order_id', 'do_khusus' => 'special_order_do_id'] as $kind => $col) {
+            foreach ($this->repo->findReadyDeliveries($this->pdo, $col) as $d) {
+                $deliveries[] = $d + ['kind' => $kind, 'docNo' => $this->deliveryDocNo($kind, $d['refId']), 'storeName' => $this->storeName($d['storeId'])];
+            }
+        }
+        $mi = array_map(fn ($m) => ['mutasiId' => (int) $m['mutasi_request_id'], 'docNo' => $m['doc_no'], 'storeName' => $this->storeName((int) $m['destination_store_id'])], $this->repo->findMutasiReadyForInvoice($this->pdo));
+        $mn = array_map(fn ($m) => ['mutasiId' => (int) $m['mutasi_request_id'], 'docNo' => $m['doc_no'], 'storeName' => $this->storeName((int) $m['source_store_id'])], $this->repo->findMutasiReadyForNota($this->pdo));
+        return ['deliveries' => $deliveries, 'mutasiInvoices' => $mi, 'mutasiNotas' => $mn];
+    }
+
+    /**
+     * Issues every document that is ready, in one transaction: one invoice
+     * per confirmed DO / special DO (per store), one invoice per completed
+     * Mutasi for its destination store, and one Nota Potongan per completed
+     * Mutasi for its source store. Nota Potongan already waiting for a
+     * delivery that gets invoiced here are linked to that invoice.
+     *
+     * @return array{invoices:array<int,array>,notas:array<int,array>}
+     */
+    public function generateAllReady(int $adminUserId, ?string $requestId): array
+    {
+        $pdo = $this->pdo;
+        $invoices = [];
+        foreach (['do' => 'delivery_order_id', 'do_khusus' => 'special_order_do_id'] as $kind => $col) {
+            foreach ($this->repo->findReadyDeliveries($pdo, $col) as $d) {
+                $ships = $this->repo->findDeliveryShipments($pdo, $col, $d['refId'], $d['storeId']);
+                $ids = array_map(static fn ($r) => (int) $r['shipment_id'], $ships);
+                $rows = $this->repo->findQtyByProductForShipments($pdo, $ids);
+                $lines = $this->priceLines($rows);
+                if ($lines['items'] === []) {
+                    continue; // e.g. custom catalog items only — nothing billable by product
+                }
+                $tanggal = (string) end($ships)['tanggal'];
+                $invoiceId = $this->insertWithLines($tanggal, $d['storeId'], $lines, $kind, $d['refId']);
+                foreach ($ids as $sid) {
+                    $this->repo->linkShipment($pdo, $invoiceId, $sid);
+                }
+                (new NotaPotonganService($pdo))->linkPendingToInvoice($invoiceId);
+                Audit::write($pdo, $requestId, $adminUserId, 'invoice.generated', 'invoice', (string) $invoiceId, 'ok', null, null,
+                    ['kind' => $kind, 'refId' => $d['refId'], 'storeId' => $d['storeId'], 'total' => $lines['total'], 'shipmentCount' => count($ids)]);
+                $invoices[] = $this->listRow($invoiceId);
+            }
+        }
+        foreach ($this->repo->findMutasiReadyForInvoice($pdo) as $m) {
+            $lines = $this->priceLines([['productId' => (int) $m['product_id'], 'productName' => (string) $m['product_name'], 'qty' => (float) $m['qty_received']]]);
+            $tanggal = substr((string) ($m['confirmed_at'] ?? $m['created_at']), 0, 10);
+            $invoiceId = $this->insertWithLines($tanggal, (int) $m['destination_store_id'], $lines, 'mutasi', (int) $m['mutasi_request_id']);
+            $this->repo->linkMutasi($pdo, $invoiceId, (int) $m['mutasi_request_id'], 'in', (float) $m['qty_received']);
+            Audit::write($pdo, $requestId, $adminUserId, 'invoice.generated', 'invoice', (string) $invoiceId, 'ok', null, null,
+                ['kind' => 'mutasi', 'mutasiId' => (int) $m['mutasi_request_id'], 'total' => $lines['total']]);
+            $invoices[] = $this->listRow($invoiceId);
+        }
+        $notas = [];
+        $notaService = new NotaPotonganService($pdo);
+        foreach ($this->repo->findMutasiReadyForNota($pdo) as $m) {
+            $notas[] = $notaService->createForMutasiKeluar($m, $adminUserId, $requestId);
+        }
+        return ['invoices' => $invoices, 'notas' => $notas];
     }
 
     /** @throws ApiException 404 NOT_FOUND */
@@ -148,6 +216,8 @@ final class InvoiceService
             'storeId' => (int) $r['store_id'],
             'storeName' => (string) $r['store_name'],
             'total' => (float) $r['total'],
+            'notaTotal' => (float) ($r['nota_total'] ?? 0),
+            'sourceKind' => (string) ($r['source_kind'] ?? 'periode'),
             'createdAt' => (string) $r['created_at'],
         ], $this->repo->listAll($this->pdo, $storeId, $dateFrom, $dateTo));
     }
@@ -168,6 +238,9 @@ final class InvoiceService
             throw new ApiException(404, 'NOT_FOUND', 'Invoice tidak ditemukan');
         }
 
+        // Notas against this invoice stay valid; they re-link automatically
+        // when their delivery is invoiced again.
+        $this->pdo->prepare('UPDATE nota_potongan SET invoice_id = NULL WHERE invoice_id = ?')->execute([$invoiceId]);
         $this->repo->deleteInvoice($this->pdo, $invoiceId);
         Audit::write(
             $this->pdo, $requestId, $adminUserId, 'invoice.voided', 'invoice', (string) $invoiceId, 'ok', null, null,
@@ -201,14 +274,13 @@ final class InvoiceService
      * stock received and already invoiced in an earlier period) is kept
      * as a legitimate credit line — this is never blocked, only surfaced.
      *
-     * @return array{items:array,total:float,rejectToko:array,rejectTokoTotal:float}
+     * @return array{items:array,total:float}
      */
     private function computeLines(int $storeId, string $dateFrom, string $dateTo): array
     {
         $shipmentRows = $this->repo->findEligibleShipmentQtyByProduct($this->pdo, $storeId, $dateFrom, $dateTo);
         $mutasiOutRows = $this->repo->findEligibleMutasiOutByProduct($this->pdo, $storeId, $dateFrom, $dateTo);
         $mutasiInRows = $this->repo->findEligibleMutasiInByProduct($this->pdo, $storeId, $dateFrom, $dateTo);
-        $rejectRows = $this->repo->findEligibleRejectToko($this->pdo, $storeId, $dateTo);
 
         $qtyDo = [];
         $names = [];
@@ -217,42 +289,73 @@ final class InvoiceService
         $net = $qtyDo;
         foreach ($mutasiOutRows as $r) { $net[$r['productId']] = ($net[$r['productId']] ?? 0.0) - $r['qty']; $names[$r['productId']] = $r['productName']; }
         foreach ($mutasiInRows as $r) { $net[$r['productId']] = ($net[$r['productId']] ?? 0.0) + $r['qty']; $names[$r['productId']] = $r['productName']; }
-        foreach ($rejectRows as $r) { $net[$r['productId']] = ($net[$r['productId']] ?? 0.0) - $r['qty']; $names[$r['productId']] = $r['productName']; }
 
+        $rows = [];
+        foreach ($net as $productId => $netQty) {
+            $rows[] = ['productId' => $productId, 'productName' => $names[$productId], 'qty' => $netQty, 'qtyDo' => $qtyDo[$productId] ?? 0.0];
+        }
+        return $this->priceLines($rows);
+    }
+
+    /**
+     * Prices rows at the product's current harga. qtyDo defaults to qty.
+     *
+     * @param array<int,array{productId:int,productName:string,qty:float,qtyDo?:float}> $rows
+     * @return array{items:array,total:float}
+     */
+    private function priceLines(array $rows): array
+    {
         $hargaStmt = $this->pdo->prepare('SELECT harga FROM product WHERE product_id = ?');
-
         $items = [];
         $total = 0.0;
-        foreach ($net as $productId => $netQty) {
-            if (abs($netQty) < 0.0001) {
+        foreach ($rows as $r) {
+            if (abs($r['qty']) < 0.0001) {
                 continue;
             }
-            $hargaStmt->execute([$productId]);
+            $hargaStmt->execute([$r['productId']]);
             $harga = (float) $hargaStmt->fetchColumn();
-            $subtotal = round($netQty * $harga, 2);
+            $subtotal = round($r['qty'] * $harga, 2);
             $items[] = [
-                'productId' => $productId,
-                'productName' => $names[$productId],
-                'qtyDo' => $qtyDo[$productId] ?? 0.0,
-                'qtyInvoice' => $netQty,
-                'harga' => $harga,
-                'subtotal' => $subtotal,
+                'productId' => $r['productId'], 'productName' => $r['productName'],
+                'qtyDo' => $r['qtyDo'] ?? $r['qty'], 'qtyInvoice' => $r['qty'], 'harga' => $harga, 'subtotal' => $subtotal,
             ];
             $total += $subtotal;
         }
         usort($items, static fn ($a, $b) => strcmp($a['productName'], $b['productName']));
+        return ['items' => $items, 'total' => round($total, 2)];
+    }
 
-        $rejectToko = [];
-        $rejectTotal = 0.0;
-        foreach ($rejectRows as $r) {
-            $hargaStmt->execute([$r['productId']]);
-            $harga = (float) $hargaStmt->fetchColumn();
-            $nilai = round($r['qty'] * $harga, 2);
-            $rejectToko[] = $r + ['harga' => $harga, 'nilai' => $nilai];
-            $rejectTotal += $nilai;
+    private function insertWithLines(string $tanggal, int $storeId, array $lines, string $kind, ?int $refId): int
+    {
+        $invoiceNo = $this->repo->allocateInvoiceNumber($this->pdo, $tanggal);
+        $invoiceId = $this->repo->insertInvoice($this->pdo, $invoiceNo, $tanggal, $storeId, $lines['total'], $kind, $refId);
+        foreach ($lines['items'] as $item) {
+            $this->repo->insertInvoiceItem($this->pdo, $invoiceId, $item['productId'], $item['qtyDo'], $item['qtyInvoice'], $item['harga'], $item['subtotal']);
         }
+        return $invoiceId;
+    }
 
-        return ['items' => $items, 'total' => round($total, 2), 'rejectToko' => $rejectToko, 'rejectTokoTotal' => round($rejectTotal, 2)];
+    private function listRow(int $invoiceId): array
+    {
+        $r = $this->repo->findById($this->pdo, $invoiceId);
+        return ['invoiceId' => $invoiceId, 'invoiceNo' => (string) $r['invoice_no'], 'tanggal' => (string) $r['tanggal'],
+            'storeName' => (string) $r['store_name'], 'total' => (float) $r['total'], 'sourceKind' => (string) $r['source_kind']];
+    }
+
+    private function deliveryDocNo(string $kind, int $refId): string
+    {
+        $sql = $kind === 'do'
+            ? 'SELECT doc_no FROM delivery_order WHERE delivery_order_id = ?'
+            : 'SELECT doc_no FROM special_order_do WHERE special_order_do_id = ?';
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute([$refId]);
+        return (string) ($stmt->fetchColumn() ?: '#' . $refId);
+    }
+
+    private function storeName(int $storeId): string
+    {
+        $s = $this->storeRepo->findById($this->pdo, $storeId);
+        return $s !== null ? (string) $s['canonical_name'] : '#' . $storeId;
     }
 
     private function fetchMutasiRows(PDO $pdo, string $storeColumn, int $storeId, string $dateFrom, string $dateTo, string $direction): array
@@ -277,11 +380,15 @@ final class InvoiceService
         $items = $this->repo->findItemsForInvoice($pdo, $invoiceId);
         $shipments = $this->repo->findShipmentsForInvoice($pdo, $invoiceId);
         $mutasi = $this->repo->findMutasiForInvoice($pdo, $invoiceId);
-        $rejectToko = $this->repo->findRejectTokoForInvoice($pdo, $invoiceId);
+        $notas = $this->repo->findNotasForInvoice($pdo, $invoiceId);
+        $notaTotal = array_sum(array_map(static fn ($n) => (float) $n['total'], $notas));
 
         $reference = [];
+        $doNos = array_values(array_unique(array_filter(array_map(static fn ($sh) => $sh['do_doc_no'], $shipments))));
         if (count($shipments) === 1) {
             $reference = ['doNumber' => $shipments[0]['do_doc_no'], 'shipmentNumber' => 'SHP-' . $shipments[0]['shipment_id'], 'shipDate' => $shipments[0]['tanggal']];
+        } elseif (count($doNos) === 1) {
+            $reference = ['doNumber' => $doNos[0], 'shipDate' => $shipments[0]['tanggal']];
         }
 
         return [
@@ -305,10 +412,13 @@ final class InvoiceService
                 'direction' => (string) $m['direction'], 'docNo' => (string) $m['doc_no'], 'qty' => (float) $m['qty'],
                 'productName' => (string) $m['product_name'], 'sourceStoreName' => (string) $m['source_store_name'], 'destinationStoreName' => (string) $m['destination_store_name'],
             ], $mutasi),
-            'rejectToko' => array_map(static fn ($r) => [
-                'docNo' => (string) $r['doc_no'], 'qty' => (float) $r['qty'], 'productName' => (string) $r['product_name'],
-                'tindakLanjut' => $r['tindak_lanjut'], 'tanggal' => (string) $r['retur_date'],
-            ], $rejectToko),
+            'sourceKind' => (string) ($invoice['source_kind'] ?? 'periode'),
+            'notas' => array_map(static fn ($n) => [
+                'notaId' => (int) $n['nota_potongan_id'], 'notaNo' => (string) $n['nota_no'], 'tanggal' => (string) $n['tanggal'],
+                'alasan' => (string) $n['alasan'], 'total' => (float) $n['total'], 'keterangan' => $n['keterangan'],
+            ], $notas),
+            'notaTotal' => round($notaTotal, 2),
+            'netTotal' => round((float) $invoice['total'] - $notaTotal, 2),
             'summary' => ['subtotal' => (float) $invoice['total'], 'discount' => 0.0, 'total' => (float) $invoice['total']],
             'metadata' => ['printedAt' => date('Y-m-d H:i'), 'generatedBy' => 'Amor Factory System', 'createdAt' => (string) $invoice['created_at']],
         ];

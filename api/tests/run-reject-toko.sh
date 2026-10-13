@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Reject di Toko integration test orchestrator (RJT-01..11, migration
+# Reject di Toko integration test orchestrator (RJT-01..14, migration
 # 0020), followed by the full existing regression (run-surplus.sh is the
 # top of that chain).
 #
-# Disposable, local-only MariaDB; applies ALL migrations 0001-0020 for
+# Disposable, local-only MariaDB; applies ALL migrations 0001-0021 for
 # real, then runs RejectTokoTest.php against a live `php -S` server.
 #
 # Usage: bash api/tests/run-reject-toko.sh
@@ -79,7 +79,7 @@ return [
 ];
 PHPCONFIG
 
-echo "--- 5/9: migrate (0001-0020, ALL phases) + seed + create ADMIN ---"
+echo "--- 5/9: migrate (0001-0021, ALL phases) + seed + create ADMIN ---"
 php "$API_ROOT/bin/migrate.php" --yes || { echo "migrate.php FAILED"; exit 1; }
 php "$API_ROOT/bin/seed.php" || { echo "seed.php FAILED"; exit 1; }
 ADMIN_PASSWORD="$TEST_ADMIN_PASS" php "$API_ROOT/bin/create_admin.php" rjt_staging_admin "Operator Login Staging Admin" || { echo "create_admin.php FAILED"; exit 1; }
@@ -154,7 +154,7 @@ fi
 fi
 
 echo ""
-if [ $INV_RESULT -eq 0 ]; then echo "Reject di Toko suite (RJT-01..11): PASSED"; else echo "Reject di Toko suite (RJT-01..11): FAILED"; fi
+if [ $INV_RESULT -eq 0 ]; then echo "Reject di Toko suite (RJT-01..14): PASSED"; else echo "Reject di Toko suite (RJT-01..14): FAILED"; fi
 if [ $REGRESSION_RESULT -eq 0 ]; then echo "Full prior regression (Operator Login + Invoice + Bakery Portal + Phase 0-5.5 + UI + Print + Production/FG rework): PASSED"; else echo "Full prior regression (Operator Login + Invoice + Bakery Portal + Phase 0-5.5 + UI + Print + Production/FG rework): FAILED"; fi
 
 if [ $INV_RESULT -eq 0 ] && [ $REGRESSION_RESULT -eq 0 ]; then

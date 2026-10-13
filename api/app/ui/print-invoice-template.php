@@ -52,7 +52,7 @@ function ui_render_invoice_print_document(array $invoice, int $pageNum = 1, int 
       </div>
     </div>
     <div class="inv-title-block">
-      <div class="inv-title">INVOICE</div>
+      <div class="inv-title"><?= ui_esc((string) ($invoice['docTitle'] ?? 'INVOICE')) ?></div>
       <div class="inv-title-meta">No. <?= ui_esc((string) $invoice['invoiceNumber']) ?></div>
       <div class="inv-title-meta">Tanggal <?= ui_esc((string) $invoice['invoiceDate']) ?></div>
     </div>
@@ -68,9 +68,12 @@ function ui_render_invoice_print_document(array $invoice, int $pageNum = 1, int 
       <?php endif; ?>
     </div>
     <div class="inv-info-box">
-      <div class="inv-info-title">Informasi Invoice</div>
-      <div class="inv-info-row"><b>No. Invoice</b><span><?= ui_esc((string) $invoice['invoiceNumber']) ?></span></div>
-      <div class="inv-info-row"><b>Tanggal Invoice</b><span><?= ui_esc((string) $invoice['invoiceDate']) ?></span></div>
+      <div class="inv-info-title">Informasi <?= ui_esc((string) ($invoice['docLabel'] ?? 'Invoice')) ?></div>
+      <div class="inv-info-row"><b>No. <?= ui_esc((string) ($invoice['docLabel'] ?? 'Invoice')) ?></b><span><?= ui_esc((string) $invoice['invoiceNumber']) ?></span></div>
+      <div class="inv-info-row"><b>Tanggal</b><span><?= ui_esc((string) $invoice['invoiceDate']) ?></span></div>
+      <?php if (trim((string) ($reference['invoiceNo'] ?? '')) !== ''): ?>
+      <div class="inv-info-row"><b>Atas Invoice</b><span><?= ui_esc((string) $reference['invoiceNo']) ?></span></div>
+      <?php endif; ?>
       <?php if ($hasReference): ?>
         <?php if (trim((string) ($reference['doNumber'] ?? '')) !== ''): ?>
         <div class="inv-info-row"><b>No. DO</b><span><?= ui_esc((string) $reference['doNumber']) ?></span></div>
@@ -108,12 +111,6 @@ function ui_render_invoice_print_document(array $invoice, int $pageNum = 1, int 
     </tbody>
   </table>
 
-  <?php if (!empty($invoice['rejectToko'])): ?>
-  <div style="margin-top:8px;font-size:11px;">
-    <strong>Potongan Reject di Toko</strong> (sudah dikurangkan dari jumlah di atas):
-    <?php foreach ($invoice['rejectToko'] as $j => $rj): ?><?= $j > 0 ? '; ' : ' ' ?><?= ui_esc($rj['docNo']) ?> &middot; <?= ui_esc($rj['productName']) ?> &minus;<?= ui_fmt_num((float) $rj['qty']) ?><?php endforeach; ?>
-  </div>
-  <?php endif; ?>
 
   <div class="inv-summary-wrap">
     <div class="inv-summary-box">
@@ -122,7 +119,7 @@ function ui_render_invoice_print_document(array $invoice, int $pageNum = 1, int 
       <?php if (isset($summary['ppn'])): ?>
       <div class="inv-summary-row"><span>PPN</span><span><?= ui_fmt_rupiah((float) $summary['ppn']) ?></span></div>
       <?php endif; ?>
-      <div class="inv-summary-row inv-summary-total"><span>Total Tagihan</span><span><?= ui_fmt_rupiah((float) ($summary['total'] ?? 0)) ?></span></div>
+      <div class="inv-summary-row inv-summary-total"><span><?= ui_esc((string) ($invoice['totalLabel'] ?? 'Total Tagihan')) ?></span><span><?= ui_fmt_rupiah((float) ($summary['total'] ?? 0)) ?></span></div>
     </div>
   </div>
 
