@@ -14,6 +14,18 @@ $batchView = null;
 $targetView = null;
 $viewError = null;
 try {
+    // Check factory access up front. Without this, a PRODUCTION login with
+    // no FG factory assigned could see the Per Produk list, but Breakdown
+    // Toko and every save failed. That looked like lost work.
+    try {
+        \Amor\Api\Auth::requireFactoryAccess($uiFactoryId);
+    } catch (\Amor\Api\ApiException $e) {
+        throw new \RuntimeException(
+            'Akun ini belum punya akses ke pabrik FG & Packing ini, jadi data FG tidak bisa dibuka atau disimpan. '
+            . 'Login dengan akun FG pabrik ini (misalnya fg_cibadak / fg_karangtengah), atau minta Admin mencentang pabriknya '
+            . 'di Manajemen User. Data yang sudah disimpan sebelumnya tetap aman.'
+        );
+    }
     if ($existingId !== false) {
         $batchView = $service->getBatch((int) $existingId);
     } else {
