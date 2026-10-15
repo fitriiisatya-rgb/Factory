@@ -68,6 +68,9 @@ ke invoice DO asal barangnya.
   pendek, jadi pilihan Pabrik FG & Packing dan tombol Simpan bisa dijangkau.
   Kalau server sudah di 0021, cukup upload + extract (tanpa migrasi), lalu
   refresh halaman.
+- Halaman **FG & Packing**: akun yang belum punya akses ke pabrik itu
+  (misalnya akun divisi) sekarang melihat pesan jelas untuk login dengan
+  akun FG, bukan halaman setengah jalan yang gagal saat disimpan.
 
 ## Yang TIDAK berubah
 - Data lama tetap ada. Invoice lama dianggap jenis "Periode".
