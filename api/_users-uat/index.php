@@ -63,7 +63,7 @@ foreach ($factories as $f) {
 <meta name="robots" content="noindex,nofollow">
 <title>Manajemen User — Amor Factory System</title>
 <link rel="stylesheet" href="/api/assets/css/tokens.css">
-<link rel="stylesheet" href="/api/assets/css/app.css">
+<link rel="stylesheet" href="/api/assets/css/app.css?v=20261017-modal">
 </head>
 <body>
 <div style="max-width:1100px;margin:0 auto;padding:var(--space-5) var(--space-4);">
@@ -155,7 +155,7 @@ foreach ($factories as $f) {
      data-factories='<?= json_encode($factories, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>'></div>
 
 <script>window.AMOR = <?= json_encode(['csrfToken' => $ui['csrfToken'], 'userId' => $ui['userId'], 'username' => $ui['username']], JSON_UNESCAPED_SLASHES) ?>;</script>
-<script src="/api/assets/js/app.js"></script>
-<script src="/api/assets/js/users.js"></script>
+<script src="/api/assets/js/app.js?v=20261017-modal"></script>
+<script src="/api/assets/js/users.js?v=20261017-modal"></script>
 </body>
 </html>

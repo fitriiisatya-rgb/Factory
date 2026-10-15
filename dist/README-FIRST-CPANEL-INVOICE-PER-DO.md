@@ -62,6 +62,13 @@ ke invoice DO asal barangnya.
 3. Login Admin, buka `https://factory.amorgroup.id/api/_upgrade/`, lalu
    jalankan migrasi **0021_nota_potongan**.
 
+## Perbaikan kecil (versi 17 Okt)
+- Tombol **Keluar** (logout) di pojok kanan atas.
+- Jendela **Tambah/Edit User** sekarang bisa di-scroll di layar laptop
+  pendek, jadi pilihan Pabrik FG & Packing dan tombol Simpan bisa dijangkau.
+  Kalau server sudah di 0021, cukup upload + extract (tanpa migrasi), lalu
+  refresh halaman.
+
 ## Yang TIDAK berubah
 - Data lama tetap ada. Invoice lama dianggap jenis "Periode".
 - Stok, nomor dokumen lain, dan hak akses tidak berubah.

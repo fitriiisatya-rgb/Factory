@@ -500,6 +500,10 @@ table.data-table { width: 100%; border-collapse: collapse; min-width: 640px; }
 .modal {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-modal); width: 100%; max-width: 480px; padding: var(--space-5);
+  /* Tall forms (e.g. Tambah User) scroll inside the dialog instead of
+     running off a short laptop screen. */
+  max-height: calc(100vh - 2 * var(--space-4)); max-height: calc(100dvh - 2 * var(--space-4));
+  overflow-y: auto; overscroll-behavior: contain;
 }
 .modal-title { font-size: var(--text-lg); margin-bottom: var(--space-2); }
 .modal-body { color: var(--text-muted); font-size: var(--text-sm); margin-bottom: var(--space-4); }
