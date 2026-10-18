@@ -82,6 +82,24 @@ final class FgController
         Response::json($service->batchProductStores($id, $productId));
     }
 
+    /**
+     * GET /api/fg/{id}/stores?productIds=1,2,3 — the store rows of many
+     * products in ONE request. The page used to fetch them one product at
+     * a time; with ~200 products on shared hosting that took ~13 s.
+     */
+    public static function allProductStores(Request $request): void
+    {
+        Auth::requireAuth();
+        $id = (int) $request->routeParams['id'];
+        $ids = array_values(array_unique(array_filter(array_map('intval', explode(',', (string) $request->query('productIds', ''))))));
+        $service = new FgService(Database::pdo());
+        $out = [];
+        foreach ($ids as $productId) {
+            $out[] = ['productId' => $productId, 'data' => $service->batchProductStores($id, $productId)];
+        }
+        Response::json($out);
+    }
+
     public static function index(Request $request): void
     {
         Auth::requireAuth();

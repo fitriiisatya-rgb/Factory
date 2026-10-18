@@ -320,10 +320,15 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
   async function fetchStoreData(pid) {
     return Amor.apiFetch('/api/fg/' + batchId + '/items/' + pid + '/stores');
   }
+  // One request for every product (was one request per product, ~13 s
+  // for ~200 products on the live server).
   async function fetchAllStoreRows() {
-    return Promise.all(visibleProducts.map(function (p) {
-      return fetchStoreData(p.productId).then(function (data) { return { productId: p.productId, productName: p.productName, data: data }; });
-    }));
+    if (visibleProducts.length === 0) return [];
+    var ids = visibleProducts.map(function (p) { return p.productId; });
+    var rows = await Amor.apiFetch('/api/fg/' + batchId + '/stores?productIds=' + ids.join(','));
+    var byId = {};
+    rows.forEach(function (r) { byId[r.productId] = r.data; });
+    return visibleProducts.map(function (p) { return { productId: p.productId, productName: p.productName, data: byId[p.productId] }; });
   }
 
   if (fgStep === 'verifikasi') {
@@ -515,10 +520,17 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
     async function buildVerifikasiPayload() {
       var items = [], storeItems = [], manual = [];
       var lines = collectItems();
+      // One request for all verified products (was one request per
+      // product, in sequence: 1-2 minutes on the live server).
+      var verifiedIds = lines.filter(function (l) { return l.fgVerified > 0.0001; }).map(function (l) { return l.productId; });
+      var storeDataById = {};
+      if (verifiedIds.length > 0) {
+        (await Amor.apiFetch('/api/fg/' + batchId + '/stores?productIds=' + verifiedIds.join(','))).forEach(function (r) { storeDataById[r.productId] = r.data; });
+      }
       for (var i = 0; i < lines.length; i++) {
         var line = lines[i];
         if (line.fgVerified <= 0.0001) { items.push(line); continue; }
-        var data = await fetchStoreData(line.productId);
+        var data = storeDataById[line.productId] || await fetchStoreData(line.productId);
         var stores = (data.stores || []).filter(function (st) { return Number(st.target) > 0.0001; });
         // Nobody ordered it: the whole verified result is Stok Sisa
         // (packed = verified so it is posted to stock with the batch).
