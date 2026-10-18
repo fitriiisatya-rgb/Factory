@@ -138,7 +138,10 @@ try {
   // fetch is intercepted here to force exactly that response shape.
   // -----------------------------------------------------------------
   const XSS_ERROR_MESSAGE = '<img src=x onerror=window.__xssFired=true>';
-  await page.route('**/api/fg/*/items/*/stores', (route) => route.fulfill({
+  // Both the one-request-for-all-products endpoint (/api/fg/{id}/stores)
+  // and the older per-product one (/api/fg/{id}/items/{pid}/stores).
+  const STORE_ROWS_URL = /\/api\/fg\/\d+\/(items\/\d+\/)?stores(\?|$)/;
+  await page.route(STORE_ROWS_URL, (route) => route.fulfill({
     status: 400,
     contentType: 'application/json',
     body: JSON.stringify({ ok: false, code: 'TEST_XSS_ERROR', message: XSS_ERROR_MESSAGE }),
@@ -149,7 +152,7 @@ try {
   check(headerText.includes(XSS_ERROR_MESSAGE), `FG-XSS-04: API error message renders as literal text in the error banner (got: ${JSON.stringify(headerText)})`);
   const xssFired = await page.evaluate(() => window.__xssFired === true);
   check(!xssFired, 'FG-XSS-04: the error message payload never executed (window.__xssFired was never set)');
-  await page.unroute('**/api/fg/*/items/*/stores');
+  await page.unroute(STORE_ROWS_URL);
   // The deliberate 400 above legitimately logs a "Failed to load
   // resource" console message for each intercepted request — expected
   // noise from forcing this error path, not a real regression (same
