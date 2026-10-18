@@ -71,6 +71,10 @@ ke invoice DO asal barangnya.
 - Halaman **FG & Packing**: akun yang belum punya akses ke pabrik itu
   (misalnya akun divisi) sekarang melihat pesan jelas untuk login dengan
   akun FG, bukan halaman setengah jalan yang gagal saat disimpan.
+- **FG & Packing jauh lebih cepat** (versi 18 Okt): daftar toko di Packing
+  dan tombol "Lanjut ke Packing" sebelumnya menunggu 13 detik sampai 1-2
+  menit di server live (satu permintaan per produk). Sekarang satu
+  permintaan untuk semua produk.
 
 ## Yang TIDAK berubah
 - Data lama tetap ada. Invoice lama dianggap jenis "Periode".
