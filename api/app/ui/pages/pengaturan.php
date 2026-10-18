@@ -24,6 +24,14 @@ declare(strict_types=1);
   </div>
 </div>
 
+<?php if (in_array('ADMIN', $ui['roles'], true)): ?>
+<div class="card section">
+  <div class="card-head"><h2 class="card-title">Integrasi finhub</h2></div>
+  <p style="color:var(--text-muted);font-size:var(--text-sm);">Kunci agar finhub bisa membaca data kiriman dan konfirmasi toko (hanya baca).</p>
+  <a class="btn btn-secondary" href="/api/_ui-preview/?page=integrasi">Buka Integrasi Finhub</a>
+</div>
+<?php endif; ?>
+
 <div class="card section">
   <div class="card-head"><h2 class="card-title">Pabrik &amp; Tanggal Default</h2></div>
   <p style="color:var(--text-muted);font-size:var(--text-sm);">

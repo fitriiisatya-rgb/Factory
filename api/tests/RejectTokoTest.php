@@ -481,6 +481,46 @@ runTest('RJT-14 Laporan & Invoice pages show invoice − nota; nota prints as NO
     expect($rt['status'] === 200 && str_contains($rt['body'], 'NP/KRM/') && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $rt['body']), 'reject-toko page should show nota numbers');
 });
 
+runTest('RJT-15 finhub integration key: read-only shipment feed matches what the store confirmed; revoke cuts access', function () use ($adminHttp, $adminCsrf, $pdo, $storeA) {
+    $k = adminPost($adminHttp, $adminCsrf, '/api/admin/integration-keys', ['name' => 'finhub']);
+    expect($k['status'] === 200 && str_starts_with((string) ($k['json']['data']['rawKey'] ?? ''), 'amk_'), 'issuing a key failed: ' . json_encode($k['json']));
+    $raw = $k['json']['data']['rawKey']; $kid = (int) $k['json']['data']['id'];
+    $stored = (string) $pdo->query("SELECT key_hash FROM integration_api_key WHERE integration_api_key_id = {$kid}")->fetchColumn();
+    expect($stored === hash('sha256', $raw) && !str_contains($stored, $raw), 'only the hash of the key may be stored');
+    $list = $adminHttp->request('GET', '/api/admin/integration-keys');
+    expect(!str_contains($list['body'], $raw) && !str_contains($list['body'], $stored), 'the key list must never expose the key or its hash');
+
+    $row = $pdo->query("SELECT sh.shipment_id, sh.tanggal FROM shipment sh JOIN shipment_receipt r ON r.shipment_id = sh.shipment_id
+        WHERE sh.store_id = {$storeA} AND sh.status = 'active' AND sh.shipped_at IS NOT NULL ORDER BY sh.shipment_id LIMIT 1")->fetch();
+    expect($row !== false, 'need a confirmed shipment for store A');
+    $q = "/api/integration/v1/shipments?from={$row['tanggal']}&to={$row['tanggal']}&storeId={$storeA}";
+    $anon = new HttpInv($GLOBALS['baseUrl']);
+    $n = $anon->request('GET', $q);
+    expect($n['status'] === 401 && ($n['json']['code'] ?? '') === 'MISSING_API_KEY', 'no key must be refused');
+    $w = $anon->request('GET', $q, null, ['X-Api-Key' => 'amk_wrong']);
+    expect($w['status'] === 401 && ($w['json']['code'] ?? '') === 'INVALID_API_KEY', 'a wrong key must be refused');
+    $ok = $anon->request('GET', $q, null, ['X-Api-Key' => $raw]);
+    expect($ok['status'] === 200, 'feed with a valid key failed: ' . $ok['body']);
+    $mine = array_values(array_filter($ok['json']['data']['shipments'], static fn ($x) => $x['shipmentId'] === (int) $row['shipment_id']));
+    expect(count($mine) === 1 && $mine[0]['store']['id'] === $storeA && $mine[0]['receipt']['confirmed'] === true, 'the confirmed shipment must be in the feed');
+    $db = $pdo->query("SELECT COALESCE(SUM(ri.received_good_qty),0) g, COALESCE(SUM(ri.reject_qty),0) rj, COALESCE(SUM(ri.shortage_qty),0) sh
+        FROM shipment_receipt r JOIN shipment_receipt_item ri ON ri.shipment_receipt_id = r.shipment_receipt_id WHERE r.shipment_id = {$row['shipment_id']}")->fetch();
+    $sum = static fn ($f) => array_sum(array_map(static fn ($i) => (float) $i[$f], $mine[0]['items']));
+    expect(abs($sum('receivedGoodQty') - (float) $db['g']) < 0.001 && abs($sum('rejectQty') - (float) $db['rj']) < 0.001 && abs($sum('shortageQty') - (float) $db['sh']) < 0.001,
+        'feed quantities must equal the stored receipt: ' . json_encode([$sum('receivedGoodQty'), $sum('rejectQty'), $sum('shortageQty'), $db]));
+    $b = $anon->request('GET', '/api/integration/v1/shipments?from=2026-01-01&to=2026-03-01', null, ['X-Api-Key' => $raw]);
+    expect($b['status'] === 400 && ($b['json']['code'] ?? '') === 'RANGE_TOO_LONG', 'a range over 31 days must be refused');
+    $post = $anon->request('POST', $q, [], ['X-Api-Key' => $raw]);
+    expect($post['status'] >= 400, 'the feed must not accept writes');
+
+    $rv = adminPost($adminHttp, $adminCsrf, "/api/admin/integration-keys/{$kid}/revoke", []);
+    expect($rv['status'] === 200, 'revoke failed: ' . json_encode($rv['json']));
+    $after = $anon->request('GET', $q, null, ['X-Api-Key' => $raw]);
+    expect($after['status'] === 401, 'a revoked key must be refused');
+    $page = $adminHttp->request('GET', '/api/_ui-preview/?page=integrasi');
+    expect($page['status'] === 200 && str_contains($page['body'], 'Buat Kunci Baru') && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $page['body']), 'Integrasi Finhub page should render');
+});
+
 $failed = array_filter($results, static fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests, ' . count($failed) . " failed.\n");
 exit(count($failed) === 0 ? 0 : 1);

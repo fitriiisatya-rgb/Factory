@@ -24,6 +24,7 @@ use Amor\Api\Controllers\ReplacementController;
 use Amor\Api\Controllers\SpecialOrderController;
 use Amor\Api\Controllers\SpecialOrderDoController;
 use Amor\Api\Controllers\StoreController;
+use Amor\Api\Controllers\IntegrationController;
 use Amor\Api\Controllers\StorePortalAdminController;
 use Amor\Api\Controllers\StorePortalController;
 use Amor\Api\Controllers\UserController;
@@ -246,6 +247,10 @@ final class App
         $router->get('/api/admin/store-portal/{storeId}/history', [StorePortalAdminController::class, 'tokenHistory']);
         $router->post('/api/admin/store-portal/{storeId}/issue', [StorePortalAdminController::class, 'tokenIssue']);
         $router->post('/api/admin/store-portal/{storeId}/revoke', [StorePortalAdminController::class, 'tokenRevoke']);
+        $router->get('/api/admin/integration-keys', [IntegrationController::class, 'keyList']);
+        $router->post('/api/admin/integration-keys', [IntegrationController::class, 'keyIssue']);
+        $router->post('/api/admin/integration-keys/{id}/revoke', [IntegrationController::class, 'keyRevoke']);
+        $router->get('/api/integration/v1/shipments', [IntegrationController::class, 'shipments']);
         $router->get('/api/admin/retur', [StorePortalAdminController::class, 'returList']);
         $router->get('/api/admin/retur/evidence/{id}', [StorePortalAdminController::class, 'returEvidence']);
         $router->get('/api/admin/retur/{id}', [StorePortalAdminController::class, 'returShow']);

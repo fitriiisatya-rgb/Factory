@@ -44,6 +44,7 @@ $pages = [
     'replacement-reject' => ['title' => 'Reject saat Terima', 'subtitle' => 'Barang rusak saat datang (dilaporkan di Konfirmasi Penerimaan): Reject Final atau Kirim Ulang / Ganti Produk.'],
     'reject-toko' => ['title' => 'Reject di Toko', 'subtitle' => 'Barang rusak/berjamur di toko sebelum expired — tanggungan pabrik: potong invoice atau ganti barang.'],
     'replacement-do-detail' => ['title' => 'Replacement Reject', 'subtitle' => 'Detail DO Replacement — pengiriman make-good tanpa harga.'],
+    'integrasi' => ['title' => 'Integrasi Finhub', 'subtitle' => 'Kunci untuk finhub membaca data kiriman dan konfirmasi toko.'],
     'bakery-portal-tokens' => ['title' => 'Portal Bakery', 'subtitle' => 'Kelola link permanen Portal Bakery per toko (generate/regenerate/revoke).'],
     'invoice' => ['title' => 'Invoice', 'subtitle' => 'Generate dan kelola invoice dari data pengiriman dan mutasi yang sudah terkonfirmasi.'],
     'invoice-detail' => ['title' => 'Invoice', 'subtitle' => 'Detail satu invoice.'],
@@ -96,6 +97,7 @@ $pageRoles = [
     // actions (a leaked link is a standing, no-login credential) — ADMIN
     // only, never PPIC (same reasoning the page file's own docblock gives).
     'bakery-portal-tokens' => ['ADMIN'],
+    'integrasi' => ['ADMIN'],
     'retur-review' => ['ADMIN', 'PPIC'],
     'reject-toko' => ['ADMIN', 'PPIC'],
     'stok-sisa' => ['ADMIN', 'PPIC'],
