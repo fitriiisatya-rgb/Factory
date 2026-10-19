@@ -29,6 +29,12 @@ yang lebih cepat.
 
 ---
 
+### Perbaikan (versi 19 Okt)
+- **Pesanan Khusus / Non-Toko di akun divisi**: di hari tanpa PO toko,
+  halaman Produksi divisi sekarang menampilkan pesanan khusus untuk tanggal
+  itu (berdasarkan Tanggal Dibutuhkan) dengan tombol **Isi Pesanan Khusus**.
+  Kalau server sudah di migrasi 0022, cukup upload + extract (tanpa migrasi).
+
 ## Cara pasang
 1. **Backup database** lewat phpMyAdmin → Export.
 2. Upload `amor-factory-integrasi-finhub.zip` ke `public_html/factory/`, lalu
