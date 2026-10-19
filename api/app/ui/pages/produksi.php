@@ -179,6 +179,17 @@ if ($fieldSimple && $runIdParam === null && $fieldRow !== null && $fieldRow['run
     $runIdParam = (int) $fieldRow['runId'];
 }
 
+// Pesanan Khusus / Non-Toko for this division on this date (by Tanggal
+// Dibutuhkan). On a day with no store PO the worksheet never opens, so
+// without this the division could not see these orders at all.
+$fieldSpecialRows = [];
+if ($fieldSimple && $fieldRow !== null && $fieldRow['runId'] === null) {
+    $fieldSpecialRows = $specialOrderRepo->findProductionDemandItems($pdo, [
+        'divisionId' => (int) $fieldRow['divisionId'],
+        'tanggal' => $uiTanggal,
+    ]);
+}
+
 $runDetail = null;
 $runDetailError = null;
 $nonRegularRows = [];
@@ -242,8 +253,20 @@ if ($runIdParam !== null) {
   <?php if ($fieldRow['runId'] === null): ?>
     <?php if ($fieldRow['hasTarget']): ?>
     <button type="button" class="btn btn-primary btn-block" data-action="create-run" data-division-id="<?= (int) $fieldRow['divisionId'] ?>">Mulai Isi Produksi</button>
-    <?php else: ?>
+    <?php elseif ($fieldSpecialRows === []): ?>
     <p class="day-card-note">Tidak ada PO untuk divisi ini pada tanggal tersebut.</p>
+    <?php endif; ?>
+    <?php if ($fieldSpecialRows !== []): ?>
+    <div class="day-card-special" style="margin-top:var(--space-3);">
+      <p class="day-card-note"><strong>Pesanan Khusus / Non-Toko</strong> untuk tanggal ini (<?= count($fieldSpecialRows) ?> item):</p>
+      <ul style="margin:var(--space-2) 0;padding-left:1.2em;">
+        <?php foreach ($fieldSpecialRows as $sr): ?>
+        <li><?= ui_esc((string) $sr['item_name_snapshot']) ?> — <strong><?= ui_fmt_num((float) $sr['qty']) ?></strong>
+          <span style="color:var(--text-muted);">(<?= ui_esc((string) $sr['order_no']) ?><?= !empty($sr['customer_name']) ? ' · ' . ui_esc((string) $sr['customer_name']) : (!empty($sr['store_name']) ? ' · ' . ui_esc((string) $sr['store_name']) : '') ?>)</span></li>
+        <?php endforeach; ?>
+      </ul>
+      <a class="btn btn-<?= $fieldRow['hasTarget'] ? 'secondary' : 'primary' ?> btn-block" href="/api/_ui-preview/?page=produksi-task-per-divisi&amp;tanggal=<?= urlencode($uiTanggal) ?>&amp;factoryId=<?= $uiFactoryId ?>&amp;divisionId=<?= (int) $fieldRow['divisionId'] ?>">Isi Pesanan Khusus</a>
+    </div>
     <?php endif; ?>
   <?php endif; ?>
   <?php endif; ?>
