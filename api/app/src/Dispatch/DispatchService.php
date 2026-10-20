@@ -262,10 +262,8 @@ final class DispatchService
     public function myRoute(int $driverUserId, string $tanggal): array
     {
         $routeId = $this->repo->findRouteId($this->pdo, $driverUserId, $tanggal);
-        if ($routeId === null) {
-            return ['tanggal' => $tanggal, 'stops' => []];
-        }
-        $stops = $this->repo->findStops($this->pdo, $routeId);
+        $stops = $routeId === null ? [] : $this->repo->findStops($this->pdo, $routeId);
+        $specialActive = $this->repo->findActiveSpecialDosForDriver($this->pdo, $driverUserId, $tanggal);
         $claims = $this->repo->findActiveClaimsForDriver($this->pdo, $driverUserId, $tanggal);
         $activeByStore = [];
         foreach ($claims as $c) {
@@ -285,11 +283,21 @@ final class DispatchService
             $storeId = (int) $s['store_id'];
             $hasActive = isset($activeByStore[$storeId]);
             $hasDeparted = isset($departedStores[$storeId]);
+            $specialPending = isset($specialActive[$storeId]) && !$hasActive;
             if ($hasActive) {
                 // Not (fully) departed yet — active-claim totals are still the live truth.
                 $storeClaims = array_values(array_filter($claims, static fn ($c) => (int) $c['store_id'] === $storeId));
                 $productCount = count($storeClaims);
                 $totalQty = array_sum(array_map(static fn ($c) => (float) $c['active_qty'], $storeClaims));
+                // A claimed DO Khusus for the same store rides along on this stop.
+                $productCount += $specialActive[$storeId]['productCount'] ?? 0;
+                $totalQty += $specialActive[$storeId]['totalQty'] ?? 0.0;
+                unset($specialActive[$storeId]);
+            } elseif (isset($specialActive[$storeId])) {
+                $hasActive = true;
+                $productCount = $specialActive[$storeId]['productCount'];
+                $totalQty = $specialActive[$storeId]['totalQty'];
+                unset($specialActive[$storeId]);
             } elseif ($hasDeparted) {
                 // Fully departed — real shipment_item totals, never the now-zeroed claims.
                 $productCount = $departedTotals[$storeId]['productCount'] ?? 0;
@@ -314,6 +322,19 @@ final class DispatchService
                 // left to show once every claim is resolved. Always empty
                 // for a stop that hasn't (fully) departed.
                 'shipmentIds' => $hasDeparted ? ($departedTotals[$storeId]['shipmentIds'] ?? []) : [],
+                'specialOnly' => false,
+                'specialPending' => $specialPending,
+            ];
+        }
+        // Stores reached only by a claimed DO Khusus (no Regular PO stop):
+        // listed after the route, not reorderable (the route itself holds
+        // Regular PO stops only).
+        $seq = count($out);
+        foreach ($specialActive as $storeId => $sp) {
+            $out[] = [
+                'stopId' => 0, 'storeId' => $storeId, 'storeName' => $sp['storeName'], 'sequence' => ++$seq,
+                'productCount' => $sp['productCount'], 'totalQty' => $sp['totalQty'], 'hasActiveClaims' => true,
+                'departureStatus' => 'belum_berangkat', 'shipmentIds' => [], 'specialOnly' => true, 'specialPending' => true,
             ];
         }
         return ['tanggal' => $tanggal, 'stops' => $out];

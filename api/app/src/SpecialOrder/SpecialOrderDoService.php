@@ -204,15 +204,24 @@ final class SpecialOrderDoService
     public function driverPool(int $driverUserId): array
     {
         $rows = $this->repo->findDriverPool($this->pdo, $driverUserId);
-        return array_map(function ($r) use ($driverUserId) {
+        $allocSvc = new SpecialOrderFgAllocationService($this->pdo);
+        return array_map(function ($r) use ($driverUserId, $allocSvc) {
             $dto = $this->summaryDto($r);
-            $dto['items'] = array_map(function ($it) {
+            $dto['items'] = array_map(function ($it) use ($allocSvc) {
+                $remaining = max(0.0, (float) $it['planned_qty'] - (float) $it['shipped_qty']);
+                // What can physically leave now (same headroom dispatch()
+                // enforces), so the driver can send part of a DO.
+                $itemId = (int) $it['special_order_item_id'];
+                $item = $this->pdo->prepare('SELECT fg_verified_qty FROM special_order_item WHERE special_order_item_id = ?');
+                $item->execute([$itemId]);
+                $special = max(0.0, (float) $item->fetchColumn() - $allocSvc->shippedSplitForItem($itemId)['shippedFromSpecial']);
                 return [
                     'doItemId' => (int) $it['special_order_do_item_id'],
                     'itemName' => $it['item_name_snapshot'],
                     'plannedQty' => (float) $it['planned_qty'],
                     'shippedQty' => (float) $it['shipped_qty'],
-                    'remainingQty' => max(0.0, (float) $it['planned_qty'] - (float) $it['shipped_qty']),
+                    'remainingQty' => $remaining,
+                    'availableNowQty' => min($remaining, $special + $allocSvc->generalFgHeadroomForItem($itemId)),
                 ];
             }, $this->repo->findDoItems($this->pdo, (int) $r['special_order_do_id']));
             $dto['isMine'] = (int) ($r['claimed_by_user_id'] ?? 0) === $driverUserId;

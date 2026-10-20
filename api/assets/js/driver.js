@@ -310,9 +310,11 @@
         '<div class="driver-summary-item"><div class="driver-summary-value">' + fmtNum(stops.reduce(function (a, s) { return a + s.totalQty; }, 0)) + '</div><div class="driver-summary-label">Pcs</div></div>';
 
       if (stops.length === 0) {
-        list.innerHTML = emptyState('Rute Anda kosong — ambil pengiriman dari tab Tersedia dulu.');
+        list.innerHTML = emptyState('Rute Anda kosong — ambil pengiriman dari tab Tersedia atau Pesanan Khusus dulu.');
         return;
       }
+      // DO-Khusus-only stops come last and are not part of the reorderable route.
+      var routeCount = stops.filter(function (s) { return !s.specialOnly; }).length;
       list.innerHTML = stops.map(function (s, i) {
         var statusBadge = s.departureStatus === 'sudah_berangkat'
           ? '<span class="driver-badge success">Sudah Berangkat</span>'
@@ -328,7 +330,10 @@
         // back to stop.php only if shipmentIds is unexpectedly empty for a
         // "departed" stop — never worse than the pre-fix behavior.
         var stopHref;
-        if (s.departureStatus === 'sudah_berangkat' && s.shipmentIds && s.shipmentIds.length === 1) {
+        if (s.specialPending) {
+          // Only a DO Khusus is still waiting here — it departs from the Khusus tab.
+          stopHref = 'index.php?tab=khusus';
+        } else if (s.departureStatus === 'sudah_berangkat' && s.shipmentIds && s.shipmentIds.length === 1) {
           stopHref = 'shipment.php?id=' + s.shipmentIds[0];
         } else if (s.departureStatus === 'sudah_berangkat' && s.shipmentIds && s.shipmentIds.length > 1) {
           stopHref = 'shipment.php?storeId=' + s.storeId + '&tanggal=' + encodeURIComponent(getTanggal());
@@ -339,12 +344,13 @@
           '<div class="driver-route-stop">' +
           '<div class="driver-route-seq">' + s.sequence + '</div>' +
           '<a class="driver-route-body" style="text-decoration:none;color:inherit;" href="' + stopHref + '">' +
-          '<div class="driver-card-title">' + esc(s.storeName) + '</div>' +
+          '<div class="driver-card-title">' + esc(s.storeName) + (s.specialPending ? ' <span class="driver-badge pastry">Khusus</span>' : '') + '</div>' +
           '<div class="driver-card-sub">' + s.productCount + ' produk &middot; ' + fmtNum(s.totalQty) + ' pcs</div>' +
           '</a>' + statusBadge +
           '<div class="driver-route-actions">' +
+          (s.specialOnly ? '' :
           '<button type="button" class="driver-route-move" data-move="up" data-i="' + i + '"' + (i === 0 ? ' disabled' : '') + '>&uarr;</button>' +
-          '<button type="button" class="driver-route-move" data-move="down" data-i="' + i + '"' + (i === stops.length - 1 ? ' disabled' : '') + '>&darr;</button>' +
+          '<button type="button" class="driver-route-move" data-move="down" data-i="' + i + '"' + (i === routeCount - 1 ? ' disabled' : '') + '>&darr;</button>') +
           '</div>' +
           '</div>';
       }).join('');
@@ -353,10 +359,10 @@
         btn.addEventListener('click', function () {
           var i = parseInt(btn.dataset.i, 10);
           var j = btn.dataset.move === 'up' ? i - 1 : i + 1;
-          if (j < 0 || j >= stops.length) return;
+          if (j < 0 || j >= routeCount) return;
           var tmp = stops[i]; stops[i] = stops[j]; stops[j] = tmp;
           draw();
-          var storeIds = stops.map(function (s) { return s.storeId; });
+          var storeIds = stops.filter(function (s) { return !s.specialOnly; }).map(function (s) { return s.storeId; });
           Amor.apiFetch('/api/dispatch/route/reorder', { method: 'POST', body: { tanggal: getTanggal(), storeIds: storeIds } })
             .catch(function (err) { Amor.toast(err.message, 'error'); load(); });
         });
@@ -696,7 +702,16 @@
         }
         root.innerHTML = rows.map(function (d) {
           var itemsHtml = (d.items || []).map(function (it) {
-            return '<div class="driver-row"><span>' + esc(it.itemName) + '</span><b>Sisa: ' + fmtNum(it.remainingQty) + '</b></div>';
+            if (!d.isMine) {
+              return '<div class="driver-row"><span>' + esc(it.itemName) + '</span><b>Sisa: ' + fmtNum(it.remainingQty) + '</b></div>';
+            }
+            // Own claimed DO: the driver may send part of it (what fits /
+            // what FG has now); the rest stays on the DO for a later trip.
+            var avail = Math.max(0, Math.min(it.remainingQty, it.availableNowQty == null ? it.remainingQty : it.availableNowQty));
+            return '<div class="driver-row"><span>' + esc(it.itemName) +
+              '<br><small>Sisa ' + fmtNum(it.remainingQty) + (avail < it.remainingQty ? ' &middot; siap ' + fmtNum(avail) : '') + '</small></span>' +
+              '<input type="number" class="khusus-qty" inputmode="decimal" min="0" step="any" max="' + avail + '" value="' + avail + '"' +
+              ' data-do="' + d.doId + '" data-item="' + it.doItemId + '" style="width:5.5rem;text-align:right;"></div>';
           }).join('');
           var actionHtml;
           if (!d.claimedByUserId) {
@@ -730,11 +745,20 @@
         });
         root.querySelectorAll('[data-act="depart"]').forEach(function (btn) {
           btn.addEventListener('click', function () {
+            var items = [], total = 0, bad = null;
+            root.querySelectorAll('input.khusus-qty[data-do="' + btn.dataset.id + '"]').forEach(function (inp) {
+              var q = parseFloat(inp.value);
+              if (isNaN(q) || q < 0) q = 0;
+              if (q > parseFloat(inp.max) + 0.0001) bad = inp;
+              if (q > 0) { items.push({ doItemId: parseInt(inp.dataset.item, 10), qty: q }); total += q; }
+            });
+            if (bad) { Amor.toast('Jumlah melebihi yang siap dikirim (maks ' + fmtNum(parseFloat(bad.max)) + ').', 'error'); bad.focus(); return; }
+            if (items.length === 0) { Amor.toast('Isi jumlah yang dibawa — semua masih 0.', 'error'); return; }
             Amor.confirmModal({
               title: 'Konfirmasi Berangkat',
-              body: 'Seluruh sisa qty pada DO ini akan dikirim sekarang.',
+              body: 'Barang yang dibawa sekarang: ' + fmtNum(total) + ' pcs. Sisa yang belum dibawa tetap di DO ini untuk pengiriman berikutnya.',
               onConfirm: function () {
-                return Amor.apiFetch('/api/special-order-do/' + btn.dataset.id + '/depart', { method: 'POST', body: { items: null } });
+                return Amor.apiFetch('/api/special-order-do/' + btn.dataset.id + '/depart', { method: 'POST', body: { items: items } });
               },
             }).then(function (ok) {
               if (ok) { Amor.toast('Pengiriman berhasil dikonfirmasi', 'success'); load(); }

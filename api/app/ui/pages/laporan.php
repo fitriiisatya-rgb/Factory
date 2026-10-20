@@ -345,12 +345,17 @@ $omzetTotal = $omzetTokoTotal + $omzetNonTokoTotal;
 // the table that is the single source of truth for that step (nothing is
 // re-derived), and only finished steps count: submitted production,
 // active (non-void) shipments, invoiced qty, verified retur.
+// Pesanan Khusus (toko khusus + non-toko, by tanggal kebutuhan) and
+// Pengganti reject (by tanggal dibuat) are included in Pesanan, Produksi
+// and Dikirim; non-toko goods count as Terjual once shipped (they are never
+// invoiced), so Terjual never exceeds what actually left the factory.
 $flowDateFrom = isset($_GET['flowDateFrom']) && $_GET['flowDateFrom'] !== '' ? (string) $_GET['flowDateFrom'] : date('Y-m-01');
 $flowDateTo = isset($_GET['flowDateTo']) && $_GET['flowDateTo'] !== '' ? (string) $_GET['flowDateTo'] : date('Y-m-d');
 $flowFactoryId = isset($_GET['flowFactoryId']) && $_GET['flowFactoryId'] !== '' ? (int) $_GET['flowFactoryId'] : $uiFactoryId;
 $flowStmt = $pdo->prepare(
     "SELECT p.product_id, p.name AS product_name, d.name AS division_name,
-            COALESCE(po.qty, 0) AS po_qty, COALESCE(pr.aktual, 0) AS produksi, COALESCE(pr.reject, 0) AS reject_produksi,
+            COALESCE(po.qty, 0) AS po_qty, COALESCE(sp.qty, 0) AS khusus_qty,
+            COALESCE(pr.aktual, 0) + COALESCE(spr.aktual, 0) AS produksi, COALESCE(pr.reject, 0) + COALESCE(spr.reject, 0) AS reject_produksi,
             COALESCE(sh.qty, 0) AS dikirim, COALESCE(rc.reject, 0) AS reject_toko,
             COALESCE(iv.qty, 0) AS terjual, COALESCE(rt.qty, 0) AS retur, COALESCE(rj.qty, 0) AS reject_di_toko
      FROM product p
@@ -358,46 +363,74 @@ $flowStmt = $pdo->prepare(
      LEFT JOIN (SELECT pi.product_id, SUM(pi.po_awal + pi.po_revisi) AS qty FROM po_item pi
                 INNER JOIN po_batch b ON b.po_batch_id = pi.po_batch_id
                 WHERE b.tanggal BETWEEN ? AND ? AND b.factory_id = ? GROUP BY pi.product_id) po ON po.product_id = p.product_id
+     LEFT JOIN (SELECT x.product_id, SUM(x.qty) AS qty FROM (
+                    SELECT soi.product_id, soi.qty FROM special_order_item soi
+                    INNER JOIN special_order so ON so.special_order_id = soi.special_order_id
+                    WHERE so.required_date BETWEEN ? AND ? AND so.status NOT IN ('draft','cancelled') AND soi.product_id IS NOT NULL
+                    UNION ALL
+                    SELECT rd.product_id, rd.approved_qty FROM replacement_demand rd WHERE DATE(rd.created_at) BETWEEN ? AND ?
+                ) x GROUP BY x.product_id) sp ON sp.product_id = p.product_id
      LEFT JOIN (SELECT it.product_id, SUM(it.aktual) AS aktual, SUM(it.reject) AS reject FROM production_item it
                 INNER JOIN production_run r ON r.production_run_id = it.production_run_id
                 WHERE r.tanggal BETWEEN ? AND ? AND r.status IN ('submitted','verified_fg') GROUP BY it.product_id) pr ON pr.product_id = p.product_id
-     LEFT JOIN (SELECT si.product_id, SUM(si.qty) AS qty FROM shipment_item si
-                INNER JOIN shipment s ON s.shipment_id = si.shipment_id
-                WHERE s.tanggal BETWEEN ? AND ? AND s.status <> 'void' GROUP BY si.product_id) sh ON sh.product_id = p.product_id
+     LEFT JOIN (SELECT x.product_id, SUM(x.aktual) AS aktual, SUM(x.reject) AS reject FROM (
+                    SELECT soi.product_id, soi.aktual_produksi AS aktual, soi.reject_produksi AS reject FROM special_order_item soi
+                    INNER JOIN special_order so ON so.special_order_id = soi.special_order_id
+                    WHERE so.required_date BETWEEN ? AND ? AND so.status NOT IN ('draft','cancelled') AND soi.product_id IS NOT NULL
+                    UNION ALL
+                    SELECT rd.product_id, rd.production_aktual, rd.production_reject FROM replacement_demand rd WHERE DATE(rd.created_at) BETWEEN ? AND ?
+                ) x GROUP BY x.product_id) spr ON spr.product_id = p.product_id
+     LEFT JOIN (SELECT x.product_id, SUM(x.qty) AS qty FROM (
+                    SELECT si.product_id, si.qty FROM shipment_item si
+                    INNER JOIN shipment s ON s.shipment_id = si.shipment_id
+                    WHERE s.tanggal BETWEEN ? AND ? AND s.status <> 'void'
+                    UNION ALL
+                    SELECT soi.product_id, sdsi.qty FROM special_order_do_shipment_item sdsi
+                    INNER JOIN shipment s ON s.shipment_id = sdsi.shipment_id
+                    INNER JOIN special_order_do_item sdi ON sdi.special_order_do_item_id = sdsi.special_order_do_item_id
+                    INNER JOIN special_order_item soi ON soi.special_order_item_id = sdi.special_order_item_id
+                    WHERE s.tanggal BETWEEN ? AND ? AND s.status <> 'void' AND soi.product_id IS NOT NULL
+                    UNION ALL
+                    SELECT rdo.product_id, rsi.qty FROM replacement_do_shipment_item rsi
+                    INNER JOIN shipment s ON s.shipment_id = rsi.shipment_id
+                    INNER JOIN replacement_do rdo ON rdo.replacement_do_id = rsi.replacement_do_id
+                    WHERE s.tanggal BETWEEN ? AND ? AND s.status <> 'void'
+                ) x GROUP BY x.product_id) sh ON sh.product_id = p.product_id
      LEFT JOIN (SELECT ri.product_id, SUM(ri.reject_qty) AS reject FROM shipment_receipt_item ri
                 INNER JOIN shipment_receipt r ON r.shipment_receipt_id = ri.shipment_receipt_id
                 INNER JOIN shipment s ON s.shipment_id = r.shipment_id
                 WHERE s.tanggal BETWEEN ? AND ? GROUP BY ri.product_id) rc ON rc.product_id = p.product_id
      LEFT JOIN (SELECT x.product_id, SUM(x.qty) AS qty FROM (
                     SELECT ii.product_id, ii.qty_invoice AS qty FROM invoice_item ii
-                    INNER JOIN invoice i ON i.invoice_id = ii.invoice_id WHERE i.tanggal BETWEEN ? AND ?
+                    INNER JOIN invoice i ON i.invoice_id = ii.invoice_id WHERE i.tanggal BETWEEN ? AND ? AND ii.product_id IS NOT NULL
                     UNION ALL
                     SELECT nit.product_id, -nit.qty FROM nota_potongan_item nit
                     INNER JOIN nota_potongan n ON n.nota_potongan_id = nit.nota_potongan_id
                     LEFT JOIN invoice ni ON ni.invoice_id = n.invoice_id
                     WHERE COALESCE(ni.tanggal, n.tanggal) BETWEEN ? AND ?
+                    UNION ALL
+                    SELECT soi.product_id, sdsi.qty FROM special_order_do_shipment_item sdsi
+                    INNER JOIN shipment s ON s.shipment_id = sdsi.shipment_id
+                    INNER JOIN special_order_do_item sdi ON sdi.special_order_do_item_id = sdsi.special_order_do_item_id
+                    INNER JOIN special_order_item soi ON soi.special_order_item_id = sdi.special_order_item_id
+                    INNER JOIN special_order so ON so.special_order_id = soi.special_order_id
+                    WHERE so.source_type = 'non_toko' AND s.tanggal BETWEEN ? AND ? AND s.status <> 'void' AND soi.product_id IS NOT NULL
                 ) x GROUP BY x.product_id) iv ON iv.product_id = p.product_id
      LEFT JOIN (SELECT product_id, SUM(qty) AS qty FROM retur_request
                 WHERE jenis = 'retur' AND status = 'verified' AND retur_date BETWEEN ? AND ? GROUP BY product_id) rt ON rt.product_id = p.product_id
      LEFT JOIN (SELECT product_id, SUM(qty) AS qty FROM retur_request
                 WHERE jenis = 'reject_toko' AND status = 'verified' AND retur_date BETWEEN ? AND ? GROUP BY product_id) rj ON rj.product_id = p.product_id
      WHERE d.factory_id = ?
-       AND (po.qty IS NOT NULL OR pr.aktual IS NOT NULL OR sh.qty IS NOT NULL OR iv.qty IS NOT NULL OR rt.qty IS NOT NULL OR rj.qty IS NOT NULL)
+       AND (po.qty IS NOT NULL OR sp.qty IS NOT NULL OR pr.aktual IS NOT NULL OR spr.aktual IS NOT NULL OR sh.qty IS NOT NULL OR iv.qty IS NOT NULL OR rt.qty IS NOT NULL OR rj.qty IS NOT NULL)
      ORDER BY d.name, p.name"
 );
-$flowStmt->execute([
-    $flowDateFrom, $flowDateTo, $flowFactoryId,
-    $flowDateFrom, $flowDateTo,
-    $flowDateFrom, $flowDateTo,
-    $flowDateFrom, $flowDateTo,
-    $flowDateFrom, $flowDateTo,
-    $flowDateFrom, $flowDateTo,
-    $flowDateFrom, $flowDateTo,
-    $flowDateFrom, $flowDateTo,
-    $flowFactoryId,
-]);
+$flowStmt->execute(array_merge(
+    [$flowDateFrom, $flowDateTo, $flowFactoryId],
+    array_merge(...array_fill(0, 14, [$flowDateFrom, $flowDateTo])),
+    [$flowFactoryId]
+));
 $flowRows = $flowStmt->fetchAll();
-$flowTotals = ['po_qty' => 0.0, 'produksi' => 0.0, 'reject_produksi' => 0.0, 'dikirim' => 0.0, 'reject_toko' => 0.0, 'reject_di_toko' => 0.0, 'terjual' => 0.0, 'retur' => 0.0];
+$flowTotals = ['po_qty' => 0.0, 'khusus_qty' => 0.0, 'produksi' => 0.0, 'reject_produksi' => 0.0, 'dikirim' => 0.0, 'reject_toko' => 0.0, 'reject_di_toko' => 0.0, 'terjual' => 0.0, 'retur' => 0.0];
 foreach ($flowRows as $r) {
     foreach ($flowTotals as $k => $_) {
         $flowTotals[$k] += (float) $r[$k];
@@ -406,7 +439,7 @@ foreach ($flowRows as $r) {
 ?>
 <div class="card section">
   <div class="card-head"><h2 class="card-title">Arus Barang per Produk</h2></div>
-  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Dari PO masuk sampai produksi, reject, terjual (invoice), dan retur toko. <b>Reject</b> = tanggungan pabrik (sudah dipotong dari Terjual); <b>Retur</b> = tanggungan toko, hanya catatan.</p>
+  <p style="color:var(--text-faint);font-size:.85rem;margin-top:-8px;margin-bottom:var(--space-3);">Dari PO dan Pesanan Khusus/Pengganti sampai produksi, kirim, reject, terjual (invoice + Non-Toko yang terkirim), dan retur toko. <b>Reject</b> = tanggungan pabrik (sudah dipotong dari Terjual); <b>Retur</b> = tanggungan toko, hanya catatan.</p>
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap;margin-bottom:var(--space-4);">
     <input type="hidden" name="page" value="laporan">
     <input type="hidden" name="tanggal" value="<?= ui_esc($uiTanggal) ?>">
@@ -426,13 +459,14 @@ foreach ($flowRows as $r) {
     <?= ui_empty_state('Belum ada arus barang', 'Belum ada PO, produksi, pengiriman, atau penjualan pada periode ini.') ?>
   <?php else: ?>
   <div class="table-scroll"><table class="data-table" id="arus-barang">
-    <thead><tr><th>Produk</th><th>Divisi</th><th class="num">PO</th><th class="num">Produksi</th><th class="num">Reject Produksi</th><th class="num">Dikirim</th><th class="num">Reject saat Terima</th><th class="num">Reject di Toko</th><th class="num">Terjual</th><th class="num">Retur (catatan)</th></tr></thead>
+    <thead><tr><th>Produk</th><th>Divisi</th><th class="num">PO</th><th class="num">Pesanan Khusus / Pengganti</th><th class="num">Produksi</th><th class="num">Reject Produksi</th><th class="num">Dikirim</th><th class="num">Reject saat Terima</th><th class="num">Reject di Toko</th><th class="num">Terjual</th><th class="num">Retur (catatan)</th></tr></thead>
     <tbody>
     <?php foreach ($flowRows as $r): ?>
     <tr>
       <td><?= ui_esc((string) $r['product_name']) ?></td>
       <td><?= ui_esc((string) $r['division_name']) ?></td>
       <td class="num"><?= ui_fmt_num((float) $r['po_qty']) ?></td>
+      <td class="num"><?= ui_fmt_num((float) $r['khusus_qty']) ?></td>
       <td class="num"><?= ui_fmt_num((float) $r['produksi']) ?></td>
       <td class="num"><?= ui_fmt_num((float) $r['reject_produksi']) ?></td>
       <td class="num"><?= ui_fmt_num((float) $r['dikirim']) ?></td>

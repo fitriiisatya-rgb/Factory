@@ -368,9 +368,11 @@ final class DispatchRepository
                     so2.non_store_source AS special_non_store_source, so2.order_no AS special_order_no,
                     r.status AS receipt_status,
                     (SELECT COUNT(*) FROM shipment_item si WHERE si.shipment_id = sh.shipment_id)
-                      + (SELECT COUNT(*) FROM special_order_do_shipment_item sodsi WHERE sodsi.shipment_id = sh.shipment_id) AS product_count,
+                      + (SELECT COUNT(*) FROM special_order_do_shipment_item sodsi WHERE sodsi.shipment_id = sh.shipment_id)
+                      + (SELECT COUNT(*) FROM replacement_do_shipment_item rsi WHERE rsi.shipment_id = sh.shipment_id) AS product_count,
                     (SELECT COALESCE(SUM(si.qty), 0) FROM shipment_item si WHERE si.shipment_id = sh.shipment_id)
-                      + (SELECT COALESCE(SUM(sodsi.qty), 0) FROM special_order_do_shipment_item sodsi WHERE sodsi.shipment_id = sh.shipment_id) AS total_qty
+                      + (SELECT COALESCE(SUM(sodsi.qty), 0) FROM special_order_do_shipment_item sodsi WHERE sodsi.shipment_id = sh.shipment_id)
+                      + (SELECT COALESCE(SUM(rsi.qty), 0) FROM replacement_do_shipment_item rsi WHERE rsi.shipment_id = sh.shipment_id) AS total_qty
              FROM shipment sh
              INNER JOIN store s ON s.store_id = sh.store_id
              LEFT JOIN delivery_order o ON o.delivery_order_id = sh.delivery_order_id
@@ -402,13 +404,47 @@ final class DispatchRepository
      * even though the join fans out one row per shipment_item.
      * @return array<int,array{productCount:int,totalQty:float,shipmentIds:int[]}> keyed by store_id
      */
+    /**
+     * This driver's claimed, not-yet-fully-shipped Pesanan Khusus/Non-Toko
+     * DOs for one date, per drop store: still-to-ship lines and qty. Lets
+     * Rute Saya count (and show) special deliveries next to Regular PO stops.
+     * @return array<int,array{storeName:string,productCount:int,totalQty:float}> keyed by store_id
+     */
+    public function findActiveSpecialDosForDriver(PDO $pdo, int $driverUserId, string $tanggal): array
+    {
+        $stmt = $pdo->prepare(
+            "SELECT sodo.drop_store_id AS store_id, s.canonical_name AS store_name,
+                    SUM(CASE WHEN x.remaining > 0 THEN 1 ELSE 0 END) AS product_count, COALESCE(SUM(x.remaining), 0) AS total_qty
+             FROM special_order_do sodo
+             INNER JOIN store s ON s.store_id = sodo.drop_store_id
+             INNER JOIN (SELECT sodi.special_order_do_id,
+                                GREATEST(0, sodi.planned_qty - COALESCE((SELECT SUM(q.qty) FROM special_order_do_shipment_item q WHERE q.special_order_do_item_id = sodi.special_order_do_item_id), 0)) AS remaining
+                         FROM special_order_do_item sodi) x ON x.special_order_do_id = sodo.special_order_do_id
+             WHERE sodo.claimed_by_user_id = ? AND sodo.tanggal = ? AND sodo.status IN ('open','partial')
+             GROUP BY sodo.drop_store_id, s.canonical_name
+             HAVING total_qty > 0"
+        );
+        $stmt->execute([$driverUserId, $tanggal]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $r) {
+            $out[(int) $r['store_id']] = ['storeName' => (string) $r['store_name'], 'productCount' => (int) $r['product_count'], 'totalQty' => (float) $r['total_qty']];
+        }
+        return $out;
+    }
+
     public function findDepartedTotalsForDriver(PDO $pdo, int $driverUserId, string $tanggal): array
     {
         $stmt = $pdo->prepare(
-            "SELECT sh.store_id, COUNT(DISTINCT si.product_id) AS product_count, COALESCE(SUM(si.qty), 0) AS total_qty,
+            "SELECT sh.store_id, COUNT(DISTINCT si.line_key) AS product_count, COALESCE(SUM(si.qty), 0) AS total_qty,
                     GROUP_CONCAT(DISTINCT sh.shipment_id ORDER BY sh.shipment_id) AS shipment_ids
              FROM shipment sh
-             INNER JOIN shipment_item si ON si.shipment_id = sh.shipment_id
+             INNER JOIN (
+                 SELECT shipment_id, CONCAT('p', product_id) AS line_key, qty FROM shipment_item
+                 UNION ALL
+                 SELECT shipment_id, CONCAT('s', special_order_do_item_id), qty FROM special_order_do_shipment_item
+                 UNION ALL
+                 SELECT shipment_id, CONCAT('r', replacement_do_id), qty FROM replacement_do_shipment_item
+             ) si ON si.shipment_id = sh.shipment_id
              WHERE sh.shipped_by = ? AND sh.tanggal = ? AND sh.status = 'active'
              GROUP BY sh.store_id"
         );
