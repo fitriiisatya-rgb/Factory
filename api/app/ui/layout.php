@@ -70,6 +70,10 @@ function ui_nav_items(array $roles = []): array
     $scoped = $roles !== [] ? ui_role_scoped_pages($roles) : null;
     if ($scoped !== null) {
         $items = array_values(array_filter($items, static fn ($i) => in_array($i['key'], $scoped, true)));
+        // Division accounts: their own division's FG summary (read-only).
+        if (in_array('fg-ringkasan', $scoped, true) && !in_array('FG_PACKING', $roles, true)) {
+            $items[] = ['key' => 'fg-ringkasan', 'label' => 'Ringkasan FG', 'icon' => 'chart'];
+        }
         if (in_array('riwayat', $scoped, true)) {
             $items[] = ['key' => 'riwayat', 'label' => 'Riwayat', 'icon' => 'clock'];
         }
@@ -115,7 +119,7 @@ function ui_role_scoped_pages(array $roles): ?array
         return null;
     }
     $byRole = [
-        'PRODUCTION' => ['produksi', 'produksi-demand', 'produksi-task-per-divisi', 'fg-packing', 'fg-khusus-non-toko', 'replacement-do-detail', 'riwayat'],
+        'PRODUCTION' => ['produksi', 'produksi-demand', 'produksi-task-per-divisi', 'fg-packing', 'fg-khusus-non-toko', 'replacement-do-detail', 'fg-ringkasan', 'riwayat'],
         'FG_PACKING' => ['fg-packing', 'fg-khusus-non-toko', 'riwayat'],
     ];
     $pages = [];
@@ -171,7 +175,7 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
     </div>
     <nav class="sidebar-nav">
       <?php foreach (ui_nav_items($ui['roles']) as $item): ?>
-      <a class="nav-item<?= $active === $item['key'] ? ' active' : '' ?>" href="/api/_ui-preview/?page=<?= $item['key'] ?><?= $navQS ?>">
+      <a class="nav-item<?= $active === $item['key'] ? ' active' : '' ?>" href="/api/_ui-preview/?page=<?= $item['key'] ?><?= $navQS ?><?= $item['key'] === 'fg-packing' ? '&amp;step=ringkasan' : '' ?>">
         <span class="nav-icon"><?= ui_icon($item['icon']) ?></span><span class="nav-label"><?= ui_esc($item['label']) ?></span>
       </a>
       <?php endforeach; ?>

@@ -46,7 +46,10 @@ try {
 // unchanged backend, see FgService::batchProductStores()'s own docblock)
 // — there is still only ONE stored number per store row, so splitting the
 // UI into two steps can never double-count or duplicate data.
-$fgStep = (($_GET['step'] ?? 'verifikasi') === 'packing') ? 'packing' : 'verifikasi';
+$fgStep = (string) ($_GET['step'] ?? 'verifikasi');
+if (!in_array($fgStep, ['ringkasan', 'verifikasi', 'packing'], true)) {
+    $fgStep = 'verifikasi';
+}
 
 $selesaiDipacking = 0;
 if ($batchView !== null) {
@@ -83,6 +86,21 @@ function fgStepUrl(string $step, string $tanggal, int $factoryId): string
 <div class="alert alert-danger"><?= ui_esc($viewError) ?></div>
 <?php endif; ?>
 
+<?php if ($fgStep === 'ringkasan'): ?>
+<?php require_once __DIR__ . '/../fg-ringkasan.php'; ?>
+<div class="filter-bar">
+  <div class="btn-group">
+    <a class="btn btn-sm btn-primary" href="<?= ui_esc(fgStepUrl('ringkasan', $uiTanggal, $uiFactoryId)) ?>">Ringkasan</a>
+    <a class="btn btn-sm btn-secondary" href="<?= ui_esc(fgStepUrl('verifikasi', $uiTanggal, $uiFactoryId)) ?>">FG Verifikasi</a>
+    <a class="btn btn-sm btn-secondary" href="<?= ui_esc(fgStepUrl('packing', $uiTanggal, $uiFactoryId)) ?>">FG Packing</a>
+  </div>
+</div>
+<?php
+if ($viewError === null) {
+    ui_render_fg_ringkasan($pdo, $uiTanggal, $uiFactoryId, null, fgStepUrl('verifikasi', $uiTanggal, $uiFactoryId));
+}
+return;
+endif; ?>
 <?php
 $rejectTotal = 0.0;
 $hilangTotal = 0.0;
@@ -107,6 +125,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
 
 <div class="filter-bar">
   <div class="btn-group">
+    <a class="btn btn-sm btn-secondary" href="<?= ui_esc(fgStepUrl('ringkasan', $uiTanggal, $uiFactoryId)) ?>">Ringkasan</a>
     <a class="btn btn-sm <?= $fgStep === 'verifikasi' ? 'btn-primary' : 'btn-secondary' ?>" href="<?= ui_esc(fgStepUrl('verifikasi', $uiTanggal, $uiFactoryId)) ?>">FG Verifikasi</a>
     <a class="btn btn-sm <?= $fgStep === 'packing' ? 'btn-primary' : 'btn-secondary' ?>" href="<?= ui_esc(fgStepUrl('packing', $uiTanggal, $uiFactoryId)) ?>">FG Packing</a>
   </div>
