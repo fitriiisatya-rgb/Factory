@@ -306,7 +306,7 @@ final class FgService
             }
             $notes = isset($line['notes']) ? trim((string) $line['notes']) : trim((string) ($item['keterangan'] ?? ''));
             if (($notes === '') && ($sesuaiVerified === false || $sesuaiPacking === false || $reject > 0.0001 || $hilang > 0.0001)) {
-                throw new ApiException(400, 'NOTES_REQUIRED', "Product {$productId}: Keterangan wajib diisi jika Verified/Packing Tidak Sesuai, atau Reject/Hilang > 0");
+                throw new ApiException(400, 'NOTES_REQUIRED', "Produk {$item['product_name']}: Keterangan wajib diisi jika Verified/Packing Tidak Sesuai, atau Reject/Hilang > 0");
             }
             $this->repo->updateItemValues($this->pdo, (int) $item['fg_item_id'], $fgVerified, $packed, $reject, $hilang, $notes !== '' ? $notes : null);
             $touched++;
@@ -607,8 +607,14 @@ final class FgService
         $packed = (float) $product['packed_qty'];
         $reject = (float) $product['reject_qty'];
         $hilang = (float) $product['hilang_qty'];
-        if ($qty > 0.0001 || $packed > 0.0001 || $reject > 0.0001 || $hilang > 0.0001) {
-            throw new ApiException(409, 'MODE_SWITCH_REQUIRES_ZERO_PER_PRODUK', "Produk {$product['product_name']}: pindah ke mode Breakdown Toko hanya bisa dilakukan sebelum FG Verified/Packing/Reject/Hilang diisi pada mode Per Produk. Kosongkan (reset ke 0) dahulu, atau lanjutkan di mode Per Produk.");
+        // The only caller passes the operator's own per-store rows, which
+        // replace the per-product numbers (FG Verified/Reject/Hilang) — the
+        // split is theirs, never guessed (owner report Oct 2026: verifying
+        // part per product and part per toko dead-ended here). Packed or
+        // already-posted stock still blocks: packing is per store and would
+        // be lost.
+        if ($packed > 0.0001 || (float) ($product['posted_packed_qty'] ?? 0) > 0.0001) {
+            throw new ApiException(409, 'MODE_SWITCH_REQUIRES_ZERO_PER_PRODUK', "Produk {$product['product_name']}: sudah ada jumlah packing pada mode Per Produk. Kosongkan Packing dahulu sebelum dibagi per Toko.");
         }
         $targetRows = $this->targets->storeBreakdownForProduct($this->pdo, $tanggal, $factoryId, $productId);
         if ($targetRows === []) {

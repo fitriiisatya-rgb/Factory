@@ -284,7 +284,9 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
   // Server-filtered list (target > 0 only — see FgService::buildBatchDto()'s
   // isVisibleItem() gate) — the single source of truth both steps fetch
   // per-store data for.
-  var visibleProducts = <?= json_encode(array_map(static fn ($it) => ['productId' => $it['productId'], 'productName' => $it['productName']], $batchView['items'])) ?>;
+  var visibleProducts = <?= json_encode(array_map(static fn ($it) => ['productId' => $it['productId'], 'productName' => $it['productName'], 'production' => (float) $it['productionActualSnapshot']], $batchView['items'])) ?>;
+  var productionById = {};
+  visibleProducts.forEach(function (p) { productionById[p.productId] = p.production; });
 
   // SECURITY: every dynamic value below (store name, product name,
   // notes/keterangan, status label, API error messages) is untrusted
@@ -326,6 +328,7 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
           b.className = 'btn btn-sm ' + (b === btn ? (isSesuai ? 'btn-primary' : 'btn-danger') : 'btn-secondary');
         });
         group.setAttribute('data-sesuai', isSesuai ? '1' : '0');
+        group.setAttribute('data-touched', isSesuai ? '0' : '1');
         if (isSesuai) {
           valueInput.value = targetProvider();
           valueInput.disabled = true;
@@ -375,7 +378,12 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
       var block = document.createElement('div');
       block.className = 'fg-card';
       block.setAttribute('data-product-id', pid);
+      var production = Number(productionById[pid] || 0);
+      var short = Number(data.totalTarget || 0) - production;
       var head = '<div class="fg-card-title">' + escHtml(pname) + '</div>'
+        + '<div class="fg-card-sub">Hasil Produksi: <b>' + production.toLocaleString('id-ID') + '</b> &middot; Total PO: <b>' + Number(data.totalTarget || 0).toLocaleString('id-ID') + '</b></div>'
+        + (editableHere && short > 0.01 ? '<div class="alert alert-warning" style="margin:var(--space-2) 0;">Hasil produksi <b>kurang ' + short.toLocaleString('id-ID') + '</b> dari PO, jadi tidak semua toko bisa <b>Sesuai</b>. '
+          + 'Pada toko yang dikurangi, klik <b>Tidak Sesuai</b> lalu isi jumlahnya. Total semua toko maksimal ' + production.toLocaleString('id-ID') + '.</div>' : '')
         + (data.exploded ? '' : '<div class="alert alert-warning" style="margin:var(--space-2) 0;">Produk ini masih mode Per Produk — mengisi baris di bawah dan Simpan akan memecahnya ke per-Toko.</div>');
       var rowsHtml = (data.stores || []).map(function (s) {
         var verifiedSesuai = editableHere && Math.abs(s.fgVerified - s.target) < 0.01 && s.fgVerified > 0;
@@ -405,7 +413,7 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
       var actions = editableHere ? '<div class="fg-card-actions"><button type="button" class="btn btn-primary btn-sm bt-save">Simpan Breakdown Toko</button></div>' : '';
       block.innerHTML = head
         + (data.stores.length === 0 ? '<p style="color:var(--text-muted);">Tidak ada Toko dengan target &gt; 0 untuk produk ini.</p>' : rowsHtml)
-        + (data.stores.length === 0 ? '' : '<div class="fg-card-row"><span class="fg-card-row-label"><b>Total</b></span><span>Target ' + data.totalTarget.toLocaleString('id-ID') + ' &middot; Verified ' + data.totalVerified.toLocaleString('id-ID') + '</span></div>')
+        + (data.stores.length === 0 ? '' : '<div class="fg-card-row"><span class="fg-card-row-label"><b>Total</b></span><span class="bt-total">Target ' + data.totalTarget.toLocaleString('id-ID') + ' &middot; Verified ' + data.totalVerified.toLocaleString('id-ID') + '</span></div>')
         + actions;
 
       block.querySelectorAll('.bt-verified-sesuai').forEach(function (group) {
@@ -414,8 +422,31 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
         wireSesuaiGroup(group, input, function () { return group.getAttribute('data-target'); });
       });
 
+      // Live total of what is typed/Sesuai, against the production ceiling.
+      function typedTotal() {
+        var t = 0;
+        block.querySelectorAll('[data-bt-field="fgVerified"]').forEach(function (inp) {
+          if (inp.closest('[data-store-id]').getAttribute('data-store-id') !== String(UNALLOCATED_STORE_ID)) t += parseFloat(inp.value || '0') || 0;
+        });
+        return t;
+      }
+      function refreshTotal() {
+        var el = block.querySelector('.bt-total');
+        if (!el) return;
+        var t = typedTotal();
+        el.innerHTML = 'Target ' + Number(data.totalTarget || 0).toLocaleString('id-ID') + ' &middot; Verified ' + t.toLocaleString('id-ID')
+          + (t > production + 0.01 ? ' <span class="badge badge-danger">lebih ' + (t - production).toLocaleString('id-ID') + ' dari hasil produksi</span>' : '');
+      }
+      block.addEventListener('input', refreshTotal);
+      block.addEventListener('click', function (e) { if (e.target.closest('.bt-verified-sesuai')) setTimeout(refreshTotal, 0); });
+
       var saveBtn = block.querySelector('.bt-save');
       if (saveBtn) saveBtn.addEventListener('click', async function () {
+        var total = typedTotal();
+        if (total > production + 0.01) {
+          Amor.toast(pname + ': total per toko ' + total.toLocaleString('id-ID') + ' melebihi hasil produksi ' + production.toLocaleString('id-ID') + '. Pada toko yang dikurangi klik Tidak Sesuai lalu isi jumlahnya.', 'danger');
+          return;
+        }
         saveBtn.disabled = true;
         var rowsOut = [];
         var storeIds = [];
@@ -432,14 +463,24 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
             return block.querySelector('[data-store-id="' + sid + '"][data-bt-field="' + name + '"], [data-store-id="' + sid + '"] [data-bt-field="' + name + '"]');
           };
           var vGroup = block.querySelector('[data-store-id="' + sid + '"] .bt-verified-sesuai');
+          var isSesuai = vGroup ? vGroup.getAttribute('data-sesuai') === '1' : false;
+          var notesVal = (field('notes') || { value: '' }).value;
+          // A store given less because production fell short of the PO:
+          // the reason is Production's, so FG never has to type it.
+          if (vGroup && !isSesuai && notesVal.trim() === '' && short > 0.01 && parseFloat((field('fgVerified') || { value: '0' }).value || '0') < Number(vGroup.getAttribute('data-target')) - 0.01) {
+            notesVal = 'Hasil produksi kurang dari PO (' + production.toLocaleString('id-ID') + ' dari ' + Number(data.totalTarget).toLocaleString('id-ID') + ')';
+          }
           rowsOut.push({
             storeId: parseInt(sid, 10),
             fgVerified: parseFloat((field('fgVerified') || { value: '0' }).value || '0'),
             packed: parseFloat((field('packed') || { value: '0' }).value || '0'),
             reject: parseFloat((field('reject') || { value: '0' }).value || '0'),
             hilang: parseFloat((field('hilang') || { value: '0' }).value || '0'),
-            notes: (field('notes') || { value: '' }).value,
-            sesuaiVerified: vGroup ? vGroup.getAttribute('data-sesuai') === '1' : false,
+            notes: notesVal,
+            // Untouched store row (still 0, Tidak Sesuai never clicked) = not verified yet.
+            sesuaiVerified: isSesuai ? true
+              : (vGroup && vGroup.getAttribute('data-touched') !== '1' && parseFloat((field('fgVerified') || { value: '0' }).value || '0') <= 0.0001
+                 && parseFloat((field('reject') || { value: '0' }).value || '0') <= 0.0001 && parseFloat((field('hilang') || { value: '0' }).value || '0') <= 0.0001 ? null : false),
           });
         });
         try {
@@ -456,6 +497,7 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
       if (!breakdownPanel) return;
       modeToko.className = 'btn btn-sm btn-primary'; modeProduk.className = 'btn btn-sm btn-secondary';
       if (perProdukWrap) perProdukWrap.style.display = 'none';
+      toggleToolbarExtras(true);
       breakdownPanel.style.display = '';
       breakdownPanel.innerHTML = '<div style="color:var(--text-muted);">Memuat Breakdown Toko...</div>';
       if (visibleProducts.length === 0) {
@@ -468,6 +510,7 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
         results.forEach(function (r) {
           breakdownPanel.appendChild(buildVerifikasiStoreBlock(r.productId, r.productName, r.data));
         });
+        filterBreakdown();
         if (focusProductId) {
           var target = breakdownPanel.querySelector('[data-product-id="' + focusProductId + '"]');
           if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -476,7 +519,25 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
         breakdownPanel.innerHTML = '<div class="alert alert-danger">' + escHtml(e.message) + '</div>';
       }
     }
+    // The "Cari produk..." box above the list filters Breakdown Toko too;
+    // its status chips and bulk-Sesuai button only apply to Per Produk.
+    function searchBox() { return document.querySelector('.ws-toolbar .cw-q'); }
+    function filterBreakdown() {
+      var box = searchBox();
+      var q = box ? (box.value || '').toLowerCase().trim() : '';
+      breakdownPanel.querySelectorAll('.fg-card[data-product-id]').forEach(function (b) {
+        var t = b.querySelector('.fg-card-title');
+        b.style.display = q === '' || (t && t.textContent.toLowerCase().indexOf(q) !== -1) ? '' : 'none';
+      });
+    }
+    function toggleToolbarExtras(breakdown) {
+      document.querySelectorAll('.ws-toolbar .ws-chips, .ws-toolbar .cw-all, .ws-toolbar .ws-progress').forEach(function (el) { el.style.display = breakdown ? 'none' : ''; });
+    }
+    document.addEventListener('input', function (e) {
+      if (e.target.classList && e.target.classList.contains('cw-q') && breakdownPanel && breakdownPanel.style.display !== 'none') filterBreakdown();
+    });
     function exitBreakdownMode() {
+      toggleToolbarExtras(false);
       modeProduk.className = 'btn btn-sm btn-primary'; modeToko.className = 'btn btn-sm btn-secondary';
       if (perProdukWrap) perProdukWrap.style.display = '';
       if (breakdownPanel) { breakdownPanel.style.display = 'none'; breakdownPanel.innerHTML = ''; }
@@ -520,7 +581,13 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
           reject: rejectInput ? parseFloat(rejectInput.value || '0') : 0,
           hilang: hilangInput ? parseFloat(hilangInput.value || '0') : 0,
           notes: notesInput ? notesInput.value : '',
-          sesuaiVerified: verifiedGroup ? verifiedGroup.getAttribute('data-sesuai') === '1' : false,
+          // Untouched (still 0, no reject/hilang, Tidak Sesuai never clicked)
+          // is "not verified yet", not "Tidak Sesuai" — it must not demand a
+          // Keterangan and block a partial draft save.
+          sesuaiVerified: verifiedGroup
+            ? (verifiedGroup.getAttribute('data-sesuai') === '1' ? true
+              : (verifiedGroup.getAttribute('data-touched') === '1' || parseFloat(input.value || '0') > 0 ? false : null))
+            : false,
         });
       });
       return items;
@@ -572,8 +639,12 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
           surplus = line.fgVerified - sumTarget;
         }
         if (rows === null) {
+          // Production is short of the PO across several stores: which store
+          // gets less is the operator's call (Breakdown Toko). The draft still
+          // keeps the per-product number meanwhile.
           var card = document.querySelector('.fg-card[data-product-id="' + line.productId + '"] .fg-card-title');
-          manual.push({ productId: line.productId, name: card ? card.textContent : ('Produk ' + line.productId) });
+          manual.push({ productId: line.productId, name: card ? card.textContent : ('Produk ' + line.productId), verified: line.fgVerified, target: sumTarget, stores: stores.length });
+          items.push(line);
           continue;
         }
         rows.forEach(function (r, idx) {
@@ -590,23 +661,36 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
       return { items: items, storeItems: storeItems, manual: manual };
     }
 
-    async function saveVerifikasi() {
+    function manualText(manual) {
+      return manual.map(function (m) {
+        return m.name + ' (FG ' + m.verified.toLocaleString('id-ID') + ', PO ' + m.target.toLocaleString('id-ID') + ' di ' + m.stores + ' toko)';
+      }).join(', ');
+    }
+    // strict = "Lanjut ke Packing": every verified product must already be
+    // split per toko. A draft save keeps the rest and only warns.
+    async function saveVerifikasi(strict) {
       var payload = await buildVerifikasiPayload();
-      if (payload.manual.length > 0) {
-        var names = payload.manual.map(function (m) { return m.name; }).join(', ');
-        throw new Error('Jumlah FG ' + names + ' berbeda dari target per toko. Bagi jumlahnya per toko di "Breakdown Toko" dulu.');
+      if (strict && payload.manual.length > 0) {
+        throw new Error('Jumlah FG berbeda dari PO per toko: ' + manualText(payload.manual) + '. Tentukan toko mana yang dikurangi di "Breakdown Toko" (klik Tidak Sesuai pada toko itu), lalu simpan.');
       }
+      lastManual = payload.manual;
       var data = await Amor.apiFetch('/api/fg/' + batchId, { method: 'PATCH', body: { expectedVersion: version, items: payload.items, storeItems: payload.storeItems, refreshSource: refreshBox && refreshBox.checked } });
       version = data.version;
       form.setAttribute('data-expected-version', version);
       return data;
     }
 
+    var lastManual = [];
     var saveBtn = document.getElementById('btn-save-fg');
     if (saveBtn) saveBtn.addEventListener('click', async function () {
       saveBtn.disabled = true;
       try {
-        await saveVerifikasi();
+        await saveVerifikasi(false);
+        if (lastManual.length > 0) {
+          Amor.toast('Draft tersimpan. Belum dibagi per toko (produksi kurang dari PO): ' + manualText(lastManual) + '. Bagi di "Breakdown Toko" sebelum Lanjut ke Packing.', 'warning');
+          setTimeout(function () { location.reload(); }, 4000);
+          return;
+        }
         Amor.toast('Verifikasi FG disimpan.', 'success');
         setTimeout(function () { location.reload(); }, 600);
       } catch (e) { Amor.toast(e.message, 'danger'); saveBtn.disabled = false; }
@@ -619,7 +703,7 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
     if (submitBtn) submitBtn.addEventListener('click', async function () {
       submitBtn.disabled = true;
       try {
-        var saved = await saveVerifikasi();
+        var saved = await saveVerifikasi(true);
         var needsPacking = (saved.items || []).some(function (it) { return Number(it.fgVerified) > 0.0001; });
         if (needsPacking) {
           Amor.toast('Verifikasi tersimpan. Lanjutkan packing per toko.', 'success');

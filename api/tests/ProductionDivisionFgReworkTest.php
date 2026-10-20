@@ -751,14 +751,21 @@ runTest('FG-STORE-08 switching modes never doubles: collapse back to Per Produk 
     expect($itemC !== null && $itemC['mode'] === 'perProduk' && $itemC['storeCount'] === 1, 'expected the product to collapse back to ONE Per Produk row: ' . json_encode($itemC));
     expect(numEq($itemC['fgVerified'], 24.0) && numEq($itemC['reject'], 1.0), "expected totals unchanged by the collapse (fgVerified=24, reject=1), got: " . json_encode($itemC));
 
-    // Re-exploding is blocked now that the collapsed Per Produk row is
-    // non-zero — this system never guesses how to re-split an aggregate
-    // number across stores (see explodeToStores()'s own docblock).
+    // Re-exploding a non-zero Per Produk row is allowed when the operator
+    // supplies the per-store split explicitly (owner report Oct 2026) —
+    // the system still never guesses one; the explicit rows replace the
+    // per-product numbers and the total stays capped at production.
     $reExplode = $http->request('PATCH', "/api/fg/{$fgBatchC}", [
         'expectedVersion' => $fgVersionC,
-        'storeItems' => [['productId' => (int) $prodC['product_id'], 'rows' => [['storeId' => $GLOBALS['storeAId'], 'fgVerified' => 24.0, 'packed' => 0.0]]]],
+        'storeItems' => [['productId' => (int) $prodC['product_id'], 'rows' => [['storeId' => $GLOBALS['storeAId'], 'fgVerified' => 24.0, 'packed' => 0.0, 'reject' => 1.0, 'notes' => 'uji']]]],
     ], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-08-reexplode')));
-    expect($reExplode['status'] === 409 && $reExplode['json']['code'] === 'MODE_SWITCH_REQUIRES_ZERO_PER_PRODUK', "expected 409 MODE_SWITCH_REQUIRES_ZERO_PER_PRODUK, got {$reExplode['status']}: " . json_encode($reExplode['json']));
+    expect($reExplode['status'] === 200, "expected an explicit per-store split to be accepted, got {$reExplode['status']}: " . json_encode($reExplode['json']));
+    $fgVersionC = (int) $reExplode['json']['data']['version'];
+    $back = $http->request('PATCH', "/api/fg/{$fgBatchC}", ['expectedVersion' => $fgVersionC, 'collapseProductIds' => [(int) $prodC['product_id']]], array_merge(['X-CSRF-Token' => $csrf], idemKey('fgstore-08-collapse2')));
+    expect($back['status'] === 200, 'collapse back failed: ' . json_encode($back['json']));
+    $fgVersionC = (int) $back['json']['data']['version'];
+    foreach ($back['json']['data']['items'] as $it) { if ($it['productId'] === (int) $prodC['product_id']) { $itemC = $it; } }
+    expect(numEq($itemC['fgVerified'], 24.0) && numEq($itemC['reject'], 1.0), 'expected the same totals after split + collapse: ' . json_encode($itemC));
 });
 
 // A SECOND, independent product carries the submit/reopen/PO-revision
