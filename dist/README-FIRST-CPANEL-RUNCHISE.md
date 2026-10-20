@@ -41,6 +41,15 @@ perbaikan 3 celah).
 - Halaman **Integrasi finhub**: daftar kunci dulu tidak tampil ("Amor is not
   defined"). Sekarang tampil.
 
+### Perbaikan FG Verifikasi (versi 20 Okt sore)
+- Cari produk sekarang juga bekerja di **Breakdown Toko**.
+- Kalau hasil produksi kurang dari PO di beberapa toko, Breakdown Toko
+  menampilkan "Hasil Produksi · Total PO · kurang N", total yang berubah
+  langsung, dan keterangan otomatis untuk toko yang dikurangi.
+- Produk yang belum diisi tidak lagi menghalangi **Simpan Draft**.
+- Produk yang sudah diisi di Per Produk bisa dibagi di Breakdown Toko.
+- Pesan error menyebut nama produk dan angkanya.
+
 ## Cara pasang
 1. **Backup database** lewat phpMyAdmin → Export.
 2. Upload `amor-factory-runchise.zip` ke `public_html/factory/`, lalu
