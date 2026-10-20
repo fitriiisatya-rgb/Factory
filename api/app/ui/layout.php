@@ -12,7 +12,7 @@ require_once __DIR__ . '/labels.php';
 // could keep serving an old version indefinitely, e.g. masking the
 // evidence-thumbnail sizing fix. Bump this string whenever any of the
 // three assets change.
-const ADMIN_ASSET_VERSION = '20261020-fgfix';
+const ADMIN_ASSET_VERSION = '20261020-notif';
 
 /**
  * Nav item list — the single source of truth for the sidebar. Every item

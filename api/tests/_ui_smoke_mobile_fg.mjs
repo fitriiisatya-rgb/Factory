@@ -153,6 +153,10 @@ try {
   // does) — clear it so MOBILE-FG-17 below only ever catches a REAL,
   // unexpected error from this point forward.
   consoleErrors.length = 0;
+  // Errors are a centered notification with an "OK, Mengerti" button
+  // that stays until dismissed — dismiss it like an operator would.
+  check(await page.locator('.nt-back .nt-b').isVisible(), 'MOBILE-FG-12b: the error is shown as a centered notification with an OK button');
+  await page.locator('.nt-back .nt-b').click();
 
   // Now save Store A for real, within its own ceiling, to exercise the
   // real submit-per-store path (MOBILE-FG-13/14).

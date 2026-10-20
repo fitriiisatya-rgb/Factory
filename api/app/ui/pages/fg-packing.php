@@ -687,8 +687,8 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
       try {
         await saveVerifikasi(false);
         if (lastManual.length > 0) {
-          Amor.toast('Draft tersimpan. Belum dibagi per toko (produksi kurang dari PO): ' + manualText(lastManual) + '. Bagi di "Breakdown Toko" sebelum Lanjut ke Packing.', 'warning');
-          setTimeout(function () { location.reload(); }, 4000);
+          await Amor.toast('Draft tersimpan. Belum dibagi per toko (produksi kurang dari PO): ' + manualText(lastManual) + '. Bagi di "Breakdown Toko" sebelum Lanjut ke Packing.', 'warning');
+          location.reload();
           return;
         }
         Amor.toast('Verifikasi FG disimpan.', 'success');
@@ -725,7 +725,8 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
         var blocking = (data.verifiedExceedsProductionBlocking || []).length;
         var msg = 'Sumber Produksi disegarkan. ' + changed + ' produk diperbarui angkanya.';
         if (blocking > 0) msg += ' PERINGATAN: ' + blocking + ' produk sekarang punya FG Terverifikasi melebihi Hasil Produksi terbaru.';
-        Amor.toast(msg, blocking > 0 ? 'warning' : 'success');
+        if (blocking > 0) { await Amor.toast(msg, 'warning'); location.reload(); return; }
+        Amor.toast(msg, 'success');
         setTimeout(function () { location.reload(); }, 800);
       } catch (e) { Amor.toast(e.message, 'danger'); refreshSourceBtn.disabled = false; }
     });

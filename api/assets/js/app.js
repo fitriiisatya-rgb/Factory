@@ -53,26 +53,67 @@
   // -----------------------------------------------------------------
   // Toast
   // -----------------------------------------------------------------
-  function ensureToastStack() {
-    let stack = document.querySelector('.toast-stack');
-    if (!stack) {
-      stack = document.createElement('div');
-      stack.className = 'toast-stack';
-      document.body.appendChild(stack);
-    }
-    return stack;
+  // Centered notification (owner request Oct 2026: "biar user aware").
+  // Error / warning: centered card over a dimmed page with an "OK, Mengerti"
+  // button — stays until dismissed. Success / info: short centered badge
+  // that fades by itself. Returns a Promise resolved once it is gone, so a
+  // caller can wait (e.g. before reloading) instead of the message being
+  // wiped by navigation. Styles are injected here so every portal that
+  // loads app.js (admin, Bakery Portal, Driver) gets the same look.
+  let ntActive = null;
+  function ensureNotifyStyles() {
+    if (document.getElementById('amor-notify-css')) return;
+    const st = document.createElement('style');
+    st.id = 'amor-notify-css';
+    st.textContent =
+      '.nt-back{position:fixed;inset:0;background:rgba(5,10,20,.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px}' +
+      '.nt-box{background:var(--surface,#151c2c);color:var(--text,#e8ecf3);border-radius:16px;max-width:440px;width:100%;padding:22px 22px 18px;box-shadow:0 20px 60px rgba(0,0,0,.5);text-align:center;border-top:6px solid var(--nt-c)}' +
+      '.nt-ic{width:52px;height:52px;border-radius:50%;margin:0 auto 10px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:#fff;background:var(--nt-c)}' +
+      '.nt-t{font-weight:700;font-size:17px;margin-bottom:6px}.nt-m{font-size:15px;line-height:1.5;color:var(--text-muted,#c3cad6);white-space:pre-line;word-break:break-word;max-height:50vh;overflow:auto}' +
+      '.nt-b{margin-top:16px;width:100%;padding:11px;border-radius:10px;border:0;background:var(--nt-c);color:#fff;font-weight:700;font-size:15px;cursor:pointer}' +
+      '.nt-ok{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:1000;background:var(--surface,#151c2c);color:var(--text,#e8ecf3);border-radius:14px;padding:16px 22px;box-shadow:0 16px 50px rgba(0,0,0,.5);display:flex;gap:10px;align-items:center;font-weight:600;font-size:15px;border-left:6px solid var(--nt-c);max-width:90vw;transition:opacity .3s}' +
+      '.nt-ok .nt-dot{flex:0 0 28px;height:28px;border-radius:50%;background:var(--nt-c);color:#fff;display:flex;align-items:center;justify-content:center}';
+    document.head.appendChild(st);
   }
   function toast(message, type) {
-    const stack = ensureToastStack();
-    const el = document.createElement('div');
-    el.className = 'toast' + (type ? ' ' + type : '');
-    el.textContent = message;
-    stack.appendChild(el);
-    setTimeout(function () {
-      el.style.transition = 'opacity .3s';
-      el.style.opacity = '0';
-      setTimeout(function () { el.remove(); }, 300);
-    }, 4200);
+    ensureNotifyStyles();
+    const kind = type === 'error' ? 'danger' : (type || 'info');
+    const color = { danger: '#ef4444', warning: '#f59e0b', success: '#22c55e', info: '#3b82f6' }[kind] || '#3b82f6';
+    if (ntActive) ntActive.close();
+    return new Promise(function (resolve) {
+      const el = document.createElement('div');
+      el.style.setProperty('--nt-c', color);
+      let done = false;
+      function close() {
+        if (done) return;
+        done = true;
+        document.removeEventListener('keydown', onKey, true);
+        el.remove();
+        if (ntActive && ntActive.el === el) ntActive = null;
+        resolve();
+      }
+      function onKey(e) { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); close(); } }
+      if (kind === 'danger' || kind === 'warning') {
+        el.className = 'nt-back';
+        el.setAttribute('role', 'alertdialog');
+        el.innerHTML = '<div class="nt-box"><div class="nt-ic">!</div><div class="nt-t"></div><div class="nt-m"></div><button type="button" class="nt-b">OK, Mengerti</button></div>';
+        el.querySelector('.nt-t').textContent = kind === 'danger' ? 'Belum berhasil' : 'Perhatian';
+        el.querySelector('.nt-m').textContent = String(message == null ? '' : message);
+        el.querySelector('.nt-b').addEventListener('click', close);
+        document.addEventListener('keydown', onKey, true);
+        document.body.appendChild(el);
+        el.querySelector('.nt-b').focus();
+      } else {
+        el.className = 'nt-ok';
+        el.setAttribute('role', 'status');
+        el.innerHTML = '<span class="nt-dot">' + (kind === 'success' ? '&#10003;' : 'i') + '</span><span class="nt-txt"></span>';
+        el.querySelector('.nt-txt').textContent = String(message == null ? '' : message);
+        el.addEventListener('click', close);
+        document.body.appendChild(el);
+        setTimeout(function () { el.style.opacity = '0'; setTimeout(close, 300); }, 2200);
+      }
+      ntActive = { el: el, close: close };
+    });
   }
 
   // -----------------------------------------------------------------

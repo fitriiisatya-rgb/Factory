@@ -68,7 +68,7 @@ require_once __DIR__ . '/../app/ui/components.php'; // ui_icon() only — pure f
  * DRIVER_ASSET_VERSION/RECEIPT_ASSET_VERSION. Bump on every patch that
  * touches either file.
  */
-const STORE_ASSET_VERSION = '20261020-runchise';
+const STORE_ASSET_VERSION = '20261020-notif';
 
 /**
  * Opens the mobile Portal HTML shell: header (bakery name, prominent per
