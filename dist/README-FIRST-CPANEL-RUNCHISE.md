@@ -50,6 +50,11 @@ perbaikan 3 celah).
 - Produk yang sudah diisi di Per Produk bisa dibagi di Breakdown Toko.
 - Pesan error menyebut nama produk dan angkanya.
 
+### Notifikasi di tengah layar
+- Error dan peringatan muncul di tengah dengan tombol **OK, Mengerti** (tidak
+  hilang sendiri). Notifikasi sukses muncul singkat di tengah lalu hilang.
+  Berlaku di admin, divisi, FG, portal toko, dan HP driver.
+
 ## Cara pasang
 1. **Backup database** lewat phpMyAdmin → Export.
 2. Upload `amor-factory-runchise.zip` ke `public_html/factory/`, lalu
