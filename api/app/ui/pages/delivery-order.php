@@ -79,6 +79,7 @@ foreach ($storesWithPo as $s) {
 <div class="btn-group section">
   <button type="button" class="btn btn-primary" id="btn-bulk-generate">Generate Draft DO Semua Toko</button>
   <a class="btn btn-secondary" href="/api/_ui-preview/print-do-bulk.php?tanggal=<?= urlencode($uiTanggal) ?>&factoryId=<?= $uiFactoryId ?>" target="_blank">Print Semua DO</a>
+  <?php require_once __DIR__ . '/../do-split-print.php'; ui_render_do_split_print($pdo, $uiTanggal, $uiFactoryId); $doDivMap = ui_do_division_map($pdo, $uiTanggal, $uiFactoryId)['dos']; ?>
 </div>
 
 <div class="table-card section">
@@ -99,7 +100,20 @@ foreach ($storesWithPo as $s) {
       <td><?= ui_esc(ui_fmt_datetime_id($d['lastShipmentAt'] ?? null)) ?></td>
       <td class="row-actions">
         <a class="btn btn-secondary btn-sm" href="/api/_ui-preview/?page=delivery-order-detail&doId=<?= (int) $d['doId'] ?>">Lihat</a>
+        <?php $rowDivs = array_keys($doDivMap[(int) $d['doId']]['divs'] ?? []); ?>
+        <?php if (count($rowDivs) > 1): ?>
+        <details class="do-print-menu" style="display:inline-block;position:relative;">
+          <summary class="btn btn-secondary btn-sm" style="list-style:none;cursor:pointer;">Print &#9662;</summary>
+          <div style="position:absolute;right:0;z-index:30;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:4px;min-width:190px;box-shadow:0 10px 30px rgba(0,0,0,.35);">
+            <a class="btn btn-sm" style="display:block;text-align:left;" href="/api/_ui-preview/print-do.php?doId=<?= (int) $d['doId'] ?>" target="_blank">&#128424; Semua produk</a>
+            <?php foreach ($rowDivs as $rd): ?>
+            <a class="btn btn-sm" style="display:block;text-align:left;" href="/api/_ui-preview/print-do.php?doId=<?= (int) $d['doId'] ?>&div=<?= urlencode($rd) ?>" target="_blank">&mdash; <?= ui_esc($rd) ?> (<?= (int) $doDivMap[(int) $d['doId']]['divs'][$rd]['n'] ?>)</a>
+            <?php endforeach; ?>
+          </div>
+        </details>
+        <?php else: ?>
         <a class="btn btn-secondary btn-sm" href="/api/_ui-preview/print-do.php?doId=<?= (int) $d['doId'] ?>" target="_blank">Print</a>
+        <?php endif; ?>
         <?php if (in_array($d['status'], ['draft', 'preprinted'], true) && (float) $d['totalRemaining'] > 0.0001): ?>
         <a class="btn btn-primary btn-sm" href="/api/_ui-preview/?page=pengiriman&doId=<?= (int) $d['doId'] ?>">Buat Pengiriman</a>
         <?php endif; ?>

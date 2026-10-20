@@ -19,6 +19,7 @@ declare(strict_types=1);
 require __DIR__ . '/../app/ui/bootstrap.php';
 require_once __DIR__ . '/../app/ui/labels.php';
 require_once __DIR__ . '/../app/ui/print-template.php';
+require_once __DIR__ . '/../app/ui/do-split-print.php';
 
 use Amor\Api\Delivery\DoService;
 
@@ -59,6 +60,16 @@ header('Content-Type: text/html; charset=utf-8');
   <button type="button" class="primary" onclick="window.print()">Cetak</button>
 </div>
 
-<?php ui_render_do_print_document($do, $factoryLabel, $printedByName, 1, 1, $ui['pdo']); ?>
+<?php
+// ?div=<divisi>: only that division's products (Print per divisi).
+$div = trim((string) ($_GET['div'] ?? ''));
+$part = $div !== '' ? ui_do_filter_divisions($do, [$div]) : null;
+if ($div !== '' && $part === null): ?>
+<p style="margin:2rem;color:#cbd5e1;font-family:sans-serif;">DO ini tidak punya produk divisi <?= ui_esc($div) ?>.</p>
+<?php elseif ($part !== null):
+    ui_render_do_print_document($part, $factoryLabel, $printedByName, 1, 1, $ui['pdo'], $div, ui_do_other_divisions_note($do, [$div]));
+else:
+    ui_render_do_print_document($do, $factoryLabel, $printedByName, 1, 1, $ui['pdo']);
+endif; ?>
 </body>
 </html>

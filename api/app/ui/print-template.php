@@ -95,7 +95,7 @@ function ui_print_status(string $status): array
  *        no other read/write happens through it here; every other field above already came
  *        from the caller's own DoService::getDo() DTO.
  */
-function ui_render_do_print_document(array $do, string $factoryLabel, string $printedByName, int $pageNum, int $pageTotal, PDO $pdo): void
+function ui_render_do_print_document(array $do, string $factoryLabel, string $printedByName, int $pageNum, int $pageTotal, PDO $pdo, ?string $bagian = null, ?string $otherNote = null): void
 {
     $status = ui_print_status($do['status']);
     ?>
@@ -119,6 +119,9 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
                  shipment_item only. This title must never say "Surat
                  Jalan" again. */ ?>
         <div class="print-doc-title">DRAFT DELIVERY ORDER / RENCANA PENGIRIMAN</div>
+        <?php if ($bagian !== null): ?>
+        <div style="margin-top:6px;padding:5px 10px;border:2px solid #000;border-radius:6px;font-weight:800;font-size:14px;display:inline-block;">BAGIAN: <?= ui_esc(mb_strtoupper($bagian)) ?></div>
+        <?php endif; ?>
       </div>
     </div>
     <div class="print-meta-right">
@@ -167,6 +170,9 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
     </tfoot>
   </table>
 
+  <?php if ($otherNote !== null): ?>
+  <div style="margin-top:6px;font-size:11px;"><?= ui_esc($otherNote) ?></div>
+  <?php endif; ?>
   <div class="print-notes">
     <b>Catatan</b>
     <div class="print-notes-body"><?= $do['catatan'] !== null && trim((string) $do['catatan']) !== '' ? nl2br(ui_esc((string) $do['catatan'])) : '&nbsp;' ?></div>

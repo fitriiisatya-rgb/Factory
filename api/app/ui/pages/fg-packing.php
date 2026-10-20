@@ -94,6 +94,7 @@ function fgStepUrl(string $step, string $tanggal, int $factoryId): string
     <a class="btn btn-sm btn-secondary" href="<?= ui_esc(fgStepUrl('verifikasi', $uiTanggal, $uiFactoryId)) ?>">FG Verifikasi</a>
     <a class="btn btn-sm btn-secondary" href="<?= ui_esc(fgStepUrl('packing', $uiTanggal, $uiFactoryId)) ?>">FG Packing</a>
   </div>
+  <?php if ($viewError === null) { require_once __DIR__ . '/../do-split-print.php'; ui_render_do_split_print($pdo, $uiTanggal, $uiFactoryId, 'btn btn-sm btn-secondary'); } ?>
 </div>
 <?php
 if ($viewError === null) {
