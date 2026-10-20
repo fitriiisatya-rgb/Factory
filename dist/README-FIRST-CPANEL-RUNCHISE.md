@@ -55,6 +55,12 @@ perbaikan 3 celah).
   hilang sendiri). Notifikasi sukses muncul singkat di tengah lalu hilang.
   Berlaku di admin, divisi, FG, portal toko, dan HP driver.
 
+### Dashboard Ringkasan FG
+- Menu **FG & Packing** sekarang membuka tab **Ringkasan** dulu: progres
+  verifikasi, total produk (ketuk untuk daftar tiap barang: terverifikasi dan
+  dipacking), per divisi, per produk, produksi kurang dari PO, dan Stok Sisa.
+- Akun divisi mendapat menu **Ringkasan FG** (hanya divisinya sendiri).
+
 ## Cara pasang
 1. **Backup database** lewat phpMyAdmin → Export.
 2. Upload `amor-factory-runchise.zip` ke `public_html/factory/`, lalu
