@@ -118,6 +118,25 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     <?= ui_badge(ui_doc_status_label($batchView['status'])) ?>
   </div>
   <?php $editable = in_array($batchView['status'], ['draft', 'reopened'], true); ?>
+  <?php
+  // Production a division submitted AFTER this FG document was created is
+  // not part of it until it is refreshed; say so instead of letting those
+  // goods silently never reach FG stock.
+  $lateRunsStmt = $pdo->prepare(
+      "SELECT d.name FROM production_run pr INNER JOIN division d ON d.division_id = pr.division_id
+       WHERE pr.tanggal = ? AND d.factory_id = ? AND pr.status = 'submitted'
+         AND pr.production_run_id NOT IN (SELECT production_run_id FROM fg_batch_source WHERE fg_batch_id = ?)
+       ORDER BY d.name"
+  );
+  $lateRunsStmt->execute([$uiTanggal, $uiFactoryId, (int) $batchView['fgBatchId']]);
+  $lateRuns = $lateRunsStmt->fetchAll(PDO::FETCH_COLUMN);
+  ?>
+  <?php if ($lateRuns !== []): ?>
+  <div class="alert alert-warning">
+    <strong>Ada produksi yang belum masuk dokumen FG ini:</strong> <?= ui_esc(implode(', ', $lateRuns)) ?> (disubmit setelah FG dibuat).
+    <?= $editable ? 'Klik <strong>Refresh Produksi Terbaru</strong> agar barangnya ikut diverifikasi.' : (array_intersect(['ADMIN', 'PPIC'], $ui['roles']) !== [] ? 'Buka kembali (Reopen) FG ini lalu Refresh Produksi Terbaru.' : 'Minta Admin membuka kembali FG ini agar barangnya bisa masuk.') ?>
+  </div>
+  <?php endif; ?>
 
   <?php if ($fgStep === 'verifikasi'): ?>
   <?php if ($batchView['sourceInconsistency']): ?>
@@ -134,7 +153,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     <?php if ($editable): ?>
     <button type="button" class="btn btn-primary" style="margin-top:var(--space-2);" id="btn-refresh-fg-source">Refresh Produksi Terbaru</button>
     <?php else: ?>
-    <p style="margin-top:var(--space-2);color:var(--text-muted);">Dokumen ini sudah <strong>submitted</strong> — klik "Buka Kembali / Reopen" dulu sebelum bisa Refresh Produksi Terbaru.</p>
+    <p style="margin-top:var(--space-2);color:var(--text-muted);">Dokumen ini sudah <strong>submitted</strong> — <?= array_intersect(['ADMIN', 'PPIC'], $ui['roles']) !== [] ? 'klik "Buka Kembali / Reopen" dulu' : 'minta Admin membuka kembali dokumen ini' ?> sebelum bisa Refresh Produksi Terbaru.</p>
     <?php endif; ?>
   </div>
   <?php elseif ($editable): ?>
@@ -185,18 +204,18 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       </div>
       <div class="fg-card-row">
         <span class="fg-card-row-label">FG Terverifikasi</span>
-        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="fgVerified" value="<?= ui_fmt_num($it['fgVerified']) ?>" <?= $verifiedIsSesuai ? 'disabled' : '' ?>>
+        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="fgVerified" value="<?= ui_num_input($it['fgVerified']) ?>" <?= $verifiedIsSesuai ? 'disabled' : '' ?>>
         <?php else: ?><b><?= ui_fmt_num($it['fgVerified']) ?></b><?php endif; ?>
       </div>
       <div class="fg-card-row"><span class="fg-card-row-label">Selisih</span><span><?= ui_fmt_num($it['variance']) ?></span></div>
       <div class="fg-card-row">
         <span class="fg-card-row-label">Reject</span>
-        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_fmt_num($it['reject'] ?? 0) ?>">
+        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_num_input($it['reject'] ?? 0) ?>">
         <?php else: ?><?= ui_fmt_num($it['reject'] ?? 0) ?><?php endif; ?>
       </div>
       <div class="fg-card-row">
         <span class="fg-card-row-label">Hilang</span>
-        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="hilang" value="<?= ui_fmt_num($it['hilang'] ?? 0) ?>">
+        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="hilang" value="<?= ui_num_input($it['hilang'] ?? 0) ?>">
         <?php else: ?><?= ui_fmt_num($it['hilang'] ?? 0) ?><?php endif; ?>
       </div>
       <div class="fg-card-row">
@@ -211,7 +230,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
            defaulting to 0 if absent — see FgService::patchDraft()'s own docblock —
            so this hidden field is what stops a Verifikasi-only save from wiping out
            already-packed work). -->
-      <input type="hidden" data-product-id="<?= (int) $it['productId'] ?>" data-field="packed" value="<?= ui_fmt_num($it['packed']) ?>">
+      <input type="hidden" data-product-id="<?= (int) $it['productId'] ?>" data-field="packed" value="<?= ui_num_input($it['packed']) ?>">
       <div class="fg-card-actions">
         <button type="button" class="btn btn-secondary btn-sm fg-breakdown-btn" data-product-id="<?= (int) $it['productId'] ?>" data-product-name="<?= ui_esc($it['productName']) ?>">Breakdown Toko</button>
         <?php if ($editable && $isBreakdown): ?>
@@ -230,7 +249,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
     <button type="button" class="btn btn-primary" id="btn-save-fg">Simpan Draft</button>
     <button type="button" class="btn btn-success" id="btn-submit-fg">Lanjut ke Packing &rarr;</button>
   </div>
-  <?php elseif ($batchView['status'] === 'submitted'): ?>
+  <?php elseif ($batchView['status'] === 'submitted' && array_intersect(['ADMIN', 'PPIC'], $ui['roles']) !== []): ?>
   <div class="btn-group" style="margin-top:var(--space-3);">
     <button type="button" class="btn btn-warning" id="btn-reopen-fg">Buka Kembali / Reopen</button>
   </div>
@@ -247,7 +266,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
   <div class="btn-group" style="margin-top:var(--space-4);">
     <button type="button" class="btn btn-success" id="btn-submit-fg-packing">Submit FG (Semua Toko)</button>
   </div>
-  <?php elseif ($batchView['status'] === 'submitted'): ?>
+  <?php elseif ($batchView['status'] === 'submitted' && array_intersect(['ADMIN', 'PPIC'], $ui['roles']) !== []): ?>
   <div class="btn-group" style="margin-top:var(--space-4);">
     <button type="button" class="btn btn-warning" id="btn-reopen-fg-packing">Buka Kembali / Reopen</button>
   </div>

@@ -498,35 +498,51 @@ runTest('OPLOGIN-18 Riwayat: a division account sees only its own divisions\' pr
     expect($d->get('/api/_ui-preview/?page=riwayat')['status'] === 403, 'a DRIVER uses the Driver Portal Riwayat, not this page');
 });
 
-runTest('OPLOGIN-19 Laporan Omset: a finished (Selesai) Pesanan Non-Toko counts as omset; an unfinished one does not', function () use ($baseUrl, $adminUser, $adminPass, $products) {
+runTest('OPLOGIN-19 Laporan Omset: Non-Toko counts what was handed over; Selesai cannot be forced before shipment', function () use ($baseUrl, $adminUser, $adminPass, $products) {
     $a = new HttpOp($baseUrl);
     $a->form('/_admin-login/', ['action' => 'login', 'username' => $adminUser, 'password' => $adminPass]);
     $csrf = csrfOf($a);
-    $make = function (string $source, float $qty, bool $finish) use ($a, $csrf, $products): void {
+    $make = function (string $source, string $fulfillment, float $qty) use ($a, $csrf, $products): array {
         $c = $a->json('POST', '/api/special-orders', [
             'sourceType' => 'non_toko', 'nonStoreSource' => $source, 'customerName' => 'Omset ' . $source,
-            'fulfillmentType' => 'pickup', 'orderDate' => '2026-12-01', 'requiredDate' => '2026-12-05',
+            'fulfillmentType' => $fulfillment, 'orderDate' => '2026-12-01', 'requiredDate' => '2026-12-05',
             'items' => [['itemType' => 'existing_product', 'productId' => (int) $products[3], 'qty' => $qty, 'unitPrice' => 10000, 'charge' => 2500]],
         ], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-create')));
         expect($c['status'] === 200, 'non-toko order create failed: ' . $c['body']);
         $id = (int) $c['json']['data']['orderId'];
+        $itemId = (int) $c['json']['data']['items'][0]['itemId'];
         $cf = $a->json('POST', "/api/special-orders/{$id}/confirm", ['expectedVersion' => $c['json']['data']['version']], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-confirm')));
         $sd = $a->json('POST', "/api/special-orders/{$id}/send-to-production", ['expectedVersion' => $cf['json']['data']['version']], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-send')));
         expect($sd['status'] === 200, 'send-to-production failed: ' . $sd['body']);
-        if ($finish) {
-            $st = $a->json('POST', "/api/special-orders/{$id}/status", ['expectedVersion' => $sd['json']['data']['version'], 'status' => 'completed'], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-done')));
-            expect($st['status'] === 200, 'marking the order Selesai failed: ' . $st['body']);
-        }
+        return [$id, $itemId, (int) $sd['json']['data']['version']];
     };
-    $make('cs', 3, true);                 // 3 x 10.000 + 2.500 = Rp32.500, counted
-    $make('sales_executive', 5, false);   // still open, never counted
+    $complete = function (int $id) use ($a, $csrf): array {
+        $v = (int) $a->json('GET', "/api/special-orders/{$id}", null)['json']['data']['version'];
+        return $a->json('POST', "/api/special-orders/{$id}/status", ['expectedVersion' => $v, 'status' => 'completed'], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-done')));
+    };
+
+    // Pickup (collected at the factory): Selesai only once FG-ready, then 3 x 10.000 + 2.500 = Rp32.500 counts.
+    [$pickId, $pickItem, $pickV] = $make('cs', 'pickup', 3);
+    $early = $complete($pickId);
+    expect($early['status'] === 400 && ($early['json']['code'] ?? '') === 'NOT_FG_READY', 'a pickup order must not be Selesai before FG is ready: ' . $early['body']);
+    $act = $a->json('POST', "/api/special-orders/{$pickId}/actual", ['expectedVersion' => $pickV, 'items' => [['itemId' => $pickItem, 'aktualProduksi' => 3, 'rejectProduksi' => 0]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-actual')));
+    expect($act['status'] === 200, 'actual failed: ' . $act['body']);
+    $ver = $a->json('POST', "/api/special-orders/items/{$pickItem}/verify-fg", ['fgVerifiedQty' => 3], array_merge(['X-CSRF-Token' => $csrf], idemKey('omset-verify')));
+    expect($ver['status'] === 200, 'verify-fg failed: ' . $ver['body']);
+    $done = $complete($pickId);
+    expect($done['status'] === 200, 'marking a FG-ready pickup order Selesai failed: ' . $done['body']);
+
+    // Pengiriman: never shipped -> Selesai refused, never counted.
+    [$shipId] = $make('sales_executive', 'pengiriman', 5);
+    $refused = $complete($shipId);
+    expect($refused['status'] === 400 && ($refused['json']['code'] ?? '') === 'NOT_FULLY_SHIPPED', 'Selesai must be refused before shipment: ' . $refused['body']);
 
     $page = $a->get('/api/_ui-preview/?page=laporan&omzetDateFrom=2026-12-01&omzetDateTo=2026-12-31');
     expect($page['status'] === 200, "expected 200, got {$page['status']}");
     expect(str_contains($page['body'], 'Omset Non-Toko') && str_contains($page['body'], 'id="omset-non-toko"'), 'expected the Non-Toko omset block');
-    expect(preg_match('/Omset Non-Toko<\/div>\s*<div class="kpi-value">Rp32\.500</', $page['body']) === 1 || str_contains($page['body'], 'Rp32.500'), 'expected Rp32.500 non-toko omset');
+    expect(str_contains($page['body'], 'Rp32.500'), 'expected Rp32.500 non-toko omset');
     expect(str_contains($page['body'], '<td>CS</td>'), 'expected the CS row');
-    expect(!str_contains($page['body'], '<td>Sales Eksekutif</td>'), 'an unfinished order must never count as omset');
+    expect(!str_contains($page['body'], '<td>Sales Eksekutif</td>'), 'an unshipped order must never count as omset');
 });
 
 // ---------------------------------------------------------------------

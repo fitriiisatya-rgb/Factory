@@ -56,6 +56,16 @@ function ui_fmt_num(float $n): string
 }
 
 /**
+ * Machine format for <input type="number"> value/min/max ("1047.5", never
+ * "1.047,5"). A number input reads "1.047" as 1.047 and "2,5" as empty, so
+ * ui_fmt_num() must never be used there.
+ */
+function ui_num_input(float $n): string
+{
+    return rtrim(rtrim(number_format($n, 2, '.', ''), '0'), '.');
+}
+
+/**
  * Money display formatter ("Rp46.000" style, task's own approved format).
  * Display-only — storage stays a plain numeric column, never this string.
  */

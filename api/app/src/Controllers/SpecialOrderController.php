@@ -209,7 +209,8 @@ final class SpecialOrderController
     /** POST /api/special-orders/items/{itemId}/verify-fg — Production → FG bridge for special/non-regular orders. */
     public static function verifyItemFg(Request $request): void
     {
-        $userId = Auth::requireRole(...self::STATUS_UPDATE_ROLES);
+        // FG accounts verify special-order FG too (their FG Sumber Khusus page); scope is checked per item in the service.
+        $userId = Auth::requireRole('ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING');
         $itemId = (int) $request->routeParams['itemId'];
         $qty = (float) ($request->input('fgVerifiedQty') ?? 0);
 

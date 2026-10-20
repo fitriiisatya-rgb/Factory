@@ -22,13 +22,18 @@
     var d = new Date();
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
+  // A date the driver picked only sticks for the day it was picked on;
+  // the next day the screen opens on today again (an old date used to
+  // stick forever and hide that day's deliveries).
   function getTanggal() {
     try {
-      return localStorage.getItem('amor_driver_tanggal') || todayStr();
+      var v = localStorage.getItem('amor_driver_tanggal');
+      var setOn = localStorage.getItem('amor_driver_tanggal_set_on');
+      return (v && setOn === todayStr()) ? v : todayStr();
     } catch (e) { return todayStr(); }
   }
   function setTanggal(v) {
-    try { localStorage.setItem('amor_driver_tanggal', v); } catch (e) { /* ignore */ }
+    try { localStorage.setItem('amor_driver_tanggal', v); localStorage.setItem('amor_driver_tanggal_set_on', todayStr()); } catch (e) { /* ignore */ }
   }
 
   function dateBar(onChange) {
@@ -620,6 +625,11 @@
         var productCount = items.filter(function (it) { return it.actualQty > 0; }).length;
         var totalQty = items.reduce(function (a, it) { return a + it.actualQty; }, 0);
         var departureResult = null;
+        if (totalQty <= 0) {
+          // Nothing would ship (usually: FG for this store not packed yet).
+          Amor.toast('Semua jumlah 0, jadi belum ada barang yang bisa diberangkatkan. Tunggu FG selesai packing untuk toko ini, lalu buka lagi.', 'danger');
+          return;
+        }
 
         // Real-UAT fix: this used to call Amor.confirmModal() with a plain
         // STRING argument — confirmModal only ever reads opts.title/opts.body

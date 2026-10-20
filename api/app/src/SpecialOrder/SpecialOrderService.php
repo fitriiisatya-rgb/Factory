@@ -6,6 +6,7 @@ namespace Amor\Api\SpecialOrder;
 
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
+use Amor\Api\Auth;
 use Amor\Api\Production\ProductionRoutingService;
 use Amor\Api\Services\DocumentSequenceService;
 use Amor\Api\StorePortal\StorePortalRepository;
@@ -348,9 +349,64 @@ final class SpecialOrderService
         if (!in_array($order['status'], self::PRODUCTION_STATUSES, true) || $order['status'] === 'completed') {
             throw new ApiException(400, 'INVALID_STATUS', 'Order must already be sent to Production (and not yet completed) to change its Production status');
         }
+        if ($newStatus === 'completed' && ($order['fulfillment_type'] ?? null) === 'pickup') {
+            // Pickup = the customer collects at the factory, so there may be
+            // no DO/shipment at all: Selesai once every line is FG-ready.
+            $allocSvc = new SpecialOrderFgAllocationService($this->pdo);
+            $lines = $this->pdo->prepare('SELECT special_order_item_id, item_type, product_id, qty, fg_verified_qty FROM special_order_item WHERE special_order_id = ?');
+            $lines->execute([$orderId]);
+            foreach ($lines->fetchAll() as $l) {
+                $ready = (float) $l['fg_verified_qty'] + ($l['item_type'] === 'existing_product' && $l['product_id'] !== null
+                    ? $allocSvc->generalFgHeadroomForItem((int) $l['special_order_item_id']) : 0.0);
+                if ($ready + 0.0001 < (float) $l['qty']) {
+                    throw new ApiException(400, 'NOT_FG_READY', 'Pesanan pickup belum siap semua di FG — Selesai bisa ditandai setelah semua item terverifikasi/teralokasi FG.');
+                }
+            }
+        } elseif ($newStatus === 'completed') {
+            [$shipped, $ordered] = $this->shippedVsOrdered($orderId);
+            if ($shipped + 0.0001 < $ordered) {
+                throw new ApiException(400, 'NOT_FULLY_SHIPPED', 'Pesanan belum terkirim semua (' . rtrim(rtrim(number_format($shipped, 2, ',', '.'), '0'), ',') . ' dari ' . rtrim(rtrim(number_format($ordered, 2, ',', '.'), '0'), ',') . '). Status Selesai otomatis begitu semua item terkirim.');
+            }
+        }
         Versioning::update($this->pdo, 'special_order', 'special_order_id', $orderId, $expectedVersion, 'status = ?', [$newStatus]);
         Audit::write($this->pdo, $requestId, $userId, 'special_order.status_changed', 'special_order', (string) $orderId, 'ok', $expectedVersion, $expectedVersion + 1, ['newStatus' => $newStatus]);
         return $this->getOrder($orderId);
+    }
+
+    /** @return array{0:float,1:float} [shipped (capped per line at its qty), ordered] over every line of the order */
+    private function shippedVsOrdered(int $orderId): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT soi.qty, COALESCE((SELECT SUM(sdsi.qty) FROM special_order_do_item sdi
+                 INNER JOIN special_order_do_shipment_item sdsi ON sdsi.special_order_do_item_id = sdi.special_order_do_item_id
+                 INNER JOIN shipment sh ON sh.shipment_id = sdsi.shipment_id AND sh.status = 'active'
+                 WHERE sdi.special_order_item_id = soi.special_order_item_id), 0) AS shipped
+             FROM special_order_item soi WHERE soi.special_order_id = ?"
+        );
+        $stmt->execute([$orderId]);
+        $shipped = 0.0;
+        $ordered = 0.0;
+        foreach ($stmt->fetchAll() as $r) {
+            $ordered += (float) $r['qty'];
+            $shipped += min((float) $r['shipped'], (float) $r['qty']);
+        }
+        return [$shipped, $ordered];
+    }
+
+    /** Marks the order Selesai once every line has shipped in full. Called inside the dispatch transaction. */
+    public function autoCompleteIfFullyShipped(int $orderId, int $userId, ?string $requestId): void
+    {
+        $order = $this->repo->lockOrderById($this->pdo, $orderId);
+        if ($order === null || $order['status'] === 'completed' || !in_array($order['status'], self::PRODUCTION_STATUSES, true)) {
+            return;
+        }
+        [$shipped, $ordered] = $this->shippedVsOrdered($orderId);
+        if ($ordered <= 0.0001 || $shipped + 0.0001 < $ordered) {
+            return;
+        }
+        $version = (int) $order['version'];
+        Versioning::update($this->pdo, 'special_order', 'special_order_id', $orderId, $version, "status = 'completed'", []);
+        Audit::write($this->pdo, $requestId, $userId, 'special_order.auto_completed', 'special_order', (string) $orderId, 'ok', $version, $version + 1, ['shipped' => $shipped, 'ordered' => $ordered]);
     }
 
     /**
@@ -390,6 +446,7 @@ final class SpecialOrderService
             if ($aktual < 0 || $reject < 0) {
                 throw new ApiException(400, 'INVALID_QTY', "Item #{$i}: aktualProduksi/rejectProduksi cannot be negative");
             }
+            self::assertCanTouchItem($this->itemScope($itemId), false);
             $ok = $this->repo->updateItemActualProduksi($this->pdo, $orderId, $itemId, $aktual, $reject, $operatorName);
             if (!$ok) {
                 throw new ApiException(400, 'UNKNOWN_ITEM_FOR_ORDER', "Item #{$i}: itemId {$itemId} does not belong to this order");
@@ -397,7 +454,12 @@ final class SpecialOrderService
             $touched++;
         }
 
-        Versioning::update($this->pdo, 'special_order', 'special_order_id', $orderId, $expectedVersion, 'status = status', []);
+        // Items of one order can belong to different divisions (and
+        // factories) that save independently. Bump the version from its
+        // current value: holding each division to the version it loaded
+        // made whichever saved second fail with a conflict and lose input.
+        $currentVersion = (int) (Versioning::currentVersion($this->pdo, 'special_order', 'special_order_id', $orderId) ?? $expectedVersion);
+        Versioning::update($this->pdo, 'special_order', 'special_order_id', $orderId, $currentVersion, 'status = status', []);
         Audit::write($this->pdo, $requestId, $userId, 'special_order.actual_updated', 'special_order', (string) $orderId, 'ok', $expectedVersion, $expectedVersion + 1, ['itemsTouched' => $touched, 'operatorName' => $operatorName]);
 
         return $this->getOrder($orderId);
@@ -415,12 +477,28 @@ final class SpecialOrderService
         if (in_array($order['status'], ['completed', 'cancelled'], true)) {
             throw new ApiException(400, 'INVALID_STATUS', 'A completed or already-cancelled order cannot be cancelled');
         }
+        // Goods already on the road cannot be "un-ordered"; open DOs of a
+        // cancelled order are cancelled with it (a driver could otherwise
+        // still depart them and, for toko khusus, they would be invoiced).
+        $dosStmt = $this->pdo->prepare("SELECT special_order_do_id, status FROM special_order_do WHERE special_order_id = ? AND status <> 'cancelled' FOR UPDATE");
+        $dosStmt->execute([$orderId]);
+        $openDos = [];
+        foreach ($dosStmt->fetchAll() as $d) {
+            if ($d['status'] !== 'open') {
+                throw new ApiException(400, 'ORDER_HAS_SHIPMENTS', 'Pesanan ini sudah ada pengirimannya, jadi tidak bisa dibatalkan.');
+            }
+            $openDos[] = (int) $d['special_order_do_id'];
+        }
+        foreach ($openDos as $doId) {
+            $this->pdo->prepare("UPDATE special_order_do SET status = 'cancelled', cancelled_at = UTC_TIMESTAMP(), cancelled_by = ?, cancel_reason = ?, claimed_by_user_id = NULL, claimed_at = NULL, version = version + 1, updated_at = UTC_TIMESTAMP() WHERE special_order_do_id = ?")
+                ->execute([$userId, 'Pesanan dibatalkan: ' . $reason, $doId]);
+        }
         Versioning::update(
             $this->pdo, 'special_order', 'special_order_id', $orderId, $expectedVersion,
             "status = 'cancelled', cancelled_at = UTC_TIMESTAMP(), cancelled_by = ?, cancel_reason = ?",
             [$userId, $reason]
         );
-        Audit::write($this->pdo, $requestId, $userId, 'special_order.cancelled', 'special_order', (string) $orderId, 'ok', $expectedVersion, $expectedVersion + 1, ['reason' => $reason]);
+        Audit::write($this->pdo, $requestId, $userId, 'special_order.cancelled', 'special_order', (string) $orderId, 'ok', $expectedVersion, $expectedVersion + 1, ['reason' => $reason, 'cancelledDos' => $openDos]);
 
         // Existing FG Allocation Bridge: release any still-active General FG
         // earmark for this order now that it can never ship (task's own
@@ -626,6 +704,35 @@ final class SpecialOrderService
      * consumed quantity" — e.g. FG Verified 10, Shipped 6 -> cannot change
      * to 2).
      */
+    /** @return array{division_id:int,factory_id:int} */
+    private function itemScope(int $itemId): array
+    {
+        $stmt = $this->pdo->prepare('SELECT soi.division_id, d.factory_id FROM special_order_item soi INNER JOIN division d ON d.division_id = soi.division_id WHERE soi.special_order_item_id = ?');
+        $stmt->execute([$itemId]);
+        $row = $stmt->fetch();
+        return $row ? ['division_id' => (int) $row['division_id'], 'factory_id' => (int) $row['factory_id']] : ['division_id' => 0, 'factory_id' => 0];
+    }
+
+    /**
+     * ADMIN/PPIC: any item. A division account: only its own division's
+     * items. An FG account: only items of its own factory, and only for FG
+     * verification ($fgStep).
+     */
+    private static function assertCanTouchItem(array $scope, bool $fgStep): void
+    {
+        $roles = Auth::currentRoles();
+        if (array_intersect(['ADMIN', 'PPIC'], $roles) !== []) {
+            return;
+        }
+        if (in_array('PRODUCTION', $roles, true) && in_array($scope['division_id'], Auth::currentDivisionIds(), true)) {
+            return;
+        }
+        if ($fgStep && in_array('FG_PACKING', $roles, true) && in_array($scope['factory_id'], Auth::currentFactoryIds(), true)) {
+            return;
+        }
+        throw new ApiException(403, 'ITEM_ACCESS_DENIED', 'Item ini milik divisi/pabrik lain — akun ini tidak bisa mengubahnya.');
+    }
+
     public function verifyItemFg(int $itemId, float $fgVerifiedQty, int $userId, ?string $requestId): array
     {
         $item = $this->repo->lockItemById($this->pdo, $itemId);
@@ -635,6 +742,7 @@ final class SpecialOrderService
         if (!in_array($item['order_status'], self::PRODUCTION_STATUSES, true)) {
             throw new ApiException(400, 'INVALID_STATUS', 'Verifikasi FG hanya bisa dilakukan setelah pesanan dikirim ke Produksi');
         }
+        self::assertCanTouchItem(['division_id' => (int) $item['division_id'], 'factory_id' => (int) $item['item_factory_id']], true);
         $aktual = (float) $item['aktual_produksi'];
         if ($fgVerifiedQty < 0 || $fgVerifiedQty > $aktual + 0.0001) {
             throw new ApiException(400, 'INVALID_FG_QTY', 'Qty FG terverifikasi harus antara 0 dan Aktual Produksi');

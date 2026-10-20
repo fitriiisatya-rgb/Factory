@@ -304,7 +304,10 @@ final class ShipmentService
                 $storeShipped = $this->repo->sumShippedForStore($this->pdo, (int) $do['store_id'], $productId, $factoryId, true);
                 $storeReady = max(0.0, $storePacked - $storeShipped);
                 if ($requested > $storeReady + 0.0001) {
-                    throw new ApiException(409, 'INSUFFICIENT_STORE_READY_FG', "Product {$productId}: requested {$requested} exceeds ready FG owned by this store {$storeReady} (packed for this store {$storePacked}, already shipped to this store {$storeShipped}) — another store's packed FG cannot be substituted");
+                    $pnStmt = $this->pdo->prepare('SELECT name FROM product WHERE product_id = ?');
+                    $pnStmt->execute([$productId]);
+                    $pn = (string) ($pnStmt->fetchColumn() ?: "Produk #{$productId}");
+                    throw new ApiException(409, 'INSUFFICIENT_STORE_READY_FG', "{$pn}: diminta {$requested}, tetapi FG yang sudah dipacking untuk toko ini tinggal {$storeReady} (dipacking {$storePacked}, sudah dikirim {$storeShipped}). Kurangi jumlahnya atau minta FG packing dulu.");
                 }
             }
 

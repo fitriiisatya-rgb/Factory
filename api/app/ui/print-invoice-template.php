@@ -102,7 +102,7 @@ function ui_render_invoice_print_document(array $invoice, int $pageNum = 1, int 
     <?php foreach (($invoice['items'] ?? []) as $i => $it): ?>
       <tr>
         <td><?= $i + 1 ?></td>
-        <td><?= ui_esc((string) $it['productName']) ?></td>
+        <td><?= ui_esc((string) $it['productName']) ?><?php if ((float) ($it['extraAmount'] ?? 0) > 0): ?><br><small>+ biaya/kemasan <?= ui_fmt_rupiah((float) $it['extraAmount']) ?></small><?php endif; ?></td>
         <td class="num"><?= ui_fmt_num((float) $it['qty']) ?></td>
         <td class="num"><?= ui_fmt_rupiah((float) $it['unitPrice']) ?></td>
         <td class="num"><?= ui_fmt_rupiah((float) $it['subtotal']) ?></td>

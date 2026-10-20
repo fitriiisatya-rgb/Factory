@@ -83,6 +83,8 @@ final class ProductionTaskService
             throw new ApiException(400, 'DIVISION_OUT_OF_SCOPE', "'{$division['name']}' is a Finishgood & Packing verification division — not part of production task tracking");
         }
 
+        \Amor\Api\Auth::requireDivisionAccess($divisionId);
+
         $tasks = $this->buildTasks($tanggal, (int) $division['factory_id'], $divisionId, $sourceFilter);
         if ($statusFilter !== null) {
             $tasks = array_values(array_filter($tasks, static fn ($t) => $t['statusCode'] === $statusFilter));
@@ -117,6 +119,13 @@ final class ProductionTaskService
         $factoryName = $factoryNameStmt->fetchColumn();
         if ($factoryName === false) {
             throw new ApiException(404, 'FACTORY_NOT_FOUND', 'Factory not found');
+        }
+
+        // A division account prints only the division(s) it is assigned to.
+        $roles = \Amor\Api\Auth::currentRoles();
+        if (array_intersect(['ADMIN', 'PPIC'], $roles) === []) {
+            $own = \Amor\Api\Auth::currentDivisionIds();
+            $divisionIds = array_values(array_filter($divisionIds, static fn ($id) => in_array($id, $own, true)));
         }
 
         $divisions = [];

@@ -110,6 +110,9 @@ $isAdmin = in_array('ADMIN', $ui['roles'] ?? [], true);
         <button type="button" class="btn btn-secondary" id="btn-release-do" data-id="<?= (int) $do['doId'] ?>">Lepas Klaim</button>
         <?php else: ?>
         <span style="color:var(--text-faint);">Sudah diambil oleh <?= ui_esc((string) $do['claimedByName']) ?>.</span>
+        <?php if ($isAdmin): ?>
+        <button type="button" class="btn btn-secondary" id="btn-release-do" data-id="<?= (int) $do['doId'] ?>">Lepas Klaim Driver</button>
+        <?php endif; ?>
         <?php endif; ?>
       <?php else: ?>
         <?php if ($isAdmin): ?>

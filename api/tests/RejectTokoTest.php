@@ -521,6 +521,71 @@ runTest('RJT-15 finhub integration key: read-only shipment feed matches what the
     expect($page['status'] === 200 && str_contains($page['body'], 'Buat Kunci Baru') && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $page['body']), 'Integrasi Finhub page should render');
 });
 
+function shipSpecialAndConfirm(HttpInv $adminHttp, string $adminCsrf, int $factoryId, string $token, array $orderBody, float $qty, ?int $dropStoreId, string $tag): array
+{
+    $h = ['X-CSRF-Token' => $adminCsrf];
+    $c = $adminHttp->request('POST', '/api/special-orders', $orderBody, array_merge($h, idemKey($tag . 'c')));
+    expect($c['status'] === 200, "{$tag}: create failed: " . $c['body']);
+    $id = (int) $c['json']['data']['orderId']; $itemId = (int) $c['json']['data']['items'][0]['itemId'];
+    $cf = $adminHttp->request('POST', "/api/special-orders/{$id}/confirm", ['expectedVersion' => $c['json']['data']['version']], array_merge($h, idemKey($tag . 'cf')));
+    $sd = $adminHttp->request('POST', "/api/special-orders/{$id}/send-to-production", ['expectedVersion' => $cf['json']['data']['version']], array_merge($h, idemKey($tag . 'sd')));
+    expect($sd['status'] === 200, "{$tag}: send failed: " . $sd['body']);
+    $adminHttp->request('POST', "/api/special-orders/{$id}/actual", ['expectedVersion' => $sd['json']['data']['version'], 'items' => [['itemId' => $itemId, 'aktualProduksi' => $qty + 2, 'rejectProduksi' => 0]]], array_merge($h, idemKey($tag . 'a')));
+    $v = $adminHttp->request('POST', "/api/special-orders/items/{$itemId}/verify-fg", ['fgVerifiedQty' => $qty + 2], array_merge($h, idemKey($tag . 'v')));
+    expect($v['status'] === 200, "{$tag}: verify-fg failed: " . $v['body']);
+    $body = ['orderId' => $id, 'factoryId' => $factoryId, 'deliveryMethod' => 'EXTERNAL_COURIER', 'courierProvider' => 'other', 'courierName' => 'Kurir Test'];
+    if ($dropStoreId !== null) { $body['dropStoreId'] = $dropStoreId; }
+    $tooMuch = $adminHttp->request('POST', '/api/special-order-do', array_merge($body, ['items' => [['itemId' => $itemId, 'qty' => $qty + 1]]]), array_merge($h, idemKey($tag . 'big')));
+    expect($tooMuch['status'] === 400, "{$tag}: a special DO must be capped at the ordered qty, got " . $tooMuch['body']);
+    $do = $adminHttp->request('POST', '/api/special-order-do', $body, array_merge($h, idemKey($tag . 'do')));
+    expect($do['status'] === 200, "{$tag}: DO failed: " . $do['body']);
+    $doQty = array_sum(array_map(static fn ($i) => (float) ($i['plannedQty'] ?? $i['qty'] ?? 0), $do['json']['data']['items'] ?? []));
+    expect($doQty === 0.0 || abs($doQty - $qty) < 0.001, "{$tag}: DO should carry exactly the ordered {$qty}, got {$doQty}");
+    $ho = $adminHttp->request('POST', "/api/special-order-do/{$do['json']['data']['doId']}/courier-handover", ['items' => null], array_merge($h, idemKey($tag . 'ho')));
+    expect($ho['status'] === 200, "{$tag}: handover failed: " . $ho['body']);
+    $shipmentId = (int) $ho['json']['data']['shipmentId'];
+    $anon = new HttpInv($GLOBALS['baseUrl']);
+    $detail = $anon->request('GET', "/api/store/{$token}/receipts/{$shipmentId}");
+    $items = array_map(static fn ($i) => ['shipmentItemId' => $i['shipmentItemId'], 'receivedGood' => (float) $i['shippedQty'], 'reject' => 0, 'shortage' => 0], $detail['json']['data']['items'] ?? []);
+    expect($items !== [], "{$tag}: the drop store should see the shipment: " . $detail['body']);
+    $r = $anon->request('POST', "/api/store/{$token}/receipts/{$shipmentId}/confirm", ['receiverName' => 'Test', 'items' => $items], idemKey($tag . 'rc'));
+    expect($r['status'] === 200, "{$tag}: confirm failed: " . $r['body']);
+    return ['orderId' => $id, 'doId' => (int) $do['json']['data']['doId'], 'shipmentId' => $shipmentId];
+}
+
+runTest('RJT-16 Special orders: toko khusus billed at the ORDER price (+biaya/kemasan once); non-toko never billed to its drop bakery; DO capped; Selesai automatic', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahId, $storeA, $tokenA, $future) {
+    $p = nextProduct(); $pid = (int) $p['product_id'];
+    $pdo->prepare('UPDATE product SET harga = 5000 WHERE product_id = ?')->execute([$pid]);
+    $tk = shipSpecialAndConfirm($adminHttp, $adminCsrf, $karangtengahId, $tokenA, [
+        'sourceType' => 'toko_khusus', 'storeId' => $storeA, 'orderDate' => $future, 'requiredDate' => $future,
+        'items' => [['itemType' => 'existing_product', 'productId' => $pid, 'qty' => 4, 'unitPrice' => 7000, 'charge' => 2000, 'extraPackaging' => 1000]],
+    ], 4.0, null, 'rjt16tk');
+    $nt = shipSpecialAndConfirm($adminHttp, $adminCsrf, $karangtengahId, $tokenA, [
+        'sourceType' => 'non_toko', 'nonStoreSource' => 'cs', 'customerName' => 'RJT16', 'fulfillmentType' => 'pengiriman', 'orderDate' => $future, 'requiredDate' => $future,
+        'items' => [['itemType' => 'existing_product', 'productId' => $pid, 'qty' => 2, 'unitPrice' => 9000]],
+    ], 2.0, $storeA, 'rjt16nt');
+
+    foreach ([$tk['orderId'], $nt['orderId']] as $oid) {
+        $st = (string) $pdo->query("SELECT status FROM special_order WHERE special_order_id = {$oid}")->fetchColumn();
+        expect($st === 'completed', "order {$oid} should be Selesai automatically once fully shipped, got {$st}");
+    }
+    $ready = readyFor($adminHttp, $storeA)['deliveries'];
+    expect(count(array_filter($ready, static fn ($d) => $d['kind'] === 'do_khusus' && $d['refId'] === $nt['doId'])) === 0, 'a non-toko DO must never be ready to bill: ' . json_encode($ready));
+    expect(count(array_filter($ready, static fn ($d) => $d['kind'] === 'do_khusus' && $d['refId'] === $tk['doId'])) === 1, 'the toko khusus DO should be ready: ' . json_encode($ready));
+
+    $g = adminPost($adminHttp, $adminCsrf, '/api/invoices/generate-ready', []);
+    expect($g['status'] === 200, 'generate-ready failed: ' . json_encode($g['json']));
+    $tkInv = $pdo->query("SELECT i.invoice_id, i.total FROM invoice i JOIN invoice_shipment s ON s.invoice_id = i.invoice_id WHERE s.shipment_id = {$tk['shipmentId']}")->fetch();
+    expect($tkInv !== false && (float) $tkInv['total'] === 31000.0, 'toko khusus invoice should be 4 x 7.000 + 2.000 + 1.000 = 31.000, got ' . json_encode($tkInv));
+    $ntInv = $pdo->query("SELECT COUNT(*) FROM invoice_shipment WHERE shipment_id = {$nt['shipmentId']}")->fetchColumn();
+    expect((int) $ntInv === 0, 'the non-toko shipment must never be invoiced to the drop bakery');
+    $d = $adminHttp->request('GET', "/api/invoices/{$tkInv['invoice_id']}")['json']['data'];
+    expect(count($d['items']) === 1 && (float) $d['items'][0]['unitPrice'] === 7000.0 && (float) $d['items'][0]['extraAmount'] === 3000.0, 'invoice line should carry the order price: ' . json_encode($d['items']));
+
+    $page = $adminHttp->request('GET', '/api/_ui-preview/?page=laporan&omzetDateFrom=' . $future . '&omzetDateTo=' . $future);
+    expect($page['status'] === 200 && str_contains($page['body'], 'Rp18.000'), 'Omset Non-Toko should count the shipped 2 x 9.000 = Rp18.000');
+});
+
 $failed = array_filter($results, static fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests, ' . count($failed) . " failed.\n");
 exit(count($failed) === 0 ? 0 : 1);

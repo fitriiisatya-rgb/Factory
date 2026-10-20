@@ -159,6 +159,11 @@ final class NotaPotonganService
              LEFT JOIN invoice_shipment iis ON iis.shipment_id = sh.shipment_id
              LEFT JOIN invoice_item ii ON ii.invoice_id = iis.invoice_id AND ii.product_id = sri.product_id
              WHERE sh.store_id = ? AND sh.status = 'active' AND sh.tanggal <= ? AND sri.received_good_qty > 0
+               -- only deliveries the store is billed for (regular DO, or a
+               -- Pesanan Khusus Toko DO): never a free replacement or a
+               -- Non-Toko pass-through, whose invoice would never come
+               AND (sh.delivery_order_id IS NOT NULL OR EXISTS (SELECT 1 FROM special_order_do sod
+                    WHERE sod.special_order_do_id = sh.special_order_do_id AND sod.source_type = 'toko_khusus'))
              ORDER BY sh.tanggal DESC, sh.shipment_id DESC
              LIMIT 1"
         );

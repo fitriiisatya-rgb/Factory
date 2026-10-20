@@ -39,7 +39,7 @@ try {
     <tbody>
     <?php foreach ($invoice['items'] as $it): ?>
     <tr>
-      <td><?= ui_esc($it['productName']) ?></td>
+      <td><?= ui_esc($it['productName']) ?><?php if ((float) ($it['extraAmount'] ?? 0) > 0): ?><br><small>+ biaya/kemasan <?= ui_fmt_money((float) $it['extraAmount']) ?></small><?php endif; ?></td>
       <td class="num"><?= ui_fmt_num($it['qtyDo']) ?></td>
       <td class="num"><?= ui_fmt_num($it['qty']) ?></td>
       <td class="num"><?= ui_fmt_money($it['unitPrice']) ?></td>

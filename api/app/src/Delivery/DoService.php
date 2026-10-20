@@ -236,8 +236,11 @@ final class DoService
             "status = 'cancelled', cancelled_at = UTC_TIMESTAMP(), cancelled_by = ?, cancel_reason = ?", [$userId, $reason]
         );
         $this->assertVersionBumpSucceeded($doId, $expectedVersion, $bumped);
+        // Drivers who already claimed this DO must not keep a dead stop on
+        // their route (departing it would only fail).
+        $releasedClaims = (new \Amor\Api\Dispatch\DispatchRepository())->cancelActiveClaimsForDo($this->pdo, $doId);
 
-        Audit::write($this->pdo, $requestId, $userId, 'do.cancel', 'delivery_order', (string) $doId, 'ok', $expectedVersion, $expectedVersion + 1, ['reason' => $reason]);
+        Audit::write($this->pdo, $requestId, $userId, 'do.cancel', 'delivery_order', (string) $doId, 'ok', $expectedVersion, $expectedVersion + 1, ['reason' => $reason, 'releasedClaims' => $releasedClaims]);
 
         $do = $this->repo->findDoById($this->pdo, $doId);
         return $this->buildDoDto($do, $do);

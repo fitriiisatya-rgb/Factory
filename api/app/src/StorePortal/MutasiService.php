@@ -225,7 +225,11 @@ final class MutasiService
         if ($row === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Mutasi tidak ditemukan');
         }
-        if ($row['status'] !== 'discrepancy') {
+        // A mutasi still waiting for the destination store can only be
+        // CANCELLED by Admin (e.g. the destination never opens its portal) —
+        // it can never be completed on the store's behalf.
+        $waitingCancel = $row['status'] === 'waiting_destination_confirmation' && $resolution === 'cancelled';
+        if ($row['status'] !== 'discrepancy' && !$waitingCancel) {
             throw new ApiException(409, 'INVALID_MUTASI_STATUS', 'Mutasi ini tidak sedang menunggu keputusan Admin');
         }
 

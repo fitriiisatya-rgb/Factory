@@ -168,7 +168,7 @@ $omzetFactoryStmt = $pdo->prepare(
      FROM invoice i
      INNER JOIN invoice_item it ON it.invoice_id = i.invoice_id
      LEFT JOIN product p ON p.product_id = it.product_id
-     LEFT JOIN division d ON d.division_id = p.division_id
+     LEFT JOIN division d ON d.division_id = COALESCE(it.division_id, p.division_id)
      LEFT JOIN factory f ON f.factory_id = d.factory_id
      WHERE i.tanggal BETWEEN ? AND ?
      GROUP BY COALESCE(f.name, 'Tanpa Pabrik')
@@ -189,31 +189,39 @@ $notaFactoryStmt = $pdo->prepare(
 );
 $notaFactoryStmt->execute([$omzetDateFrom, $omzetDateTo]);
 
-// Omset Non-Toko (CS / Sales Eksekutif / Lainnya / Konsumen Langsung):
-// these orders never go through a store invoice, so they are counted from
-// the order itself — the line subtotals (qty x harga + biaya + kemasan)
-// of every order marked "Selesai", dated by its tanggal kebutuhan.
-// Cancelled and still-open orders never count. Factory = the product's
-// division factory, else the order's own factory (special catalog items).
+// Omset Non-Toko = what was actually SHIPPED (owner decision Oct 2026):
+// shipped qty x the order's unit price, plus each line's charge and extra
+// packaging once it has shipped. Factory = the producing division of each
+// line (so one order across two factories is split correctly). Dated by
+// the order's tanggal kebutuhan; cancelled orders never count.
+$nonTokoShippedSql = "SELECT sdi.special_order_item_id, SUM(sdsi.qty) AS shipped
+     FROM special_order_do_shipment_item sdsi
+     INNER JOIN shipment sh ON sh.shipment_id = sdsi.shipment_id AND sh.status = 'active'
+     INNER JOIN special_order_do_item sdi ON sdi.special_order_do_item_id = sdsi.special_order_do_item_id
+     GROUP BY sdi.special_order_item_id";
+// A Pickup order collected at the factory may have no shipment at all: once
+// marked Selesai its full ordered qty counts.
+$nonTokoQty = "CASE WHEN so.fulfillment_type = 'pickup' AND so.status = 'completed' THEN GREATEST(it.qty, COALESCE(x.shipped, 0)) ELSE COALESCE(x.shipped, 0) END";
 $nonTokoFactoryStmt = $pdo->prepare(
-    "SELECT COALESCE(f.name, fo.name, 'Tanpa Pabrik') AS factory_name,
-            SUM(it.qty) AS qty_terjual, SUM(it.subtotal) AS total_omset
+    "SELECT COALESCE(f.name, 'Tanpa Pabrik') AS factory_name,
+            SUM({$nonTokoQty}) AS qty_terjual, SUM({$nonTokoQty} * it.unit_price + it.charge + it.extra_packaging) AS total_omset
      FROM special_order so
      INNER JOIN special_order_item it ON it.special_order_id = so.special_order_id
-     LEFT JOIN product p ON p.product_id = it.product_id
-     LEFT JOIN division d ON d.division_id = p.division_id
+     LEFT JOIN ({$nonTokoShippedSql}) x ON x.special_order_item_id = it.special_order_item_id
+     LEFT JOIN division d ON d.division_id = it.division_id
      LEFT JOIN factory f ON f.factory_id = d.factory_id
-     LEFT JOIN factory fo ON fo.factory_id = so.factory_id
-     WHERE so.source_type = 'non_toko' AND so.status = 'completed'
+     WHERE so.source_type = 'non_toko' AND so.status <> 'cancelled' AND {$nonTokoQty} > 0
        AND so.required_date BETWEEN ? AND ?
-     GROUP BY COALESCE(f.name, fo.name, 'Tanpa Pabrik')"
+     GROUP BY COALESCE(f.name, 'Tanpa Pabrik')"
 );
 $nonTokoFactoryStmt->execute([$omzetDateFrom, $omzetDateTo]);
 $nonTokoSourceStmt = $pdo->prepare(
-    "SELECT so.non_store_source, COUNT(DISTINCT so.special_order_id) AS order_count, SUM(it.subtotal) AS total_omset
+    "SELECT so.non_store_source, COUNT(DISTINCT so.special_order_id) AS order_count,
+            SUM({$nonTokoQty} * it.unit_price + it.charge + it.extra_packaging) AS total_omset
      FROM special_order so
      INNER JOIN special_order_item it ON it.special_order_id = so.special_order_id
-     WHERE so.source_type = 'non_toko' AND so.status = 'completed'
+     LEFT JOIN ({$nonTokoShippedSql}) x ON x.special_order_item_id = it.special_order_item_id
+     WHERE so.source_type = 'non_toko' AND so.status <> 'cancelled' AND {$nonTokoQty} > 0
        AND so.required_date BETWEEN ? AND ?
      GROUP BY so.non_store_source
      ORDER BY total_omset DESC"

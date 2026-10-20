@@ -82,7 +82,7 @@ try {
       <span style="color:var(--text-faint);">Status Produksi:</span>
       <button type="button" class="btn btn-secondary btn-sm" data-status-btn="in_production" data-id="<?= (int) $order['orderId'] ?>" data-version="<?= (int) $order['version'] ?>">Sedang Diproduksi</button>
       <button type="button" class="btn btn-secondary btn-sm" data-status-btn="ready" data-id="<?= (int) $order['orderId'] ?>" data-version="<?= (int) $order['version'] ?>">Siap</button>
-      <button type="button" class="btn btn-secondary btn-sm" data-status-btn="completed" data-id="<?= (int) $order['orderId'] ?>" data-version="<?= (int) $order['version'] ?>">Selesai</button>
+      <span style="color:var(--text-faint);font-size:.85rem;">Selesai otomatis setelah semua item terkirim.</span>
       <button type="button" class="btn btn-secondary" id="btn-cancel-order" data-id="<?= (int) $order['orderId'] ?>" data-version="<?= (int) $order['version'] ?>">Batalkan</button>
     <?php else: ?>
       <span style="color:var(--text-faint);">Pesanan ini sudah <?= mb_strtolower(ui_special_order_status_label($order['status'])) ?> — tidak ada tindakan lagi.</span>

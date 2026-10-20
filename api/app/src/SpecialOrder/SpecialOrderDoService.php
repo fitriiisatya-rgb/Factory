@@ -156,7 +156,9 @@ final class SpecialOrderDoService
                 ? $allocSvc->generalFgHeadroomForItem($itemId)
                 : 0.0;
             $totalReady = (float) $item['fg_verified_qty'] + $generalFgRemaining;
-            $available = max(0.0, $totalReady - $allocatedToDo);
+            // Never more than was ORDERED (owner decision Oct 2026): extra
+            // production stays as Stok Sisa instead of being shipped/billed.
+            $available = max(0.0, min($totalReady, (float) $item['qty']) - $allocatedToDo);
             $requested = $lines[$itemId] ?? $available;
             if ($requested <= 0.0001) {
                 continue;
@@ -447,6 +449,9 @@ final class SpecialOrderDoService
         }
 
         $newStatus = $this->repo->refreshStatus($this->pdo, $doId);
+        // Owner decision Oct 2026: the order is "Selesai" automatically once
+        // every item has shipped in full (no manual click needed).
+        (new SpecialOrderService($this->pdo))->autoCompleteIfFullyShipped((int) $do['special_order_id'], $userId, $requestId);
 
         // Automatic Bakery email / Digital Surat Jalan (task's own "Final
         // Pre-Live Rework" Section E) — the outbox ROW is created here,

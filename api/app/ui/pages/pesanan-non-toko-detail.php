@@ -86,7 +86,11 @@ $sourceLabels = ['konsumen_langsung' => 'Konsumen Langsung', 'cs' => 'CS', 'sale
       <span style="color:var(--text-faint);">Status Produksi:</span>
       <button type="button" class="btn btn-secondary btn-sm" data-status-btn="in_production" data-id="<?= (int) $order['orderId'] ?>" data-version="<?= (int) $order['version'] ?>">Sedang Diproduksi</button>
       <button type="button" class="btn btn-secondary btn-sm" data-status-btn="ready" data-id="<?= (int) $order['orderId'] ?>" data-version="<?= (int) $order['version'] ?>">Siap</button>
-      <button type="button" class="btn btn-secondary btn-sm" data-status-btn="completed" data-id="<?= (int) $order['orderId'] ?>" data-version="<?= (int) $order['version'] ?>">Selesai</button>
+      <?php if (($order['fulfillmentType'] ?? null) === 'pickup'): ?>
+      <button type="button" class="btn btn-secondary btn-sm" data-status-btn="completed" data-id="<?= (int) $order['orderId'] ?>" data-version="<?= (int) $order['version'] ?>">Selesai (sudah diambil)</button>
+      <?php else: ?>
+      <span style="color:var(--text-faint);font-size:.85rem;">Selesai otomatis setelah semua item terkirim.</span>
+      <?php endif; ?>
       <button type="button" class="btn btn-secondary" id="btn-cancel-order" data-id="<?= (int) $order['orderId'] ?>" data-version="<?= (int) $order['version'] ?>">Batalkan</button>
     <?php else: ?>
       <span style="color:var(--text-faint);">Pesanan ini sudah <?= mb_strtolower(ui_special_order_status_label($order['status'])) ?> — tidak ada tindakan lagi.</span>

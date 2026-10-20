@@ -117,11 +117,11 @@ function ui_render_shipment_print_document(array $shipment, string $printedByNam
   <?php if ($shipment['status'] !== 'void'): ?>
   <div class="print-receipt-qr">
     <div class="print-receipt-qr-code <?= ui_esc($qrSizeClass) ?>">
-      <?= $shipment['doId'] !== null ? ui_do_receipt_qr_svg($pdo, (int) $shipment['doId']) : ui_shipment_receipt_qr_svg($pdo, (int) $shipment['shipmentId']) ?>
+      <?= !empty($shipment['doId']) ? ui_do_receipt_qr_svg($pdo, (int) $shipment['doId']) : ui_shipment_receipt_qr_svg($pdo, (int) $shipment['shipmentId']) ?>
     </div>
     <div class="print-receipt-qr-label">
       Scan untuk Konfirmasi Penerimaan Barang<br>
-      <?php if ($shipment['doId'] !== null): ?>
+      <?php if (!empty($shipment['doId'])): ?>
       <span class="print-receipt-qr-note">(QR ini sama untuk semua pengiriman pada DO ini — toko memilih pengiriman yang sesuai saat konfirmasi)</span>
       <?php else: ?>
       <span class="print-receipt-qr-note">(QR ini khusus untuk pengiriman SHP-<?= (int) $shipment['shipmentId'] ?> ini)</span>

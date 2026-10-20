@@ -367,6 +367,17 @@ final class DispatchService
             $doRemaining = max(0.0, $planned - $shipped);
             $factoryId = $c['factory_id'] !== null ? (int) $c['factory_id'] : null;
             $fgAvailable = $factoryId !== null ? $this->liveFgAvailable($productId, $factoryId) : 0.0;
+            // Once a product is packed per store, ship() only lets this store
+            // take what was packed FOR it; show the driver that same number
+            // so departure never fails on a qty the screen suggested.
+            if ($factoryId !== null) {
+                $unallocated = $this->fg->unallocatedStoreId($this->pdo);
+                if ($this->doRepo->hasAnyStoreAllocation($this->pdo, $productId, $factoryId, $unallocated)) {
+                    $storeReady = max(0.0, $this->doRepo->sumPackedForStore($this->pdo, $storeId, $productId, $factoryId, null)
+                        - $this->doRepo->sumShippedForStore($this->pdo, $storeId, $productId, $factoryId));
+                    $fgAvailable = min($fgAvailable, $storeReady);
+                }
+            }
             $claimedQty = (float) $c['active_qty'];
             $items[] = [
                 'claimId' => (int) $c['dispatch_claim_id'],
@@ -576,11 +587,13 @@ final class DispatchService
             // shipment (it has no delivery_order_id at all) — use
             // specialOrderDoId + the shipment-scoped QR token instead (see
             // print-shipment-template.php's own branch).
-            'doId' => !$isSpecial ? (int) $shipment['delivery_order_id'] : null,
+            // Replacement shipments have no DO either: null, not (int) null = 0
+            // (a QR for "DO 0" broke the Surat Jalan print).
+            'doId' => !$isSpecial && $shipment['delivery_order_id'] !== null ? (int) $shipment['delivery_order_id'] : null,
             'specialOrderDoId' => $isSpecial ? (int) $shipment['special_order_do_id'] : null,
             'storeId' => (int) $shipment['store_id'],
             'storeName' => $shipment['store_name'],
-            'docNo' => $isSpecial ? $shipment['special_doc_no'] : $shipment['doc_no'],
+            'docNo' => $isSpecial ? $shipment['special_doc_no'] : ($shipment['doc_no'] ?? ($shipment['replacement_doc_no'] ?? null)),
             'doTanggal' => $isSpecial ? $shipment['special_tanggal'] : $shipment['do_tanggal'],
             'tanggal' => $shipment['tanggal'],
             'shipmentGroup' => $shipment['shipment_group'],

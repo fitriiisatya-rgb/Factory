@@ -63,6 +63,8 @@ $tabs = ['' => 'Semua', 'discrepancy' => 'Selisih (Perlu Keputusan)', 'waiting_d
           <?php if ($r['status'] === 'discrepancy'): ?>
           <button type="button" class="btn btn-primary btn-sm btn-accept">Terima Apa Adanya</button>
           <button type="button" class="btn btn-secondary btn-sm btn-cancel">Batalkan Mutasi</button>
+          <?php elseif ($r['status'] === 'waiting_destination_confirmation'): ?>
+          <button type="button" class="btn btn-secondary btn-sm btn-cancel">Batalkan Mutasi</button>
           <?php endif; ?>
         </div>
       </td>

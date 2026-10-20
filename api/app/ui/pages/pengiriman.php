@@ -60,8 +60,8 @@ if ($doIdParam !== null) {
           <td class="num"><?= ui_fmt_num($it['remainingToShip']) ?></td>
           <td class="num"><?= ui_fmt_num($available) ?></td>
           <td class="num"><?= $storeReady === null ? '-' : ui_fmt_num($storeReady) ?></td>
-          <td class="num"><input type="number" step="0.01" min="0" max="<?= ui_fmt_num($max) ?>" style="width:6rem;text-align:right;"
-              data-product-id="<?= (int) $it['productId'] ?>" data-max="<?= ui_fmt_num($max) ?>" data-field="qty" value="0" <?= $disabled ? 'disabled title="FG belum tersedia untuk toko ini"' : '' ?>></td>
+          <td class="num"><input type="number" step="0.01" min="0" max="<?= ui_num_input($max) ?>" style="width:6rem;text-align:right;"
+              data-product-id="<?= (int) $it['productId'] ?>" data-max="<?= ui_num_input($max) ?>" data-field="qty" value="0" <?= $disabled ? 'disabled title="FG belum tersedia untuk toko ini"' : '' ?>></td>
           <td><input type="text" style="width:8rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="notes" <?= $disabled ? 'disabled' : '' ?>></td>
         </tr>
         <?php endforeach; ?>

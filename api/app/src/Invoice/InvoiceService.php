@@ -167,10 +167,11 @@ final class InvoiceService
             foreach ($this->repo->findReadyDeliveries($pdo, $col) as $d) {
                 $ships = $this->repo->findDeliveryShipments($pdo, $col, $d['refId'], $d['storeId']);
                 $ids = array_map(static fn ($r) => (int) $r['shipment_id'], $ships);
-                $rows = $this->repo->findQtyByProductForShipments($pdo, $ids);
-                $lines = $this->priceLines($rows);
+                $lines = $kind === 'do_khusus'
+                    ? $this->specialOrderLines($ids)
+                    : $this->priceLines($this->repo->findQtyByProductForShipments($pdo, $ids));
                 if ($lines['items'] === []) {
-                    continue; // e.g. custom catalog items only — nothing billable by product
+                    continue;
                 }
                 $tanggal = (string) end($ships)['tanggal'];
                 $invoiceId = $this->insertWithLines($tanggal, $d['storeId'], $lines, $kind, $d['refId']);
@@ -325,12 +326,46 @@ final class InvoiceService
         return ['items' => $items, 'total' => round($total, 2)];
     }
 
+    /**
+     * Pesanan Khusus Toko: billed at the ORDER's price (owner decision Oct
+     * 2026): received-good qty x unit price, plus the line's charge and
+     * extra packaging once (on the first invoice that bills that line).
+     * Custom catalog items are included (no master product needed).
+     */
+    private function specialOrderLines(array $shipmentIds): array
+    {
+        $items = [];
+        $total = 0.0;
+        foreach ($this->repo->findSpecialLinesForShipments($this->pdo, $shipmentIds) as $r) {
+            $qty = (float) $r['qty'];
+            $extra = (int) $r['extra_charged'] === 1 ? 0.0 : (float) $r['charge'] + (float) $r['extra_packaging'];
+            if ($qty < 0.0001 && $extra < 0.0001) {
+                continue;
+            }
+            $harga = (float) $r['unit_price'];
+            $subtotal = round($qty * $harga + $extra, 2);
+            $items[] = [
+                'productId' => $r['product_id'] !== null ? (int) $r['product_id'] : null,
+                'productName' => (string) $r['item_name_snapshot'],
+                'itemName' => (string) $r['item_name_snapshot'],
+                'specialOrderItemId' => (int) $r['special_order_item_id'],
+                'divisionId' => $r['division_id'] !== null ? (int) $r['division_id'] : null,
+                'qtyDo' => (float) $r['qty_do'], 'qtyInvoice' => $qty, 'harga' => $harga,
+                'extraAmount' => $extra, 'subtotal' => $subtotal,
+            ];
+            $total += $subtotal;
+        }
+        usort($items, static fn ($a, $b) => strcmp($a['productName'], $b['productName']));
+        return ['items' => $items, 'total' => round($total, 2)];
+    }
+
     private function insertWithLines(string $tanggal, int $storeId, array $lines, string $kind, ?int $refId): int
     {
         $invoiceNo = $this->repo->allocateInvoiceNumber($this->pdo, $tanggal);
         $invoiceId = $this->repo->insertInvoice($this->pdo, $invoiceNo, $tanggal, $storeId, $lines['total'], $kind, $refId);
         foreach ($lines['items'] as $item) {
-            $this->repo->insertInvoiceItem($this->pdo, $invoiceId, $item['productId'], $item['qtyDo'], $item['qtyInvoice'], $item['harga'], $item['subtotal']);
+            $this->repo->insertInvoiceItem($this->pdo, $invoiceId, $item['productId'], $item['qtyDo'], $item['qtyInvoice'], $item['harga'], $item['subtotal'],
+                $item['itemName'] ?? null, $item['specialOrderItemId'] ?? null, $item['divisionId'] ?? null, (float) ($item['extraAmount'] ?? 0));
         }
         return $invoiceId;
     }
@@ -398,11 +433,12 @@ final class InvoiceService
             'customer' => ['storeName' => (string) $invoice['store_name'], 'storeId' => (int) $invoice['store_id'], 'storeEmail' => $invoice['store_email']],
             'reference' => $reference,
             'items' => array_map(static fn ($it) => [
-                'productId' => (int) $it['product_id'],
+                'productId' => $it['product_id'] !== null ? (int) $it['product_id'] : null,
                 'productName' => (string) $it['product_name'],
                 'qtyDo' => (float) $it['qty_do'],
                 'qty' => (float) $it['qty_invoice'],
                 'unitPrice' => (float) $it['harga'],
+                'extraAmount' => (float) ($it['extra_amount'] ?? 0),
                 'subtotal' => (float) $it['subtotal'],
             ], $items),
             'shipments' => array_map(static fn ($s) => [

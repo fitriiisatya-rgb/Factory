@@ -25,6 +25,14 @@ $divisionIdParam = isset($_GET['divisionId']) && $_GET['divisionId'] !== '' ? (i
 $divisions = $pdo->prepare('SELECT division_id, name FROM division WHERE factory_id = ? AND is_verification = 0 ORDER BY name');
 $divisions->execute([$uiFactoryId]);
 $divisionRows = $divisions->fetchAll();
+// A division account only sees (and can only save) its own division(s).
+if (array_intersect(['ADMIN', 'PPIC'], $ui['roles']) === []) {
+    $ownDivisions = \Amor\Api\Auth::currentDivisionIds();
+    $divisionRows = array_values(array_filter($divisionRows, static fn ($d) => in_array((int) $d['division_id'], $ownDivisions, true)));
+    if ($divisionIdParam !== null && !in_array($divisionIdParam, $ownDivisions, true)) {
+        $divisionIdParam = null;
+    }
+}
 if ($divisionIdParam === null && $divisionRows !== []) {
     $divisionIdParam = (int) $divisionRows[0]['division_id'];
 }
@@ -129,13 +137,13 @@ if ($divisionIdParam !== null) {
       <td class="num"><?= ui_fmt_num($t['target']) ?></td>
       <td class="num">
         <?php if ($t['editable']): ?>
-        <input type="number" class="ptd-aktual" min="0" step="0.01" style="width:5.5rem;text-align:right;" value="<?= ui_fmt_num($t['aktual']) ?>"
+        <input type="number" class="ptd-aktual" data-source="<?= ui_esc($t['source']) ?>" min="0" step="0.01" style="width:5.5rem;text-align:right;" value="<?= ui_num_input($t['aktual']) ?>"
                data-item-id="<?= (int) $t['itemId'] ?>" data-order-id="<?= (int) $t['orderId'] ?>" data-order-version="<?= (int) $t['orderVersion'] ?>">
         <?php else: ?><?= ui_fmt_num($t['aktual']) ?><?php endif; ?>
       </td>
       <td class="num">
         <?php if ($t['editable']): ?>
-        <input type="number" class="ptd-reject" min="0" step="0.01" style="width:5.5rem;text-align:right;" value="<?= ui_fmt_num($t['reject']) ?>"
+        <input type="number" class="ptd-reject" min="0" step="0.01" style="width:5.5rem;text-align:right;" value="<?= ui_num_input($t['reject']) ?>"
                data-item-id="<?= (int) $t['itemId'] ?>" data-order-id="<?= (int) $t['orderId'] ?>">
         <?php else: ?><?= ui_fmt_num($t['reject']) ?><?php endif; ?>
       </td>
@@ -204,11 +212,17 @@ if ($divisionIdParam !== null) {
       var errEl = document.getElementById('ptd-save-error');
       errEl.textContent = '';
       var byOrder = {};
+      var replacements = [];
       document.querySelectorAll('.ptd-aktual').forEach(function (input) {
         var orderId = input.getAttribute('data-order-id');
         var itemId = input.getAttribute('data-item-id');
         var version = parseInt(input.getAttribute('data-order-version'), 10);
-        var rejectInput = document.querySelector('.ptd-reject[data-item-id="' + itemId + '"]');
+        var rejectInput = input.closest('tr').querySelector('.ptd-reject');
+        // Replacement-reject rows have their own endpoint (no special-order item).
+        if (input.getAttribute('data-source') === 'replacement_reject') {
+          replacements.push({ demandId: orderId, body: { aktualProduksi: parseFloat(input.value || '0'), rejectProduksi: parseFloat(rejectInput ? (rejectInput.value || '0') : '0') } });
+          return;
+        }
         if (!byOrder[orderId]) byOrder[orderId] = { expectedVersion: version, items: [] };
         byOrder[orderId].items.push({
           itemId: parseInt(itemId, 10),
@@ -221,6 +235,9 @@ if ($divisionIdParam !== null) {
         for (var orderId in byOrder) {
           if (!byOrder.hasOwnProperty(orderId)) continue;
           await Amor.apiFetch('/api/special-orders/' + orderId + '/actual', { method: 'POST', body: byOrder[orderId] });
+        }
+        for (var r = 0; r < replacements.length; r++) {
+          await Amor.apiFetch('/api/replacement-demands/' + replacements[r].demandId + '/production-actual', { method: 'POST', body: replacements[r].body });
         }
         Amor.toast('Aktual & Reject Produksi disimpan.', 'success');
         setTimeout(function () { location.reload(); }, 500);

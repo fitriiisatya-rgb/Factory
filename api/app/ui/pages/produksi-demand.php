@@ -114,7 +114,7 @@ $inbox = $service->productionInbox(array_filter([
       <td><?= ui_badge(ui_special_order_status_label($it['status'])) ?></td>
       <td><?= $it['allocationStatus'] !== null ? ui_badge($it['allocationStatus']) : '-' ?></td>
       <td>
-        <?php if (!empty($it['canAllocateFg'])): ?>
+        <?php if (!empty($it['canAllocateFg']) && array_intersect(['ADMIN', 'PPIC'], $ui['roles']) !== []): ?>
         <button type="button" class="btn btn-primary btn-sm fg-allocate-btn"
           data-item-id="<?= (int) $it['itemId'] ?>"
           data-item-name="<?= ui_esc($it['itemName']) ?>"

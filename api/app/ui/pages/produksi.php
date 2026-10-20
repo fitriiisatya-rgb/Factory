@@ -62,8 +62,14 @@ $specialOrderRepo = new SpecialOrderRepository();
 // ---------------------------------------------------------------------
 $liveProducts = $targetService->targetsByProduct($pdo, $uiTanggal, $uiFactoryId, $divisionIdParam);
 $liveTargetByDivision = [];
+$unroutedProducts = [];
 foreach ($liveProducts as $p) {
     if ($p['divisionId'] === null) {
+        // Store PO for a product with no division: no division will ever
+        // see it, so the admin must be told (and fix it in Master Data).
+        if ($p['target'] > 0.0001) {
+            $unroutedProducts[] = ($p['productName'] ?? ('Produk #' . ($p['productId'] ?? '?'))) . ' (' . ui_fmt_num((float) $p['target']) . ')';
+        }
         continue;
     }
     $liveTargetByDivision[$p['divisionId']] = ($liveTargetByDivision[$p['divisionId']] ?? 0.0) + $p['target'];
@@ -184,10 +190,10 @@ if ($fieldSimple && $runIdParam === null && $fieldRow !== null && $fieldRow['run
 // without this the division could not see these orders at all.
 $fieldSpecialRows = [];
 if ($fieldSimple && $fieldRow !== null && $fieldRow['runId'] === null) {
-    $fieldSpecialRows = $specialOrderRepo->findProductionDemandItems($pdo, [
-        'divisionId' => (int) $fieldRow['divisionId'],
-        'tanggal' => $uiTanggal,
-    ]);
+    // Same rows as Task per Divisi, minus store PO (shown above as Target):
+    // Pesanan Khusus, Non-Toko and replacement-reject demand.
+    $fieldTasks = (new \Amor\Api\Production\ProductionTaskService($pdo))->tasksForDivision($uiTanggal, (int) $fieldRow['divisionId'], null, null);
+    $fieldSpecialRows = array_values(array_filter($fieldTasks['tasks'], static fn ($t) => $t['source'] !== \Amor\Api\Production\ProductionTaskService::SOURCE_PO_REGULER));
 }
 
 $runDetail = null;
@@ -229,6 +235,21 @@ if ($runIdParam !== null) {
                 'orderVersion' => (int) $r['order_version'],
             ];
         }
+        // Target for special rows = what still has to be PRODUCED (order qty
+        // minus FG already allocated to it), same as Task per Divisi.
+        if ($nonRegularRows !== []) {
+            $netByItem = [];
+            foreach ((new \Amor\Api\Production\ProductionTaskService($pdo))->tasksForDivision($uiTanggal, (int) $runDetail['divisionId'], null, null)['tasks'] as $t) {
+                if ($t['itemId'] !== null && in_array($t['source'], ['pesanan_khusus', 'pesanan_non_toko'], true)) {
+                    $netByItem[(int) $t['itemId']] = (float) $t['target'];
+                }
+            }
+            foreach ($nonRegularRows as $k => $r) {
+                if (isset($netByItem[$r['itemId']])) {
+                    $nonRegularRows[$k]['target'] = $netByItem[$r['itemId']];
+                }
+            }
+        }
     } catch (\Throwable $e) {
         $runDetailError = $e->getMessage();
     }
@@ -258,14 +279,14 @@ if ($runIdParam !== null) {
     <?php endif; ?>
     <?php if ($fieldSpecialRows !== []): ?>
     <div class="day-card-special" style="margin-top:var(--space-3);">
-      <p class="day-card-note"><strong>Pesanan Khusus / Non-Toko</strong> untuk tanggal ini (<?= count($fieldSpecialRows) ?> item):</p>
+      <p class="day-card-note"><strong>Pesanan Khusus / Non-Toko / Pengganti Reject</strong> untuk tanggal ini (<?= count($fieldSpecialRows) ?> item):</p>
       <ul style="margin:var(--space-2) 0;padding-left:1.2em;">
         <?php foreach ($fieldSpecialRows as $sr): ?>
-        <li><?= ui_esc((string) $sr['item_name_snapshot']) ?> — <strong><?= ui_fmt_num((float) $sr['qty']) ?></strong>
-          <span style="color:var(--text-muted);">(<?= ui_esc((string) $sr['order_no']) ?><?= !empty($sr['customer_name']) ? ' · ' . ui_esc((string) $sr['customer_name']) : (!empty($sr['store_name']) ? ' · ' . ui_esc((string) $sr['store_name']) : '') ?>)</span></li>
+        <li><?= ui_esc((string) $sr['taskName']) ?> — <strong><?= ui_fmt_num((float) $sr['target']) ?></strong>
+          <span style="color:var(--text-muted);">(<?= ui_esc((string) $sr['sourceLabel']) ?><?= $sr['reference'] ? ' · ' . ui_esc((string) $sr['reference']) : '' ?>)</span></li>
         <?php endforeach; ?>
       </ul>
-      <a class="btn btn-<?= $fieldRow['hasTarget'] ? 'secondary' : 'primary' ?> btn-block" href="/api/_ui-preview/?page=produksi-task-per-divisi&amp;tanggal=<?= urlencode($uiTanggal) ?>&amp;factoryId=<?= $uiFactoryId ?>&amp;divisionId=<?= (int) $fieldRow['divisionId'] ?>">Isi Pesanan Khusus</a>
+      <a class="btn btn-<?= $fieldRow['hasTarget'] ? 'secondary' : 'primary' ?> btn-block" href="/api/_ui-preview/?page=produksi-task-per-divisi&amp;tanggal=<?= urlencode($uiTanggal) ?>&amp;factoryId=<?= $uiFactoryId ?>&amp;divisionId=<?= (int) $fieldRow['divisionId'] ?>">Isi Pesanan Khusus / Pengganti</a>
     </div>
     <?php endif; ?>
   <?php endif; ?>
@@ -273,6 +294,9 @@ if ($runIdParam !== null) {
 </div>
 <?php else: ?>
 <?= ui_produksi_tabs('produksi', $uiTanggal, $uiFactoryId) ?>
+<?php endif; ?>
+<?php if (!$fieldSimple && $unroutedProducts !== []): ?>
+<div class="alert alert-danger"><strong><?= count($unroutedProducts) ?> produk di PO belum punya divisi</strong>, jadi tidak muncul di divisi mana pun: <?= ui_esc(implode(', ', $unroutedProducts)) ?>. Atur divisinya di <a href="/api/_ui-preview/?page=master-data">Master Data</a>.</div>
 <?php endif; ?>
 <?php if ($noDivisionAssignment): ?>
 <div class="alert alert-danger">User belum memiliki assignment divisi produksi. Hubungi Admin untuk mendapatkan akses ke divisi produksi Anda.</div>
@@ -432,6 +456,28 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
     <?php endif; ?>
   </div>
 
+  <?php
+  // A PO revision can add products for this division after the draft was
+  // opened; they only enter the worksheet through a target refresh.
+  $newPoProducts = 0;
+  if ($editable) {
+      $runDivStmt = $pdo->prepare('SELECT factory_id FROM division WHERE division_id = ?');
+      $runDivStmt->execute([(int) $runDetail['divisionId']]);
+      $runFactoryId = (int) $runDivStmt->fetchColumn();
+      $inRun = array_flip(array_map(static fn ($i) => (int) $i['productId'], $runDetail['items']));
+      foreach ($targetService->targetsByProduct($pdo, (string) $runDetail['tanggal'], $runFactoryId, (int) $runDetail['divisionId']) as $pid => $t) {
+          if (!isset($inRun[(int) $pid]) && (float) $t['target'] > 0.0001) {
+              $newPoProducts++;
+          }
+      }
+  }
+  ?>
+  <?php if ($newPoProducts > 0): ?>
+  <div class="alert alert-warning" style="margin-bottom:var(--space-3);">
+    Ada <strong><?= $newPoProducts ?> produk baru</strong> dari PO revisi untuk divisi ini yang belum ada di lembar ini.
+    <button type="button" class="btn btn-primary btn-sm" id="btn-refresh-targets" style="margin-left:var(--space-2);">Tambahkan ke lembar</button>
+  </div>
+  <?php endif; ?>
   <form id="run-form" data-run-id="<?= (int) $runDetail['productionRunId'] ?>" data-expected-version="<?= (int) $runDetail['version'] ?>">
   <div class="table-scroll"><table class="data-table" id="rd-table">
     <thead><tr><th>No</th><th>Produk</th><th>Sumber</th><th class="num">Target</th><th>Hasil Produksi</th><th class="num">Actual</th><th class="num">Reject Produksi</th><th>Status</th><th>Catatan</th></tr></thead>
@@ -452,12 +498,12 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
       </td>
       <td class="num">
         <?php if ($editable): ?>
-        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="actual" value="<?= ui_fmt_num($it['actual']) ?>" <?= abs($it['actual'] - $it['liveTarget']) < 0.01 && $it['actual'] > 0 ? 'disabled' : '' ?>>
+        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="actual" value="<?= ui_num_input($it['actual']) ?>" <?= abs($it['actual'] - $it['liveTarget']) < 0.01 && $it['actual'] > 0 ? 'disabled' : '' ?>>
         <?php else: ?><?= ui_fmt_num($it['actual']) ?><?php endif; ?>
       </td>
       <td class="num">
         <?php if ($editable): ?>
-        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_fmt_num($it['reject']) ?>">
+        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_num_input($it['reject']) ?>">
         <?php else: ?><?= ui_fmt_num($it['reject']) ?><?php endif; ?>
       </td>
       <td><?= ui_badge($it['displayStatusLabel']) ?></td>
@@ -477,9 +523,9 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
         </div>
       </td>
       <td class="num">
-        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" class="nr-actual" data-item-id="<?= $nr['itemId'] ?>" data-order-id="<?= $nr['orderId'] ?>" data-order-version="<?= $nr['orderVersion'] ?>" value="<?= ui_fmt_num($nr['aktual']) ?>" <?= abs($nr['aktual'] - $nr['target']) < 0.01 && $nr['aktual'] > 0 ? 'disabled' : '' ?>>
+        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" class="nr-actual" data-item-id="<?= $nr['itemId'] ?>" data-order-id="<?= $nr['orderId'] ?>" data-order-version="<?= $nr['orderVersion'] ?>" value="<?= ui_num_input($nr['aktual']) ?>" <?= abs($nr['aktual'] - $nr['target']) < 0.01 && $nr['aktual'] > 0 ? 'disabled' : '' ?>>
       </td>
-      <td class="num"><input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" class="nr-reject" data-item-id="<?= $nr['itemId'] ?>" value="<?= ui_fmt_num($nr['reject']) ?>"></td>
+      <td class="num"><input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" class="nr-reject" data-item-id="<?= $nr['itemId'] ?>" value="<?= ui_num_input($nr['reject']) ?>"></td>
       <td><?= $nr['aktual'] <= 0.0001 ? ui_badge('Belum Diproduksi') : ($nr['aktual'] + 0.0001 >= $nr['target'] ? ui_badge('Sesuai Target') : ui_badge('Belum Sesuai Target')) ?></td>
       <td><?= $nr['catatan'] ? ui_esc((string) $nr['catatan']) : '-' ?><?php if (!empty($nr['operatorName'])): ?><div class="nr-operator" style="font-size:var(--text-xs);color:var(--text-muted);">Diisi oleh: <?= ui_esc((string) $nr['operatorName']) ?></div><?php endif; ?></td>
     </tr>
@@ -491,10 +537,12 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
     <button type="button" class="btn btn-primary" id="btn-save-draft">Simpan Draft</button>
     <button type="button" class="btn btn-success" id="btn-submit-run">Submit Produksi</button>
   </div>
-  <?php elseif ($runDetail['status'] === 'submitted'): ?>
+  <?php elseif ($runDetail['status'] === 'submitted' && array_intersect(['ADMIN', 'PPIC'], $ui['roles']) !== []): ?>
   <div class="btn-group" style="margin-top:var(--space-4);">
     <button type="button" class="btn btn-warning" id="btn-reopen-run">Buka Kembali / Reopen</button>
   </div>
+  <?php elseif ($runDetail['status'] === 'submitted'): ?>
+  <p class="day-card-note" style="margin-top:var(--space-3);">Sudah disubmit. Kalau ada angka yang perlu dikoreksi, minta Admin membuka kembali dokumen ini.</p>
   <?php endif; ?>
   <?php if ($nonRegularRows !== []): ?>
   <div class="btn-group" style="margin-top:var(--space-3);">
@@ -631,9 +679,10 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
   var runId = form.getAttribute('data-run-id');
   var version = parseInt(form.getAttribute('data-expected-version'), 10);
 
-  var saveNonRegularBtn = document.getElementById('btn-save-non-regular');
-  if (saveNonRegularBtn) saveNonRegularBtn.addEventListener('click', async function () {
-    saveNonRegularBtn.disabled = true;
+  // Pesanan Khusus / Non-Toko rows on this worksheet are saved through
+  // their own endpoint. Simpan Draft and Submit save them too, so values
+  // filled by "Isi semua = Sesuai" are never lost on the reload.
+  async function saveNonRegular() {
     var byOrder = {};
     document.querySelectorAll('.nr-actual').forEach(function (input) {
       var orderId = input.getAttribute('data-order-id');
@@ -647,20 +696,35 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
         rejectProduksi: parseFloat(rejectInput ? (rejectInput.value || '0') : '0'),
       });
     });
+    for (var orderId in byOrder) {
+      if (!byOrder.hasOwnProperty(orderId)) continue;
+      await Amor.apiFetch('/api/special-orders/' + orderId + '/actual', { method: 'POST', body: byOrder[orderId] });
+    }
+  }
+  var saveNonRegularBtn = document.getElementById('btn-save-non-regular');
+  if (saveNonRegularBtn) saveNonRegularBtn.addEventListener('click', async function () {
+    saveNonRegularBtn.disabled = true;
     try {
-      for (var orderId in byOrder) {
-        if (!byOrder.hasOwnProperty(orderId)) continue;
-        await Amor.apiFetch('/api/special-orders/' + orderId + '/actual', { method: 'POST', body: byOrder[orderId] });
-      }
+      await saveNonRegular();
       Amor.toast('Actual & Reject Non Reguler disimpan.', 'success');
       setTimeout(function () { location.reload(); }, 500);
     } catch (e) { Amor.toast(e.message, 'danger'); saveNonRegularBtn.disabled = false; }
+  });
+  var refreshBtn = document.getElementById('btn-refresh-targets');
+  if (refreshBtn) refreshBtn.addEventListener('click', async function () {
+    refreshBtn.disabled = true;
+    try {
+      await Amor.apiFetch('/api/production/' + runId, { method: 'PATCH', body: { expectedVersion: version, items: collectItems(), refreshTargets: true } });
+      Amor.toast('Produk baru dari PO revisi ditambahkan.', 'success');
+      setTimeout(function () { location.reload(); }, 500);
+    } catch (e) { Amor.toast(e.message, 'danger'); refreshBtn.disabled = false; }
   });
 
   var saveBtn = document.getElementById('btn-save-draft');
   if (saveBtn) saveBtn.addEventListener('click', async function () {
     saveBtn.disabled = true;
     try {
+      await saveNonRegular();
       var data = await Amor.apiFetch('/api/production/' + runId, { method: 'PATCH', body: { expectedVersion: version, items: collectItems() } });
       Amor.toast('Draft Produksi disimpan.', 'success');
       version = data.version;
@@ -675,6 +739,7 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
     if (!ok) return;
     submitBtn.disabled = true;
     try {
+      await saveNonRegular();
       await Amor.apiFetch('/api/production/' + runId, { method: 'PATCH', body: { expectedVersion: version, items: collectItems() } });
       var data = await Amor.apiFetch('/api/production/' + runId + '/submit', { method: 'POST', body: { expectedVersion: version + 1 } });
       Amor.toast('Produksi berhasil disubmit.', 'success');

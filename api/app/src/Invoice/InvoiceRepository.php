@@ -47,6 +47,7 @@ final class InvoiceRepository
              INNER JOIN shipment sh ON sh.shipment_id = sr.shipment_id
              INNER JOIN product p ON p.product_id = sri.product_id
              WHERE sh.store_id = ? AND sh.status = \'active\'
+               AND sh.delivery_order_id IS NOT NULL
                AND sr.status IN (\'confirmed_ok\', \'verified\')
                AND sh.tanggal BETWEEN ? AND ?
                AND sri.product_id IS NOT NULL
@@ -68,6 +69,7 @@ final class InvoiceRepository
              INNER JOIN shipment_receipt sr ON sr.shipment_receipt_id = sri.shipment_receipt_id
              INNER JOIN shipment sh ON sh.shipment_id = sr.shipment_id
              WHERE sh.store_id = ? AND sh.status = \'active\'
+               AND sh.delivery_order_id IS NOT NULL
                AND sr.status IN (\'confirmed_ok\', \'verified\')
                AND sh.tanggal BETWEEN ? AND ?
                AND sh.shipment_id NOT IN (SELECT shipment_id FROM invoice_shipment)'
@@ -141,6 +143,11 @@ final class InvoiceRepository
      */
     public function findReadyDeliveries(PDO $pdo, string $column): array
     {
+        // Pesanan Non-Toko goods only pass through a drop bakery; they are
+        // never billed to it (owner decision Oct 2026).
+        $billable = $column === 'special_order_do_id'
+            ? "AND EXISTS (SELECT 1 FROM special_order_do sod WHERE sod.special_order_do_id = sh.special_order_do_id AND sod.source_type = 'toko_khusus')"
+            : '';
         $rows = $pdo->query(
             "SELECT sh.{$column} AS ref_id, sh.store_id,
                     SUM(CASE WHEN sr.status IN ('confirmed_ok','verified') THEN 1 ELSE 0 END) AS ok_count,
@@ -149,6 +156,7 @@ final class InvoiceRepository
              LEFT JOIN shipment_receipt sr ON sr.shipment_id = sh.shipment_id
              WHERE sh.status = 'active' AND sh.{$column} IS NOT NULL
                AND sh.shipment_id NOT IN (SELECT shipment_id FROM invoice_shipment)
+               {$billable}
              GROUP BY sh.{$column}, sh.store_id
              HAVING ok_count > 0 AND waiting_count = 0
              ORDER BY MIN(sh.tanggal), sh.{$column}"
@@ -239,13 +247,44 @@ final class InvoiceRepository
         return (int) $pdo->lastInsertId();
     }
 
-    public function insertInvoiceItem(PDO $pdo, int $invoiceId, int $productId, float $qtyDo, float $qtyInvoice, float $harga, float $subtotal): void
+    public function insertInvoiceItem(PDO $pdo, int $invoiceId, ?int $productId, float $qtyDo, float $qtyInvoice, float $harga, float $subtotal,
+        ?string $itemName = null, ?int $specialOrderItemId = null, ?int $divisionId = null, float $extraAmount = 0.0): void
     {
         $stmt = $pdo->prepare(
-            'INSERT INTO invoice_item (invoice_id, product_id, qty_do, qty_invoice, harga, subtotal, rate_pct, rate_source)
-             VALUES (?, ?, ?, ?, ?, ?, 100.00, \'default\')'
+            'INSERT INTO invoice_item (invoice_id, product_id, item_name, special_order_item_id, division_id, qty_do, qty_invoice, harga, subtotal, extra_amount, rate_pct, rate_source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100.00, \'default\')'
         );
-        $stmt->execute([$invoiceId, $productId, $qtyDo, $qtyInvoice, $harga, $subtotal]);
+        $stmt->execute([$invoiceId, $productId, $itemName, $specialOrderItemId, $divisionId, $qtyDo, $qtyInvoice, $harga, $subtotal, $extraAmount]);
+    }
+
+    /**
+     * Pesanan Khusus Toko lines for these shipments: received-good qty per
+     * ORDER LINE, with the order's own price, charge and extra packaging.
+     * extra_charged = whether that order line's charge/packaging was already
+     * billed on an earlier invoice (it is billed once).
+     * @return array<int,array>
+     */
+    public function findSpecialLinesForShipments(PDO $pdo, array $shipmentIds): array
+    {
+        if ($shipmentIds === []) {
+            return [];
+        }
+        $in = implode(',', array_fill(0, count($shipmentIds), '?'));
+        $stmt = $pdo->prepare(
+            "SELECT soi.special_order_item_id, soi.product_id, soi.item_name_snapshot, soi.division_id,
+                    soi.unit_price, soi.charge, soi.extra_packaging,
+                    SUM(sri.received_good_qty) AS qty, SUM(sri.shipped_qty) AS qty_do,
+                    EXISTS (SELECT 1 FROM invoice_item ii WHERE ii.special_order_item_id = soi.special_order_item_id) AS extra_charged
+             FROM shipment_receipt_item sri
+             INNER JOIN shipment_receipt sr ON sr.shipment_receipt_id = sri.shipment_receipt_id
+             INNER JOIN special_order_do_shipment_item sdsi ON sdsi.special_order_do_shipment_item_id = sri.special_order_do_shipment_item_id
+             INNER JOIN special_order_do_item sdi ON sdi.special_order_do_item_id = sdsi.special_order_do_item_id
+             INNER JOIN special_order_item soi ON soi.special_order_item_id = sdi.special_order_item_id
+             WHERE sr.shipment_id IN ({$in})
+             GROUP BY soi.special_order_item_id, soi.product_id, soi.item_name_snapshot, soi.division_id, soi.unit_price, soi.charge, soi.extra_packaging"
+        );
+        $stmt->execute(array_values($shipmentIds));
+        return $stmt->fetchAll();
     }
 
     public function linkShipment(PDO $pdo, int $invoiceId, int $shipmentId): void
@@ -275,9 +314,9 @@ final class InvoiceRepository
     public function findItemsForInvoice(PDO $pdo, int $invoiceId): array
     {
         $stmt = $pdo->prepare(
-            'SELECT ii.*, p.name AS product_name FROM invoice_item ii
-             INNER JOIN product p ON p.product_id = ii.product_id
-             WHERE ii.invoice_id = ? ORDER BY p.name'
+            'SELECT ii.*, COALESCE(p.name, ii.item_name) AS product_name FROM invoice_item ii
+             LEFT JOIN product p ON p.product_id = ii.product_id
+             WHERE ii.invoice_id = ? ORDER BY COALESCE(p.name, ii.item_name)'
         );
         $stmt->execute([$invoiceId]);
         return $stmt->fetchAll();
