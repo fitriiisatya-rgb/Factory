@@ -45,6 +45,7 @@ $pages = [
     'reject-toko' => ['title' => 'Reject di Toko', 'subtitle' => 'Barang rusak/berjamur di toko sebelum expired — tanggungan pabrik: potong invoice atau ganti barang.'],
     'replacement-do-detail' => ['title' => 'Replacement Reject', 'subtitle' => 'Detail DO Replacement — pengiriman make-good tanpa harga.'],
     'integrasi' => ['title' => 'Integrasi Finhub', 'subtitle' => 'Kunci untuk finhub membaca data kiriman dan konfirmasi toko.'],
+    'runchise' => ['title' => 'Mapping Runchise', 'subtitle' => 'Katalog, pemetaan toko/produk, dan file stok masuk Runchise per surat jalan.'],
     'bakery-portal-tokens' => ['title' => 'Portal Bakery', 'subtitle' => 'Kelola link permanen Portal Bakery per toko (generate/regenerate/revoke).'],
     'invoice' => ['title' => 'Invoice', 'subtitle' => 'Generate dan kelola invoice dari data pengiriman dan mutasi yang sudah terkonfirmasi.'],
     'invoice-detail' => ['title' => 'Invoice', 'subtitle' => 'Detail satu invoice.'],
@@ -98,6 +99,7 @@ $pageRoles = [
     // only, never PPIC (same reasoning the page file's own docblock gives).
     'bakery-portal-tokens' => ['ADMIN'],
     'integrasi' => ['ADMIN'],
+    'runchise' => ['ADMIN'],
     'retur-review' => ['ADMIN', 'PPIC'],
     'reject-toko' => ['ADMIN', 'PPIC'],
     'stok-sisa' => ['ADMIN', 'PPIC'],

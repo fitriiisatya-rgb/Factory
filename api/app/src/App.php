@@ -18,6 +18,7 @@ use Amor\Api\Controllers\PoController;
 use Amor\Api\Controllers\ProductController;
 use Amor\Api\Controllers\ProductionController;
 use Amor\Api\Controllers\ReceiptController;
+use Amor\Api\Controllers\RunchiseController;
 use Amor\Api\Controllers\ShipmentEmailController;
 use Amor\Api\Controllers\ProductionTaskController;
 use Amor\Api\Controllers\ReplacementController;
@@ -151,6 +152,8 @@ final class App
         // raw delivery_order_id — see ReceiptController's own docblock.
         $router->get('/api/receive/{token}', [ReceiptController::class, 'publicView']);
         $router->post('/api/receive/{token}/shipments/{shipmentId}/confirm', [ReceiptController::class, 'confirm']);
+        $router->get('/api/receive/{token}/shipments/{shipmentId}/runchise', [RunchiseController::class, 'qrPreview']);
+        $router->get('/api/receive/{token}/shipments/{shipmentId}/runchise/download', [RunchiseController::class, 'qrDownload']);
 
         // Phase 5.5 — Admin discrepancy verification (ADMIN-only, normal session/CSRF).
         // Evidence is STORE evidence, uploaded only via the public confirm()
@@ -224,6 +227,8 @@ final class App
         $router->get('/api/store/{token}/receipts', [StorePortalController::class, 'receiptList']);
         $router->get('/api/store/{token}/receipts/{shipmentId}', [StorePortalController::class, 'receiptDetail']);
         $router->post('/api/store/{token}/receipts/{shipmentId}/confirm', [StorePortalController::class, 'receiptConfirm']);
+        $router->get('/api/store/{token}/receipts/{shipmentId}/runchise', [RunchiseController::class, 'portalPreview']);
+        $router->get('/api/store/{token}/receipts/{shipmentId}/runchise/download', [RunchiseController::class, 'portalDownload']);
         $router->get('/api/store/{token}/special-orders', [StorePortalController::class, 'specialOrderList']);
         $router->post('/api/store/{token}/special-orders', [StorePortalController::class, 'specialOrderCreate']);
         $router->get('/api/store/{token}/special-orders/{orderId}', [StorePortalController::class, 'specialOrderDetail']);
@@ -251,6 +256,13 @@ final class App
         $router->post('/api/admin/integration-keys', [IntegrationController::class, 'keyIssue']);
         $router->post('/api/admin/integration-keys/{id}/revoke', [IntegrationController::class, 'keyRevoke']);
         $router->get('/api/integration/v1/shipments', [IntegrationController::class, 'shipments']);
+        // Runchise "Impor Stok Masuk" file + mapping (migration 0024).
+        $router->get('/api/admin/runchise/mapping', [RunchiseController::class, 'mapping']);
+        $router->post('/api/admin/runchise/catalog', [RunchiseController::class, 'uploadCatalog']);
+        $router->post('/api/admin/runchise/products/{id}', [RunchiseController::class, 'setProduct']);
+        $router->post('/api/admin/runchise/stores/{id}', [RunchiseController::class, 'setStore']);
+        $router->get('/api/admin/runchise/shipments/{shipmentId}', [RunchiseController::class, 'adminPreview']);
+        $router->get('/api/admin/runchise/shipments/{shipmentId}/download', [RunchiseController::class, 'adminDownload']);
         $router->get('/api/admin/retur', [StorePortalAdminController::class, 'returList']);
         $router->get('/api/admin/retur/evidence/{id}', [StorePortalAdminController::class, 'returEvidence']);
         $router->get('/api/admin/retur/{id}', [StorePortalAdminController::class, 'returShow']);

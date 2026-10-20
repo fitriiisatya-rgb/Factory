@@ -40,7 +40,8 @@ final class ShipmentFeedService
 
         $sql = 'SELECT sh.shipment_id, sh.store_id, sh.no_sj, sh.source_type, sh.tanggal, sh.shipped_at,
                        s.canonical_name AS store_name, f.name AS factory_name,
-                       r.status AS receipt_status, r.confirmed_at, r.verified_at
+                       r.status AS receipt_status, r.confirmed_at, r.verified_at,
+                       sh.runchise_downloaded_at, s.runchise_location
                 FROM shipment sh
                 INNER JOIN store s ON s.store_id = sh.store_id
                 LEFT JOIN factory f ON f.factory_id = sh.factory_id
@@ -79,6 +80,10 @@ final class ShipmentFeedService
                     'verifiedByAdmin' => $r['verified_at'] !== null,
                     'verifiedAt' => $r['verified_at'],
                 ],
+                // Migration 0024: when the store/admin downloaded the Runchise
+                // "Impor Stok Masuk" file in Factory (UTC), and the mapped location.
+                'runchiseDownloadedAt' => $r['runchise_downloaded_at'] !== null ? str_replace(' ', 'T', (string) $r['runchise_downloaded_at']) . 'Z' : null,
+                'runchiseLocation' => $r['runchise_location'],
                 'items' => array_map(static fn ($i) => [
                     'productId' => $i['productId'],
                     'productCode' => $codes[(int) $i['productId']] ?? null,

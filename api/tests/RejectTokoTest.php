@@ -586,6 +586,70 @@ runTest('RJT-16 Special orders: toko khusus billed at the ORDER price (+biaya/ke
     expect($page['status'] === 200 && str_contains($page['body'], 'Rp18.000'), 'Omset Non-Toko should count the shipped 2 x 9.000 = Rp18.000');
 });
 
+runTest('RJT-17 Runchise stok masuk file: good qty only, mapped/summed lines, exact CSV format, download recorded, own store only, feed fields', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $tokenA, $tokenB, $today) {
+    $today = (new DateTimeImmutable('+9 days', new DateTimeZone('UTC')))->format('Y-m-d'); // own date: no other test produces for it
+    $p1 = nextProduct(); $p2 = nextProduct(); $p3 = nextProduct();
+    $ins = $pdo->prepare('INSERT INTO product_legacy_code (product_id, legacy_code, first_seen_at, created_at) VALUES (?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())');
+    $ins->execute([(int) $p1['product_id'], 'RJT17A']);
+    $ins->execute([(int) $p2['product_id'], 'RJT17B']);
+    $csv = "\u{FEFF}Nama Lokasi,Tanggal Stok,Alasan,Nama Produk,SKU Produk,Jumlah,Nama Unit Produk,Biaya per unit\r\nLocation Name Here,01/01/2026,Contoh,,,1,PCS,\r\n,,,\"ROTI, SPESIAL\",RJT17A,,PCS,\r\n,,,ROTI B,RJT17B,,PCS,\r\n";
+    $u = adminPost($adminHttp, $adminCsrf, '/api/admin/runchise/catalog', ['csv' => $csv]);
+    expect($u['status'] === 200 && $u['json']['data']['catalogProducts'] === 2 && $u['json']['data']['autoMapped'] >= 2, 'catalog upload failed: ' . $u['body']);
+    // p2 is mapped onto p1's Runchise product too -> summed into one line.
+    adminPost($adminHttp, $adminCsrf, '/api/admin/runchise/products/' . (int) $p2['product_id'], ['mode' => 'stok', 'sku' => 'RJT17A']);
+
+    $fx = setupShipmentForStore($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeA, $today, (int) $p1['product_id'], 5.0);
+    $sid = $fx['shipmentId'];
+    $pdo->prepare('INSERT INTO shipment_item (shipment_id, product_id, qty) SELECT ?, ?, 3 FROM DUAL')->execute([$sid, (int) $p2['product_id']]);
+    $pdo->prepare('INSERT INTO shipment_item (shipment_id, product_id, qty) SELECT ?, ?, 2 FROM DUAL')->execute([$sid, (int) $p3['product_id']]);
+    $anon = new HttpInv($GLOBALS['baseUrl']);
+    $pre = $anon->request('GET', "/api/store/{$tokenA}/receipts/{$sid}/runchise");
+    expect($pre['status'] === 200 && $pre['json']['data']['ready'] === false, 'no file before confirmation: ' . $pre['body']);
+    $detail = $anon->request('GET', "/api/store/{$tokenA}/receipts/{$sid}")['json']['data'];
+    $lines = array_map(static function ($i) use ($p1) {
+        $rej = (int) $i['productId'] === (int) $p1['product_id'] ? 1.0 : 0.0;
+        return ['shipmentItemId' => $i['shipmentItemId'], 'receivedGood' => (float) $i['shippedQty'] - $rej, 'reject' => $rej, 'shortage' => 0];
+    }, $detail['items']);
+    $c = $anon->requestMultipart('POST', "/api/store/{$tokenA}/receipts/{$sid}/confirm", ['receiverName' => 'RJT17', 'items' => json_encode($lines)], ['evidence[]' => fakeEvidenceImage()], idemKey('rjt17c'));
+    expect($c['status'] === 200, 'confirm failed: ' . $c['body']);
+
+    $pdo->prepare('UPDATE store SET runchise_location = NULL WHERE store_id = ?')->execute([$storeA]);
+    $nl = $anon->request('GET', "/api/store/{$tokenA}/receipts/{$sid}/runchise")['json']['data'];
+    expect($nl['ready'] === false && str_contains((string) $nl['message'], 'Lokasi Runchise belum diatur'), 'store without location must not get a file');
+    $bad = adminPost($adminHttp, $adminCsrf, "/api/admin/runchise/stores/{$storeA}", ['location' => 'bangbarung']);
+    expect($bad['status'] === 400, 'location must match a Runchise location exactly');
+    adminPost($adminHttp, $adminCsrf, "/api/admin/runchise/stores/{$storeA}", ['location' => 'AMOR CAKES BAKERY BANGBARUNG']);
+
+    $pv = $anon->request('GET', "/api/store/{$tokenA}/receipts/{$sid}/runchise")['json']['data'];
+    expect($pv['ready'] === true && count($pv['lines']) === 1 && (float) $pv['lines'][0]['qty'] === 7.0 && $pv['lines'][0]['name'] === 'ROTI, SPESIAL',
+        'expected one summed line of 4 + 3 = 7 good pcs: ' . json_encode($pv['lines']));
+    expect(count($pv['excluded']) === 1 && (int) round($pv['excluded'][0]['qty']) === 2, 'the unmapped product must be listed as not in the file: ' . json_encode($pv['excluded']));
+    expect($anon->request('GET', "/api/store/{$tokenB}/receipts/{$sid}/runchise")['status'] === 404, 'another store must not reach this file');
+
+    $ch = curl_init($GLOBALS['baseUrl'] . "/api/store/{$tokenA}/receipts/{$sid}/runchise/download");
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_HEADER => true]);
+    $raw = (string) curl_exec($ch); $hs = curl_getinfo($ch, CURLINFO_HEADER_SIZE); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+    $head = substr($raw, 0, $hs); $body = substr($raw, $hs);
+    $doNo = (string) $detail['docNo'];
+    $d = DateTimeImmutable::createFromFormat('Y-m-d', $today)->format('d/m/Y');
+    $expected = "Nama Lokasi,Tanggal Stok,Alasan,Nama Produk,SKU Produk,Jumlah,Nama Unit Produk,Biaya per unit\r\n"
+        . "AMOR CAKES BAKERY BANGBARUNG,{$d},DO {$doNo},\"ROTI, SPESIAL\",RJT17A,7,PCS,\r\n";
+    expect($code === 200 && $body === $expected, "CSV must match exactly. got:\n" . $body . "\nexpected:\n" . $expected);
+    expect(str_contains($head, 'filename="stok_masuk_AMORCAKESBAKERYBANGBARUNG_' . $today . '_'), 'file name: ' . $head);
+
+    $after = $anon->request('GET', "/api/store/{$tokenA}/receipts/{$sid}/runchise")['json']['data'];
+    expect($after['downloadedAt'] !== null && $after['downloadCount'] === 1 && $after['changedSinceDownload'] === false, 'download must be recorded: ' . json_encode($after));
+    $pdo->prepare('UPDATE shipment_receipt SET updated_at = DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 MINUTE) WHERE shipment_id = ?')->execute([$sid]);
+    expect($anon->request('GET', "/api/store/{$tokenA}/receipts/{$sid}/runchise")['json']['data']['changedSinceDownload'] === true, 'a later receipt change must warn the old file is stale');
+
+    $k = adminPost($adminHttp, $adminCsrf, '/api/admin/integration-keys', ['name' => 'rjt17']);
+    $feed = $anon->request('GET', "/api/integration/v1/shipments?from={$today}&to={$today}&storeId={$storeA}", null, ['X-Api-Key' => $k['json']['data']['rawKey']]);
+    $mine = array_values(array_filter($feed['json']['data']['shipments'], static fn ($x) => $x['shipmentId'] === $sid));
+    expect(count($mine) === 1 && $mine[0]['runchiseLocation'] === 'AMOR CAKES BAKERY BANGBARUNG' && str_ends_with((string) $mine[0]['runchiseDownloadedAt'], 'Z'), 'feed must carry the Runchise fields: ' . json_encode($mine));
+    $page = $adminHttp->request('GET', '/api/_ui-preview/?page=runchise');
+    expect($page['status'] === 200 && str_contains($page['body'], 'Upload Katalog') && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $page['body']), 'Mapping Runchise page should render');
+});
+
 $failed = array_filter($results, static fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests, ' . count($failed) . " failed.\n");
 exit(count($failed) === 0 ? 0 : 1);

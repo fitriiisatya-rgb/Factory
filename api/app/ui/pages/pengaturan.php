@@ -30,6 +30,11 @@ declare(strict_types=1);
   <p style="color:var(--text-muted);font-size:var(--text-sm);">Kunci agar finhub bisa membaca data kiriman dan konfirmasi toko (hanya baca).</p>
   <a class="btn btn-secondary" href="/api/_ui-preview/?page=integrasi">Buka Integrasi Finhub</a>
 </div>
+<div class="card section">
+  <div class="card-head"><h2 class="card-title">Mapping Runchise</h2></div>
+  <p style="color:var(--text-muted);font-size:var(--text-sm);">Katalog produk Runchise, lokasi tiap toko, dan file stok masuk per surat jalan yang sudah dikonfirmasi.</p>
+  <a class="btn btn-secondary" href="/api/_ui-preview/?page=runchise">Buka Mapping Runchise</a>
+</div>
 <?php endif; ?>
 
 <div class="card section">

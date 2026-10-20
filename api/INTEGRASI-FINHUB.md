@@ -53,6 +53,8 @@ Hanya `GET`. Kunci tidak bisa dipakai untuk mengubah data apa pun.
           "verifiedByAdmin": false,
           "verifiedAt": null
         },
+        "runchiseDownloadedAt": "2026-10-18T10:05:12Z",
+        "runchiseLocation": "SUDIRMAN",
         "items": [
           { "productId": 185, "productCode": null, "productName": "BOLLEN LILIT COKLAT",
             "shippedQty": 2, "receivedGoodQty": 2, "rejectQty": 0, "shortageQty": 0 }
@@ -76,7 +78,14 @@ Hanya `GET`. Kunci tidak bisa dipakai untuk mengubah data apa pun.
 - Satu toko bisa punya lebih dari satu surat jalan per hari (misalnya
   grup MAIN dan PASTRY). Kunci unik per baris: `shipmentId`.
 - Nama toko adalah nama di master factory (misalnya "Bakery Sudirman").
-  Pemetaan ke lokasi Runchise tetap di finhub.
+- `runchiseLocation`: nama lokasi Runchise toko ini menurut pemetaan di
+  factory (`null` bila belum diatur). Pemetaan toko dan produk sekarang
+  dipelihara di factory (Pengaturan → Mapping Runchise).
+- `runchiseDownloadedAt` (UTC): kapan file "Impor Stok Masuk" surat jalan
+  ini diunduh di factory; `null` bila belum. Tampilkan sebagai "sudah
+  diunduh di Factory". Factory memakai format Alasan yang sama
+  (`DO <docNo>`), jadi deteksi "sudah masuk Runchise" dari file Pergerakan
+  Stok tetap berlaku.
 
 ## Kode error
 
@@ -90,5 +99,8 @@ Hanya `GET`. Kunci tidak bisa dipakai untuk mengubah data apa pun.
 
 1. Ganti "Upload file DO pabrik" dengan tombol **Ambil dari factory** untuk tanggal terpilih.
 2. Simpan per `shipmentId`. Ambil ulang aman (tidak dobel) dan memperbarui status konfirmasi.
-3. Buat file impor Runchise hanya dari surat jalan dengan `receipt.confirmed = true`.
+3. File impor Runchise sekarang dibuat di **factory** (jalur utama, diunduh toko
+   setelah konfirmasi). Tombol unduh di finhub sebaiknya jadi cadangan admin saja,
+   dan tampilkan peringatan bila `runchiseDownloadedAt` sudah terisi, agar stok
+   tidak terimpor dua kali.
 4. QR dan konfirmasi di finhub tidak dipakai lagi untuk kiriman pabrik, supaya toko tidak konfirmasi dua kali.

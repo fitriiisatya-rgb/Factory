@@ -53,7 +53,8 @@ Header: X-Api-Key: &lt;kunci&gt;</pre>
 </div>
 
 <script>
-(function () {
+// app.js (window.Amor) loads after the page body — start once it is there.
+document.addEventListener('DOMContentLoaded', function () {
   function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
   function fmt(s) { return s ? esc(s.replace('T', ' ').slice(0, 16)) + ' UTC' : '-'; }
   async function load() {
@@ -91,5 +92,5 @@ Header: X-Api-Key: &lt;kunci&gt;</pre>
     btn.disabled = false;
   });
   load();
-})();
+});
 </script>

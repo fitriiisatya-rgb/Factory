@@ -210,6 +210,36 @@
     }).catch(function (err) { root.innerHTML = ''; root.appendChild(emptyState(err.message)); });
   }
 
+  // Runchise "Impor Stok Masuk" file for one confirmed surat jalan:
+  // preview (location, date, products, pcs, what is left out) + download,
+  // with a warning when it was already downloaded (never import twice).
+  function renderRunchiseCard(root, previewUrl) {
+    var box = card('<div class="store-section-title">File stok masuk Runchise</div><div class="driver-card-sub">Memuat...</div>');
+    root.appendChild(box);
+    getJson(previewUrl).then(function (p) {
+      var html = '<div class="store-section-title">File stok masuk Runchise</div>';
+      if (!p.ready) {
+        html += '<p class="store-hint">' + esc(p.message) + '</p>';
+      } else {
+        html += '<div class="driver-row"><span>Lokasi</span><b>' + esc(p.location) + '</b></div>' +
+          '<div class="driver-row"><span>Tanggal</span><b>' + esc(p.tanggal) + '</b></div>' +
+          '<div class="driver-row"><span>Isi file</span><b>' + p.productCount + ' produk &middot; ' + fmtNum(p.totalQty) + ' pcs</b></div>';
+      }
+      if (p.excluded && p.excluded.length) {
+        html += '<p class="store-hint"><b>Tidak ikut file:</b><br>' + p.excluded.map(function (x) { return esc(x.name) + ' (' + fmtNum(x.qty) + ') — ' + esc(x.reason); }).join('<br>') + '</p>';
+      }
+      if (p.downloadedAt) {
+        html += '<p class="store-field-error" style="display:block;">File ini sudah diunduh pada ' + esc(fmtWib(String(p.downloadedAt).replace('Z', ''))) + ' oleh ' + esc(p.downloadedBy || '-') + '. Jangan impor dua kali agar stok tidak dobel.' +
+          (p.changedSinceDownload ? '<br><b>Konfirmasi sudah berubah sejak file diunduh — file lama tidak sesuai lagi.</b>' : '') + '</p>';
+      }
+      if (p.ready) {
+        html += '<a class="driver-btn primary" style="display:block;text-align:center;margin-top:8px;" href="' + previewUrl + '/download">Unduh file stok masuk Runchise</a>' +
+          '<p class="store-hint" style="margin-top:8px;">1. Buka Runchise → Produk → Stok → Stok Masuk → Impor.<br>2. Pilih file yang baru diunduh.<br>3. Pastikan lokasinya <b>' + esc(p.location) + '</b> lalu proses.</p>';
+      }
+      box.innerHTML = html;
+    }).catch(function (err) { box.innerHTML = '<div class="store-section-title">File stok masuk Runchise</div><p class="store-hint">' + esc(err.message) + '</p>'; });
+  }
+
   function renderKonfirmasiDetail(root, shipmentId) {
     root.appendChild(backLink('konfirmasi'));
     getJson(apiPath('/receipts/' + shipmentId)).then(function (sh) {
@@ -256,6 +286,7 @@
         if (sh.receiverName) {
           root.appendChild(card('<div class="driver-row"><span>Diterima oleh</span><b>' + esc(sh.receiverName) + '</b></div>'));
         }
+        renderRunchiseCard(root, apiPath('/receipts/' + shipmentId + '/runchise'));
         return;
       }
 
