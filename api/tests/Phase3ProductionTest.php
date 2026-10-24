@@ -415,7 +415,7 @@ runTest('P3-09 own-division product without PO can be added (target 0) — produ
     expect($r['status'] === 200, 'expected 200: ' . json_encode($r['json']));
     $itemB = current(array_filter($r['json']['data']['items'], fn ($i) => $i['productId'] === $prodB['product_id']));
     expect($itemB !== false, 'productB should now be on the sheet');
-    expect((float) $itemB['actualQty'] === 5.0, 'actual 5 expected: ' . json_encode($itemB));
+    expect((float) $itemB['actual'] === 5.0, 'actual 5 expected: ' . json_encode($itemB));
 });
 
 runTest('P3-10 refreshTargets pulls in a newly-appearing PO product without resetting existing actuals', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodA, $prodB) {
