@@ -328,11 +328,11 @@ production_handover_item). No existing row or column changes.
   apa?" search adds own-division products); a PO upload adds its products
   to open sheets automatically.
 - "Serah terima ke FG": hand over part of what is done, several times a
-  day; correct/take back until FG checks it.
+  day; correct/take back while the run is open (not below FG verified).
 - FG: handed-over goods are FG source at once (check and reject stay in
   FG Verifikasi). A new handover reopens a submitted FG document.
-- Ringkasan FG: "Posisi barang hari ini" (masih di produksi / menunggu
-  cek / diterima FG / dipacking, reject saat serah terima).
+- Ringkasan FG: "Serah terima masuk" list and "Posisi barang hari ini"
+  (masih di produksi / di FG belum diverifikasi / terverifikasi / dipacking).
 - Includes everything up to 0024 (Runchise).
 
 A server at 0016-0024 is brought to 0025 by api/_upgrade/.
