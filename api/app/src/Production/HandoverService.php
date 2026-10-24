@@ -12,22 +12,21 @@ use PDO;
 
 /**
  * Serah terima (migration 0025): a division hands part of what it has
- * produced to FG, several times a day. FG checks each handover (received
- * qty; the rest is reject with a reason). The FG batch of the day is
- * updated at once (see FgService::syncFromHandover()).
+ * produced to FG, several times a day. What is handed over is FG source at
+ * once (see FgService::syncFromHandover()); checking and reject happen in
+ * FG Verifikasi as before (owner decision: "verifikasi itu sudah termasuk
+ * proses cek, reject dll").
  *
  * Rules (owner decisions Oct 2026):
  *  - a handover can never exceed what is "sudah jadi" (production actual)
  *    minus what was already handed over for that product;
- *  - the division may correct or take back a handover until FG checked it;
- *    after that only ADMIN/PPIC may change it;
+ *  - the division may correct or take back a handover while its run is
+ *    open, but never below what FG has already verified of that product;
  *  - only a draft/reopened run hands over (a submitted run already counts
  *    in full for FG).
  */
 final class HandoverService
 {
-    public const REJECT_REASONS = ['Ukuran tidak sesuai', 'Rusak/penyok', 'Bentuk'];
-
     public function __construct(private PDO $pdo)
     {
     }
@@ -65,7 +64,7 @@ final class HandoverService
     {
         $h = $this->lockHandover($handoverId);
         $run = $this->lockRun((int) $h['production_run_id']);
-        $this->assertCanCorrect($h, $run);
+        $this->assertCanCorrect($run);
         $lines = $this->validateLines($run, $items, $handoverId, allowZero: true);
         foreach ($lines as $productId => $qty) {
             if ($qty <= 0.0001) {
@@ -74,9 +73,7 @@ final class HandoverService
             }
             $this->pdo->prepare(
                 'INSERT INTO production_handover_item (production_handover_id, product_id, qty) VALUES (?, ?, ?)
-                 ON DUPLICATE KEY UPDATE qty = VALUES(qty),
-                   received_qty = IF(received_qty IS NULL, NULL, LEAST(received_qty, VALUES(qty))),
-                   reject_qty = IF(received_qty IS NULL, 0, VALUES(qty) - LEAST(received_qty, VALUES(qty)))'
+                 ON DUPLICATE KEY UPDATE qty = VALUES(qty)'
             )->execute([$handoverId, $productId, $qty]);
         }
         $left = (int) $this->scalar('SELECT COUNT(*) FROM production_handover_item WHERE production_handover_id = ?', [$handoverId]);
@@ -85,55 +82,11 @@ final class HandoverService
         } else {
             $this->pdo->prepare('UPDATE production_handover SET updated_at = UTC_TIMESTAMP() WHERE production_handover_id = ?')->execute([$handoverId]);
         }
+        $this->assertNotBelowVerified($run, array_keys($lines));
         Audit::write($this->pdo, $requestId, $userId, $left === 0 ? 'production.handover.cancel' : 'production.handover.correct', 'production_handover', (string) $handoverId, 'ok', null, null,
             ['items' => $lines, 'operatorName' => $operator]);
         $this->syncFg($run, $userId, $requestId);
         return $left === 0 ? ['handoverId' => $handoverId, 'deleted' => true] : $this->get($handoverId);
-    }
-
-    /**
-     * FG check: per product the received qty; qty - received is reject and
-     * needs a reason. @param array<int,array{productId:int,receivedQty:float,rejectReason?:string}> $items
-     */
-    public function check(int $handoverId, array $items, int $userId, ?string $operator, ?string $requestId): array
-    {
-        $h = $this->lockHandover($handoverId);
-        $run = $this->lockRun((int) $h['production_run_id']);
-        Auth::requireFactoryAccess((int) $run['factory_id']);
-        if ($h['status'] === 'dicek' && array_intersect(['ADMIN', 'PPIC'], Auth::currentRoles()) === []) {
-            throw new ApiException(409, 'HANDOVER_ALREADY_CHECKED', 'Serah terima ini sudah dicek. Perubahan lewat Admin.');
-        }
-        $byProduct = [];
-        foreach ($items as $line) {
-            $byProduct[(int) ($line['productId'] ?? 0)] = $line;
-        }
-        $rows = $this->pdo->prepare('SELECT phi.*, p.name FROM production_handover_item phi INNER JOIN product p ON p.product_id = phi.product_id WHERE phi.production_handover_id = ?');
-        $rows->execute([$handoverId]);
-        $upd = $this->pdo->prepare('UPDATE production_handover_item SET received_qty = ?, reject_qty = ?, reject_reason = ? WHERE production_handover_item_id = ?');
-        $rejects = [];
-        foreach ($rows->fetchAll(PDO::FETCH_ASSOC) as $r) {
-            $qty = (float) $r['qty'];
-            $line = $byProduct[(int) $r['product_id']] ?? null;
-            $received = $line !== null && isset($line['receivedQty']) ? (float) $line['receivedQty'] : $qty;
-            if ($received < -0.0001 || $received > $qty + 0.0001) {
-                throw new ApiException(400, 'INVALID_RECEIVED_QTY', "{$r['name']}: jumlah diterima harus 0 sampai {$qty}.");
-            }
-            $reject = round($qty - $received, 2);
-            $reason = $line !== null ? trim((string) ($line['rejectReason'] ?? '')) : '';
-            if ($reject > 0.0001 && $reason === '') {
-                throw new ApiException(400, 'REJECT_REASON_REQUIRED', "{$r['name']}: pilih alasan reject ({$reject} pcs).");
-            }
-            $upd->execute([$received, $reject, $reject > 0.0001 ? $this->clip($reason) : null, (int) $r['production_handover_item_id']]);
-            if ($reject > 0.0001) {
-                $rejects[$r['name']] = ['qty' => $reject, 'reason' => $reason];
-            }
-        }
-        $this->pdo->prepare("UPDATE production_handover SET status = 'dicek', checked_by = ?, checked_operator_name = ?, checked_at = UTC_TIMESTAMP() WHERE production_handover_id = ?")
-            ->execute([$userId, $operator, $handoverId]);
-        Audit::write($this->pdo, $requestId, $userId, 'production.handover.check', 'production_handover', (string) $handoverId, 'ok', null, null,
-            ['rejects' => $rejects, 'operatorName' => $operator]);
-        $this->syncFg($run, $userId, $requestId);
-        return $this->get($handoverId);
     }
 
     public function get(int $handoverId): array
@@ -190,7 +143,7 @@ final class HandoverService
     {
         $stmt = $this->pdo->prepare(
             "SELECT ph.*, r.tanggal, r.division_id, d.name AS division_name, d.factory_id,
-                    phi.product_id, p.name AS product_name, phi.qty, phi.received_qty, phi.reject_qty, phi.reject_reason
+                    phi.product_id, p.name AS product_name, phi.qty
              FROM production_handover ph
              INNER JOIN production_run r ON r.production_run_id = ph.production_run_id
              INNER JOIN division d ON d.division_id = r.division_id
@@ -204,19 +157,15 @@ final class HandoverService
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
             $id = (int) $r['production_handover_id'];
             $out[$id] ??= [
-                'handoverId' => $id, 'runId' => (int) $r['production_run_id'], 'seq' => (int) $r['seq'], 'status' => $r['status'],
+                'handoverId' => $id, 'runId' => (int) $r['production_run_id'], 'seq' => (int) $r['seq'],
                 'tanggal' => $r['tanggal'], 'divisionId' => (int) $r['division_id'], 'divisionName' => $r['division_name'],
-                'note' => $r['note'], 'createdAt' => $r['created_at'], 'createdBy' => $r['created_operator_name'],
-                'checkedAt' => $r['checked_at'], 'checkedBy' => $r['checked_operator_name'],
-                'totalQty' => 0.0, 'totalReject' => 0.0, 'items' => [],
+                'note' => $r['note'], 'createdAt' => $r['created_at'], 'updatedAt' => $r['updated_at'], 'createdBy' => $r['created_operator_name'],
+                'totalQty' => 0.0, 'items' => [],
             ];
             $out[$id]['items'][] = [
                 'productId' => (int) $r['product_id'], 'productName' => $r['product_name'], 'qty' => (float) $r['qty'],
-                'receivedQty' => $r['received_qty'] !== null ? (float) $r['received_qty'] : null,
-                'rejectQty' => (float) $r['reject_qty'], 'rejectReason' => $r['reject_reason'],
             ];
             $out[$id]['totalQty'] += (float) $r['qty'];
-            $out[$id]['totalReject'] += (float) $r['reject_qty'];
         }
         return array_values($out);
     }
@@ -255,13 +204,37 @@ final class HandoverService
         return $out;
     }
 
-    private function assertCanCorrect(array $h, array $run): void
+    private function assertCanCorrect(array $run): void
     {
-        $isOffice = array_intersect(['ADMIN', 'PPIC'], Auth::currentRoles()) !== [];
-        if (!$isOffice) {
-            Auth::requireDivisionAccess((int) $run['division_id']);
-            if ($h['status'] === 'dicek') {
-                throw new ApiException(409, 'HANDOVER_ALREADY_CHECKED', 'Serah terima ini sudah dicek FG. Koreksi lewat Admin.');
+        Auth::requireDivisionAccess((int) $run['division_id']);
+        if (!in_array($run['status'], ['draft', 'reopened'], true)) {
+            throw new ApiException(409, 'RUN_NOT_OPEN', 'Produksi ini sudah disubmit. Buka kembali dulu untuk mengoreksi serah terima.');
+        }
+    }
+
+    /**
+     * A correction may not take away goods FG has already verified — the
+     * FG ceiling would drop under the verified qty.
+     * @param int[] $productIds
+     */
+    private function assertNotBelowVerified(array $run, array $productIds): void
+    {
+        if ($productIds === []) {
+            return;
+        }
+        $source = (new \Amor\Api\Fg\FgTargetService())->productionActualByProduct($this->pdo, (string) $run['tanggal'], (int) $run['factory_id']);
+        $stmt = $this->pdo->prepare(
+            'SELECT fi.product_id, p.name, SUM(fi.qty) FROM fg_item fi
+             INNER JOIN fg_batch b ON b.fg_batch_id = fi.fg_batch_id
+             INNER JOIN product p ON p.product_id = fi.product_id
+             WHERE b.tanggal = ? AND b.factory_id = ? AND fi.product_id IN (' . implode(',', array_map('intval', $productIds)) . ')
+             GROUP BY fi.product_id, p.name'
+        );
+        $stmt->execute([(string) $run['tanggal'], (int) $run['factory_id']]);
+        foreach ($stmt->fetchAll(PDO::FETCH_NUM) as [$pid, $name, $verified]) {
+            $left = (float) ($source[(int) $pid]['actual'] ?? 0.0);
+            if ((float) $verified > $left + 0.0001) {
+                throw new ApiException(409, 'HANDOVER_BELOW_VERIFIED', "{$name}: FG sudah memverifikasi " . round((float) $verified, 2) . ' pcs, jadi serah terima tidak bisa dikurangi di bawah itu. Minta FG mengoreksi verifikasinya dulu.');
             }
         }
     }

@@ -98,7 +98,7 @@ function fgStepUrl(string $step, string $tanggal, int $factoryId): string
 </div>
 <?php
 if ($viewError === null) {
-    ui_render_fg_ringkasan($pdo, $uiTanggal, $uiFactoryId, null, fgStepUrl('verifikasi', $uiTanggal, $uiFactoryId), array_intersect(['ADMIN', 'PPIC', 'FG_PACKING'], $ui['roles']) !== []);
+    ui_render_fg_ringkasan($pdo, $uiTanggal, $uiFactoryId, null, fgStepUrl('verifikasi', $uiTanggal, $uiFactoryId));
 }
 return;
 endif; ?>

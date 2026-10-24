@@ -650,7 +650,7 @@ runTest('RJT-17 Runchise stok masuk file: good qty only, mapped/summed lines, ex
     expect($page['status'] === 200 && str_contains($page['body'], 'Upload Katalog') && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $page['body']), 'Mapping Runchise page should render');
 });
 
-runTest('RJT-18 Serah terima sebagian: produksi tanpa PO, FG dapat yang diserahkan, reject saat cek mengurangi, koreksi divisi terkunci setelah dicek, FG submitted terbuka lagi', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId) {
+runTest('RJT-18 Serah terima sebagian: produksi tanpa PO, FG langsung dapat yang diserahkan, koreksi tidak di bawah yang sudah diverifikasi, FG submitted terbuka lagi', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId) {
     $day = (new DateTimeImmutable('+11 days', new DateTimeZone('UTC')))->format('Y-m-d'); // own date, no PO
     $p = (int) nextProduct()['product_id'];
     $post = static fn (HttpInv $h, string $c, string $m, string $path, array $b) => $h->request($m, $path, $b, array_merge(['X-CSRF-Token' => $c], idemKey('rjt18')));
@@ -673,18 +673,13 @@ runTest('RJT-18 Serah terima sebagian: produksi tanpa PO, FG dapat yang diserahk
 
     $fg = $post($adminHttp, $adminCsrf, 'POST', '/api/fg', ['tanggal' => $day, 'factoryId' => $karangtengahId]);
     expect($fg['status'] === 200, 'FG must open on handed-over goods of a draft run: ' . $fg['body']);
-    expect($snap() === 6.0, 'FG source must be the 6 handed over, got ' . $snap());
+    expect($snap() === 6.0, 'FG source must be the 6 handed over (no separate check step), got ' . $snap());
+    expect($adminHttp->request('POST', '/api/production/handovers/1/check', ['items' => []], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('rjt18x')))['status'] === 404, 'the separate check step is gone');
 
-    $hid = (int) $h1['json']['data']['handoverId'];
-    $noReason = $post($adminHttp, $adminCsrf, 'POST', "/api/production/handovers/{$hid}/check", ['items' => [['productId' => $p, 'receivedQty' => 4]]]);
-    expect($noReason['status'] === 400 && $noReason['json']['code'] === 'REJECT_REASON_REQUIRED', 'reject needs a reason: ' . $noReason['body']);
-    $chk = $post($adminHttp, $adminCsrf, 'POST', "/api/production/handovers/{$hid}/check", ['items' => [['productId' => $p, 'receivedQty' => 4, 'rejectReason' => 'Ukuran tidak sesuai']]]);
-    expect($chk['status'] === 200 && $chk['json']['data']['status'] === 'dicek' && (float) $chk['json']['data']['items'][0]['rejectQty'] === 2.0, 'check: ' . $chk['body']);
-    expect($snap() === 4.0, 'reject at check must lower the FG source to 4, got ' . $snap());
-
+    // FG verifies 5 of the 6 (1 reject recorded in FG Verifikasi) and submits.
     $batchId = (int) $fg['json']['data']['fgBatchId'];
     $b = $adminHttp->request('GET', "/api/fg/{$batchId}")['json']['data'];
-    $fs = $post($adminHttp, $adminCsrf, 'PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $b['version'], 'items' => [['productId' => $p, 'fgVerified' => 4, 'packed' => 4]]]);
+    $fs = $post($adminHttp, $adminCsrf, 'PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $b['version'], 'items' => [['productId' => $p, 'fgVerified' => 5, 'packed' => 5]]]);
     expect($fs['status'] === 200, 'fg save: ' . $fs['body']);
     $sub = $post($adminHttp, $adminCsrf, 'POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $fs['json']['data']['version']]);
     expect($sub['status'] === 200, 'fg submit: ' . $sub['body']);
@@ -702,18 +697,19 @@ runTest('RJT-18 Serah terima sebagian: produksi tanpa PO, FG dapat yang diserahk
     expect($h2['status'] === 200 && $h2['json']['data']['seq'] === 2, 'second handover by the division: ' . $h2['body']);
     $st = $pdo->prepare('SELECT status FROM fg_batch WHERE fg_batch_id = ?'); $st->execute([$batchId]);
     expect($st->fetchColumn() === 'reopened', 'a new handover must reopen the submitted FG document');
-    expect($snap() === 8.0, 'FG source 4 + 4 = 8, got ' . $snap());
+    expect($snap() === 10.0, 'FG source 6 + 4 = 10, got ' . $snap());
 
-    $locked = $post($div, $dc, 'PATCH', "/api/production/handovers/{$hid}", ['items' => [['productId' => $p, 'qty' => 5]]]);
-    expect($locked['status'] === 409 && $locked['json']['code'] === 'HANDOVER_ALREADY_CHECKED', 'division cannot correct a checked handover: ' . $locked['body']);
-    $h2id = (int) $h2['json']['data']['handoverId'];
-    $fix = $post($div, $dc, 'PATCH', "/api/production/handovers/{$h2id}", ['items' => [['productId' => $p, 'qty' => 3]]]);
-    expect($fix['status'] === 200 && (float) $fix['json']['data']['totalQty'] === 3.0, 'division corrects an unchecked handover: ' . $fix['body']);
-    expect($snap() === 7.0, 'FG source after correction 4 + 3 = 7, got ' . $snap());
+    $hid = (int) $h1['json']['data']['handoverId'];
+    $fix = $post($div, $dc, 'PATCH', "/api/production/handovers/{$hid}", ['items' => [['productId' => $p, 'qty' => 3]]]);
+    expect($fix['status'] === 200 && (float) $fix['json']['data']['totalQty'] === 3.0, 'division corrects a handover: ' . $fix['body']);
+    expect($snap() === 7.0, 'FG source after correction 3 + 4 = 7, got ' . $snap());
+    $below = $post($div, $dc, 'PATCH', "/api/production/handovers/{$hid}", ['items' => [['productId' => $p, 'qty' => 0]]]);
+    expect($below['status'] === 409 && $below['json']['code'] === 'HANDOVER_BELOW_VERIFIED', 'cannot take back below the 5 FG verified: ' . $below['body']);
+    expect($snap() === 7.0, 'refused correction must change nothing, got ' . $snap());
 
     $r = $div->request('GET', "/api/production/{$runId}")['json']['data'];
-    $below = $post($div, $dc, 'PATCH', "/api/production/{$runId}", ['expectedVersion' => $r['version'], 'items' => [['productId' => $p, 'actualQty' => 8]]]);
-    expect($below['status'] === 400 && $below['json']['code'] === 'ACTUAL_BELOW_HANDED_OVER', 'sudah jadi cannot drop under the 9 already handed over: ' . $below['body']);
+    $low = $post($div, $dc, 'PATCH', "/api/production/{$runId}", ['expectedVersion' => $r['version'], 'items' => [['productId' => $p, 'actualQty' => 6]]]);
+    expect($low['status'] === 400 && $low['json']['code'] === 'ACTUAL_BELOW_HANDED_OVER', 'sudah jadi cannot drop under the 7 already handed over: ' . $low['body']);
 
     $list = $div->request('GET', "/api/production/handovers?tanggal={$day}&factoryId={$karangtengahId}");
     expect($list['status'] === 200 && count($list['json']['data']) === 2, 'division sees its 2 handovers: ' . $list['body']);

@@ -15,12 +15,11 @@ use PDO;
 
 /**
  * Serah terima produksi → FG (migration 0025). Divisions create/correct
- * their handovers; FG checks them. See HandoverService for the rules.
+ * their handovers; FG sees them arrive. See HandoverService for the rules.
  */
 final class HandoverController
 {
     private const DIVISION_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION'];
-    private const FG_ROLES = ['ADMIN', 'PPIC', 'FG_PACKING'];
 
     /** GET /api/production/handovers?tanggal=&factoryId= — FG/office see the factory; a division account only its own. */
     public static function index(Request $request): void
@@ -59,19 +58,6 @@ final class HandoverController
         $operator = Auth::currentOperatorName();
         Idempotency::handle($request, 'PATCH /api/production/handovers/{id}', function (PDO $pdo) use ($request, $userId, $id, $items, $operator) {
             $dto = (new HandoverService($pdo))->update($id, $items, $userId, $operator, $request->header('Idempotency-Key'));
-            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'production_handover', 'recordKey' => (string) $id];
-        });
-    }
-
-    /** POST /api/production/handovers/{id}/check {items:[{productId,receivedQty,rejectReason}]} */
-    public static function check(Request $request): void
-    {
-        $userId = Auth::requireRole(...self::FG_ROLES);
-        $id = (int) $request->routeParams['id'];
-        $items = (array) $request->input('items', []);
-        $operator = Auth::currentOperatorName();
-        Idempotency::handle($request, 'POST /api/production/handovers/{id}/check', function (PDO $pdo) use ($request, $userId, $id, $items, $operator) {
-            $dto = (new HandoverService($pdo))->check($id, $items, $userId, $operator, $request->header('Idempotency-Key'));
             return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'production_handover', 'recordKey' => (string) $id];
         });
     }

@@ -77,15 +77,14 @@ final class FgTargetService
         $stmt = $pdo->prepare(
             // Migration 0025 (partial handover): a submitted run counts in
             // full as before; a draft/reopened run counts what it has
-            // handed over so far. Either way, what FG rejected when checking
-            // a handover (e.g. wrong size) never becomes FG source.
+            // handed over so far (reject is recorded in FG Verifikasi).
             "SELECT pi.product_id, p.name AS product_name,
-                    SUM((CASE WHEN r.status = 'submitted' THEN pi.aktual ELSE COALESCE(h.qty, 0) END) - COALESCE(h.rej, 0)) AS actual
+                    SUM(CASE WHEN r.status = 'submitted' THEN pi.aktual ELSE COALESCE(h.qty, 0) END) AS actual
              FROM production_run r
              INNER JOIN division d ON d.division_id = r.division_id
              INNER JOIN production_item pi ON pi.production_run_id = r.production_run_id
              INNER JOIN product p ON p.product_id = pi.product_id
-             LEFT JOIN (SELECT ph.production_run_id, phi.product_id, SUM(phi.qty) AS qty, SUM(phi.reject_qty) AS rej
+             LEFT JOIN (SELECT ph.production_run_id, phi.product_id, SUM(phi.qty) AS qty
                         FROM production_handover ph
                         INNER JOIN production_handover_item phi ON phi.production_handover_id = ph.production_handover_id
                         GROUP BY ph.production_run_id, phi.product_id) h

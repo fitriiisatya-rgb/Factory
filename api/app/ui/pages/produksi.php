@@ -595,11 +595,10 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
       <div style="border-top:1px solid var(--border);padding:8px 0;">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
           <b>#<?= (int) $h['seq'] ?> · <?= ui_esc(ui_fmt_datetime_id((string) $h['createdAt'])) ?></b>
-          <span><?= $h['status'] === 'dicek' ? ui_badge('Dicek FG') : ui_badge('Menunggu cek FG') ?>
-          <?php if ($h['status'] === 'diserahkan' && $editable): ?><button type="button" class="btn btn-secondary btn-sm" data-ho-edit="<?= (int) $h['handoverId'] ?>">Koreksi</button><?php endif; ?></span>
+          <?php if ($editable): ?><button type="button" class="btn btn-secondary btn-sm" data-ho-edit="<?= (int) $h['handoverId'] ?>">Koreksi</button><?php endif; ?>
         </div>
         <div style="font-size:var(--text-sm);color:var(--text-muted);">
-          <?= ui_esc(implode(' · ', array_map(static fn ($it) => $it['productName'] . ' ' . ui_fmt_num($it['qty']) . ($it['rejectQty'] > 0 ? ' (reject ' . ui_fmt_num($it['rejectQty']) . ': ' . $it['rejectReason'] . ')' : ''), $h['items']))) ?>
+          <?= ui_esc(implode(' · ', array_map(static fn ($it) => $it['productName'] . ' ' . ui_fmt_num($it['qty']), $h['items']))) ?>
           <?= $h['createdBy'] ? ' — oleh ' . ui_esc((string) $h['createdBy']) : '' ?>
         </div>
       </div>
@@ -652,7 +651,7 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
       var bad = (window.__hoOut || []).filter(function (x) { return x.qty > x.max + 0.0001; });
       if (bad.length) { Amor.toast('Jumlah melebihi yang sudah jadi dan belum diserahkan.', 'danger'); return; }
       if (!items.length) { Amor.toast('Tidak ada jumlah yang diisi.', 'warning'); return; }
-      try { await Amor.apiFetch('/api/production/' + RUN + '/handovers', { method: 'POST', body: { items: items.map(function (x) { return { productId: x.productId, qty: x.qty }; }) } }); Amor.toast('Serah terima tersimpan. FG bisa langsung mengecek.', 'success'); setTimeout(function () { location.reload(); }, 700); }
+      try { await Amor.apiFetch('/api/production/' + RUN + '/handovers', { method: 'POST', body: { items: items.map(function (x) { return { productId: x.productId, qty: x.qty }; }) } }); Amor.toast('Serah terima tersimpan. Barang langsung masuk ke FG.', 'success'); setTimeout(function () { location.reload(); }, 700); }
       catch (e) { Amor.toast(e.message, 'danger'); }
     });
     document.querySelectorAll('[data-ho-edit]').forEach(function (b) {
@@ -660,7 +659,7 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
         var h = HO.filter(function (x) { return String(x.id) === b.getAttribute('data-ho-edit'); })[0];
         var rows = h.items.map(function (it) { var r = ROWS.filter(function (x) { return x.id === it.productId; })[0] || { made: it.qty, handed: it.qty };
           var max = Math.max(0, liveMade(it.productId) - (r.handed - it.qty)); return { id: it.productId, name: it.productName, max: max, value: it.qty, sub: 'diserahkan ' + num(it.qty) + ' · isi 0 untuk menarik kembali' }; });
-        var ok = await qtyModal('Koreksi serah terima #' + h.seq, 'Bisa dikoreksi selama FG belum mengecek.', rows, 'Simpan koreksi');
+        var ok = await qtyModal('Koreksi serah terima #' + h.seq, 'Bisa dikoreksi selama produksi belum disubmit (tidak bisa di bawah yang sudah diverifikasi FG).', rows, 'Simpan koreksi');
         if (!ok) return;
         try { await Amor.apiFetch('/api/production/handovers/' + h.id, { method: 'PATCH', body: { items: (window.__hoOut || []).map(function (x) { return { productId: x.productId, qty: x.qty }; }) } }); Amor.toast('Koreksi tersimpan.', 'success'); setTimeout(function () { location.reload(); }, 700); }
         catch (e) { Amor.toast(e.message, 'danger'); }

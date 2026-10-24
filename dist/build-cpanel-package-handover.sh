@@ -329,8 +329,8 @@ production_handover_item). No existing row or column changes.
   to open sheets automatically.
 - "Serah terima ke FG": hand over part of what is done, several times a
   day; correct/take back until FG checks it.
-- FG: inbox "Serah terima dari produksi" (Cek: received qty, reject with
-  reason). A new handover reopens a submitted FG document automatically.
+- FG: handed-over goods are FG source at once (check and reject stay in
+  FG Verifikasi). A new handover reopens a submitted FG document.
 - Ringkasan FG: "Posisi barang hari ini" (masih di produksi / menunggu
   cek / diterima FG / dipacking, reject saat serah terima).
 - Includes everything up to 0024 (Runchise).

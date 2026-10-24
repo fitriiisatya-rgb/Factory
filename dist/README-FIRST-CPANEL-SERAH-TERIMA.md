@@ -26,25 +26,25 @@ Divisi, Ringkasan FG, notifikasi di tengah).
 - Kotak **Serah terima ke FG**: sudah jadi / diserahkan / belum diserahkan.
 - **Serahkan ke FG** → isi jumlah yang dibawa sekarang (otomatis = sisa yang
   belum diserahkan). Tidak bisa melebihi yang sudah jadi.
-- **Koreksi** selama FG belum mengecek; isi 0 untuk menarik kembali. Setelah
-  dicek FG, koreksi hanya lewat Admin.
+- **Koreksi** selama produksi belum disubmit; isi 0 untuk menarik kembali.
+  Tidak bisa dikurangi di bawah jumlah yang sudah diverifikasi FG.
 - "Hasil jadi" tidak bisa diturunkan di bawah jumlah yang sudah diserahkan.
 
-### FG: cek serah terima
-- Tab **Ringkasan** menampilkan **Serah terima dari produksi**: daftar yang
-  menunggu cek dan yang sudah dicek.
-- **Cek** → isi jumlah diterima baik. Selisihnya = **reject**, wajib pilih
-  alasan: Ukuran tidak sesuai / Rusak-penyok / Bentuk / Lainnya (tulis).
-- Yang bisa diverifikasi FG = yang sudah diserahkan dikurangi reject.
-  Produksi yang sudah **Submit** tetap terhitung penuh seperti sebelumnya.
+### FG: barang langsung masuk, cek & reject di FG Verifikasi
+- Yang diserahkan **langsung** jadi Hasil Produksi di FG Verifikasi — tidak
+  ada langkah cek terpisah. Cek, reject, dan selisih tetap dicatat di FG
+  Verifikasi seperti biasa.
+- Produksi yang sudah **Submit** tetap terhitung penuh seperti sebelumnya.
 - Kalau dokumen FG sudah disubmit lalu ada serah terima baru, dokumen FG
   **otomatis terbuka lagi** (alasan: "Otomatis: ada serah terima baru dari
   produksi").
+- Tab **Ringkasan** menampilkan **Serah terima masuk dari produksi** (jam,
+  divisi, produk, jumlah).
 
 ### Ringkasan FG: posisi barang hari ini
-- Bar 4 warna: **Masih di produksi · Diserahkan, belum dicek · Diterima FG ·
-  Dipacking**, plus **Reject saat serah terima**.
-- Per divisi: sudah jadi, masih di produksi, diserahkan, menunggu cek.
+- Bar 4 warna: **Masih di produksi · Di FG, belum diverifikasi ·
+  Terverifikasi, belum dipacking · Dipacking**.
+- Per divisi: sudah jadi, masih di produksi, diserahkan.
 
 ## Cara pasang
 1. **Backup database** lewat phpMyAdmin → Export.
@@ -53,7 +53,7 @@ Divisi, Ringkasan FG, notifikasi di tengah).
 3. Login Admin, buka `https://factory.amorgroup.id/api/_upgrade/`, lalu
    jalankan migrasi **0025_production_handover**.
 4. Uji: login akun divisi → Produksi → isi hasil → **Serahkan ke FG**; lalu
-   login FG → FG & Packing → Ringkasan → **Cek**.
+   login FG → FG & Packing → FG Verifikasi: hasil produksinya sudah muncul.
 
 ## Catatan
 - Migrasi 0025 hanya menambah 2 tabel baru. Data lama tidak diubah.

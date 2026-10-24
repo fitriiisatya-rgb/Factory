@@ -82,7 +82,6 @@ final class App
         // Serah terima produksi → FG (migration 0025) — before /{id} routes.
         $router->get('/api/production/handovers', [HandoverController::class, 'index']);
         $router->patch('/api/production/handovers/{id}', [HandoverController::class, 'update']);
-        $router->post('/api/production/handovers/{id}/check', [HandoverController::class, 'check']);
         $router->get('/api/production', [ProductionController::class, 'index']);
         $router->post('/api/production', [ProductionController::class, 'create']);
         $router->get('/api/production/{id}', [ProductionController::class, 'show']);
