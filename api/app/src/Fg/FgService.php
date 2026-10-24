@@ -1178,14 +1178,35 @@ final class FgService
         }
         $batch = $this->repo->lockBatchById($this->pdo, (int) $batchId);
         $version = (int) $batch['version'];
+        if (!in_array($batch['status'], ['draft', 'reopened', 'submitted'], true)) {
+            return;
+        }
+        // Only a real change of quantity may reopen a submitted document.
+        $actuals = $this->targets->productionActualByProduct($this->pdo, $tanggal, $factoryId);
+        $items = $this->repo->findItems($this->pdo, (int) $batchId);
+        $changed = false;
+        foreach ($actuals as $productId => $a) {
+            if (!isset($items[$productId]) || abs((float) $items[$productId]['production_actual_snapshot'] - (float) $a['actual']) > 0.0001) {
+                $changed = true;
+            }
+        }
+        foreach ($items as $productId => $item) {
+            if (!isset($actuals[$productId]) && (float) $item['production_actual_snapshot'] > 0.0001) {
+                $changed = true;
+            }
+        }
+        if (!$changed) {
+            foreach ($this->targets->eligibleProductionRuns($this->pdo, $tanggal, $factoryId) as $run) {
+                $this->repo->upsertBatchSource($this->pdo, (int) $batchId, $run['productionRunId'], $run['version']);
+            }
+            return;
+        }
         if ($batch['status'] === 'submitted') {
             $this->repo->bumpVersion($this->pdo, (int) $batchId, $version,
                 "status = 'reopened', reopened_by = ?, reopened_at = UTC_TIMESTAMP(), reopen_reason = ?",
                 [$userId, 'Otomatis: ada serah terima baru dari produksi']);
             \Amor\Api\Audit::write($this->pdo, $requestId, $userId, 'fg.reopen.auto_handover', 'fg_batch', (string) $batchId, 'ok', $version, $version + 1, null);
             $version++;
-        } elseif (!in_array($batch['status'], ['draft', 'reopened'], true)) {
-            return;
         }
         $this->refreshSource((int) $batchId, $tanggal, $factoryId);
         // A handover taken back (deleted / reduced to 0) leaves no source
@@ -1315,7 +1336,10 @@ final class FgService
             if ($current === null) {
                 continue;
             }
-            $mismatch = (int) $current['version'] !== $storedVersion || $current['status'] !== 'submitted';
+            // A draft run that hands over is kept exact by every handover
+            // (FgService::syncFromHandover()), whatever its own version.
+            $handsOver = $current['status'] === 'draft' && (new \Amor\Api\Production\HandoverService($this->pdo))->handedByProduct($runId) !== [];
+            $mismatch = !$handsOver && ((int) $current['version'] !== $storedVersion || $current['status'] !== 'submitted');
             if ($mismatch) {
                 $inconsistent = true;
             }

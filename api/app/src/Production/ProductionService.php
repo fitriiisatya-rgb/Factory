@@ -270,6 +270,13 @@ final class ProductionService
         }
 
         $run = $this->repo->findRunById($this->pdo, $runId);
+        // A run that already handed goods over is part of the day's FG
+        // document; submitting it hands over the rest, so FG follows at once.
+        if ((new HandoverService($this->pdo))->handedByProduct($runId) !== []) {
+            $factoryStmt = $this->pdo->prepare('SELECT factory_id FROM division WHERE division_id = ?');
+            $factoryStmt->execute([(int) $run['division_id']]);
+            (new \Amor\Api\Fg\FgService($this->pdo))->syncFromHandover((string) $run['tanggal'], (int) $factoryStmt->fetchColumn(), $userId, $requestId);
+        }
         $dto = $this->buildRunDto($run, $run);
         $dto['submitWarnings'] = $warnings;
         return $dto;

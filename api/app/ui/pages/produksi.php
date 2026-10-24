@@ -581,7 +581,11 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
   <div class="card" style="margin-top:var(--space-4);padding:var(--space-3);" id="ho-card">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
       <h3 class="card-title" style="margin:0;">Serah terima ke FG</h3>
+      <?php if ($runDetail['status'] === 'submitted'): ?>
+      <span style="font-size:var(--text-sm);color:var(--text-muted);">Sudah jadi <b><?= ui_fmt_num($hoMade) ?></b> · semua sudah di FG</span>
+      <?php else: ?>
       <span style="font-size:var(--text-sm);color:var(--text-muted);">Sudah jadi <b><?= ui_fmt_num($hoMade) ?></b> · Diserahkan <b><?= ui_fmt_num($hoGiven) ?></b> · Belum diserahkan <b><?= ui_fmt_num(max(0, $hoMade - $hoGiven)) ?></b></span>
+      <?php endif; ?>
     </div>
     <?php if ($editable): ?>
     <p style="font-size:var(--text-sm);color:var(--text-muted);margin:6px 0;">Setiap kali barang dibawa ke FG, tekan <b>Serahkan ke FG</b> dan isi jumlah yang dibawa saat itu. Bisa berkali-kali sehari.</p>

@@ -859,7 +859,9 @@
       const g = row.querySelector(opts.groupSel);
       if (g.querySelector('[data-value="sesuai"]').classList.contains('btn-primary')) return 'ok';
       if (g.getAttribute('data-touched') === '1') return 'short';
-      const nums = row.querySelectorAll('input[type="number"]');
+      // fillSel: the inputs that mean "this row was filled" (Packing: only
+      // the packed qty — a reject carried over from Verifikasi is not packing).
+      const nums = row.querySelectorAll(opts.fillSel || 'input[type="number"]');
       for (let i = 0; i < nums.length; i++) { if (parseFloat(nums[i].value || '0') > 0) return 'short'; }
       return 'empty';
     }

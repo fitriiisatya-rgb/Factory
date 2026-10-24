@@ -24,7 +24,7 @@ function ui_fg_ringkasan_data(PDO $pdo, string $tanggal, int $factoryId, ?array 
     }
     $stmt = $pdo->prepare(
         "SELECT p.product_id, p.name, d.name AS division_name, COALESCE(po.qty, 0) AS po, COALESCE(pr.qty, 0) AS prod,
-                COALESCE(fg.ver, 0) AS ver, COALESCE(fg.packed, 0) AS packed,
+                COALESCE(fg.ver, 0) AS ver, COALESCE(fg.packed, 0) AS packed, COALESCE(fg.lost, 0) AS lost,
                 COALESCE(mv.made, 0) AS made, COALESCE(mv.handed, 0) AS handed
          FROM product p
          INNER JOIN division d ON d.division_id = p.division_id
@@ -34,7 +34,7 @@ function ui_fg_ringkasan_data(PDO $pdo, string $tanggal, int $factoryId, ?array 
          LEFT JOIN (SELECT it.product_id, SUM(it.aktual) AS qty FROM production_item it
                     INNER JOIN production_run r ON r.production_run_id = it.production_run_id
                     WHERE r.tanggal = ? AND r.status IN ('submitted','verified_fg') GROUP BY it.product_id) pr ON pr.product_id = p.product_id
-         LEFT JOIN (SELECT fi.product_id, SUM(fi.qty) AS ver, SUM(fi.packed_qty) AS packed FROM fg_item fi
+         LEFT JOIN (SELECT fi.product_id, SUM(fi.qty) AS ver, SUM(fi.packed_qty) AS packed, SUM(fi.reject_qty + fi.hilang_qty) AS lost FROM fg_item fi
                     INNER JOIN fg_batch fb ON fb.fg_batch_id = fi.fg_batch_id
                     WHERE fb.tanggal = ? AND fb.factory_id = ? GROUP BY fi.product_id) fg ON fg.product_id = p.product_id
          LEFT JOIN (SELECT pi.product_id, SUM(pi.aktual) AS made,
@@ -67,7 +67,9 @@ function ui_fg_ringkasan_data(PDO $pdo, string $tanggal, int $factoryId, ?array 
         $state = $madeAll < $po - 0.01 ? 'kurang' : ($ver <= 0.0001 ? 'belum' : ($ver >= $prod - 0.01 ? 'selesai' : 'sebagian'));
         $pos = [
             'diProduksi' => max(0.0, $made - $handed),
-            'diFgBelumVerifikasi' => max(0.0, $prod - $ver),
+            // Reject/hilang written in FG Verifikasi is checked, not waiting.
+            'diFgBelumVerifikasi' => max(0.0, $prod - $ver - (float) $r['lost']),
+            'rejectFg' => (float) $r['lost'],
             'verifikasiBelumPacking' => max(0.0, $ver - $packed),
             'dipacking' => $packed,
             'diserahkan' => $handed,
@@ -177,6 +179,7 @@ function ui_render_fg_ringkasan(PDO $pdo, string $tanggal, int $factoryId, ?arra
       <div class="rk-stat"><b><?= $n($sum('verifikasiBelumPacking')) ?></b><small style="color:#60a5fa">&#9679; Terverifikasi, belum dipacking</small></div>
       <div class="rk-stat"><b><?= $n($sum('dipacking')) ?></b><small style="color:#4ade80">&#9679; Dipacking</small></div>
     </div>
+    <?php if ($sum('rejectFg') > 0.0001): ?><div class="rk-line" style="margin-top:6px;">Reject / hilang dicatat di FG Verifikasi: <b><?= $n($sum('rejectFg')) ?> pcs</b></div><?php endif; ?>
   </div>
 
   <div class="rk-cols">

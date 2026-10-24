@@ -146,6 +146,8 @@ final class PoImporter
                     'PO Awal untuk tanggal & pabrik ini sudah pernah ditetapkan dari file yang berbeda — tidak ditimpa otomatis.', 'data' => $plan],
                 'NO_INITIAL_YET' => ['ok' => false, 'code' => 'NO_INITIAL_YET', 'message' =>
                     'Belum ada PO Awal untuk tanggal & pabrik ini — upload PO Awal dulu sebelum PO Tambahan/Revisi.', 'data' => $plan],
+                'EMPTY_FILE' => ['ok' => false, 'code' => 'EMPTY_FILE', 'message' =>
+                    'Tidak ada produk/toko yang terbaca dari file ini — cek file dan formatnya.', 'data' => $plan],
                 default => ['ok' => false, 'code' => 'IMPORT_BLOCKED', 'message' => 'Impor tidak bisa dilanjutkan.', 'data' => $plan],
             };
         }
@@ -168,6 +170,16 @@ final class PoImporter
              INNER JOIN po_item pi ON pi.product_id = p.product_id AND pi.po_batch_id = ?
              WHERE r.tanggal = ? AND d.factory_id = ? AND r.status IN ('draft','reopened') AND (pi.po_awal + pi.po_revisi) > 0
                AND NOT EXISTS (SELECT 1 FROM production_item x WHERE x.production_run_id = r.production_run_id AND x.product_id = pi.product_id)"
+        )->execute([$poBatchId, $tanggal, (int) $plan['factoryId']]);
+        // Products a division added before any PO existed carry target 0;
+        // the first PO is their real target, not a "change".
+        $this->pdo->prepare(
+            "UPDATE production_item it
+             INNER JOIN production_run r ON r.production_run_id = it.production_run_id
+             INNER JOIN division d ON d.division_id = r.division_id
+             INNER JOIN po_item pi ON pi.product_id = it.product_id AND pi.po_batch_id = ?
+             SET it.target = (pi.po_awal + pi.po_revisi)
+             WHERE r.tanggal = ? AND d.factory_id = ? AND r.status IN ('draft','reopened') AND it.target = 0 AND (pi.po_awal + pi.po_revisi) > 0"
         )->execute([$poBatchId, $tanggal, (int) $plan['factoryId']]);
 
         $this->repo->recordImportHistory($this->pdo, [
@@ -371,6 +383,10 @@ final class PoImporter
         $blockReason = null;
         if ($productUnresolved > 0 || $storeUnresolved > 0) {
             $blockReason = 'UNRESOLVED_ROWS';
+        } elseif ($newLines === []) {
+            // Wrong file / wrong layout: nothing readable. Saving it would
+            // leave an empty PO for the date ("total 0 pcs").
+            $blockReason = 'EMPTY_FILE';
         } elseif ($uploadType === 'initial' && $hasExistingItems
             && !($duplicateOf !== null && $duplicateOf['upload_type'] === 'initial')
         ) {

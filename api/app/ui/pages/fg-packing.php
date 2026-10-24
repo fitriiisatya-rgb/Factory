@@ -987,7 +987,7 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
         var readyInput = card.querySelector('[data-pk-field="fgVerified"]');
         wireSesuaiGroup(group2, packedInput, function () { return readyInput.value || '0'; });
       });
-      Amor.compactList({ list: detail.querySelector('.fg-card-list'), rowSel: '.fg-packing-row', groupSel: '.pk-sesuai', nameSel: '.fg-card-title', bulkLabel: 'Isi semua yang belum diisi = Sesuai (dipacking semua)' });
+      Amor.compactList({ list: detail.querySelector('.fg-card-list'), rowSel: '.fg-packing-row', groupSel: '.pk-sesuai', nameSel: '.fg-card-title', fillSel: '[data-pk-field="packed"]', bulkLabel: 'Isi semua yang belum diisi = Sesuai (dipacking semua)' });
     }
 
     wirePackingActions(group, detail, status, locked, editingCorrection);

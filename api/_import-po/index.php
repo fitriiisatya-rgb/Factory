@@ -527,6 +527,9 @@ ui_page_head($ui, 'pesanan-toko', 'Import / Revisi PO Toko', 'Upload PO Awal ata
   <div class="alert alert-danger" style="margin-top:var(--space-3);"><strong>PO Awal sudah ada</strong><p style="margin:4px 0 0;">Tanggal &amp; pabrik ini sudah punya PO Awal dari file
   yang berbeda. Ini tidak ditimpa otomatis — pilih "PO Tambahan / Revisi" jika maksud Anda memperbarui, atau hubungi
   admin lain jika PO Awal ini perlu dikoreksi.</p></div>
+  <?php elseif ($plan['blockReason'] === 'EMPTY_FILE'): ?>
+  <div class="alert alert-danger" style="margin-top:var(--space-3);"><strong>Tidak ada data yang terbaca</strong><p style="margin:4px 0 0;">File ini tidak berisi produk
+  dengan jumlah per toko yang bisa dibaca. Cek apakah filenya benar (format PO Karangtengah: NO | KATEGORI | KODE | NAMA PRODUK | kode toko...).</p></div>
   <?php elseif ($plan['blockReason'] === 'NO_INITIAL_YET'): ?>
   <div class="alert alert-danger" style="margin-top:var(--space-3);"><strong>Belum ada PO Awal</strong><p style="margin:4px 0 0;">Tanggal &amp; pabrik ini belum punya PO Awal sama
   sekali. Upload PO Awal dulu sebelum PO Tambahan/Revisi.</p></div>

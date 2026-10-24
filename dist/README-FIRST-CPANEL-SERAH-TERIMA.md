@@ -35,8 +35,11 @@ Divisi, Ringkasan FG, notifikasi di tengah).
   ada langkah cek terpisah. Cek, reject, dan selisih tetap dicatat di FG
   Verifikasi seperti biasa.
 - Produksi yang sudah **Submit** tetap terhitung penuh seperti sebelumnya.
-- Kalau dokumen FG sudah disubmit lalu ada serah terima baru, dokumen FG
-  **otomatis terbuka lagi** (alasan: "Otomatis: ada serah terima baru dari
+  Kalau divisi Submit saat masih ada sisa yang belum diserahkan, sisanya
+  **langsung** masuk ke FG (tidak perlu tombol Refresh).
+- Kalau dokumen FG sudah disubmit lalu jumlah dari produksi berubah (serah
+  terima baru / koreksi / divisi Submit dengan sisa), dokumen FG **otomatis
+  terbuka lagi** (alasan: "Otomatis: ada serah terima baru dari
   produksi").
 - Tab **Ringkasan** menampilkan **Serah terima masuk dari produksi** (jam,
   divisi, produk, jumlah).
@@ -44,7 +47,15 @@ Divisi, Ringkasan FG, notifikasi di tengah).
 ### Ringkasan FG: posisi barang hari ini
 - Bar 4 warna: **Masih di produksi · Di FG, belum diverifikasi ·
   Terverifikasi, belum dipacking · Dipacking**.
+- Reject / hilang yang dicatat di FG Verifikasi tampil terpisah.
 - Per divisi: sudah jadi, masih di produksi, diserahkan.
+
+### Perbaikan lain (ketemu saat uji)
+- Packing: "Isi semua yang belum diisi = Sesuai" sekarang juga mengisi
+  produk yang punya reject dari FG Verifikasi (dulu terlewat, sehingga Submit
+  FG ditolak "Packing belum selesai").
+- Upload PO dengan file yang tidak terbaca (0 produk) sekarang ditolak dengan
+  pesan jelas, tidak lagi tersimpan sebagai "PO 0 pcs".
 
 ## Cara pasang
 1. **Backup database** lewat phpMyAdmin → Export.

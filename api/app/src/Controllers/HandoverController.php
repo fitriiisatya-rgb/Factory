@@ -31,7 +31,14 @@ final class HandoverController
         }
         $factoryId = (int) $request->query('factoryId', '0');
         $roles = Auth::currentRoles();
-        $divisionIds = array_intersect(['ADMIN', 'PPIC', 'FG_PACKING'], $roles) === [] ? Auth::currentDivisionIds() : null;
+        $divisionIds = null;
+        if (array_intersect(['ADMIN', 'PPIC'], $roles) === []) {
+            if (in_array('FG_PACKING', $roles, true)) {
+                Auth::requireFactoryAccess($factoryId);
+            } else {
+                $divisionIds = Auth::currentDivisionIds();
+            }
+        }
         Response::json((new HandoverService(Database::pdo()))->listForDay($tanggal, $factoryId, $divisionIds));
     }
 

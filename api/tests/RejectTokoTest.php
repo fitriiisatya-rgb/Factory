@@ -713,6 +713,42 @@ runTest('RJT-18 Serah terima sebagian: produksi tanpa PO, FG langsung dapat yang
 
     $list = $div->request('GET', "/api/production/handovers?tanggal={$day}&factoryId={$karangtengahId}");
     expect($list['status'] === 200 && count($list['json']['data']) === 2, 'division sees its 2 handovers: ' . $list['body']);
+
+    // Access: another division may not hand over on this sheet; FG of
+    // another factory may not read it.
+    $mk = static function (string $role, string $tbl, string $col, int $id) use ($pdo): array {
+        $u = 'rjt18_' . strtolower($role) . '_' . substr(uniqid(), -6);
+        $pdo->prepare('INSERT INTO users (username, password_hash, full_name, active, created_at) VALUES (?, ?, ?, 1, UTC_TIMESTAMP())')->execute([$u, password_hash('Rjt18Pass#1', PASSWORD_DEFAULT), $u]);
+        $uid = (int) $pdo->lastInsertId();
+        $pdo->prepare('INSERT INTO user_roles (user_id, role_id) SELECT ?, role_id FROM roles WHERE code = ?')->execute([$uid, $role]);
+        $pdo->prepare("INSERT INTO {$tbl} (user_id, {$col}) VALUES (?, ?)")->execute([$uid, $id]);
+        $h = new HttpInv($GLOBALS['baseUrl']);
+        return [$h, login($h, $u, 'Rjt18Pass#1')];
+    };
+    $otherDiv = (int) $pdo->query("SELECT division_id FROM division WHERE factory_id = {$karangtengahId} AND division_id <> {$rotiBollenDivId} AND is_verification = 0 LIMIT 1")->fetchColumn();
+    [$od, $odc] = $mk('PRODUCTION', 'user_division_access', 'division_id', $otherDiv);
+    $foreign = $post($od, $odc, 'POST', "/api/production/{$runId}/handovers", ['items' => [['productId' => $p, 'qty' => 1]]]);
+    expect($foreign['status'] === 403, 'another division must not hand over on this sheet: ' . $foreign['body']);
+    expect($od->request('GET', "/api/production/handovers?tanggal={$day}&factoryId={$karangtengahId}")['json']['data'] === [], 'another division sees none of these handovers');
+    $cibadakId = (int) $pdo->query("SELECT factory_id FROM factory WHERE factory_id <> {$karangtengahId} LIMIT 1")->fetchColumn();
+    [$ofg] = $mk('FG_PACKING', 'user_factory_access', 'factory_id', $cibadakId);
+    expect($ofg->request('GET', "/api/production/handovers?tanggal={$day}&factoryId={$karangtengahId}")['status'] === 403, 'FG of another factory must not read these handovers');
+
+    // Submitting the run hands over the rest (10 made, 7 handed): FG gets
+    // all 10 at once; a later identical sync must not reopen a submitted FG.
+    $r = $div->request('GET', "/api/production/{$runId}")['json']['data'];
+    $sr = $post($div, $dc, 'POST', "/api/production/{$runId}/submit", ['expectedVersion' => $r['version']]);
+    expect($sr['status'] === 200, 'production submit: ' . $sr['body']);
+    expect($snap() === 10.0, 'after submit FG source is the full 10, got ' . $snap());
+    $closed = $post($div, $dc, 'POST', "/api/production/{$runId}/handovers", ['items' => [['productId' => $p, 'qty' => 1]]]);
+    expect($closed['status'] === 409 && $closed['json']['code'] === 'RUN_NOT_OPEN', 'no handover on a submitted run: ' . $closed['body']);
+    $b2 = $adminHttp->request('GET', "/api/fg/{$batchId}")['json']['data'];
+    $fs2 = $post($adminHttp, $adminCsrf, 'PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $b2['version'], 'items' => [['productId' => $p, 'fgVerified' => 9, 'packed' => 9, 'reject' => 1, 'notes' => 'reject 1']]]);
+    expect($fs2['status'] === 200, 'fg save 2: ' . $fs2['body']);
+    expect($post($adminHttp, $adminCsrf, 'POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $fs2['json']['data']['version']])['status'] === 200, 'fg resubmit');
+    (new \Amor\Api\Fg\FgService($pdo))->syncFromHandover($day, $karangtengahId, $uid, null);
+    $st->execute([$batchId]);
+    expect($st->fetchColumn() === 'submitted', 'a sync without any quantity change must leave a submitted FG document alone');
     $page = $adminHttp->request('GET', "/api/_ui-preview/?page=fg-packing&tanggal={$day}");
     expect($page['status'] === 200 && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $page['body']), 'FG page must render with handovers');
 });
