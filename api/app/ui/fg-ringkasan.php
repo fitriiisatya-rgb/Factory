@@ -208,12 +208,14 @@ function ui_render_fg_ringkasan(PDO $pdo, string $tanggal, int $factoryId, ?arra
       <button type="button" class="rk-chip" data-f="kurang">Kurang (<?= $cnt('kurang') ?>)</button>
       <button type="button" class="rk-chip" data-f="belum">Belum (<?= $cnt('belum') ?>)</button>
       <button type="button" class="rk-chip" data-f="sisa">Lebih (<?= $sisaProducts ?>)</button>
+      <button type="button" class="rk-chip" data-f="diproduksi">Masih di produksi (<?= count(array_filter($products, static fn ($p) => $p['diProduksi'] > 0.0001)) ?>)</button>
       <button type="button" class="rk-chip" data-f="">Semua (<?= $total ?>)</button>
     </div>
     <?php foreach ($products as $p): ?>
-    <details class="rk-p st-<?= $p['state'] ?>" data-name="<?= ui_esc(mb_strtolower($p['name'])) ?>" data-div="<?= ui_esc($p['division']) ?>" data-state="<?= $p['state'] ?>" data-sisa="<?= $p['sisa'] > 0.0001 ? '1' : '0' ?>">
-      <summary><span class="rk-dot"></span><span class="rk-pn"><?= ui_esc($p['name']) ?></span><span class="rk-q"><?= $n($p['prod']) ?><small>/<?= $n($p['po']) ?> PO</small></span></summary>
-      <div class="rk-dd"><?= ui_esc($p['division']) ?> · Terverifikasi <b><?= $n($p['ver']) ?></b> · Dipacking <b><?= $n($p['packed']) ?></b>
+    <details class="rk-p st-<?= $p['state'] ?>" data-name="<?= ui_esc(mb_strtolower($p['name'])) ?>" data-div="<?= ui_esc($p['division']) ?>" data-state="<?= $p['state'] ?>" data-sisa="<?= $p['sisa'] > 0.0001 ? '1' : '0' ?>" data-diproduksi="<?= $p['diProduksi'] > 0.0001 ? '1' : '0' ?>">
+      <summary><span class="rk-dot"></span><span class="rk-pn"><?= ui_esc($p['name']) ?><?= $p['diProduksi'] > 0.0001 ? ' <small class="rk-yel">· ' . $n($p['diProduksi']) . ' di produksi</small>' : '' ?></span><span class="rk-q"><?= $n($p['prod']) ?><small>/<?= $n($p['po']) ?> PO</small></span></summary>
+      <div class="rk-dd">Sudah jadi <b><?= $n($p['sudahJadi']) ?></b> · Diserahkan ke FG <b><?= $n($p['diserahkan']) ?></b><?= $p['diProduksi'] > 0.0001 ? ' · <span class="rk-yel">Masih di produksi ' . $n($p['diProduksi']) . '</span>' : '' ?><br>
+        <?= ui_esc($p['division']) ?> · Terverifikasi <b><?= $n($p['ver']) ?></b> · Dipacking <b><?= $n($p['packed']) ?></b>
         <?= $p['short'] > 0.0001 ? ' · <span class="rk-red">Produksi kurang ' . $n($p['short']) . ' — bagi per toko</span>' : '' ?>
         <?= $p['sisa'] > 0.0001 ? ' · <span class="rk-yel">Stok Sisa ' . $n($p['sisa']) . '</span>' : '' ?>
         <?= $verifyUrl !== null && $p['state'] !== 'selesai' ? ' · <a href="' . ui_esc($verifyUrl) . '">Verifikasi →</a>' : '' ?></div>
@@ -268,7 +270,7 @@ function ui_render_fg_ringkasan(PDO $pdo, string $tanggal, int $factoryId, ?arra
     rows.forEach(function (r) {
       var st = r.getAttribute('data-state');
       var ok = (!q || r.getAttribute('data-name').indexOf(q) !== -1) && (!dv || r.getAttribute('data-div') === dv)
-        && (filter === '' || (filter === 'perhatian' ? (st === 'kurang' || st === 'belum' || st === 'sebagian') : filter === 'sisa' ? r.getAttribute('data-sisa') === '1' : st === filter));
+        && (filter === '' || (filter === 'perhatian' ? (st === 'kurang' || st === 'belum' || st === 'sebagian') : filter === 'sisa' ? r.getAttribute('data-sisa') === '1' : filter === 'diproduksi' ? r.getAttribute('data-diproduksi') === '1' : st === filter));
       if (ok) matched++;
       var vis = ok && (showAll || q !== '' || shown < LIMIT);
       if (vis) shown++;

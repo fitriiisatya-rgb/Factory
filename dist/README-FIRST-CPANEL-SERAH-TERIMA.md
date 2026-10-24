@@ -49,6 +49,9 @@ Divisi, Ringkasan FG, notifikasi di tengah).
   Terverifikasi, belum dipacking · Dipacking**.
 - Reject / hilang yang dicatat di FG Verifikasi tampil terpisah.
 - Per divisi: sudah jadi, masih di produksi, diserahkan.
+- Per produk: "Sudah jadi · Diserahkan ke FG · Masih di produksi", penanda
+  kuning "N di produksi" di daftar, dan filter **Masih di produksi** untuk
+  melihat produk yang masih ditunggu dari divisi.
 
 ### Perbaikan lain (ketemu saat uji)
 - Packing: "Isi semua yang belum diisi = Sesuai" sekarang juga mengisi
@@ -62,7 +65,8 @@ Divisi, Ringkasan FG, notifikasi di tengah).
 2. Upload `amor-factory-handover.zip` ke `public_html/factory/`, lalu
    **Extract** (timpa file lama).
 3. Login Admin, buka `https://factory.amorgroup.id/api/_upgrade/`, lalu
-   jalankan migrasi **0025_production_handover**.
+   jalankan migrasi **0025_production_handover** (lewati kalau sudah pernah
+   dijalankan — di live sudah diterapkan 24 Okt 2026).
 4. Uji: login akun divisi → Produksi → isi hasil → **Serahkan ke FG**; lalu
    login FG → FG & Packing → FG Verifikasi: hasil produksinya sudah muncul.
 
