@@ -402,16 +402,20 @@ runTest('P3-08 cross-division product rejected (PRODUCT_DIVISION_MISMATCH)', fun
     expect(in_array($r['json']['code'], ['PRODUCT_DIVISION_MISMATCH', 'UNKNOWN_PRODUCT_FOR_RUN'], true), 'expected a division/scope rejection code, got ' . json_encode($r['json']));
 });
 
-runTest('P3-09 unresolved product for this run rejected unless refreshTargets is used', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodA, $prodB) {
+runTest('P3-09 own-division product without PO can be added (target 0) — production may start before the PO', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodA, $prodB) {
     $tanggal = '2026-02-09';
     seedPo($pdo, $tanggal, $karangtengahId, [$prodA['product_id'] => ['poAwal' => 10.0, 'poRevisi' => 0.0]]);
     $create = $http->request('POST', '/api/production', ['tanggal' => $tanggal, 'divisionId' => $rotiBollenDivId], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-09')));
     $runId = $create['json']['data']['productionRunId'];
     $v = $create['json']['data']['version'];
 
-    // productB has no PO demand yet for this date — not part of the run.
+    // productB has no PO demand yet for this date — the division may still
+    // record it (migration 0025 decision); it joins the run with target 0.
     $r = $http->request('PATCH', "/api/production/{$runId}", ['expectedVersion' => $v, 'items' => [['productId' => $prodB['product_id'], 'actualQty' => 5]]], array_merge(['X-CSRF-Token' => $csrf], idemKey('p3-09b')));
-    expect($r['status'] === 400 && $r['json']['code'] === 'UNKNOWN_PRODUCT_FOR_RUN', 'expected 400 UNKNOWN_PRODUCT_FOR_RUN: ' . json_encode($r['json']));
+    expect($r['status'] === 200, 'expected 200: ' . json_encode($r['json']));
+    $itemB = current(array_filter($r['json']['data']['items'], fn ($i) => $i['productId'] === $prodB['product_id']));
+    expect($itemB !== false, 'productB should now be on the sheet');
+    expect((float) $itemB['actualQty'] === 5.0, 'actual 5 expected: ' . json_encode($itemB));
 });
 
 runTest('P3-10 refreshTargets pulls in a newly-appearing PO product without resetting existing actuals', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $prodA, $prodB) {

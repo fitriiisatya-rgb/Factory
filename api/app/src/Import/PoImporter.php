@@ -156,6 +156,19 @@ final class PoImporter
         }
         $this->repo->applyLines($this->pdo, $poBatchId, $plan['mergePreview']['lines'], $pbByProduct);
         $newVersion = $this->repo->bumpBatchUploadMeta($this->pdo, $poBatchId, $uploadType, $sourceFilename, $sourceHash, $uploadedBy);
+        // Divisions may already be producing (owner decision Oct 2026): every
+        // open production sheet of this date/factory gets the new PO
+        // products at once — no "refresh" button needed.
+        $this->pdo->prepare(
+            "INSERT INTO production_item (production_run_id, product_id, target, aktual, status)
+             SELECT r.production_run_id, pi.product_id, (pi.po_awal + pi.po_revisi), 0, 'tidak_sesuai'
+             FROM production_run r
+             INNER JOIN division d ON d.division_id = r.division_id
+             INNER JOIN product p ON p.division_id = r.division_id
+             INNER JOIN po_item pi ON pi.product_id = p.product_id AND pi.po_batch_id = ?
+             WHERE r.tanggal = ? AND d.factory_id = ? AND r.status IN ('draft','reopened') AND (pi.po_awal + pi.po_revisi) > 0
+               AND NOT EXISTS (SELECT 1 FROM production_item x WHERE x.production_run_id = r.production_run_id AND x.product_id = pi.product_id)"
+        )->execute([$poBatchId, $tanggal, (int) $plan['factoryId']]);
 
         $this->repo->recordImportHistory($this->pdo, [
             'poBatchId' => $poBatchId, 'tanggal' => $tanggal, 'factoryId' => $plan['factoryId'],

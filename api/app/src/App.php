@@ -13,6 +13,7 @@ use Amor\Api\Controllers\DoController;
 use Amor\Api\Controllers\InvoiceController;
 use Amor\Api\Controllers\FactoryController;
 use Amor\Api\Controllers\FgController;
+use Amor\Api\Controllers\HandoverController;
 use Amor\Api\Controllers\HealthController;
 use Amor\Api\Controllers\PoController;
 use Amor\Api\Controllers\ProductController;
@@ -78,12 +79,17 @@ final class App
 
         $router->get('/api/production/target', [ProductionController::class, 'target']);
         $router->get('/api/production/history', [ProductionController::class, 'history']);
+        // Serah terima produksi → FG (migration 0025) — before /{id} routes.
+        $router->get('/api/production/handovers', [HandoverController::class, 'index']);
+        $router->patch('/api/production/handovers/{id}', [HandoverController::class, 'update']);
+        $router->post('/api/production/handovers/{id}/check', [HandoverController::class, 'check']);
         $router->get('/api/production', [ProductionController::class, 'index']);
         $router->post('/api/production', [ProductionController::class, 'create']);
         $router->get('/api/production/{id}', [ProductionController::class, 'show']);
         $router->patch('/api/production/{id}', [ProductionController::class, 'update']);
         $router->post('/api/production/{id}/submit', [ProductionController::class, 'submit']);
         $router->post('/api/production/{id}/reopen', [ProductionController::class, 'reopen']);
+        $router->post('/api/production/{id}/handovers', [HandoverController::class, 'create']);
 
         $router->get('/api/fg/target', [FgController::class, 'target']);
         $router->get('/api/fg/availability', [FgController::class, 'availability']);

@@ -79,7 +79,7 @@ return [
 ];
 PHPCONFIG
 
-echo "--- 5/9: migrate (0001-0024, ALL phases) + seed + create ADMIN ---"
+echo "--- 5/9: migrate (0001-0025, ALL phases) + seed + create ADMIN ---"
 php "$API_ROOT/bin/migrate.php" --yes || { echo "migrate.php FAILED"; exit 1; }
 php "$API_ROOT/bin/seed.php" || { echo "seed.php FAILED"; exit 1; }
 ADMIN_PASSWORD="$TEST_ADMIN_PASS" php "$API_ROOT/bin/create_admin.php" rjt_staging_admin "Operator Login Staging Admin" || { echo "create_admin.php FAILED"; exit 1; }

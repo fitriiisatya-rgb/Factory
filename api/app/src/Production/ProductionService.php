@@ -144,18 +144,27 @@ final class ProductionService
         // target query on every draft save.
         $liveTargetsForSesuaiCheck = null;
         $touched = 0;
+        $handed = (new HandoverService($this->pdo))->handedByProduct($runId);
         foreach ($items as $line) {
             $productId = (int) ($line['productId'] ?? 0);
-            if ($productId <= 0 || !isset($existingItems[$productId])) {
-                throw new ApiException(400, 'UNKNOWN_PRODUCT_FOR_RUN', "Product {$productId} is not part of this production document — use refreshTargets to pull in newly-appearing PO products first");
-            }
-            $product = $this->repo->findProduct($this->pdo, $productId);
+            $product = $productId > 0 ? $this->repo->findProduct($this->pdo, $productId) : null;
             if ($product === null || (int) ($product['division_id'] ?? 0) !== (int) $run['division_id']) {
                 throw new ApiException(400, 'PRODUCT_DIVISION_MISMATCH', "Product {$productId} does not belong to this document's division — cross-factory/division production pollution is not allowed");
+            }
+            if (!isset($existingItems[$productId])) {
+                // Owner decision Oct 2026: divisions start before the PO is
+                // uploaded — any product of the division can be added ("Mau
+                // produksi apa?"); its target fills in once the PO arrives.
+                $live = $this->targets->targetsByProduct($this->pdo, (string) $run['tanggal'], $factoryId, (int) $run['division_id']);
+                $this->repo->insertItem($this->pdo, $runId, $productId, (float) ($live[$productId]['target'] ?? 0.0));
+                $existingItems = $this->repo->findItems($this->pdo, $runId);
             }
             $actualQty = (float) ($line['actualQty'] ?? 0);
             if ($actualQty < 0) {
                 throw new ApiException(400, 'INVALID_ACTUAL_QTY', 'actualQty cannot be negative');
+            }
+            if ($actualQty + 0.0001 < ($handed[$productId] ?? 0.0)) {
+                throw new ApiException(400, 'ACTUAL_BELOW_HANDED_OVER', "{$product['name']}: sudah jadi ({$actualQty}) tidak boleh kurang dari yang sudah diserahkan ke FG (" . $handed[$productId] . '). Koreksi serah terimanya dulu.');
             }
             // "Sesuai" is a client-declared INTENT (the operator clicked the
             // Sesuai button), never trusted on its own — the server always

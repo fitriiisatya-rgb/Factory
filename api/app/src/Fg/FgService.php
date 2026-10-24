@@ -1159,6 +1159,49 @@ final class FgService
      * snapshot" lives in submit()'s own pre-flight check, not here — this
      * method's only job is to make the snapshot true.
      */
+    /**
+     * A production handover (serah terima) was created, corrected or checked:
+     * bring the day's FG batch up to date at once. A submitted batch is
+     * reopened automatically (owner decision Oct 2026: FG keeps working
+     * through the day; stock is posted as the difference on the next
+     * submit). No batch yet = nothing to do (it reads the handovers when
+     * created). Runs inside the caller's transaction; no role check — the
+     * caller already authorised the handover action itself.
+     */
+    public function syncFromHandover(string $tanggal, int $factoryId, int $userId, ?string $requestId): void
+    {
+        $stmt = $this->pdo->prepare('SELECT fg_batch_id FROM fg_batch WHERE tanggal = ? AND factory_id = ? FOR UPDATE');
+        $stmt->execute([$tanggal, $factoryId]);
+        $batchId = $stmt->fetchColumn();
+        if ($batchId === false) {
+            return;
+        }
+        $batch = $this->repo->lockBatchById($this->pdo, (int) $batchId);
+        $version = (int) $batch['version'];
+        if ($batch['status'] === 'submitted') {
+            $this->repo->bumpVersion($this->pdo, (int) $batchId, $version,
+                "status = 'reopened', reopened_by = ?, reopened_at = UTC_TIMESTAMP(), reopen_reason = ?",
+                [$userId, 'Otomatis: ada serah terima baru dari produksi']);
+            \Amor\Api\Audit::write($this->pdo, $requestId, $userId, 'fg.reopen.auto_handover', 'fg_batch', (string) $batchId, 'ok', $version, $version + 1, null);
+            $version++;
+        } elseif (!in_array($batch['status'], ['draft', 'reopened'], true)) {
+            return;
+        }
+        $this->refreshSource((int) $batchId, $tanggal, $factoryId);
+        // A handover taken back (deleted / reduced to 0) leaves no source
+        // row at all — its product's ceiling drops to 0 instead of staying
+        // at the old number.
+        $actuals = $this->targets->productionActualByProduct($this->pdo, $tanggal, $factoryId);
+        foreach ($this->repo->findItems($this->pdo, (int) $batchId) as $productId => $item) {
+            if (!isset($actuals[$productId])) {
+                foreach ($item['fg_item_ids'] ?? [(int) $item['fg_item_id']] as $fgItemId) {
+                    $this->repo->updateItemSnapshot($this->pdo, (int) $fgItemId, 0.0);
+                }
+            }
+        }
+        $this->repo->bumpVersion($this->pdo, (int) $batchId, $version, 'status = status', []);
+    }
+
     private function refreshSource(int $batchId, string $tanggal, int $factoryId): void
     {
         $runs = $this->targets->eligibleProductionRuns($this->pdo, $tanggal, $factoryId);

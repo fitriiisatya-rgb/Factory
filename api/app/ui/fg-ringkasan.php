@@ -15,7 +15,7 @@ declare(strict_types=1);
 function ui_fg_ringkasan_data(PDO $pdo, string $tanggal, int $factoryId, ?array $divisionIds): array
 {
     $divFilter = '';
-    $params = [$tanggal, $factoryId, $tanggal, $tanggal, $factoryId, $factoryId];
+    $params = [$tanggal, $factoryId, $tanggal, $tanggal, $factoryId, $tanggal, $factoryId];
     if ($divisionIds !== null) {
         if ($divisionIds === []) {
             return ['products' => [], 'divisions' => []];
@@ -24,7 +24,8 @@ function ui_fg_ringkasan_data(PDO $pdo, string $tanggal, int $factoryId, ?array 
     }
     $stmt = $pdo->prepare(
         "SELECT p.product_id, p.name, d.name AS division_name, COALESCE(po.qty, 0) AS po, COALESCE(pr.qty, 0) AS prod,
-                COALESCE(fg.ver, 0) AS ver, COALESCE(fg.packed, 0) AS packed
+                COALESCE(fg.ver, 0) AS ver, COALESCE(fg.packed, 0) AS packed,
+                COALESCE(mv.made, 0) AS made, COALESCE(mv.handed, 0) AS handed, COALESCE(mv.waiting, 0) AS waiting, COALESCE(mv.hrej, 0) AS hrej
          FROM product p
          INNER JOIN division d ON d.division_id = p.division_id
          LEFT JOIN (SELECT pi.product_id, SUM(pi.po_awal + pi.po_revisi) AS qty FROM po_item pi
@@ -36,8 +37,18 @@ function ui_fg_ringkasan_data(PDO $pdo, string $tanggal, int $factoryId, ?array 
          LEFT JOIN (SELECT fi.product_id, SUM(fi.qty) AS ver, SUM(fi.packed_qty) AS packed FROM fg_item fi
                     INNER JOIN fg_batch fb ON fb.fg_batch_id = fi.fg_batch_id
                     WHERE fb.tanggal = ? AND fb.factory_id = ? GROUP BY fi.product_id) fg ON fg.product_id = p.product_id
+         LEFT JOIN (SELECT pi.product_id, SUM(pi.aktual) AS made,
+                           SUM(CASE WHEN r.status IN ('submitted','verified_fg') THEN pi.aktual ELSE COALESCE(h.qty, 0) END) AS handed,
+                           SUM(COALESCE(h.waiting, 0)) AS waiting, SUM(COALESCE(h.rej, 0)) AS hrej
+                    FROM production_run r
+                    INNER JOIN production_item pi ON pi.production_run_id = r.production_run_id
+                    LEFT JOIN (SELECT ph.production_run_id, phi.product_id, SUM(phi.qty) AS qty, SUM(phi.reject_qty) AS rej,
+                                      SUM(CASE WHEN ph.status = 'diserahkan' THEN phi.qty ELSE 0 END) AS waiting
+                               FROM production_handover ph INNER JOIN production_handover_item phi ON phi.production_handover_id = ph.production_handover_id
+                               GROUP BY ph.production_run_id, phi.product_id) h ON h.production_run_id = r.production_run_id AND h.product_id = pi.product_id
+                    WHERE r.tanggal = ? GROUP BY pi.product_id) mv ON mv.product_id = p.product_id
          WHERE d.factory_id = ? {$divFilter}
-           AND (po.qty > 0 OR pr.qty > 0 OR fg.ver > 0)
+           AND (po.qty > 0 OR pr.qty > 0 OR fg.ver > 0 OR mv.made > 0)
          ORDER BY d.name, p.name"
     );
     $stmt->execute($params);
@@ -45,32 +56,54 @@ function ui_fg_ringkasan_data(PDO $pdo, string $tanggal, int $factoryId, ?array 
     $divisions = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
         $po = (float) $r['po'];
-        $prod = (float) $r['prod'];
         $ver = (float) $r['ver'];
         $packed = (float) $r['packed'];
-        $state = $prod < $po - 0.01 ? 'kurang' : ($ver <= 0.0001 ? 'belum' : ($ver >= $prod - 0.01 ? 'selesai' : 'sebagian'));
-        $products[] = [
+        $made = (float) $r['made'];
+        $handed = (float) $r['handed'];
+        // "Hasil produksi" for FG = what FG may verify: submitted runs in
+        // full, open runs as handed over, minus rejects at handover check.
+        $hrej = (float) $r['hrej'];
+        $handed = max($handed, (float) $r['prod']);
+        $made = max($made, $handed);
+        $prod = max(0.0, $handed - $hrej);
+        // What is really there: made minus what FG rejected at handover.
+        $madeAll = max(0.0, $made - $hrej);
+        $state = $madeAll < $po - 0.01 ? 'kurang' : ($ver <= 0.0001 ? 'belum' : ($ver >= $prod - 0.01 ? 'selesai' : 'sebagian'));
+        $pos = [
+            'diProduksi' => max(0.0, $made - $handed),
+            'menungguCek' => (float) $r['waiting'],
+            'diterima' => max(0.0, $prod - (float) $r['waiting']),
+            'dipacking' => $packed,
+            'rejectSerahTerima' => $hrej,
+            'diserahkan' => $handed,
+            'sudahJadi' => $made,
+        ];
+        $products[] = $pos + [
             'id' => (int) $r['product_id'], 'name' => (string) $r['name'], 'division' => (string) $r['division_name'],
             'po' => $po, 'prod' => $prod, 'ver' => $ver, 'packed' => $packed,
-            'sisa' => max(0.0, $prod - $po), 'short' => max(0.0, $po - $prod), 'state' => $state,
+            'sisa' => max(0.0, $madeAll - $po), 'short' => max(0.0, $po - $madeAll), 'state' => $state,
         ];
         $dv = &$divisions[(string) $r['division_name']];
-        $dv ??= ['products' => 0, 'verifiedProducts' => 0, 'po' => 0.0, 'prod' => 0.0, 'ver' => 0.0, 'packed' => 0.0, 'sisa' => 0.0];
+        $dv ??= ['products' => 0, 'verifiedProducts' => 0, 'po' => 0.0, 'prod' => 0.0, 'ver' => 0.0, 'packed' => 0.0, 'sisa' => 0.0, 'diProduksi' => 0.0, 'menungguCek' => 0.0, 'diserahkan' => 0.0, 'sudahJadi' => 0.0];
+        foreach (['diProduksi', 'menungguCek', 'diserahkan', 'sudahJadi'] as $k) {
+            $dv[$k] += $pos[$k];
+        }
         $dv['products']++;
         $dv['verifiedProducts'] += $ver > 0.0001 ? 1 : 0;
         $dv['po'] += $po;
         $dv['prod'] += $prod;
         $dv['ver'] += $ver;
         $dv['packed'] += $packed;
-        $dv['sisa'] += max(0.0, $prod - $po);
+        $dv['sisa'] += max(0.0, $madeAll - $po);
         unset($dv);
     }
     return ['products' => $products, 'divisions' => $divisions];
 }
 
 /** @param int[]|null $divisionIds */
-function ui_render_fg_ringkasan(PDO $pdo, string $tanggal, int $factoryId, ?array $divisionIds, ?string $verifyUrl): void
+function ui_render_fg_ringkasan(PDO $pdo, string $tanggal, int $factoryId, ?array $divisionIds, ?string $verifyUrl, bool $canCheck = false): void
 {
+    ui_render_handover_inbox($pdo, $tanggal, $factoryId, $divisionIds, $canCheck);
     $data = ui_fg_ringkasan_data($pdo, $tanggal, $factoryId, $divisionIds);
     $products = $data['products'];
     if ($products === []) {
@@ -134,6 +167,23 @@ function ui_render_fg_ringkasan(PDO $pdo, string $tanggal, int $factoryId, ?arra
     <?php if ($cnt('kurang') > 0): ?><div class="rk-alert">⚠ <?= $cnt('kurang') ?> produk produksi kurang dari PO — bagi per toko di Breakdown Toko</div><?php endif; ?>
     <?php if ($sisaProducts > 0): ?><div class="rk-alert y">+ <?= $sisaProducts ?> produk produksi lebih dari PO · Stok Sisa <?= $n($sum('sisa')) ?> pcs</div><?php endif; ?>
   </div>
+  <?php
+  $posTotal = $sum('diProduksi') + $sum('menungguCek') + max(0.0, $sum('diterima') - $sum('dipacking')) + $sum('dipacking');
+  $seg = static fn (float $v) => $posTotal > 0 ? round($v * 100 / $posTotal, 1) : 0;
+  ?>
+  <div class="rk-card">
+    <h3>Posisi barang hari ini <small>pcs</small></h3>
+    <div class="rk-bar" style="display:flex;height:11px;margin:4px 0 8px;">
+      <i style="width:<?= $seg($sum('diProduksi')) ?>%;background:#64748b"></i><i style="width:<?= $seg($sum('menungguCek')) ?>%;background:#f59e0b"></i><i style="width:<?= $seg(max(0.0, $sum('diterima') - $sum('dipacking'))) ?>%;background:#3b82f6"></i><i style="width:<?= $seg($sum('dipacking')) ?>%;background:#22c55e"></i>
+    </div>
+    <div class="rk-stats">
+      <div class="rk-stat"><b><?= $n($sum('diProduksi')) ?></b><small>&#9679; Masih di produksi</small></div>
+      <div class="rk-stat"><b><?= $n($sum('menungguCek')) ?></b><small style="color:#fbbf24">&#9679; Diserahkan, belum dicek</small></div>
+      <div class="rk-stat"><b><?= $n($sum('diterima')) ?></b><small style="color:#60a5fa">&#9679; Diterima FG</small></div>
+      <div class="rk-stat"><b><?= $n($sum('dipacking')) ?></b><small style="color:#4ade80">&#9679; Dipacking</small></div>
+    </div>
+    <?php if ($sum('rejectSerahTerima') > 0.0001): ?><div class="rk-line" style="margin-top:6px;">Reject saat serah terima: <b><?= $n($sum('rejectSerahTerima')) ?> pcs</b></div><?php endif; ?>
+  </div>
 
   <div class="rk-cols">
   <div class="rk-card">
@@ -143,7 +193,7 @@ function ui_render_fg_ringkasan(PDO $pdo, string $tanggal, int $factoryId, ?arra
       <summary><span class="rk-dn"><?= ui_esc($name) ?><small><?= $d['verifiedProducts'] ?>/<?= $d['products'] ?> produk</small></span>
         <span class="rk-bar"><i style="width:<?= max(1, min(100, $p)) ?>%"></i></span>
         <span class="rk-q"><?= $n($d['ver']) ?><small>/<?= $n($d['prod']) ?></small></span></summary>
-      <div class="rk-dd">PO <b><?= $n($d['po']) ?></b> · Produksi <b><?= $n($d['prod']) ?></b> · Terverifikasi <b><?= $n($d['ver']) ?></b> · Dipacking <b><?= $n($d['packed']) ?></b><?= $d['sisa'] > 0.0001 ? ' · <span class="rk-yel">Stok Sisa ' . $n($d['sisa']) . '</span>' : '' ?></div>
+      <div class="rk-dd">Sudah jadi <b><?= $n($d['sudahJadi']) ?></b> · Masih di produksi <b><?= $n($d['diProduksi']) ?></b> · Diserahkan <b><?= $n($d['diserahkan']) ?></b><?= $d['menungguCek'] > 0.0001 ? ' · <span class="rk-yel">menunggu cek ' . $n($d['menungguCek']) . '</span>' : '' ?><br>PO <b><?= $n($d['po']) ?></b> · Produksi <b><?= $n($d['prod']) ?></b> · Terverifikasi <b><?= $n($d['ver']) ?></b> · Dipacking <b><?= $n($d['packed']) ?></b><?= $d['sisa'] > 0.0001 ? ' · <span class="rk-yel">Stok Sisa ' . $n($d['sisa']) . '</span>' : '' ?></div>
     </details>
     <?php endforeach; ?>
   </div>
@@ -262,5 +312,105 @@ function ui_render_fg_ringkasan(PDO $pdo, string $tanggal, int $factoryId, ?arra
   sheet.querySelector('.rk-sq').addEventListener('input', sheetApply);
 })();
 </script>
+    <?php
+}
+
+
+/**
+ * Serah terima produksi → FG of the day (migration 0025): waiting ones on
+ * top with a "Cek" action for FG (received qty; the rest is reject with a
+ * reason), checked ones below. Division accounts see their own, read-only.
+ * @param int[]|null $divisionIds
+ */
+function ui_render_handover_inbox(PDO $pdo, string $tanggal, int $factoryId, ?array $divisionIds, bool $canCheck): void
+{
+    $list = (new \Amor\Api\Production\HandoverService($pdo))->listForDay($tanggal, $factoryId, $divisionIds);
+    if ($list === []) {
+        return;
+    }
+    $waiting = array_values(array_filter($list, static fn ($h) => $h['status'] === 'diserahkan'));
+    $done = array_values(array_filter($list, static fn ($h) => $h['status'] === 'dicek'));
+    $n = static fn (float $v) => ui_fmt_num($v);
+    $fmtT = static fn (?string $t) => $t ? ui_fmt_datetime_id($t) : '-';
+    ?>
+<div class="rk-card" id="ho-inbox" style="background:var(--surface,#151c2c);border:1px solid var(--border,#24304a);border-radius:14px;padding:12px 14px;margin-bottom:12px">
+  <h3 style="font-size:14px;margin:0 0 6px;display:flex;justify-content:space-between">Serah terima dari produksi <small style="font-weight:500;color:var(--text-muted)"><?= count($waiting) ?> menunggu cek · <?= count($done) ?> sudah dicek</small></h3>
+  <?php foreach ($waiting as $h): ?>
+  <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--border,#24304a)">
+    <span style="flex:1"><b><?= ui_esc($h['divisionName']) ?> #<?= (int) $h['seq'] ?></b> <small style="color:var(--text-muted)">· <?= ui_esc($fmtT($h['createdAt'])) ?><?= $h['createdBy'] ? ' · ' . ui_esc((string) $h['createdBy']) : '' ?></small><br>
+      <small style="color:var(--text-muted)"><?= count($h['items']) ?> produk · <?= $n($h['totalQty']) ?> pcs</small></span>
+    <?php if ($canCheck): ?><button type="button" class="btn btn-primary btn-sm" data-ho-check="<?= (int) $h['handoverId'] ?>">Cek</button><?php else: ?><span class="badge badge-warning">Menunggu cek FG</span><?php endif; ?>
+  </div>
+  <?php endforeach; ?>
+  <?php if ($done !== []): ?>
+  <details style="border-top:1px solid var(--border,#24304a);margin-top:4px"><summary style="cursor:pointer;padding:7px 0;font-size:13px;color:var(--text-muted)">Sudah dicek (<?= count($done) ?>)</summary>
+    <?php foreach (array_reverse($done) as $h): ?>
+    <div style="font-size:12.5px;padding:5px 0;border-top:1px dashed var(--border,#24304a)"><b><?= ui_esc($h['divisionName']) ?> #<?= (int) $h['seq'] ?></b> · <?= $n($h['totalQty']) ?> pcs<?= $h['totalReject'] > 0 ? ' · <span style="color:#f87171">reject ' . $n($h['totalReject']) . '</span>' : '' ?>
+      <small style="color:var(--text-muted)">· dicek <?= ui_esc($fmtT($h['checkedAt'])) ?><?= $h['checkedBy'] ? ' oleh ' . ui_esc((string) $h['checkedBy']) : '' ?></small></div>
+    <?php endforeach; ?>
+  </details>
+  <?php endif; ?>
+</div>
+<?php if ($canCheck): ?>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var HO = <?= json_encode(array_map(static fn ($h) => ['id' => $h['handoverId'], 'title' => $h['divisionName'] . ' #' . $h['seq'], 'items' => $h['items']], $waiting), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+  var REASONS = <?= json_encode(\Amor\Api\Production\HandoverService::REJECT_REASONS, JSON_UNESCAPED_UNICODE) ?>;
+  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+  function num(n) { return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('id-ID'); }
+  document.querySelectorAll('[data-ho-check]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var h = HO.filter(function (x) { return String(x.id) === b.getAttribute('data-ho-check'); })[0];
+      var back = document.createElement('div'); back.className = 'modal-backdrop open';
+      back.innerHTML = '<div class="modal" style="max-width:520px;max-height:92vh;overflow:auto"><div class="modal-title">Cek serah terima ' + esc(h.title) + '</div>'
+        + '<p style="font-size:13px;color:var(--text-muted);margin:0 0 8px">Isi jumlah yang <b>diterima baik</b>. Selisihnya dicatat sebagai reject — pilih alasannya.</p>'
+        + h.items.map(function (it) {
+          return '<div class="hoc-row" data-pid="' + it.productId + '" data-qty="' + it.qty + '" style="padding:8px 0;border-bottom:1px solid var(--border)">'
+            + '<div style="display:flex;align-items:center;gap:8px"><span style="flex:1"><b style="font-size:13px">' + esc(it.productName) + '</b><br><small style="color:var(--text-muted)">diserahkan ' + num(it.qty) + '</small></span>'
+            + '<input type="number" class="hoc-recv" min="0" max="' + it.qty + '" step="any" value="' + it.qty + '" style="width:5.5rem;text-align:right"></div>'
+            + '<div class="hoc-rej" style="display:none;margin-top:6px"><small class="hoc-rej-n" style="color:#f87171;font-weight:600"></small>'
+            + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">' + REASONS.map(function (r) { return '<button type="button" class="btn btn-secondary btn-sm hoc-reason" data-r="' + esc(r) + '">' + esc(r) + '</button>'; }).join('')
+            + '<button type="button" class="btn btn-secondary btn-sm hoc-reason" data-r="">Lainnya…</button></div>'
+            + '<input type="text" class="hoc-other" placeholder="Tulis alasan" style="display:none;width:100%;margin-top:6px"></div></div>';
+        }).join('')
+        + '<div class="modal-actions"><button type="button" class="btn btn-secondary hoc-cancel">Batal</button><button type="button" class="btn btn-primary hoc-go">Terima serah terima</button></div></div>';
+      document.body.appendChild(back);
+      function refresh(row) {
+        var qty = parseFloat(row.getAttribute('data-qty')), recv = parseFloat(row.querySelector('.hoc-recv').value) || 0;
+        var rej = Math.round((qty - recv) * 100) / 100;
+        row.querySelector('.hoc-rej').style.display = rej > 0.0001 ? '' : 'none';
+        row.querySelector('.hoc-rej-n').textContent = 'Reject ' + num(rej) + ' — alasan:';
+      }
+      back.querySelectorAll('.hoc-row').forEach(function (row) {
+        row.querySelector('.hoc-recv').addEventListener('input', function () { refresh(row); });
+        row.querySelectorAll('.hoc-reason').forEach(function (rb) {
+          rb.addEventListener('click', function () {
+            row.querySelectorAll('.hoc-reason').forEach(function (x) { x.className = 'btn btn-sm hoc-reason ' + (x === rb ? 'btn-danger' : 'btn-secondary'); });
+            row.setAttribute('data-reason', rb.getAttribute('data-r'));
+            row.querySelector('.hoc-other').style.display = rb.getAttribute('data-r') === '' ? '' : 'none';
+          });
+        });
+      });
+      back.querySelector('.hoc-cancel').addEventListener('click', function () { back.remove(); });
+      back.querySelector('.hoc-go').addEventListener('click', async function () {
+        var items = [], err = null;
+        back.querySelectorAll('.hoc-row').forEach(function (row) {
+          var qty = parseFloat(row.getAttribute('data-qty')), recv = parseFloat(row.querySelector('.hoc-recv').value);
+          if (isNaN(recv) || recv < 0 || recv > qty + 0.0001) { err = 'Jumlah diterima harus 0 sampai ' + num(qty) + '.'; return; }
+          var reason = row.hasAttribute('data-reason') ? (row.getAttribute('data-reason') || row.querySelector('.hoc-other').value.trim()) : '';
+          if (qty - recv > 0.0001 && !reason) { err = 'Pilih alasan reject untuk ' + row.querySelector('b').textContent + '.'; return; }
+          items.push({ productId: parseInt(row.getAttribute('data-pid'), 10), receivedQty: recv, rejectReason: reason });
+        });
+        if (err) { Amor.toast(err, 'danger'); return; }
+        try {
+          await Amor.apiFetch('/api/production/handovers/' + h.id + '/check', { method: 'POST', body: { items: items } });
+          back.remove(); Amor.toast('Serah terima diterima.', 'success'); setTimeout(function () { location.reload(); }, 700);
+        } catch (e2) { Amor.toast(e2.message, 'danger'); }
+      });
+    });
+  });
+});
+</script>
+<?php endif; ?>
     <?php
 }

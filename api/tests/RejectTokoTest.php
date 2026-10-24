@@ -650,6 +650,77 @@ runTest('RJT-17 Runchise stok masuk file: good qty only, mapped/summed lines, ex
     expect($page['status'] === 200 && str_contains($page['body'], 'Upload Katalog') && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $page['body']), 'Mapping Runchise page should render');
 });
 
+runTest('RJT-18 Serah terima sebagian: produksi tanpa PO, FG dapat yang diserahkan, reject saat cek mengurangi, koreksi divisi terkunci setelah dicek, FG submitted terbuka lagi', function () use ($adminHttp, $adminCsrf, $pdo, $karangtengahId, $rotiBollenDivId) {
+    $day = (new DateTimeImmutable('+11 days', new DateTimeZone('UTC')))->format('Y-m-d'); // own date, no PO
+    $p = (int) nextProduct()['product_id'];
+    $post = static fn (HttpInv $h, string $c, string $m, string $path, array $b) => $h->request($m, $path, $b, array_merge(['X-CSRF-Token' => $c], idemKey('rjt18')));
+    $snap = static function () use ($pdo, $day, $karangtengahId, $p): float {
+        $s = $pdo->prepare('SELECT COALESCE(MAX(i.production_actual_snapshot), -1) FROM fg_item i INNER JOIN fg_batch b ON b.fg_batch_id = i.fg_batch_id WHERE b.tanggal = ? AND b.factory_id = ? AND i.product_id = ?');
+        $s->execute([$day, $karangtengahId, $p]);
+        return (float) $s->fetchColumn();
+    };
+
+    $run = $post($adminHttp, $adminCsrf, 'POST', '/api/production', ['tanggal' => $day, 'divisionId' => $rotiBollenDivId]);
+    expect($run['status'] === 200, 'division must be able to start before the PO exists: ' . $run['body']);
+    $runId = (int) $run['json']['data']['productionRunId'];
+    $save = $post($adminHttp, $adminCsrf, 'PATCH', "/api/production/{$runId}", ['expectedVersion' => $run['json']['data']['version'], 'items' => [['productId' => $p, 'actualQty' => 10]]]);
+    expect($save['status'] === 200, 'adding a product without PO must work: ' . $save['body']);
+
+    $h1 = $post($adminHttp, $adminCsrf, 'POST', "/api/production/{$runId}/handovers", ['items' => [['productId' => $p, 'qty' => 6]]]);
+    expect($h1['status'] === 200 && $h1['json']['data']['seq'] === 1, 'first handover: ' . $h1['body']);
+    $over = $post($adminHttp, $adminCsrf, 'POST', "/api/production/{$runId}/handovers", ['items' => [['productId' => $p, 'qty' => 5]]]);
+    expect($over['status'] === 400 && $over['json']['code'] === 'HANDOVER_EXCEEDS_PRODUCED', 'only 4 left to hand over: ' . $over['body']);
+
+    $fg = $post($adminHttp, $adminCsrf, 'POST', '/api/fg', ['tanggal' => $day, 'factoryId' => $karangtengahId]);
+    expect($fg['status'] === 200, 'FG must open on handed-over goods of a draft run: ' . $fg['body']);
+    expect($snap() === 6.0, 'FG source must be the 6 handed over, got ' . $snap());
+
+    $hid = (int) $h1['json']['data']['handoverId'];
+    $noReason = $post($adminHttp, $adminCsrf, 'POST', "/api/production/handovers/{$hid}/check", ['items' => [['productId' => $p, 'receivedQty' => 4]]]);
+    expect($noReason['status'] === 400 && $noReason['json']['code'] === 'REJECT_REASON_REQUIRED', 'reject needs a reason: ' . $noReason['body']);
+    $chk = $post($adminHttp, $adminCsrf, 'POST', "/api/production/handovers/{$hid}/check", ['items' => [['productId' => $p, 'receivedQty' => 4, 'rejectReason' => 'Ukuran tidak sesuai']]]);
+    expect($chk['status'] === 200 && $chk['json']['data']['status'] === 'dicek' && (float) $chk['json']['data']['items'][0]['rejectQty'] === 2.0, 'check: ' . $chk['body']);
+    expect($snap() === 4.0, 'reject at check must lower the FG source to 4, got ' . $snap());
+
+    $batchId = (int) $fg['json']['data']['fgBatchId'];
+    $b = $adminHttp->request('GET', "/api/fg/{$batchId}")['json']['data'];
+    $fs = $post($adminHttp, $adminCsrf, 'PATCH', "/api/fg/{$batchId}", ['expectedVersion' => $b['version'], 'items' => [['productId' => $p, 'fgVerified' => 4, 'packed' => 4]]]);
+    expect($fs['status'] === 200, 'fg save: ' . $fs['body']);
+    $sub = $post($adminHttp, $adminCsrf, 'POST', "/api/fg/{$batchId}/submit", ['expectedVersion' => $fs['json']['data']['version']]);
+    expect($sub['status'] === 200, 'fg submit: ' . $sub['body']);
+
+    // Division account (own division only) hands over the rest.
+    $u = 'rjt18_div_' . substr(uniqid(), -6);
+    $pdo->prepare('INSERT INTO users (username, password_hash, full_name, active, created_at) VALUES (?, ?, ?, 1, UTC_TIMESTAMP())')->execute([$u, password_hash('Rjt18Pass#1', PASSWORD_DEFAULT), $u]);
+    $uid = (int) $pdo->lastInsertId();
+    $pdo->prepare("INSERT INTO user_roles (user_id, role_id) SELECT ?, role_id FROM roles WHERE code = 'PRODUCTION'")->execute([$uid]);
+    $pdo->prepare('INSERT INTO user_division_access (user_id, division_id) VALUES (?, ?)')->execute([$uid, $rotiBollenDivId]);
+    $div = new HttpInv($GLOBALS['baseUrl']);
+    $dc = login($div, $u, 'Rjt18Pass#1');
+
+    $h2 = $post($div, $dc, 'POST', "/api/production/{$runId}/handovers", ['items' => [['productId' => $p, 'qty' => 4]]]);
+    expect($h2['status'] === 200 && $h2['json']['data']['seq'] === 2, 'second handover by the division: ' . $h2['body']);
+    $st = $pdo->prepare('SELECT status FROM fg_batch WHERE fg_batch_id = ?'); $st->execute([$batchId]);
+    expect($st->fetchColumn() === 'reopened', 'a new handover must reopen the submitted FG document');
+    expect($snap() === 8.0, 'FG source 4 + 4 = 8, got ' . $snap());
+
+    $locked = $post($div, $dc, 'PATCH', "/api/production/handovers/{$hid}", ['items' => [['productId' => $p, 'qty' => 5]]]);
+    expect($locked['status'] === 409 && $locked['json']['code'] === 'HANDOVER_ALREADY_CHECKED', 'division cannot correct a checked handover: ' . $locked['body']);
+    $h2id = (int) $h2['json']['data']['handoverId'];
+    $fix = $post($div, $dc, 'PATCH', "/api/production/handovers/{$h2id}", ['items' => [['productId' => $p, 'qty' => 3]]]);
+    expect($fix['status'] === 200 && (float) $fix['json']['data']['totalQty'] === 3.0, 'division corrects an unchecked handover: ' . $fix['body']);
+    expect($snap() === 7.0, 'FG source after correction 4 + 3 = 7, got ' . $snap());
+
+    $r = $div->request('GET', "/api/production/{$runId}")['json']['data'];
+    $below = $post($div, $dc, 'PATCH', "/api/production/{$runId}", ['expectedVersion' => $r['version'], 'items' => [['productId' => $p, 'actualQty' => 8]]]);
+    expect($below['status'] === 400 && $below['json']['code'] === 'ACTUAL_BELOW_HANDED_OVER', 'sudah jadi cannot drop under the 9 already handed over: ' . $below['body']);
+
+    $list = $div->request('GET', "/api/production/handovers?tanggal={$day}&factoryId={$karangtengahId}");
+    expect($list['status'] === 200 && count($list['json']['data']) === 2, 'division sees its 2 handovers: ' . $list['body']);
+    $page = $adminHttp->request('GET', "/api/_ui-preview/?page=fg-packing&tanggal={$day}");
+    expect($page['status'] === 200 && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $page['body']), 'FG page must render with handovers');
+});
+
 $failed = array_filter($results, static fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests, ' . count($failed) . " failed.\n");
 exit(count($failed) === 0 ? 0 : 1);

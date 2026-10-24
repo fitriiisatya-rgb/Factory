@@ -269,14 +269,13 @@ if ($runIdParam !== null) {
     <div><span>Target</span><strong><?= ui_fmt_num($fieldRow['target']) ?></strong></div>
     <div><span>Hasil</span><strong><?= ui_fmt_num($fieldRow['actual']) ?></strong></div>
     <div><span>Reject</span><strong><?= ui_fmt_num($fieldRow['reject'] ?? 0) ?></strong></div>
-    <div><span>Status</span><?= $fieldRow['hasTarget'] ? ui_badge($fieldRow['statusLabel']) : ui_badge('No Target') ?></div>
+    <div><span>Status</span><?= $fieldRow['hasTarget'] || $fieldRow['runId'] !== null ? ui_badge($fieldRow['statusLabel']) : ui_badge('Belum ada PO') ?></div>
   </div>
   <?php if ($fieldRow['runId'] === null): ?>
-    <?php if ($fieldRow['hasTarget']): ?>
-    <button type="button" class="btn btn-primary btn-block" data-action="create-run" data-division-id="<?= (int) $fieldRow['divisionId'] ?>">Mulai Isi Produksi</button>
-    <?php elseif ($fieldSpecialRows === []): ?>
-    <p class="day-card-note">Tidak ada PO untuk divisi ini pada tanggal tersebut.</p>
+    <?php if (!$fieldRow['hasTarget']): ?>
+    <p class="day-card-note">PO untuk tanggal ini <b>belum ada</b>. Produksi tetap bisa diisi — target muncul otomatis begitu PO diupload.</p>
     <?php endif; ?>
+    <button type="button" class="btn btn-primary btn-block" data-action="create-run" data-division-id="<?= (int) $fieldRow['divisionId'] ?>">Mulai Isi Produksi</button>
     <?php if ($fieldSpecialRows !== []): ?>
     <div class="day-card-special" style="margin-top:var(--space-3);">
       <p class="day-card-note"><strong>Pesanan Khusus / Non-Toko / Pengganti Reject</strong> untuk tanggal ini (<?= count($fieldSpecialRows) ?> item):</p>
@@ -483,13 +482,15 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
     <thead><tr><th>No</th><th>Produk</th><th>Sumber</th><th class="num">Target</th><th>Hasil Produksi</th><th class="num">Actual</th><th class="num">Reject Produksi</th><th>Status</th><th>Catatan</th></tr></thead>
     <tbody>
     <?php $no = 1; foreach ($runDetail['items'] as $it): ?>
-    <tr class="rd-row" data-source="po_reguler" data-search="<?= ui_esc(mb_strtolower($it['productName'])) ?>">
+    <tr class="rd-row" data-source="po_reguler" data-search="<?= ui_esc(mb_strtolower($it['productName'])) ?>"<?= $editable && (float) $it['liveTarget'] <= 0.0001 ? ' data-nopo="1"' : '' ?>>
       <td><?= $no++ ?></td>
       <td><?= ui_esc($it['productName']) ?></td>
       <td><?= ui_task_source_badge('po_reguler', 'Toko Reguler') ?></td>
       <td class="num"><?= ui_fmt_num($it['liveTarget']) ?><?php if ($it['targetChangedSinceDraft']): ?> <span class="badge badge-warning" title="Target PO berubah sejak draft dibuat">berubah</span><?php endif; ?></td>
       <td>
-        <?php if ($editable): ?>
+        <?php if ($editable && (float) $it['liveTarget'] <= 0.0001): ?>
+        <span style="color:var(--text-faint);font-size:var(--text-xs);">belum ada PO</span>
+        <?php elseif ($editable): ?>
         <div class="btn-group rd-sesuai-group" data-product-id="<?= (int) $it['productId'] ?>" data-target="<?= ui_esc((string) $it['liveTarget']) ?>">
           <button type="button" class="btn btn-sm rd-sesuai-btn <?= abs($it['actual'] - $it['liveTarget']) < 0.01 && $it['actual'] > 0 ? 'btn-primary' : 'btn-secondary' ?>" data-value="sesuai">Sesuai</button>
           <button type="button" class="btn btn-sm rd-sesuai-btn <?= !(abs($it['actual'] - $it['liveTarget']) < 0.01 && $it['actual'] > 0) && ($it['actual'] > 0 || $it['reject'] > 0) ? 'btn-danger' : 'btn-secondary' ?>" data-value="tidak_sesuai">Tidak Sesuai</button>
@@ -550,6 +551,143 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
   </div>
   <?php endif; ?>
   </form>
+  <?php
+  // Serah terima ke FG (migration 0025) + "Mau produksi apa?".
+  $hoService = new \Amor\Api\Production\HandoverService($pdo);
+  $hoList = $hoService->listForRun((int) $runDetail['productionRunId']);
+  $hoHanded = $hoService->handedByProduct((int) $runDetail['productionRunId']);
+  $hoMade = array_sum(array_map(static fn ($i) => (float) $i['actual'], $runDetail['items']));
+  $hoGiven = array_sum($hoHanded);
+  $inSheet = array_flip(array_map(static fn ($i) => (int) $i['productId'], $runDetail['items']));
+  $addable = [];
+  if ($editable) {
+      $ap = $pdo->prepare('SELECT product_id, name FROM product WHERE division_id = ? AND aktif = 1 ORDER BY name');
+      $ap->execute([(int) $runDetail['divisionId']]);
+      foreach ($ap->fetchAll(PDO::FETCH_ASSOC) as $p) {
+          if (!isset($inSheet[(int) $p['product_id']])) {
+              $addable[] = ['id' => (int) $p['product_id'], 'name' => (string) $p['name']];
+          }
+      }
+  }
+  $hoRows = array_map(static fn ($i) => ['id' => (int) $i['productId'], 'name' => (string) $i['productName'], 'made' => (float) $i['actual'], 'handed' => (float) ($hoHanded[(int) $i['productId']] ?? 0)], $runDetail['items']);
+  ?>
+  <?php if ($editable): ?>
+  <div class="ho-add" style="margin-top:var(--space-4);position:relative;">
+    <label style="font-weight:700;font-size:var(--text-sm);display:block;margin-bottom:4px;">Mau produksi apa? <span style="font-weight:400;color:var(--text-muted);">(produk yang belum ada di lembar ini)</span></label>
+    <input type="search" id="ho-add-q" placeholder="Ketik nama produk, mis. donut ring..." autocomplete="off" style="width:100%;">
+    <div id="ho-add-list" style="display:none;position:absolute;left:0;right:0;z-index:40;background:var(--surface);border:1px solid var(--border);border-radius:10px;max-height:240px;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.35);"></div>
+  </div>
+  <?php endif; ?>
+  <div class="card" style="margin-top:var(--space-4);padding:var(--space-3);" id="ho-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+      <h3 class="card-title" style="margin:0;">Serah terima ke FG</h3>
+      <span style="font-size:var(--text-sm);color:var(--text-muted);">Sudah jadi <b><?= ui_fmt_num($hoMade) ?></b> · Diserahkan <b><?= ui_fmt_num($hoGiven) ?></b> · Belum diserahkan <b><?= ui_fmt_num(max(0, $hoMade - $hoGiven)) ?></b></span>
+    </div>
+    <?php if ($editable): ?>
+    <p style="font-size:var(--text-sm);color:var(--text-muted);margin:6px 0;">Setiap kali barang dibawa ke FG, tekan <b>Serahkan ke FG</b> dan isi jumlah yang dibawa saat itu. Bisa berkali-kali sehari.</p>
+    <button type="button" class="btn btn-primary" id="btn-handover">Serahkan ke FG &rarr;</button>
+    <?php elseif ($runDetail['status'] === 'submitted'): ?>
+    <p style="font-size:var(--text-sm);color:var(--text-muted);margin:6px 0;">Produksi sudah disubmit — semua hasilnya sudah terhitung di FG.</p>
+    <?php endif; ?>
+    <?php if ($hoList !== []): ?>
+    <div style="margin-top:var(--space-3);">
+      <?php foreach (array_reverse($hoList) as $h): ?>
+      <div style="border-top:1px solid var(--border);padding:8px 0;">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+          <b>#<?= (int) $h['seq'] ?> · <?= ui_esc(ui_fmt_datetime_id((string) $h['createdAt'])) ?></b>
+          <span><?= $h['status'] === 'dicek' ? ui_badge('Dicek FG') : ui_badge('Menunggu cek FG') ?>
+          <?php if ($h['status'] === 'diserahkan' && $editable): ?><button type="button" class="btn btn-secondary btn-sm" data-ho-edit="<?= (int) $h['handoverId'] ?>">Koreksi</button><?php endif; ?></span>
+        </div>
+        <div style="font-size:var(--text-sm);color:var(--text-muted);">
+          <?= ui_esc(implode(' · ', array_map(static fn ($it) => $it['productName'] . ' ' . ui_fmt_num($it['qty']) . ($it['rejectQty'] > 0 ? ' (reject ' . ui_fmt_num($it['rejectQty']) . ': ' . $it['rejectReason'] . ')' : ''), $h['items']))) ?>
+          <?= $h['createdBy'] ? ' — oleh ' . ui_esc((string) $h['createdBy']) : '' ?>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+  </div>
+  <script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var RUN = <?= (int) $runDetail['productionRunId'] ?>;
+    var ROWS = <?= json_encode($hoRows, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    var ADDABLE = <?= json_encode($addable, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    var HO = <?= json_encode(array_map(static fn ($h) => ['id' => $h['handoverId'], 'seq' => $h['seq'], 'items' => $h['items']], $hoList), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+    function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+    function num(n) { return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('id-ID'); }
+    function form() { return document.getElementById('run-form'); }
+    function liveMade(id) {
+      var inp = document.querySelector('#run-form [data-field="actual"][data-product-id="' + id + '"]');
+      return inp ? (parseFloat(inp.value) || 0) : 0;
+    }
+    async function saveSheet() {
+      var f = form(); if (!f) return;
+      var items = [];
+      f.querySelectorAll('[data-field="actual"]').forEach(function (inp) {
+        var pid = inp.getAttribute('data-product-id');
+        var rej = f.querySelector('[data-field="reject"][data-product-id="' + pid + '"]');
+        var note = f.querySelector('[data-field="keterangan"][data-product-id="' + pid + '"]');
+        items.push({ productId: parseInt(pid, 10), actualQty: parseFloat(inp.value) || 0, rejectQty: rej ? (parseFloat(rej.value) || 0) : undefined, notes: note ? note.value : undefined });
+      });
+      var d = await Amor.apiFetch('/api/production/' + RUN, { method: 'PATCH', body: { expectedVersion: parseInt(f.getAttribute('data-expected-version'), 10), items: items } });
+      f.setAttribute('data-expected-version', d.version);
+    }
+    function qtyModal(title, intro, rows, confirmLabel) {
+      var html = '<p style="font-size:var(--text-sm);color:var(--text-muted);margin:0 0 8px">' + intro + '</p>'
+        + rows.map(function (r) { return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="flex:1"><b style="font-size:13px">' + esc(r.name) + '</b><br><small style="color:var(--text-muted)">' + esc(r.sub) + '</small></span><input type="number" class="ho-q" data-id="' + r.id + '" min="0" step="any" max="' + r.max + '" value="' + r.value + '" style="width:5.5rem;text-align:right"></div>'; }).join('');
+      return Amor.confirmModal({ title: title, body: '', bodyHtml: html, confirmLabel: confirmLabel, onConfirm: function () {
+        var out = []; document.querySelectorAll('.modal .ho-q').forEach(function (i) { out.push({ productId: parseInt(i.getAttribute('data-id'), 10), qty: parseFloat(i.value) || 0, max: parseFloat(i.max) }); });
+        window.__hoOut = out; return Promise.resolve();
+      } });
+    }
+    var hb = document.getElementById('btn-handover');
+    if (hb) hb.addEventListener('click', async function () {
+      try { await saveSheet(); } catch (e) { Amor.toast(e.message, 'danger'); return; }
+      var rows = ROWS.map(function (r) { var made = liveMade(r.id); return { id: r.id, name: r.name, max: Math.max(0, made - r.handed), sub: 'sudah jadi ' + num(made) + ' · sudah diserahkan ' + num(r.handed) }; })
+        .filter(function (r) { return r.max > 0.0001; }).map(function (r) { r.value = r.max; return r; });
+      if (!rows.length) { Amor.toast('Belum ada hasil yang bisa diserahkan. Isi dulu jumlah "sudah jadi" (kolom Actual), lalu Simpan.', 'warning'); return; }
+      var ok = await qtyModal('Serahkan ke FG', 'Isi jumlah yang <b>dibawa ke FG sekarang</b>. Sisanya tetap di produksi dan bisa diserahkan nanti.', rows, 'Serahkan ke FG');
+      if (!ok) return;
+      var items = (window.__hoOut || []).filter(function (x) { return x.qty > 0; });
+      var bad = (window.__hoOut || []).filter(function (x) { return x.qty > x.max + 0.0001; });
+      if (bad.length) { Amor.toast('Jumlah melebihi yang sudah jadi dan belum diserahkan.', 'danger'); return; }
+      if (!items.length) { Amor.toast('Tidak ada jumlah yang diisi.', 'warning'); return; }
+      try { await Amor.apiFetch('/api/production/' + RUN + '/handovers', { method: 'POST', body: { items: items.map(function (x) { return { productId: x.productId, qty: x.qty }; }) } }); Amor.toast('Serah terima tersimpan. FG bisa langsung mengecek.', 'success'); setTimeout(function () { location.reload(); }, 700); }
+      catch (e) { Amor.toast(e.message, 'danger'); }
+    });
+    document.querySelectorAll('[data-ho-edit]').forEach(function (b) {
+      b.addEventListener('click', async function () {
+        var h = HO.filter(function (x) { return String(x.id) === b.getAttribute('data-ho-edit'); })[0];
+        var rows = h.items.map(function (it) { var r = ROWS.filter(function (x) { return x.id === it.productId; })[0] || { made: it.qty, handed: it.qty };
+          var max = Math.max(0, liveMade(it.productId) - (r.handed - it.qty)); return { id: it.productId, name: it.productName, max: max, value: it.qty, sub: 'diserahkan ' + num(it.qty) + ' · isi 0 untuk menarik kembali' }; });
+        var ok = await qtyModal('Koreksi serah terima #' + h.seq, 'Bisa dikoreksi selama FG belum mengecek.', rows, 'Simpan koreksi');
+        if (!ok) return;
+        try { await Amor.apiFetch('/api/production/handovers/' + h.id, { method: 'PATCH', body: { items: (window.__hoOut || []).map(function (x) { return { productId: x.productId, qty: x.qty }; }) } }); Amor.toast('Koreksi tersimpan.', 'success'); setTimeout(function () { location.reload(); }, 700); }
+        catch (e) { Amor.toast(e.message, 'danger'); }
+      });
+    });
+    var q = document.getElementById('ho-add-q'), list = document.getElementById('ho-add-list');
+    if (q) {
+      q.addEventListener('input', function () {
+        var t = q.value.toLowerCase().trim();
+        if (t.length < 2) { list.style.display = 'none'; return; }
+        var hits = ADDABLE.filter(function (p) { return p.name.toLowerCase().indexOf(t) !== -1; }).slice(0, 12);
+        list.innerHTML = hits.length ? hits.map(function (p) { return '<div class="ho-hit" data-id="' + p.id + '" style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)">' + esc(p.name) + '</div>'; }).join('') : '<div style="padding:9px 12px;color:var(--text-muted)">Tidak ditemukan di produk divisi ini.</div>';
+        list.style.display = '';
+      });
+      list.addEventListener('click', async function (e) {
+        var hit = e.target.closest('.ho-hit'); if (!hit) return;
+        list.style.display = 'none';
+        try {
+          await saveSheet().catch(function () {});
+          var f = form();
+          await Amor.apiFetch('/api/production/' + RUN, { method: 'PATCH', body: { expectedVersion: parseInt(f.getAttribute('data-expected-version'), 10), items: [{ productId: parseInt(hit.getAttribute('data-id'), 10), actualQty: 0 }] } });
+          Amor.toast(hit.textContent + ' ditambahkan ke lembar.', 'success'); setTimeout(function () { location.reload(); }, 600);
+        } catch (err) { Amor.toast(err.message, 'danger'); }
+      });
+    }
+  });
+  </script>
   <?php else: ?>
     <?= ui_empty_state('Draft tidak ditemukan', '') ?>
   <?php endif; ?>
@@ -604,6 +742,11 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
     var group = tr.querySelector('.rd-sesuai-group, .nr-sesuai-group');
     var actual = tr.querySelector('[data-field="actual"], .nr-actual');
     var reject = tr.querySelector('[data-field="reject"], .nr-reject');
+    if (tr.hasAttribute('data-nopo') && actual) {
+      // No PO yet: nothing to be "Sesuai" against, the qty is typed in.
+      var na = parseFloat(actual.value || '0'), nr = parseFloat(reject && reject.value || '0');
+      return nr > 0 ? 'short' : (na > 0 ? 'ok' : 'empty');
+    }
     if (!group || !actual) return 'done';
     var sesuaiBtn = group.querySelector('[data-value="sesuai"]');
     if (sesuaiBtn && sesuaiBtn.classList.contains('btn-primary')) return 'ok';
@@ -622,7 +765,7 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
     document.querySelectorAll('#rd-table tbody tr.rd-row').forEach(function (tr) {
       var st = rowState(tr);
       tr.setAttribute('data-state', st);
-      tr.classList.toggle('is-open', st === 'short');
+      tr.classList.toggle('is-open', st === 'short' || tr.hasAttribute('data-nopo'));
       if (st !== 'done') { total++; if (st !== 'empty') filled++; }
       var rowSrc = tr.getAttribute('data-source');
       var matchQ = q === '' || tr.getAttribute('data-search').indexOf(q) !== -1;
@@ -647,7 +790,7 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
   }
   var allBtn = document.getElementById('btn-all-sesuai');
   if (allBtn) allBtn.addEventListener('click', async function () {
-    var rows = Array.prototype.filter.call(document.querySelectorAll('#rd-table tbody tr.rd-row'), function (tr) { return rowState(tr) === 'empty'; });
+    var rows = Array.prototype.filter.call(document.querySelectorAll('#rd-table tbody tr.rd-row'), function (tr) { return rowState(tr) === 'empty' && !tr.hasAttribute('data-nopo'); });
     if (rows.length === 0) { Amor.toast('Semua produk sudah terisi.', 'info'); return; }
     var ok = await Amor.confirmModal({ title: 'Tandai Sesuai target?', body: rows.length + ' produk yang belum diisi akan diisi sama dengan targetnya. Produk yang kurang tetap bisa diubah satu per satu sebelum disimpan.' });
     if (!ok) return;
