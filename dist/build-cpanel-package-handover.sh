@@ -169,7 +169,7 @@ fi
 SQL0025="$REPO_ROOT/database/schema-v1-0025-production-handover.sql"
 SQL0025_CODE="$(grep -vE '^[[:space:]]*--' "$SQL0025")"
 echo "--- sanity: confirm migration 0025 only creates the two handover tables ---"
-if echo "$SQL0025_CODE" | grep -qEi "DROP |TRUNCATE|DELETE |RENAME |MODIFY |CHANGE |ALTER TABLE|UPDATE |INSERT "; then
+if echo "$SQL0025_CODE" | sed "s/ON DELETE CASCADE//g" | grep -qEi "DROP |TRUNCATE|DELETE |RENAME |MODIFY |CHANGE |ALTER TABLE|UPDATE |INSERT "; then
   echo "REFUSING TO BUILD: migration 0025 may only CREATE TABLE IF NOT EXISTS." >&2
   exit 1
 fi
