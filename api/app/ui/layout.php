@@ -12,7 +12,7 @@ require_once __DIR__ . '/labels.php';
 // could keep serving an old version indefinitely, e.g. masking the
 // evidence-thumbnail sizing fix. Bump this string whenever any of the
 // three assets change.
-const ADMIN_ASSET_VERSION = '20261020-notif';
+const ADMIN_ASSET_VERSION = '20261025-ketuk';
 
 /**
  * Nav item list — the single source of truth for the sidebar. Every item
@@ -36,6 +36,7 @@ const ADMIN_ASSET_VERSION = '20261020-notif';
 function ui_nav_items(array $roles = []): array
 {
     $items = [
+        ['key' => 'hari-ini', 'label' => 'Hari Ini', 'icon' => 'alert'],
         ['key' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard'],
         ['key' => 'pesanan-toko', 'label' => 'Pesanan Toko', 'icon' => 'cart'],
         ['key' => 'produksi', 'label' => 'Produksi', 'icon' => 'factory'],
@@ -56,7 +57,7 @@ function ui_nav_items(array $roles = []): array
     // Permanent Bakery Portal admin pages (migration 0017), each gated
     // identically to api/_ui-preview/index.php's own $pageRoles.
     if ($roles !== [] && array_intersect(['ADMIN', 'PPIC'], $roles) === []) {
-        $hidden = ['replacement-reject', 'reject-toko', 'retur-review', 'mutasi-review', 'bakery-portal-tokens', 'invoice', 'stok-sisa'];
+        $hidden = ['hari-ini', 'replacement-reject', 'reject-toko', 'retur-review', 'mutasi-review', 'bakery-portal-tokens', 'invoice', 'stok-sisa'];
         $items = array_values(array_filter($items, static fn ($i) => !in_array($i['key'], $hidden, true)));
     } elseif ($roles !== [] && !in_array('ADMIN', $roles, true)) {
         // bakery-portal-tokens and invoice are ADMIN-only (token mgmt is

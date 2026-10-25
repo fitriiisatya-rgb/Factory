@@ -22,6 +22,7 @@ final class ErrorHandler
             $e->getFile(),
             $e->getLine()
         ));
+        \Amor\Api\System\ErrorLog::record('api', get_class($e) . ': ' . $e->getMessage(), $e->getFile(), $e->getLine());
         if (Config::get('APP_DEBUG') === true) {
             error_log($e->getTraceAsString());
         }

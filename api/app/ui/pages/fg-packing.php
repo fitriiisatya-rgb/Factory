@@ -224,23 +224,23 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
       </div>
       <div class="fg-card-row">
         <span class="fg-card-row-label">FG Terverifikasi</span>
-        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="fgVerified" value="<?= ui_num_input($it['fgVerified']) ?>" <?= $verifiedIsSesuai ? 'disabled' : '' ?>>
+        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="fgVerified" data-stepper="1" value="<?= ui_num_input($it['fgVerified']) ?>" <?= $verifiedIsSesuai ? 'disabled' : '' ?>>
         <?php else: ?><b><?= ui_fmt_num($it['fgVerified']) ?></b><?php endif; ?>
       </div>
       <div class="fg-card-row"><span class="fg-card-row-label">Selisih</span><span><?= ui_fmt_num($it['variance']) ?></span></div>
       <div class="fg-card-row">
         <span class="fg-card-row-label">Reject</span>
-        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_num_input($it['reject'] ?? 0) ?>">
+        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" data-stepper="1" value="<?= ui_num_input($it['reject'] ?? 0) ?>">
         <?php else: ?><?= ui_fmt_num($it['reject'] ?? 0) ?><?php endif; ?>
       </div>
       <div class="fg-card-row">
         <span class="fg-card-row-label">Hilang</span>
-        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="hilang" value="<?= ui_num_input($it['hilang'] ?? 0) ?>">
+        <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="hilang" data-stepper="1" value="<?= ui_num_input($it['hilang'] ?? 0) ?>">
         <?php else: ?><?= ui_fmt_num($it['hilang'] ?? 0) ?><?php endif; ?>
       </div>
       <div class="fg-card-row">
         <span class="fg-card-row-label">Catatan</span>
-        <?php if ($rowEditable): ?><input type="text" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="notes" value="<?= ui_esc((string) ($it['notes'] ?? '')) ?>">
+        <?php if ($rowEditable): ?><input type="text" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="notes" data-reasons="1" value="<?= ui_esc((string) ($it['notes'] ?? '')) ?>">
         <?php else: ?><?= ui_esc((string) ($it['notes'] ?? '')) ?><?php endif; ?>
       </div>
       <div class="fg-card-row"><span class="fg-card-row-label">FG Status</span><?= ui_badge($it['fgStatusLabel']) ?></div>
@@ -423,10 +423,10 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
           +     '<button type="button" class="btn btn-sm ' + (verifiedSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
           +     '<button type="button" class="btn btn-sm ' + (!verifiedSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'
           +   '</div></div>'
-          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Actual Verified</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="fgVerified" value="' + s.fgVerified + '" ' + (verifiedSesuai ? 'disabled' : '') + '></div>'
-          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Reject</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="reject" value="' + s.reject + '"></div>'
-          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Hilang</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="hilang" value="' + s.hilang + '"></div>'
-          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-bt-field="notes" value="' + escHtml(s.notes || '') + '"></div>'
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Actual Verified</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="fgVerified" data-stepper="1" value="' + s.fgVerified + '" ' + (verifiedSesuai ? 'disabled' : '') + '></div>'
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Reject</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="reject" data-stepper="1" value="' + s.reject + '"></div>'
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Hilang</span><input type="number" step="0.01" min="0" class="fg-card-input" data-bt-field="hilang" data-stepper="1" value="' + s.hilang + '"></div>'
+          + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-bt-field="notes" data-reasons="1" value="' + escHtml(s.notes || '') + '"></div>'
           + '<input type="hidden" data-store-id="' + s.storeId + '" data-bt-field="packed" value="' + s.packed + '">'
           + '<div class="fg-card-row" data-store-id="' + s.storeId + '"><span class="fg-card-row-label">Status</span><span>' + escHtml(s.status || '') + '</span></div>';
       }).join('');
@@ -963,10 +963,10 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
         +   '<button type="button" class="btn btn-sm ' + (packingSesuai ? 'btn-primary' : 'btn-secondary') + '" data-value="sesuai">Sesuai</button>'
         +   '<button type="button" class="btn btn-sm ' + (!packingSesuai ? 'btn-danger' : 'btn-secondary') + '" data-value="tidak_sesuai">Tidak Sesuai</button>'
         + '</div></div>'
-        + '<div class="fg-card-row"><span class="fg-card-row-label">Jumlah Dipacking</span><input type="number" step="0.01" min="0" max="' + r.fgVerified + '" class="fg-card-input" data-pk-field="packed" value="' + r.packed + '" ' + (packingSesuai ? 'disabled' : '') + '></div>'
-        + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><input type="number" step="0.01" min="0" class="fg-card-input" data-pk-field="reject" value="' + r.reject + '"></div>'
-        + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><input type="number" step="0.01" min="0" class="fg-card-input" data-pk-field="hilang" value="' + r.hilang + '"></div>'
-        + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-pk-field="notes" value="' + escHtml(r.notes || '') + '"></div>'
+        + '<div class="fg-card-row"><span class="fg-card-row-label">Jumlah Dipacking</span><input type="number" step="0.01" min="0" max="' + r.fgVerified + '" class="fg-card-input" data-pk-field="packed" data-stepper="1" value="' + r.packed + '" ' + (packingSesuai ? 'disabled' : '') + '></div>'
+        + '<div class="fg-card-row"><span class="fg-card-row-label">Reject</span><input type="number" step="0.01" min="0" class="fg-card-input" data-pk-field="reject" data-stepper="1" value="' + r.reject + '"></div>'
+        + '<div class="fg-card-row"><span class="fg-card-row-label">Hilang</span><input type="number" step="0.01" min="0" class="fg-card-input" data-pk-field="hilang" data-stepper="1" value="' + r.hilang + '"></div>'
+        + '<div class="fg-card-row"><span class="fg-card-row-label">Keterangan</span><input type="text" class="fg-card-input" data-pk-field="notes" data-reasons="1" value="' + escHtml(r.notes || '') + '"></div>'
         + '<input type="hidden" data-pk-field="fgVerified" value="' + r.fgVerified + '">'
         + '</div>';
       return body;

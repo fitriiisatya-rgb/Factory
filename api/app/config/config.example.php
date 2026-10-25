@@ -105,4 +105,9 @@ return [
     'MAIL_ENCRYPTION' => 'tls', // 'tls' (port 587, most common) | 'ssl' (port 465) | 'none'
     'MAIL_FROM_ADDRESS' => 'factory@amorgroup.id',
     'MAIL_FROM_NAME' => 'Amor Factory System',
+
+    // --- Error alert (Pengaturan → Sistem) ---
+    // Optional: an address that gets an e-mail when a system error is
+    // logged (at most one per hour). Needs MAIL_ENABLED + MAIL_* above.
+    'ERROR_ALERT_EMAIL' => '',
 ];

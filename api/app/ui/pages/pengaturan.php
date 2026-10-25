@@ -26,6 +26,11 @@ declare(strict_types=1);
 
 <?php if (in_array('ADMIN', $ui['roles'], true)): ?>
 <div class="card section">
+  <div class="card-head"><h2 class="card-title">Sistem</h2></div>
+  <p style="color:var(--text-muted);font-size:var(--text-sm);">Backup database (unduh untuk disimpan di luar server) dan catatan error.</p>
+  <a class="btn btn-secondary" href="/api/_ui-preview/?page=sistem">Buka Sistem</a>
+</div>
+<div class="card section">
   <div class="card-head"><h2 class="card-title">Integrasi finhub</h2></div>
   <p style="color:var(--text-muted);font-size:var(--text-sm);">Kunci agar finhub bisa membaca data kiriman dan konfirmasi toko (hanya baca).</p>
   <a class="btn btn-secondary" href="/api/_ui-preview/?page=integrasi">Buka Integrasi Finhub</a>

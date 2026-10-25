@@ -14,6 +14,7 @@ use Amor\Api\Controllers\InvoiceController;
 use Amor\Api\Controllers\FactoryController;
 use Amor\Api\Controllers\FgController;
 use Amor\Api\Controllers\HandoverController;
+use Amor\Api\Controllers\SystemController;
 use Amor\Api\Controllers\HealthController;
 use Amor\Api\Controllers\PoController;
 use Amor\Api\Controllers\ProductController;
@@ -257,6 +258,8 @@ final class App
         $router->get('/api/admin/store-portal/{storeId}/history', [StorePortalAdminController::class, 'tokenHistory']);
         $router->post('/api/admin/store-portal/{storeId}/issue', [StorePortalAdminController::class, 'tokenIssue']);
         $router->post('/api/admin/store-portal/{storeId}/revoke', [StorePortalAdminController::class, 'tokenRevoke']);
+        $router->post('/api/admin/system/backups', [SystemController::class, 'backupNow']);
+        $router->get('/api/admin/system/backup-download', [SystemController::class, 'download']);
         $router->get('/api/admin/integration-keys', [IntegrationController::class, 'keyList']);
         $router->post('/api/admin/integration-keys', [IntegrationController::class, 'keyIssue']);
         $router->post('/api/admin/integration-keys/{id}/revoke', [IntegrationController::class, 'keyRevoke']);

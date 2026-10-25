@@ -45,6 +45,26 @@ $ui = [
     'csrfToken' => (string) ($_SESSION['csrf_token'] ?? ''),
 ];
 
+// PHP fatals on a page end up in Pengaturan → Sistem instead of a blank
+// screen nobody reports.
+\Amor\Api\System\ErrorLog::registerFatalHandler();
+// Daily backup, taken after an Admin/PPIC page has been sent (the page
+// never waits for it where the server supports finishing the response).
+if (array_intersect(['ADMIN', 'PPIC'], $ui['roles']) !== []) {
+    register_shutdown_function(static function (): void {
+        $e = error_get_last();
+        if ($e !== null && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+            return;
+        }
+        if (function_exists('fastcgi_finish_request')) {
+            @fastcgi_finish_request();
+        } elseif (function_exists('litespeed_finish_request')) {
+            @litespeed_finish_request();
+        }
+        (new \Amor\Api\System\BackupService(Database::pdo()))->maybeDaily();
+    });
+}
+
 function ui_esc(string $s): string
 {
     return htmlspecialchars($s, ENT_QUOTES);

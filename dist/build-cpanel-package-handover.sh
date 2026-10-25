@@ -56,6 +56,7 @@ cp "$REPO_ROOT/api/app/autoload.php" "$STAGE/api/app/autoload.php"
 cp "$REPO_ROOT/api/app/.htaccess" "$STAGE/api/app/.htaccess"
 cp -r "$REPO_ROOT/api/app/src" "$STAGE/api/app/src"
 cp -r "$REPO_ROOT/api/app/ui" "$STAGE/api/app/ui"
+cp -r "$REPO_ROOT/api/app/cli" "$STAGE/api/app/cli"
 if [ -d "$STAGE/api/app/ui/assets" ]; then
   echo "REFUSING TO BUILD: api/app/ui/assets/ exists — static browser assets must live under the PUBLIC api/assets/, never inside the deny-all api/app/ tree." >&2
   exit 1

@@ -799,7 +799,74 @@
     return 'Rp' + Math.round(n || 0).toLocaleString('id-ID');
   }
 
+  // -----------------------------------------------------------------
+  // Tap instead of type (field accounts):
+  //  - <input data-stepper> gets − / + buttons (on touch screens and the
+  //    phone layout); min/max/disabled are respected and the page sees a
+  //    normal 'input' event.
+  //  - <input data-reasons> gets one-tap reject reasons that fill the
+  //    note, so reasons are written the same way every time.
+  // Works for rows a page renders later too (MutationObserver).
+  // -----------------------------------------------------------------
+  const REJECT_REASONS = ['Ukuran tidak sesuai', 'Rusak/penyok', 'Gosong', 'Bentuk tidak sesuai', 'Kemasan rusak', 'Hilang'];
+  function enhanceInputs(root) {
+    (root || document).querySelectorAll('input[data-stepper]:not([data-enh])').forEach(function (inp) {
+      inp.setAttribute('data-enh', '1');
+      const wrap = document.createElement('span'); wrap.className = 'stp';
+      inp.parentNode.insertBefore(wrap, inp);
+      const mk = function (label, delta) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'stp-btn'; b.textContent = label; b.tabIndex = -1;
+        b.setAttribute('aria-label', delta < 0 ? 'Kurangi' : 'Tambah');
+        b.addEventListener('click', function () {
+          if (inp.disabled || inp.readOnly) return;
+          const step = parseFloat(inp.getAttribute('data-stepper')) || 1;
+          let v = (parseFloat(inp.value) || 0) + delta * step;
+          const min = inp.min !== '' ? parseFloat(inp.min) : 0; const max = inp.max !== '' ? parseFloat(inp.max) : Infinity;
+          v = Math.max(min, Math.min(max, Math.round(v * 100) / 100));
+          inp.value = String(v);
+          inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        return b;
+      };
+      wrap.appendChild(mk('−', -1)); wrap.appendChild(inp); wrap.appendChild(mk('+', 1));
+    });
+    (root || document).querySelectorAll('input[data-reasons]:not([data-enh])').forEach(function (inp) {
+      inp.setAttribute('data-enh', '1');
+      const box = document.createElement('div'); box.className = 'rsn';
+      REJECT_REASONS.forEach(function (r) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'rsn-chip'; b.textContent = r;
+        b.addEventListener('click', function () {
+          if (inp.disabled || inp.readOnly) return;
+          const cur = inp.value.trim();
+          inp.value = cur === '' ? r : (cur.split(/\s*,\s*/).indexOf(r) !== -1 ? cur : cur + ', ' + r);
+          inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        box.appendChild(b);
+      });
+      inp.insertAdjacentElement('afterend', box);
+    });
+  }
+  (function () {
+    const css = '.stp{display:inline-flex;align-items:center;gap:4px;max-width:100%}.stp input{min-width:0}'
+      + '.stp-btn{display:none;flex:0 0 auto;width:40px;height:40px;border-radius:10px;border:1px solid var(--border,#2a3550);background:var(--surface-2,#1b2438);color:var(--text,#e8ecf5);font-size:22px;font-weight:700;line-height:1;cursor:pointer;touch-action:manipulation}'
+      + '.stp-btn:active{transform:scale(.94)}body.is-field .stp-btn,body.driver-body .stp-btn{display:inline-flex;align-items:center;justify-content:center}'
+      + '@media (pointer:coarse){.stp-btn{display:inline-flex;align-items:center;justify-content:center}}'
+      + '.rsn{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;width:100%}.rsn-chip{border:1px solid var(--border,#2a3550);background:none;color:var(--text-muted,#9aa5bd);border-radius:999px;padding:6px 11px;font-size:12.5px;cursor:pointer;touch-action:manipulation}'
+      + '.rsn-chip:active{background:var(--surface-2,#1b2438)}'
+      + 'body.is-field .stp input,body.driver-body .stp input{width:5.2rem !important;max-width:none !important;text-align:center}'
+      + 'body.is-field table#rd-table tr.rd-row.is-open > td .stp input{width:5.2rem !important;max-width:none !important}';
+    const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
+    const start = function () {
+      enhanceInputs(document);
+      new MutationObserver(function (muts) {
+        for (let i = 0; i < muts.length; i++) { if (muts[i].addedNodes.length) { enhanceInputs(document); break; } }
+      }).observe(document.body, { childList: true, subtree: true });
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+  })();
+
   window.Amor = {
+    enhanceInputs: enhanceInputs,
     toast: toast,
     confirmModal: confirmModal,
     imageLightbox: imageLightbox,

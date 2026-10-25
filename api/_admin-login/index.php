@@ -81,7 +81,7 @@ function safeReturnUrl(?string $raw): ?string
     return $raw;
 }
 
-const LOGIN_ASSET_VERSION = '20261011';
+const LOGIN_ASSET_VERSION = '20261025';
 
 /** Inline line icons for the login shell (no external icon font). */
 function loginSvg(string $name): string
@@ -184,6 +184,35 @@ HTML;
     renderShell('Amor Factory — Login', $card);
 }
 
+/**
+ * Names this shared account used in the last 60 days (newest first), so
+ * the person taps their name instead of typing it every login.
+ * @return string[]
+ */
+function recentOperatorNames(): array
+{
+    try {
+        $st = \Amor\Api\Database::pdo()->prepare(
+            "SELECT payload_summary FROM audit_log WHERE user_id = ? AND event_at > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 60 DAY)
+               AND payload_summary LIKE '%operatorName%' ORDER BY audit_log_id DESC LIMIT 400"
+        );
+        $st->execute([(int) ($_SESSION['user_id'] ?? 0)]);
+        $names = [];
+        foreach ($st->fetchAll(PDO::FETCH_COLUMN) as $json) {
+            $n = trim((string) (json_decode((string) $json, true)['operatorName'] ?? ''));
+            if (mb_strlen($n) >= 2 && !in_array(mb_strtolower($n), array_map('mb_strtolower', $names), true)) {
+                $names[] = $n;
+            }
+            if (count($names) >= 10) {
+                break;
+            }
+        }
+        return $names;
+    } catch (\Throwable) {
+        return [];
+    }
+}
+
 /** "Siapa Anda?" — shared division accounts name the actual person (migration 0019). */
 function renderOperatorForm(?string $return, ?string $error = null, string $prefill = ''): void
 {
@@ -192,17 +221,27 @@ function renderOperatorForm(?string $return, ?string $error = null, string $pref
     $account = esc((string) ($_SESSION['full_name'] ?? $_SESSION['username'] ?? ''));
     $prefillEsc = esc($prefill);
     $user = loginSvg('user');
+    $chips = '';
+    foreach (recentOperatorNames() as $nm) {
+        $chips .= '<button type="submit" name="operatorName" value="' . esc($nm) . '" class="lg-chip">' . esc($nm) . '</button>';
+    }
+    $chipBlock = $chips !== ''
+        ? '<form method="post" class="lg-field"><input type="hidden" name="action" value="set_operator_name"><input type="hidden" name="csrf_token" value="' . $csrf . '">' . $returnField
+          . '<label>Ketuk nama Anda</label><div class="lg-chips">' . $chips . '</div></form><div class="lg-or">atau ketik nama baru</div>'
+        : '';
+    $autofocus = $chips === '' ? ' autofocus' : '';
     $card = '<span class="lg-icon">📦</span>'
         . '<h1 class="lg-title">Siapa Anda?</h1>'
-        . "<p class=\"lg-sub\">Akun <strong>{$account}</strong> dipakai bersama oleh satu divisi. Ketik nama Anda — nama ini dicatat di setiap input dan submit produksi selama sesi ini.</p>"
+        . "<p class=\"lg-sub\">Akun <strong>{$account}</strong> dipakai bersama oleh satu divisi. Pilih atau ketik nama Anda — nama ini dicatat di setiap input dan submit selama sesi ini.</p>"
         . alertBlock($error)
+        . $chipBlock
         . <<<HTML
 <form method="post">
   <input type="hidden" name="action" value="set_operator_name">
   <input type="hidden" name="csrf_token" value="{$csrf}">
   {$returnField}
   <div class="lg-field"><label for="lg-operator">Nama Anda</label>
-    <div class="lg-input">{$user}<input id="lg-operator" type="text" name="operatorName" value="{$prefillEsc}" required maxlength="150" autocomplete="name" autofocus></div></div>
+    <div class="lg-input">{$user}<input id="lg-operator" type="text" name="operatorName" value="{$prefillEsc}" required maxlength="150" autocomplete="name"{$autofocus}></div></div>
   <button type="submit" class="lg-btn">Lanjut</button>
 </form>
 <div class="lg-or">bukan akun Anda?</div>

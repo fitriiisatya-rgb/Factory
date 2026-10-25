@@ -46,3 +46,6 @@ api/uploads/mutasi-evidence/*
 # non-technical operator needs to download it directly, not run a build
 # script). Only the transient staging directory is ignored.
 dist/.stage/
+
+# Server-side backups and error logs (api/app/storage/)
+api/app/storage/

@@ -56,6 +56,8 @@ $pages = [
     'laporan' => ['title' => 'Laporan', 'subtitle' => 'Ringkasan lintas tahap, dari PO sampai pengiriman.'],
     'riwayat' => ['title' => 'Riwayat', 'subtitle' => 'Riwayat input produksi dan FG akun ini.'],
     'pengaturan' => ['title' => 'Pengaturan', 'subtitle' => 'Akun, preferensi tampilan, dan sesi.'],
+    'sistem' => ['title' => 'Sistem', 'subtitle' => 'Backup database dan catatan error.'],
+    'hari-ini' => ['title' => 'Hari Ini', 'subtitle' => 'Apa yang perlu dikerjakan sekarang — ketuk satu baris untuk langsung ke halamannya.'],
 ];
 
 // Role-scoped accounts (migration 0019): anyone without ADMIN/PPIC — a
@@ -65,7 +67,7 @@ $pages = [
 // Master Data, Pesanan, DO, etc. ADMIN/PPIC are unaffected ($scopedPages
 // null).
 $scopedPages = ui_role_scoped_pages($ui['roles']);
-$defaultPage = $scopedPages === null ? 'dashboard' : $scopedPages[0];
+$defaultPage = $scopedPages === null ? 'hari-ini' : $scopedPages[0];
 
 $page = (string) ($_GET['page'] ?? $defaultPage);
 if (!isset($pages[$page])) {
@@ -100,6 +102,8 @@ $pageRoles = [
     // only, never PPIC (same reasoning the page file's own docblock gives).
     'bakery-portal-tokens' => ['ADMIN'],
     'integrasi' => ['ADMIN'],
+    'sistem' => ['ADMIN'],
+    'hari-ini' => ['ADMIN', 'PPIC'],
     'runchise' => ['ADMIN'],
     'fg-ringkasan' => ['ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING'],
     'retur-review' => ['ADMIN', 'PPIC'],

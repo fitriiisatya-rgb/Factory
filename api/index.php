@@ -8,6 +8,8 @@ use Amor\Api\App;
 use Amor\Api\ErrorHandler;
 use Amor\Api\Request;
 
+\Amor\Api\System\ErrorLog::registerFatalHandler();
+
 try {
     $request = new Request();
     App::run($request);

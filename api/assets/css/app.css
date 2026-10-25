@@ -807,3 +807,8 @@ body.is-field .fg-card.cw-row .fg-card-row:has(.fg-verified-sesuai-group, .pk-se
 .logout-btn { display: inline-flex !important; align-items: center; gap: 6px; width: auto; padding: 0 10px; }
 .logout-label { font-size: var(--text-sm); font-weight: 600; }
 @media (max-width: 640px) { .logout-label { display: none; } .logout-btn { padding: 0 8px; } }
+/* Catatan row on the phone worksheet: one-tap reasons on their own line. */
+body.is-field table#rd-table tr.rd-row.is-open > td:nth-child(9) { flex-wrap: wrap; }
+body.is-field table#rd-table tr.rd-row.is-open > td:nth-child(9) .rsn { flex: 1 1 100%; }
+body.is-field .fg-card-row:has(.rsn) { flex-wrap: wrap; }
+body.is-field .fg-card-row .rsn { flex: 1 1 100%; }

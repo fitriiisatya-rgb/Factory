@@ -198,7 +198,7 @@
       if (box.hidden && box.innerHTML === '') {
         box.innerHTML = (groupsByKey[card.getAttribute('data-key')] || []).map(function (it) {
           return '<div class="driver-row" style="align-items:center;margin-top:6px;"><span>' + esc(it.productName) + ' <small>(siap ' + fmtNum(it.availableToClaim) + ')</small></span>' +
-            '<input type="number" class="driver-qty-input" data-qty-for="' + it.doItemId + '" min="0" max="' + it.availableToClaim + '" step="0.01" value="' + it.availableToClaim + '"></div>';
+            '<input type="number" class="driver-qty-input" data-stepper="1" data-qty-for="' + it.doItemId + '" min="0" max="' + it.availableToClaim + '" step="0.01" value="' + it.availableToClaim + '"></div>';
         }).join('');
       }
       box.hidden = !box.hidden;
@@ -613,7 +613,7 @@
             '<div class="driver-row"><span>Qty Saya (diklaim)</span><b>' + fmtNum(it.claimedQty) + '</b></div>' +
             '<div class="driver-row"><span>FG Ready</span><b>' + fmtNum(it.fgAvailable) + '</b></div>' +
             '<div class="driver-row" style="align-items:center;margin-top:6px;"><span>Qty Kirim</span>' +
-            '<input type="number" class="driver-qty-input" data-actual data-max="' + Math.min(it.claimedQty, it.doRemaining, it.fgAvailable) + '" min="0" step="0.01" value="' + it.defaultActualQty + '"></div>' +
+            '<input type="number" class="driver-qty-input" data-stepper="1" data-actual data-max="' + Math.min(it.claimedQty, it.doRemaining, it.fgAvailable) + '" min="0" step="0.01" value="' + it.defaultActualQty + '"></div>' +
             '</div>';
         }).join('') +
         '<div class="driver-notice">Stok FG akan berkurang setelah pengiriman dikonfirmasi.</div>' +
@@ -710,7 +710,7 @@
             var avail = Math.max(0, Math.min(it.remainingQty, it.availableNowQty == null ? it.remainingQty : it.availableNowQty));
             return '<div class="driver-row"><span>' + esc(it.itemName) +
               '<br><small>Sisa ' + fmtNum(it.remainingQty) + (avail < it.remainingQty ? ' &middot; siap ' + fmtNum(avail) : '') + '</small></span>' +
-              '<input type="number" class="khusus-qty" inputmode="decimal" min="0" step="any" max="' + avail + '" value="' + avail + '"' +
+              '<input type="number" class="khusus-qty" data-stepper="1" inputmode="decimal" min="0" step="any" max="' + avail + '" value="' + avail + '"' +
               ' data-do="' + d.doId + '" data-item="' + it.doItemId + '" style="width:5.5rem;text-align:right;"></div>';
           }).join('');
           var actionHtml;

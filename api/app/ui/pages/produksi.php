@@ -499,16 +499,16 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
       </td>
       <td class="num">
         <?php if ($editable): ?>
-        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="actual" value="<?= ui_num_input($it['actual']) ?>" <?= abs($it['actual'] - $it['liveTarget']) < 0.01 && $it['actual'] > 0 ? 'disabled' : '' ?>>
+        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="actual" data-stepper="1" value="<?= ui_num_input($it['actual']) ?>" <?= abs($it['actual'] - $it['liveTarget']) < 0.01 && $it['actual'] > 0 ? 'disabled' : '' ?>>
         <?php else: ?><?= ui_fmt_num($it['actual']) ?><?php endif; ?>
       </td>
       <td class="num">
         <?php if ($editable): ?>
-        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" value="<?= ui_num_input($it['reject']) ?>">
+        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" data-stepper="1" value="<?= ui_num_input($it['reject']) ?>">
         <?php else: ?><?= ui_fmt_num($it['reject']) ?><?php endif; ?>
       </td>
       <td><?= ui_badge($it['displayStatusLabel']) ?></td>
-      <td><?php if ($editable): ?><input type="text" style="width:9rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="keterangan" value="<?= ui_esc((string) ($it['notes'] ?? '')) ?>"><?php else: ?><?= ui_esc((string) ($it['notes'] ?? '')) ?><?php endif; ?></td>
+      <td><?php if ($editable): ?><input type="text" style="width:9rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="keterangan" data-reasons="1" value="<?= ui_esc((string) ($it['notes'] ?? '')) ?>"><?php else: ?><?= ui_esc((string) ($it['notes'] ?? '')) ?><?php endif; ?></td>
     </tr>
     <?php endforeach; ?>
     <?php foreach ($nonRegularRows as $nr): ?>
@@ -524,9 +524,9 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
         </div>
       </td>
       <td class="num">
-        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" class="nr-actual" data-item-id="<?= $nr['itemId'] ?>" data-order-id="<?= $nr['orderId'] ?>" data-order-version="<?= $nr['orderVersion'] ?>" value="<?= ui_num_input($nr['aktual']) ?>" <?= abs($nr['aktual'] - $nr['target']) < 0.01 && $nr['aktual'] > 0 ? 'disabled' : '' ?>>
+        <input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" class="nr-actual" data-stepper="1" data-item-id="<?= $nr['itemId'] ?>" data-order-id="<?= $nr['orderId'] ?>" data-order-version="<?= $nr['orderVersion'] ?>" value="<?= ui_num_input($nr['aktual']) ?>" <?= abs($nr['aktual'] - $nr['target']) < 0.01 && $nr['aktual'] > 0 ? 'disabled' : '' ?>>
       </td>
-      <td class="num"><input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" class="nr-reject" data-item-id="<?= $nr['itemId'] ?>" value="<?= ui_num_input($nr['reject']) ?>"></td>
+      <td class="num"><input type="number" step="0.01" min="0" style="width:6rem;text-align:right;" class="nr-reject" data-stepper="1" data-item-id="<?= $nr['itemId'] ?>" value="<?= ui_num_input($nr['reject']) ?>"></td>
       <td><?= $nr['aktual'] <= 0.0001 ? ui_badge('Belum Diproduksi') : ($nr['aktual'] + 0.0001 >= $nr['target'] ? ui_badge('Sesuai Target') : ui_badge('Belum Sesuai Target')) ?></td>
       <td><?= $nr['catatan'] ? ui_esc((string) $nr['catatan']) : '-' ?><?php if (!empty($nr['operatorName'])): ?><div class="nr-operator" style="font-size:var(--text-xs);color:var(--text-muted);">Diisi oleh: <?= ui_esc((string) $nr['operatorName']) ?></div><?php endif; ?></td>
     </tr>
@@ -569,12 +569,35 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
           }
       }
   }
+  // "Biasa dibuat": what this division produced most often in the last
+  // 30 days and is not on the sheet yet — one tap adds it.
+  $habit = [];
+  if ($editable && $addable !== []) {
+      $hs = $pdo->prepare(
+          "SELECT pi.product_id, COUNT(*) AS n FROM production_item pi
+           INNER JOIN production_run r ON r.production_run_id = pi.production_run_id
+           WHERE r.division_id = ? AND r.tanggal BETWEEN DATE_SUB(?, INTERVAL 30 DAY) AND DATE_SUB(?, INTERVAL 1 DAY) AND pi.aktual > 0
+           GROUP BY pi.product_id ORDER BY n DESC LIMIT 30"
+      );
+      $hs->execute([(int) $runDetail['divisionId'], (string) $runDetail['tanggal'], (string) $runDetail['tanggal']]);
+      $addableById = array_column($addable, 'name', 'id');
+      foreach ($hs->fetchAll(PDO::FETCH_ASSOC) as $h) {
+          if (isset($addableById[(int) $h['product_id']]) && count($habit) < 8) {
+              $habit[] = ['id' => (int) $h['product_id'], 'name' => $addableById[(int) $h['product_id']]];
+          }
+      }
+  }
   $hoRows = array_map(static fn ($i) => ['id' => (int) $i['productId'], 'name' => (string) $i['productName'], 'made' => (float) $i['actual'], 'handed' => (float) ($hoHanded[(int) $i['productId']] ?? 0)], $runDetail['items']);
   ?>
   <?php if ($editable): ?>
   <div class="ho-add" style="margin-top:var(--space-4);position:relative;">
     <label style="font-weight:700;font-size:var(--text-sm);display:block;margin-bottom:4px;">Mau produksi apa? <span style="font-weight:400;color:var(--text-muted);">(produk yang belum ada di lembar ini)</span></label>
-    <input type="search" id="ho-add-q" placeholder="Ketik nama produk, mis. donut ring..." autocomplete="off" style="width:100%;">
+    <?php if ($habit !== []): ?>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px;"><span style="font-size:var(--text-xs);color:var(--text-muted);align-self:center;">Biasa dibuat:</span>
+      <?php foreach ($habit as $h): ?><button type="button" class="btn btn-secondary btn-sm ho-habit" data-id="<?= (int) $h['id'] ?>">+ <?= ui_esc($h['name']) ?></button><?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+    <input type="search" id="ho-add-q" placeholder="Atau ketik nama produk, mis. donut ring..." autocomplete="off" style="width:100%;">
     <div id="ho-add-list" style="display:none;position:absolute;left:0;right:0;z-index:40;background:var(--surface);border:1px solid var(--border);border-radius:10px;max-height:240px;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,.35);"></div>
   </div>
   <?php endif; ?>
@@ -637,7 +660,7 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
     }
     function qtyModal(title, intro, rows, confirmLabel) {
       var html = '<p style="font-size:var(--text-sm);color:var(--text-muted);margin:0 0 8px">' + intro + '</p>'
-        + rows.map(function (r) { return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="flex:1"><b style="font-size:13px">' + esc(r.name) + '</b><br><small style="color:var(--text-muted)">' + esc(r.sub) + '</small></span><input type="number" class="ho-q" data-id="' + r.id + '" min="0" step="any" max="' + r.max + '" value="' + r.value + '" style="width:5.5rem;text-align:right"></div>'; }).join('');
+        + rows.map(function (r) { return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="flex:1"><b style="font-size:13px">' + esc(r.name) + '</b><br><small style="color:var(--text-muted)">' + esc(r.sub) + '</small></span><input type="number" class="ho-q" data-stepper="1" data-id=""' + r.id + '" min="0" step="any" max="' + r.max + '" value="' + r.value + '" style="width:5.5rem;text-align:right"></div>'; }).join('');
       return Amor.confirmModal({ title: title, body: '', bodyHtml: html, confirmLabel: confirmLabel, onConfirm: function () {
         var out = []; document.querySelectorAll('.modal .ho-q').forEach(function (i) { out.push({ productId: parseInt(i.getAttribute('data-id'), 10), qty: parseFloat(i.value) || 0, max: parseFloat(i.max) }); });
         window.__hoOut = out; return Promise.resolve();
@@ -678,16 +701,17 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
         list.innerHTML = hits.length ? hits.map(function (p) { return '<div class="ho-hit" data-id="' + p.id + '" style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)">' + esc(p.name) + '</div>'; }).join('') : '<div style="padding:9px 12px;color:var(--text-muted)">Tidak ditemukan di produk divisi ini.</div>';
         list.style.display = '';
       });
-      list.addEventListener('click', async function (e) {
-        var hit = e.target.closest('.ho-hit'); if (!hit) return;
+      var addProduct = async function (hit) {
         list.style.display = 'none';
         try {
           await saveSheet().catch(function () {});
           var f = form();
           await Amor.apiFetch('/api/production/' + RUN, { method: 'PATCH', body: { expectedVersion: parseInt(f.getAttribute('data-expected-version'), 10), items: [{ productId: parseInt(hit.getAttribute('data-id'), 10), actualQty: 0 }] } });
-          Amor.toast(hit.textContent + ' ditambahkan ke lembar.', 'success'); setTimeout(function () { location.reload(); }, 600);
+          Amor.toast(hit.textContent.replace(/^\+\s*/, '') + ' ditambahkan ke lembar.', 'success'); setTimeout(function () { location.reload(); }, 600);
         } catch (err) { Amor.toast(err.message, 'danger'); }
-      });
+      };
+      list.addEventListener('click', function (e) { var hit = e.target.closest('.ho-hit'); if (hit) addProduct(hit); });
+      document.querySelectorAll('.ho-habit').forEach(function (b) { b.addEventListener('click', function () { b.disabled = true; addProduct(b); }); });
     }
   });
   </script>
