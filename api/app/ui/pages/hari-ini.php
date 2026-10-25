@@ -69,7 +69,8 @@ $add('Pagi', $poToday > 0 ? 'ok' : 'todo', 'PO hari ini (' . $tglId($d) . ')', $
 $add('Pagi', $poTomorrow > 0 ? 'ok' : 'warn', 'PO besok (' . $tglId($besok) . ')', $poTomorrow > 0 ? $n($poTomorrow) . ' pcs sudah diupload' : 'Belum diupload.', '/api/_import-po/', 'Upload PO');
 
 if ($divs === []) {
-    $add('Produksi', 'warn', 'Produksi divisi', 'Belum ada divisi dengan PO atau lembar produksi untuk tanggal ini.', $qs('produksi', $d));
+    // Nothing to chase yet: without a PO the PO line above is the action.
+    $add('Produksi', $poToday > 0 ? 'warn' : 'ok', 'Produksi divisi', 'Belum ada divisi yang mulai produksi untuk tanggal ini.', $qs('produksi', $d));
 } else {
     $add('Produksi', $divSubmitted === count($divs) ? 'ok' : 'todo', 'Divisi sudah submit: ' . $divSubmitted . ' / ' . count($divs), 'Ketuk divisi di bawah untuk membuka lembarnya.', $qs('produksi', $d));
     foreach ($divs as $r) {
@@ -86,7 +87,16 @@ if ($divs === []) {
 }
 
 $fgLabel = ['draft' => 'Draft — sedang diverifikasi', 'reopened' => 'Dibuka kembali — ada barang baru dari produksi', 'submitted' => 'Sudah Submit FG'];
-$add('FG & Kirim', $fgStatus === 'submitted' ? 'ok' : ($fgStatus ? 'warn' : 'todo'), 'FG & Packing', $fgStatus ? ($fgLabel[$fgStatus] ?? (string) $fgStatus) : 'Dokumen FG belum dibuat.', $qs('fg-packing', $d, ['step' => 'ringkasan']));
+// FG only has work once a division has handed over or submitted something.
+$readyForFg = array_filter($divs, static fn ($r) => (float) $r['handed'] > 0 || in_array($r['status'], ['submitted', 'verified_fg'], true)) !== [];
+if ($fgStatus) {
+    $fgState = $fgStatus === 'submitted' ? 'ok' : 'warn';
+    $fgDetail = $fgLabel[$fgStatus] ?? (string) $fgStatus;
+} else {
+    $fgState = $readyForFg ? 'todo' : 'ok';
+    $fgDetail = $readyForFg ? 'Sudah ada barang dari produksi — buat dokumen FG.' : 'Belum ada barang dari produksi.';
+}
+$add('FG & Kirim', $fgState, 'FG & Packing', $fgDetail, $qs('fg-packing', $d, ['step' => 'ringkasan']));
 $add('FG & Kirim', $k['doTotal'] > 0 && $k['doCreated'] >= $k['doTotal'] ? 'ok' : ($k['doTotal'] > 0 ? 'todo' : 'ok'), 'Delivery Order dibuat: ' . $k['doCreated'] . ' / ' . $k['doTotal'] . ' toko', $k['doTotal'] > 0 ? 'Toko dengan PO hari ini.' : 'Tidak ada toko dengan PO hari ini.', $qs('delivery-order', $d));
 $add('FG & Kirim', $k['doCreated'] > 0 && $k['shipped'] >= $k['doCreated'] ? 'ok' : ($k['doCreated'] > 0 ? 'warn' : 'ok'), 'Sudah dikirim: ' . $k['shipped'] . ' / ' . $k['doCreated'] . ' DO', 'Pengiriman driver.', $qs('pengiriman', $d));
 
