@@ -47,6 +47,7 @@ $to = (new \DateTimeImmutable('now', $tz))->format('Y-m-d');
 </div>
 <style>
   .db-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:var(--space-3); }
+  .db-grid > .card { min-width:0; overflow:hidden; }
   .db-bar { display:flex; align-items:center; gap:8px; margin-top:9px; font-size:var(--text-sm); }
   .db-rank { width:22px; color:var(--text-faint); font-weight:700; font-size:12px; }
   .db-main { flex:1; min-width:0; } .db-lbl { display:flex; justify-content:space-between; gap:8px; }
@@ -84,8 +85,8 @@ document.addEventListener('DOMContentLoaded', function () {
         return '<div class="db-bar"><div style="width:86px;color:var(--text-muted);font-size:12px">' + esc(x.tanggal) + '</div><div class="db-main"><div class="db-track"><div class="db-fill" style="width:' + Math.round(x.qty / maxT * 100) + '%"></div></div></div><b style="width:40px;text-align:right">' + num(x.qty) + '</b></div>';
       }).join('');
       $('db-toko').innerHTML = d.perToko.length
-        ? '<table class="data-table"><thead><tr><th>Toko</th><th class="num">Retur</th><th class="num">Reject</th></tr></thead><tbody>' +
-          d.perToko.map(function (t) { return '<tr><td>' + esc(t.nama) + '</td><td class="num">' + num(t.retur) + '</td><td class="num">' + num(t.reject) + '</td></tr>'; }).join('') + '</tbody></table>'
+        ? '<div class="table-scroll"><table class="data-table" style="min-width:0"><thead><tr><th>Toko</th><th class="num">Retur</th><th class="num">Reject</th></tr></thead><tbody>' +
+          d.perToko.map(function (t) { return '<tr><td>' + esc(t.nama) + '</td><td class="num">' + num(t.retur) + '</td><td class="num">' + num(t.reject) + '</td></tr>'; }).join('') + '</tbody></table></div>'
         : '<div class="db-empty">Tidak ada data untuk filter ini.</div>';
       bars($('db-top-retur'), d.topRetur, '');
       bars($('db-top-reject'), d.topReject, 'reject');

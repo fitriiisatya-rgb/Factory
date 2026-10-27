@@ -161,7 +161,16 @@
         info.innerHTML = esc(p.kategori || '-') + ' · ' + esc(p.pabrik || '-') + ' · <b>' + rp(p.harga) + '</b>/pcs';
       }
       combo(pInput, el.querySelector('.sr-combo-list'), function (q) {
-        return PRODUCTS.filter(function (p) { return !q || p.name.toLowerCase().indexOf(q) !== -1; });
+        // Every typed word must appear (any order); products whose NAME
+        // holds all words come before those matched via their category.
+        var words = q.split(/\s+/).filter(Boolean);
+        var byName = [], byKat = [];
+        PRODUCTS.forEach(function (p) {
+          var name = p.name.toLowerCase(), all = name + ' ' + String(p.kategori || '').toLowerCase();
+          if (words.every(function (w) { return name.indexOf(w) !== -1; })) byName.push(p);
+          else if (words.every(function (w) { return all.indexOf(w) !== -1; })) byKat.push(p);
+        });
+        return byName.concat(byKat);
       }, function (p) {
         return esc(p.name) + ' <small>(' + esc(p.kategori || '-') + ') — ' + rp(p.harga) + '</small>';
       }, pick);

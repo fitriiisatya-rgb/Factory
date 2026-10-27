@@ -73,6 +73,7 @@ function render_store_report_print(array $report, string $format, string $backUr
   .tot { font-size: 15px; font-weight: bold; }
   .sign { margin-top: 24px; } .sign + .sign { margin-top: 12px; }
   .page { page-break-after: always; } .page:last-of-type { page-break-after: auto; }
+  @media screen { .page { border-bottom: 2px dashed #bbb; padding-bottom: 18px; margin-bottom: 18px; } }
 <?php endif; ?>
   .bar { position: sticky; top: 0; background: #f3f5f9; border-bottom: 1px solid #d7dce6; padding: 8px; display: flex; gap: 6px; flex-wrap: wrap; font-family: Arial, sans-serif; }
   .bar a, .bar button { font: 600 13px Arial, sans-serif; padding: 9px 12px; border-radius: 8px; border: 1px solid #c9d1e0; background: #fff; color: #1a1f2b; text-decoration: none; cursor: pointer; }
