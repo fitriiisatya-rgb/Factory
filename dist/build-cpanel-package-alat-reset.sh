@@ -16,7 +16,10 @@ php -l "$F" > /dev/null
 grep -q "requireRole('ADMIN')" "$F" || { echo "REFUSING TO BUILD: ADMIN check missing"; exit 1; }
 grep -q "password_verify" "$F" || { echo "REFUSING TO BUILD: password re-check missing"; exit 1; }
 grep -q "gzopen" "$F" || { echo "REFUSING TO BUILD: automatic backup missing"; exit 1; }
-for keep in product store users store_portal_token division factory user_roles; do
+for need in production_handover production_handover_item production_run fg_batch po_batch shipment invoice; do
+  sed -n '/const TRANSACTION_TABLES/,/];/p' "$F" | grep -q "'${need}'" || { echo "REFUSING TO BUILD: transaction table ${need} missing from the delete list"; exit 1; }
+done
+for keep in product store users store_portal_token division factory user_roles runchise_catalog integration_api_key product_legacy_code; do
   if sed -n '/const TRANSACTION_TABLES/,/];/p' "$F" | grep -q "'${keep}'"; then
     echo "REFUSING TO BUILD: master table ${keep} is in the delete list"; exit 1
   fi

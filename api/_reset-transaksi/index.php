@@ -6,7 +6,7 @@ declare(strict_types=1);
  * Amor Factory — RESET DATA TRANSAKSI (one-time tool, shipped separately as
  * amor-factory-alat-reset.zip, NEVER inside the normal package).
  *
- * Empties every transactional table (PO, produksi, FG, stok, DO, kiriman,
+ * Empties every transactional table (PO, produksi, serah terima, FG, stok, DO, kiriman,
  * konfirmasi toko, lapor barang, mutasi, pesanan khusus, replacement,
  * invoice, nota potongan, nomor dokumen, idempotency log, transactional
  * audit rows) and the uploaded evidence photos, so live can start real
@@ -50,7 +50,7 @@ const TRANSACTION_TABLES = [
     'shipment_item', 'shipment', 'delivery_order_item', 'delivery_order',
     'stock_transfer', 'stock_adjustment', 'stock_ledger', 'stock_balance', 'store_fg_balance',
     'fg_store_packing_submission', 'fg_item', 'fg_batch_source', 'fg_batch',
-    'production_item', 'production_run',
+    'production_handover_item', 'production_handover', 'production_item', 'production_run',
     'po_store_item', 'po_item', 'po_import', 'po_closure', 'po_batch',
     'customer_order_item', 'customer_order', 'retail_sale', 'reject_note', 'return_note',
     'document_sequence', 'idempotency_log',
@@ -200,7 +200,7 @@ foreach ($counts as $t => $n) {
     if ($n > 0) { $rows .= '<tr><td>' . esc($t) . '</td><td>' . $n . '</td></tr>'; }
 }
 page('Reset Data Transaksi', '<h1>Reset Data Transaksi</h1>'
-    . '<div class="box red"><b>Semua data transaksi akan dihapus:</b> PO, produksi, FG &amp; stok, DO, kiriman, konfirmasi toko, lapor barang, mutasi, pesanan khusus, invoice, nota potongan, nomor dokumen, dan foto bukti.<br>'
+    . '<div class="box red"><b>Semua data transaksi akan dihapus:</b> PO, produksi, serah terima, FG &amp; stok, DO, kiriman, konfirmasi toko, lapor barang, mutasi, pesanan khusus, invoice, nota potongan, nomor dokumen, dan foto bukti.<br>'
     . '<b>Tetap ada:</b> pabrik, divisi, produk, toko, akun &amp; password, link Portal Bakery.<br>'
     . 'Sebelum menghapus, alat ini otomatis membuat cadangan. Tetap disarankan Export database lewat phpMyAdmin dulu.</div>'
     . ($error !== null ? '<div class="box red"><b>' . esc($error) . '</b></div>' : '')
