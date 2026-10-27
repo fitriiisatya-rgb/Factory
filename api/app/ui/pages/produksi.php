@@ -660,7 +660,7 @@ $activeSubmittedCount = count(array_filter($divisionSummaryRows, static fn ($r) 
     }
     function qtyModal(title, intro, rows, confirmLabel) {
       var html = '<p style="font-size:var(--text-sm);color:var(--text-muted);margin:0 0 8px">' + intro + '</p>'
-        + rows.map(function (r) { return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="flex:1"><b style="font-size:13px">' + esc(r.name) + '</b><br><small style="color:var(--text-muted)">' + esc(r.sub) + '</small></span><input type="number" class="ho-q" data-stepper="1" data-id=""' + r.id + '" min="0" step="any" max="' + r.max + '" value="' + r.value + '" style="width:5.5rem;text-align:right"></div>'; }).join('');
+        + rows.map(function (r) { return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="flex:1"><b style="font-size:13px">' + esc(r.name) + '</b><br><small style="color:var(--text-muted)">' + esc(r.sub) + '</small></span><input type="number" class="ho-q" data-stepper="1" data-id="' + r.id + '" min="0" step="any" max="' + r.max + '" value="' + r.value + '" style="width:5.5rem;text-align:right"></div>'; }).join('');
       return Amor.confirmModal({ title: title, body: '', bodyHtml: html, confirmLabel: confirmLabel, onConfirm: function () {
         var out = []; document.querySelectorAll('.modal .ho-q').forEach(function (i) { out.push({ productId: parseInt(i.getAttribute('data-id'), 10), qty: parseFloat(i.value) || 0, max: parseFloat(i.max) }); });
         window.__hoOut = out; return Promise.resolve();

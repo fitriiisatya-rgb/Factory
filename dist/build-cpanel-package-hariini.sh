@@ -177,6 +177,11 @@ if echo "$SQL0025_CODE" | sed "s/ON DELETE CASCADE//g" | grep -qEi "DROP |TRUNCA
   exit 1
 fi
 [ "$(echo "$SQL0025_CODE" | grep -c 'CREATE TABLE IF NOT EXISTS')" = "2" ] || { echo "REFUSING TO BUILD: migration 0025 must create exactly 2 tables."; exit 1; }
+if grep -rnE "=\"\"' \+|=\"\"\" \+" "$STAGE/api" --include='*.php' --include='*.js' | grep -q .; then
+  echo "REFUSING TO BUILD: broken HTML attribute (=\"\"' +) in a template string:" >&2
+  grep -rnE "=\"\"' \+|=\"\"\" \+" "$STAGE/api" --include='*.php' --include='*.js' >&2; exit 1
+fi
+grep -q 'class="ho-q" data-stepper="1" data-id="'"'"' + r.id' "$STAGE/api/app/ui/pages/produksi.php" || { echo "REFUSING TO BUILD: serah terima modal lost its product id."; exit 1; }
 grep -q "class BackupService" "$STAGE/api/app/src/System/BackupService.php" || { echo "REFUSING TO BUILD: backup service missing."; exit 1; }
 [ -f "$STAGE/api/app/cli/backup.php" ] || { echo "REFUSING TO BUILD: cron backup script missing."; exit 1; }
 [ ! -e "$STAGE/api/app/storage" ] || { echo "REFUSING TO BUILD: api/app/storage (backups/logs) must never ship."; exit 1; }
