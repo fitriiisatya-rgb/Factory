@@ -516,9 +516,27 @@ final class StoreReportService
             if ($row === null || !ReturRepository::reportApproved($this->pdo, isset($row['store_report_id']) ? (int) $row['store_report_id'] : null)) {
                 throw new ApiException(404, 'NOT_FOUND', 'Item tidak ditemukan');
             }
+            if ($row['status'] === 'cancelled') {
+                throw new ApiException(409, 'MUTASI_CANCELLED', 'Mutasi ini sudah dibatalkan');
+            }
+            if ($status === 'tidak_sesuai') {
+                // Owner decision (Oct 2026): Admin's physical check is the last
+                // word — "Tidak Sesuai" cancels the mutasi so the bill never
+                // moves to the destination store. Only possible while neither
+                // side has been billed for it yet.
+                $billed = $this->pdo->prepare(
+                    'SELECT (SELECT COUNT(*) FROM invoice_mutasi WHERE mutasi_request_id = ?) + (SELECT COUNT(*) FROM nota_potongan WHERE mutasi_request_id = ?)'
+                );
+                $billed->execute([$id, $id]);
+                if ((int) $billed->fetchColumn() > 0) {
+                    throw new ApiException(409, 'MUTASI_ALREADY_INVOICED', 'Mutasi ini sudah masuk invoice / nota potongan. Batalkan invoice-nya dulu di menu Invoice, baru tandai Tidak Sesuai.');
+                }
+                $this->mutasiRepo->markAdminReviewed($this->pdo, $id, 'cancelled', 'Tidak sesuai fisik: ' . $note, $adminUserId);
+            }
             $this->pdo->prepare('UPDATE mutasi_request SET validasi_status = ?, validasi_note = ?, validasi_by = ?, validasi_at = UTC_TIMESTAMP(), updated_at = UTC_TIMESTAMP() WHERE mutasi_request_id = ?')
                 ->execute([$status, $status === 'tidak_sesuai' ? $note : null, $adminUserId, $id]);
-            Audit::write($this->pdo, $requestId, $adminUserId, 'mutasi.validasi', 'mutasi_request', (string) $id, 'ok', null, null, ['status' => $status]);
+            Audit::write($this->pdo, $requestId, $adminUserId, 'mutasi.validasi', 'mutasi_request', (string) $id, 'ok', null, null,
+                ['status' => $status, 'cancelled' => $status === 'tidak_sesuai']);
             return ['ok' => true];
         }
         if ($type !== 'retur') {
@@ -556,7 +574,9 @@ final class StoreReportService
         $topRet = $topRej = $perTgl = $perToko = [];
         foreach ($items as $it) {
             if ($it['jenis'] === 'mutasi') {
-                $out['totalMutasi'] += $it['qty'];
+                if ($it['itemStatus'] !== 'cancelled') {
+                    $out['totalMutasi'] += $it['qty'];
+                }
                 continue;
             }
             $toko = $it['storeName'];
@@ -705,7 +725,7 @@ final class StoreReportService
                  LEFT JOIN store_report sr ON sr.store_report_id = mr.store_report_id
                  LEFT JOIN users au ON au.user_id = sr.approved_by
                  LEFT JOIN users vu ON vu.user_id = mr.validasi_by
-                 WHERE {$w} AND mr.status <> 'cancelled'"
+                 WHERE {$w} AND (mr.status <> 'cancelled' OR mr.validasi_status = 'tidak_sesuai')"
             );
             $st->execute($p);
             $rows = array_merge($rows, $st->fetchAll());

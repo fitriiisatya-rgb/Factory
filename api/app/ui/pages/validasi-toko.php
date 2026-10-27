@@ -101,13 +101,14 @@ document.addEventListener('DOMContentLoaded', function () {
     if (it.notes) sub.push('Catatan: ' + it.notes);
     var approved = it.approvalMode === 'otomatis' ? 'tanpa Atasan (otomatis)' : (it.approvedByName ? 'Atasan: ' + it.approvedByName : '');
     var decided = it.validasiStatus !== 'menunggu';
-    var canAct = CAN_ACT && (!decided || it.jenis === 'mutasi');
+    var canAct = CAN_ACT && (!decided || (it.jenis === 'mutasi' && it.itemStatus !== 'cancelled'));
     el.innerHTML =
       '<div class="vt-head"><div>' +
         '<div class="vt-meta">' + esc(it.tanggal) + ' · ' + esc(it.storeName) + ' · ' + esc(it.pabrik || '-') + ' · ' + esc(it.reportNo || it.docNo) + (approved ? ' · ' + esc(approved) : '') + '</div>' +
         '<div class="vt-title"><span class="vt-jb ' + it.jenis + '">' + JL[it.jenis] + '</span>' + esc(it.productName) + '</div>' +
         (sub.length ? '<div class="vt-sub">' + esc(sub.join(' · ')) + '</div>' : '') +
         (it.validasiStatus === 'tidak_sesuai' && it.validasiNote ? '<div class="vt-sub" style="color:var(--danger)">Catatan: ' + esc(it.validasiNote) + '</div>' : '') +
+        (it.jenis === 'mutasi' && it.itemStatus === 'cancelled' ? '<div class="vt-sub" style="color:var(--danger)">Mutasi dibatalkan — tagihan tidak pindah.</div>' : '') +
         (it.validasiByName && decided ? '<div class="vt-meta">Divalidasi oleh: ' + esc(it.validasiByName) + (it.tindakLanjut ? ' · ' + (it.tindakLanjut === 'ganti' ? 'Ganti barang' : 'Potong tagihan') : '') + '</div>' : '') +
       '</div><div><div class="vt-qty">' + num(it.qty) + ' pcs</div><div class="vt-meta" style="text-align:right">' + rp(it.total) + '</div>' +
         '<div style="text-align:right"><span class="vt-chip ' + it.validasiStatus + '">' + SL[it.validasiStatus] + '</span></div></div></div>' +
@@ -129,6 +130,15 @@ document.addEventListener('DOMContentLoaded', function () {
         if (act === 'send-no') {
           var note = el.querySelector('textarea').value.trim();
           if (!note) { Amor.toast('Tulis catatan ketidaksesuaian dulu.', 'warning'); return; }
+          if (it.jenis === 'mutasi') {
+            Amor.confirmModal({
+              title: 'Batalkan mutasi ini?',
+              body: 'Tidak Sesuai untuk Mutasi = mutasi DIBATALKAN: tagihan ' + num(it.qty) + ' pcs ' + it.productName + ' tidak pindah ke ' + (it.destinationStoreName || 'toko tujuan') + ' dan tetap menjadi tagihan ' + it.storeName + '.',
+              confirmLabel: 'Ya, Batalkan Mutasi',
+              danger: true,
+            }).then(function (ok) { if (ok) send(it, el, 'tidak_sesuai', note, null); });
+            return;
+          }
           return send(it, el, 'tidak_sesuai', note, null);
         }
         if (act === 'ok') return send(it, el, 'sesuai', '', null);

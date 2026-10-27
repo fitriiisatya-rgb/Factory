@@ -353,7 +353,7 @@
     function itemStatus(it, r) {
       if (r.status !== 'disetujui') return '';
       if (it.jenis === 'mutasi') {
-        var m = { waiting_destination_confirmation: 'menunggu konfirmasi toko tujuan', completed: 'diterima toko tujuan', discrepancy: 'ada selisih, dicek Admin', cancelled: 'dibatalkan' };
+        var m = { waiting_destination_confirmation: 'menunggu konfirmasi toko tujuan', completed: 'diterima toko tujuan', discrepancy: 'ada selisih, dicek Admin', cancelled: 'dibatalkan (tidak sesuai fisik)' };
         return m[it.itemStatus] || '';
       }
       if (it.validasiStatus === 'menunggu') return 'menunggu dicek pabrik';

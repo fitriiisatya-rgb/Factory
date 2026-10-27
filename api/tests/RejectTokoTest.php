@@ -849,6 +849,22 @@ runTest('RJT-19 Retur/Reject/Mutasi in one transaction: Atasan approval gate, ed
     expect($nv['status'] === 400 && $nv['json']['code'] === 'NOTE_REQUIRED', 'tidak sesuai needs a note');
     $nv = adminPost($adminHttp, $adminCsrf, '/api/store-reports/validasi', ['type' => 'mutasi', 'id' => $mut['itemId'], 'status' => 'tidak_sesuai', 'note' => 'fisik hanya 0']);
     expect($nv['status'] === 200, 'mutasi validasi: ' . $nv['body']);
+    expect($pdo->query("SELECT status FROM mutasi_request WHERE mutasi_request_id = {$mut['itemId']}")->fetchColumn() === 'cancelled', 'Admin Tidak Sesuai cancels the mutasi');
+    $bConfirm = (new HttpInv($GLOBALS['baseUrl']))->requestMultipart('POST', "/api/store/{$tokenB}/mutasi/{$mut['itemId']}/confirm", ['confirmation' => json_encode(['qtyReceived' => 1])], [], idemKey('mc'));
+    expect(in_array($bConfirm['status'], [404, 409], true), 'a cancelled mutasi can no longer be confirmed by the destination: ' . $bConfirm['body']);
+    $again = adminPost($adminHttp, $adminCsrf, '/api/store-reports/validasi', ['type' => 'mutasi', 'id' => $mut['itemId'], 'status' => 'sesuai']);
+    expect($again['status'] === 409 && $again['json']['code'] === 'MUTASI_CANCELLED', 'a cancelled mutasi stays cancelled');
+    // The auto-approved mutasi (4 pcs): destination confirms, invoices are issued -> Admin can no longer cancel it.
+    $mut1 = array_values(array_filter($t1['items'], static fn ($i) => $i['jenis'] === 'mutasi'))[0];
+    $c1 = (new HttpInv($GLOBALS['baseUrl']))->requestMultipart('POST', "/api/store/{$tokenB}/mutasi/{$mut1['itemId']}/confirm", ['confirmation' => json_encode(['qtyReceived' => 4])], [], idemKey('mc'));
+    expect($c1['status'] === 200, 'destination confirms: ' . $c1['body']);
+    $gen = adminPost($adminHttp, $adminCsrf, '/api/invoices/generate-ready', []);
+    expect($gen['status'] === 200, 'generate ready: ' . $gen['body']);
+    expect((int) $pdo->query("SELECT COUNT(*) FROM invoice_mutasi WHERE mutasi_request_id = {$mut['itemId']}")->fetchColumn() === 0
+        && (int) $pdo->query("SELECT COUNT(*) FROM nota_potongan WHERE mutasi_request_id = {$mut['itemId']}")->fetchColumn() === 0, 'a cancelled mutasi is never billed');
+    expect((int) $pdo->query("SELECT COUNT(*) FROM invoice_mutasi WHERE mutasi_request_id = {$mut1['itemId']}")->fetchColumn() === 1, 'the confirmed mutasi is billed to the destination');
+    $late2 = adminPost($adminHttp, $adminCsrf, '/api/store-reports/validasi', ['type' => 'mutasi', 'id' => $mut1['itemId'], 'status' => 'tidak_sesuai', 'note' => 'telat']);
+    expect($late2['status'] === 409 && $late2['json']['code'] === 'MUTASI_ALREADY_INVOICED', 'an invoiced mutasi cannot be cancelled from validasi: ' . $late2['body']);
     $ret1 = array_values(array_filter($t1['items'], static fn ($i) => $i['jenis'] === 'retur'))[0];
     $rv = adminPost($adminHttp, $adminCsrf, '/api/store-reports/validasi', ['type' => 'retur', 'id' => $ret1['itemId'], 'status' => 'tidak_sesuai', 'note' => 'barang tidak ada']);
     expect($rv['status'] === 200, 'retur tidak sesuai: ' . $rv['body']);
