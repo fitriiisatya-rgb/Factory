@@ -227,7 +227,7 @@ foreach ($batchView !== null ? $batchView['items'] : [] as $it) {
         <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="fgVerified" data-stepper="1" value="<?= ui_num_input($it['fgVerified']) ?>" <?= $verifiedIsSesuai ? 'disabled' : '' ?>>
         <?php else: ?><b><?= ui_fmt_num($it['fgVerified']) ?></b><?php endif; ?>
       </div>
-      <div class="fg-card-row"><span class="fg-card-row-label">Selisih</span><span><?= ui_fmt_num($it['variance']) ?></span></div>
+      <div class="fg-card-row"><span class="fg-card-row-label">Selisih</span><span class="fg-var" data-product-id="<?= (int) $it['productId'] ?>"><?= ui_fmt_num($it['variance']) ?></span></div>
       <div class="fg-card-row">
         <span class="fg-card-row-label">Reject</span>
         <?php if ($rowEditable): ?><input type="number" step="0.01" min="0" class="fg-card-input" data-product-id="<?= (int) $it['productId'] ?>" data-field="reject" data-stepper="1" value="<?= ui_num_input($it['reject'] ?? 0) ?>">
@@ -378,6 +378,17 @@ var UNALLOCATED_STORE_ID = <?= (int) (new \Amor\Api\Fg\FgRepository())->unalloca
       var pid = group.getAttribute('data-product-id');
       var input = document.querySelector('#fg-form [data-field="fgVerified"][data-product-id="' + pid + '"]');
       if (input) wireSesuaiGroup(group, input, function () { return group.getAttribute('data-target'); });
+      // Selisih = hasil produksi - terverifikasi, kept live while typing
+      // (the server value is only refreshed on save).
+      var varEl = document.querySelector('.fg-var[data-product-id="' + pid + '"]');
+      if (input && varEl) {
+        var showVar = function () {
+          var v = Math.round(((parseFloat(group.getAttribute('data-target')) || 0) - (parseFloat(input.value) || 0)) * 100) / 100;
+          varEl.textContent = v.toLocaleString('id-ID');
+        };
+        input.addEventListener('input', showVar);
+        group.addEventListener('click', function () { setTimeout(showVar, 0); });
+      }
     });
     // app.js loads after this inline script — run once it is there.
     document.addEventListener('DOMContentLoaded', function () {
