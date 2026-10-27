@@ -235,6 +235,7 @@ grep -q "function generateAllReady" "$STAGE/api/app/src/Invoice/InvoiceService.p
 [ -f "$STAGE/api/_ui-preview/print-nota.php" ] || { echo "REFUSING TO BUILD: nota print page is missing."; exit 1; }
 grep -q "createForRejectToko" "$STAGE/api/app/src/StorePortal/ReturService.php" || { echo "REFUSING TO BUILD: approving a reject no longer issues a nota."; exit 1; }
 [ ! -e "$STAGE/api/_reset-transaksi" ] || { echo "REFUSING TO BUILD: the reset tool must never ship in the normal package."; exit 1; }
+[ ! -e "$STAGE/api/_hapus-uji-retur" ] || { echo "REFUSING TO BUILD: the trial-data removal tool must never ship in the normal package."; exit 1; }
 
 echo "--- sanity: confirm Reject di Toko ships (red/grey Lapor Barang, admin decision, invoice deduction) ---"
 [ -f "$STAGE/api/app/ui/pages/reject-toko.php" ] || { echo "REFUSING TO BUILD: the Reject di Toko admin page is missing."; exit 1; }
