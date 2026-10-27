@@ -16,14 +16,14 @@ use PDO;
  */
 final class ReturRepository
 {
-    public function insert(PDO $pdo, string $docNo, int $storeId, int $productId, float $qty, string $reason, ?string $notes, string $returDate, ?int $submittedViaTokenId, string $jenis = 'retur', ?string $kondisi = null, ?string $expDate = null): int
+    public function insert(PDO $pdo, string $docNo, int $storeId, int $productId, float $qty, string $reason, ?string $notes, string $returDate, ?int $submittedViaTokenId, string $jenis = 'retur', ?string $kondisi = null, ?string $expDate = null, ?int $storeReportId = null): int
     {
         $stmt = $pdo->prepare(
             'INSERT INTO retur_request
-                (doc_no, store_id, product_id, qty, reason, notes, retur_date, status, submitted_via_token_id, jenis, kondisi, exp_date, version, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, \'waiting_admin_verification\', ?, ?, ?, ?, 1, UTC_TIMESTAMP())'
+                (doc_no, store_id, product_id, qty, reason, notes, retur_date, status, submitted_via_token_id, jenis, kondisi, exp_date, store_report_id, validasi_status, version, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, \'waiting_admin_verification\', ?, ?, ?, ?, ?, \'menunggu\', 1, UTC_TIMESTAMP())'
         );
-        $stmt->execute([$docNo, $storeId, $productId, $qty, $reason, $notes, $returDate, $submittedViaTokenId, $jenis, $kondisi, $expDate]);
+        $stmt->execute([$docNo, $storeId, $productId, $qty, $reason, $notes, $returDate, $submittedViaTokenId, $jenis, $kondisi, $expDate, $storeReportId]);
         return (int) $pdo->lastInsertId();
     }
 
@@ -105,8 +105,9 @@ final class ReturRepository
                 INNER JOIN store s ON s.store_id = rr.store_id
                 LEFT JOIN special_order so ON so.special_order_id = rr.pengganti_order_id
                 LEFT JOIN nota_potongan np ON np.retur_request_id = rr.retur_request_id
-             LEFT JOIN invoice inv ON inv.invoice_id = np.invoice_id
-                WHERE 1=1';
+                LEFT JOIN invoice inv ON inv.invoice_id = np.invoice_id
+                LEFT JOIN store_report sr ON sr.store_report_id = rr.store_report_id
+                WHERE (sr.store_report_id IS NULL OR sr.status = \'disetujui\')';
         $params = [];
         if ($status !== null) {
             $sql .= ' AND rr.status = ?';
@@ -126,6 +127,7 @@ final class ReturRepository
     {
         $stmt = $pdo->prepare(
             "UPDATE retur_request SET status = 'verified', verified_by = ?, verified_at = UTC_TIMESTAMP(),
+                    validasi_status = COALESCE(NULLIF(validasi_status, 'menunggu'), 'sesuai'), validasi_by = COALESCE(validasi_by, verified_by), validasi_at = COALESCE(validasi_at, UTC_TIMESTAMP()),
                     version = version + 1, updated_at = UTC_TIMESTAMP()
              WHERE retur_request_id = ?"
         );
@@ -136,6 +138,7 @@ final class ReturRepository
     {
         $stmt = $pdo->prepare(
             "UPDATE retur_request SET status = 'verified', verified_by = ?, verified_at = UTC_TIMESTAMP(),
+                    validasi_status = COALESCE(NULLIF(validasi_status, 'menunggu'), 'sesuai'), validasi_by = COALESCE(validasi_by, verified_by), validasi_at = COALESCE(validasi_at, UTC_TIMESTAMP()),
                     tindak_lanjut = ?, pengganti_order_id = ?,
                     version = version + 1, updated_at = UTC_TIMESTAMP()
              WHERE retur_request_id = ?"
@@ -147,9 +150,21 @@ final class ReturRepository
     {
         $stmt = $pdo->prepare(
             "UPDATE retur_request SET status = 'rejected', reject_reason = ?, verified_by = ?, verified_at = UTC_TIMESTAMP(),
+                    validasi_status = 'tidak_sesuai', validasi_note = COALESCE(validasi_note, reject_reason), validasi_by = COALESCE(validasi_by, verified_by), validasi_at = COALESCE(validasi_at, UTC_TIMESTAMP()),
                     version = version + 1, updated_at = UTC_TIMESTAMP()
              WHERE retur_request_id = ?"
         );
         $stmt->execute([$rejectReason, $adminUserId, $id]);
+    }
+
+    /** True when the item is free for Admin/destination processing: no store report, or its report is approved. */
+    public static function reportApproved(PDO $pdo, ?int $storeReportId): bool
+    {
+        if ($storeReportId === null) {
+            return true;
+        }
+        $stmt = $pdo->prepare('SELECT status FROM store_report WHERE store_report_id = ?');
+        $stmt->execute([$storeReportId]);
+        return $stmt->fetchColumn() === 'disetujui';
     }
 }

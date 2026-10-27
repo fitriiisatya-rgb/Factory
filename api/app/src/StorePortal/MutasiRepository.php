@@ -15,14 +15,14 @@ use PDO;
  */
 final class MutasiRepository
 {
-    public function insert(PDO $pdo, string $docNo, int $sourceStoreId, int $destinationStoreId, int $productId, float $qtyRequested, ?string $requestNotes, ?int $requestedViaTokenId): int
+    public function insert(PDO $pdo, string $docNo, int $sourceStoreId, int $destinationStoreId, int $productId, float $qtyRequested, ?string $requestNotes, ?int $requestedViaTokenId, ?int $storeReportId = null): int
     {
         $stmt = $pdo->prepare(
             'INSERT INTO mutasi_request
-                (doc_no, source_store_id, destination_store_id, product_id, qty_requested, request_notes, status, requested_via_token_id, version, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, \'waiting_destination_confirmation\', ?, 1, UTC_TIMESTAMP())'
+                (doc_no, source_store_id, destination_store_id, product_id, qty_requested, request_notes, status, requested_via_token_id, store_report_id, validasi_status, version, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, \'waiting_destination_confirmation\', ?, ?, \'menunggu\', 1, UTC_TIMESTAMP())'
         );
-        $stmt->execute([$docNo, $sourceStoreId, $destinationStoreId, $productId, $qtyRequested, $requestNotes, $requestedViaTokenId]);
+        $stmt->execute([$docNo, $sourceStoreId, $destinationStoreId, $productId, $qtyRequested, $requestNotes, $requestedViaTokenId, $storeReportId]);
         return (int) $pdo->lastInsertId();
     }
 
@@ -100,7 +100,8 @@ final class MutasiRepository
                 FROM mutasi_request mr
                 INNER JOIN product p ON p.product_id = mr.product_id
                 INNER JOIN store ss ON ss.store_id = mr.source_store_id
-                WHERE mr.destination_store_id = ?';
+                LEFT JOIN store_report sr ON sr.store_report_id = mr.store_report_id
+                WHERE mr.destination_store_id = ? AND (sr.store_report_id IS NULL OR sr.status = \'disetujui\')';
         $params = [$storeId];
         if ($onlyPending) {
             $sql .= " AND mr.status = 'waiting_destination_confirmation'";
@@ -119,7 +120,8 @@ final class MutasiRepository
                 INNER JOIN product p ON p.product_id = mr.product_id
                 INNER JOIN store ss ON ss.store_id = mr.source_store_id
                 INNER JOIN store ds ON ds.store_id = mr.destination_store_id
-                WHERE 1=1';
+                LEFT JOIN store_report sr ON sr.store_report_id = mr.store_report_id
+                WHERE (sr.store_report_id IS NULL OR sr.status = \'disetujui\')';
         $params = [];
         if ($status !== null) {
             $sql .= ' AND mr.status = ?';

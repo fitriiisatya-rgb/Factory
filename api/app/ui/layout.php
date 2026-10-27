@@ -46,9 +46,9 @@ function ui_nav_items(array $roles = []): array
         ['key' => 'pengiriman', 'label' => 'Pengiriman', 'icon' => 'truck'],
         ['key' => 'konfirmasi-toko', 'label' => 'Konfirmasi Toko', 'icon' => 'user'],
         ['key' => 'replacement-reject', 'label' => 'Reject saat Terima', 'icon' => 'file'],
-        ['key' => 'reject-toko', 'label' => 'Reject di Toko', 'icon' => 'alert'],
-        ['key' => 'retur-review', 'label' => 'Retur (catatan)', 'icon' => 'box'],
-        ['key' => 'mutasi-review', 'label' => 'Mutasi Produk', 'icon' => 'bolt'],
+        ['key' => 'validasi-toko', 'label' => 'Retur, Reject & Mutasi', 'icon' => 'alert'],
+        ['key' => 'approval-toko', 'label' => 'Approval Toko', 'icon' => 'user'],
+        ['key' => 'dashboard-retur', 'label' => 'Dashboard Retur & Reject', 'icon' => 'chart'],
         ['key' => 'bakery-portal-tokens', 'label' => 'Portal Bakery', 'icon' => 'mail'],
         ['key' => 'invoice', 'label' => 'Invoice', 'icon' => 'file'],
     ];
@@ -57,7 +57,7 @@ function ui_nav_items(array $roles = []): array
     // Permanent Bakery Portal admin pages (migration 0017), each gated
     // identically to api/_ui-preview/index.php's own $pageRoles.
     if ($roles !== [] && array_intersect(['ADMIN', 'PPIC'], $roles) === []) {
-        $hidden = ['hari-ini', 'replacement-reject', 'reject-toko', 'retur-review', 'mutasi-review', 'bakery-portal-tokens', 'invoice', 'stok-sisa'];
+        $hidden = ['hari-ini', 'replacement-reject', 'validasi-toko', 'bakery-portal-tokens', 'invoice', 'stok-sisa'];
         $items = array_values(array_filter($items, static fn ($i) => !in_array($i['key'], $hidden, true)));
     } elseif ($roles !== [] && !in_array('ADMIN', $roles, true)) {
         // bakery-portal-tokens and invoice are ADMIN-only (token mgmt is
@@ -65,6 +65,10 @@ function ui_nav_items(array $roles = []): array
         // ADMIN-only end to end via InvoiceController's own role gate) —
         // a PPIC user keeps the other two.
         $items = array_values(array_filter($items, static fn ($i) => !in_array($i['key'], ['bakery-portal-tokens', 'invoice'], true)));
+    }
+    // Approval Toko is the Atasan's own queue; Admin/PPIC work in Validasi.
+    if (!in_array('ATASAN', $roles, true)) {
+        $items = array_values(array_filter($items, static fn ($i) => $i['key'] !== 'approval-toko'));
     }
     // Role-scoped accounts (PRODUCTION shared division logins, FG_PACKING,
     // DRIVER, ...) only see what ui_role_scoped_pages() lets them open.
@@ -122,6 +126,7 @@ function ui_role_scoped_pages(array $roles): ?array
     $byRole = [
         'PRODUCTION' => ['produksi', 'produksi-demand', 'produksi-task-per-divisi', 'fg-packing', 'fg-khusus-non-toko', 'replacement-do-detail', 'fg-ringkasan', 'riwayat'],
         'FG_PACKING' => ['fg-packing', 'fg-khusus-non-toko', 'riwayat'],
+        'ATASAN' => ['approval-toko', 'dashboard-retur'],
     ];
     $pages = [];
     foreach ($roles as $role) {

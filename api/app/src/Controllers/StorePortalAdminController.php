@@ -196,7 +196,7 @@ final class StorePortalAdminController
         self::streamEvidence($evidence, 'mutasi-evidence');
     }
 
-    private static function streamEvidence(array $evidence, string $context): void
+    public static function streamEvidence(array $evidence, string $context): void
     {
         $path = EvidenceUploader::absolutePath($evidence['file_path'], $context);
         if (!is_file($path)) {

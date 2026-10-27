@@ -60,6 +60,12 @@ final class UserService
         return $this->repo->allFactories($this->pdo);
     }
 
+    /** @return array<int,array{storeId:int,name:string}> */
+    public function listStores(): array
+    {
+        return $this->repo->allStores($this->pdo);
+    }
+
     /** @param string[] $roleCodes */
     public function createUser(string $username, string $fullName, string $password, string $passwordConfirm, array $roleCodes, int $actorUserId, ?string $requestId): array
     {
@@ -180,6 +186,28 @@ final class UserService
         return $this->toDto($this->repo->findById($this->pdo, $userId));
     }
 
+    /**
+     * ATASAN store scoping (migration 0026). An Atasan with no stores
+     * approves nothing; a store with no Atasan is approved automatically.
+     * @param int[] $storeIds
+     */
+    public function updateStoreAccess(int $userId, array $storeIds, int $actorUserId, ?string $requestId): array
+    {
+        $user = $this->repo->lockById($this->pdo, $userId);
+        if ($user === null) {
+            throw new ApiException(404, 'NOT_FOUND', 'User tidak ditemukan');
+        }
+        $storeIds = array_values(array_unique(array_map('intval', $storeIds)));
+        $valid = $this->repo->validStoreIds($this->pdo, $storeIds);
+        $unknown = array_diff($storeIds, $valid);
+        if ($unknown !== []) {
+            throw new ApiException(400, 'UNKNOWN_STORE', 'Toko tidak dikenal: ' . implode(', ', $unknown));
+        }
+        $this->repo->replaceStoreAccess($this->pdo, $userId, $valid);
+        Audit::write($this->pdo, $requestId, $actorUserId, 'user.store_access_changed', 'user', (string) $userId, 'ok', null, null, ['storeIds' => $valid]);
+        return $this->toDto($this->repo->findById($this->pdo, $userId));
+    }
+
     public function resetPassword(int $userId, string $newPassword, string $confirmPassword, int $actorUserId, ?string $requestId): array
     {
         $this->assertPasswordValid($newPassword, $confirmPassword);
@@ -262,6 +290,7 @@ final class UserService
             'roles' => $row['roles'],
             'divisionIds' => $row['division_ids'] ?? [],
             'factoryIds' => $row['factory_ids'] ?? [],
+            'storeIds' => $row['store_ids'] ?? [],
             'createdAt' => (string) $row['created_at'],
             'updatedAt' => $row['updated_at'] !== null ? (string) $row['updated_at'] : null,
         ];

@@ -22,6 +22,8 @@
   try { DIVISIONS = JSON.parse((rolesRoot && rolesRoot.getAttribute('data-divisions')) || '[]'); } catch (e) { DIVISIONS = []; }
   var FACTORIES = [];
   try { FACTORIES = JSON.parse((rolesRoot && rolesRoot.getAttribute('data-factories')) || '[]'); } catch (e) { FACTORIES = []; }
+  var STORES = [];
+  try { STORES = JSON.parse((rolesRoot && rolesRoot.getAttribute('data-stores')) || '[]'); } catch (e) { STORES = []; }
 
   function esc(s) {
     var d = document.createElement('div');
@@ -74,6 +76,19 @@
     }).join('');
   }
 
+  // ATASAN (Head Store): the stores whose Retur/Reject/Mutasi reports this
+  // user approves (migration 0026). A store with no Atasan is approved
+  // automatically.
+  function storeCheckboxesHtml(checkedIds) {
+    checkedIds = checkedIds || [];
+    return STORES.map(function (s) {
+      var checked = checkedIds.indexOf(s.storeId) !== -1 ? 'checked' : '';
+      return '<label style="display:flex;align-items:center;gap:8px;padding:2px 0;">'
+        + '<input type="checkbox" name="storeIds" value="' + s.storeId + '" ' + checked + '>'
+        + '<span>' + esc(s.name) + '</span></label>';
+    }).join('');
+  }
+
   function openModal(html, title) {
     var backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop open';
@@ -113,6 +128,8 @@
       + '<div id="uf-divisions" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;">' + divisionCheckboxesHtml(isEdit ? existing.divisionIds : []) + '</div></div>'
       + '<div style="margin-bottom:12px;"><label style="display:block;margin-bottom:6px;">Pabrik FG &amp; Packing (opsional — kosong = akses semua pabrik sesuai peran)</label>'
       + '<div id="uf-factories">' + factoryCheckboxesHtml(isEdit ? existing.factoryIds : []) + '</div></div>'
+      + '<div style="margin-bottom:12px;"><label style="display:block;margin-bottom:6px;">Toko binaan (khusus peran Atasan / Head Store — laporan Retur, Reject &amp; Mutasi toko ini menunggu persetujuannya)</label>'
+      + '<div id="uf-stores" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px;">' + storeCheckboxesHtml(isEdit ? existing.storeIds : []) + '</div></div>'
       + '<div id="uf-error" style="color:var(--danger);font-size:var(--text-sm);margin-bottom:8px;display:none;"></div>'
       + '<div class="modal-actions">'
       + '<button type="button" class="btn btn-secondary" id="uf-cancel">Batal</button>'
@@ -135,7 +152,11 @@
       var selectedFactoryIds = Array.prototype.map.call(
         modal.root.querySelectorAll('#uf-factories input[type=checkbox]:checked'), function (cb) { return parseInt(cb.value, 10); }
       );
+      var selectedStoreIds = Array.prototype.map.call(
+        modal.root.querySelectorAll('#uf-stores input[type=checkbox]:checked'), function (cb) { return parseInt(cb.value, 10); }
+      );
       if (fullName === '') { errEl.textContent = 'Nama wajib diisi.'; errEl.style.display = 'block'; return; }
+      if (selectedRoles.indexOf('ATASAN') !== -1 && selectedStoreIds.length === 0) { errEl.textContent = 'Atasan wajib punya minimal satu toko binaan.'; errEl.style.display = 'block'; return; }
       if (selectedRoles.length === 0) { errEl.textContent = 'Pilih minimal satu peran.'; errEl.style.display = 'block'; return; }
 
       var saveBtn = modal.root.querySelector('#uf-save');
@@ -146,6 +167,7 @@
           await Amor.apiFetch('/api/users/' + existing.id + '/roles', { method: 'PUT', body: { roles: selectedRoles } });
           await Amor.apiFetch('/api/users/' + existing.id + '/divisions', { method: 'PUT', body: { divisionIds: selectedDivisionIds } });
           await Amor.apiFetch('/api/users/' + existing.id + '/factories', { method: 'PUT', body: { factoryIds: selectedFactoryIds } });
+          await Amor.apiFetch('/api/users/' + existing.id + '/stores', { method: 'PUT', body: { storeIds: selectedStoreIds } });
           Amor.toast('User diperbarui', 'success');
         } else {
           var username = modal.root.querySelector('#uf-username').value.trim();
@@ -161,6 +183,9 @@
           if (newUserId && (selectedDivisionIds.length || selectedFactoryIds.length)) {
             await Amor.apiFetch('/api/users/' + newUserId + '/divisions', { method: 'PUT', body: { divisionIds: selectedDivisionIds } });
             await Amor.apiFetch('/api/users/' + newUserId + '/factories', { method: 'PUT', body: { factoryIds: selectedFactoryIds } });
+          }
+          if (newUserId && selectedStoreIds.length) {
+            await Amor.apiFetch('/api/users/' + newUserId + '/stores', { method: 'PUT', body: { storeIds: selectedStoreIds } });
           }
           Amor.toast('User dibuat', 'success');
         }
@@ -225,6 +250,7 @@
           roles: btn.getAttribute('data-roles') || '',
           divisionIds: (btn.getAttribute('data-division-ids') || '').split(',').filter(Boolean).map(function (s) { return parseInt(s, 10); }),
           factoryIds: (btn.getAttribute('data-factory-ids') || '').split(',').filter(Boolean).map(function (s) { return parseInt(s, 10); }),
+          storeIds: (btn.getAttribute('data-store-ids') || '').split(',').filter(Boolean).map(function (s) { return parseInt(s, 10); }),
         });
       });
     });

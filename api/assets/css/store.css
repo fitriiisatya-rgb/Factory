@@ -175,3 +175,44 @@ input[type="file"]::file-selector-button {
 .store-issue-btn.active { background: rgba(239,68,68,.2); }
 .store-field-reject label { color: #fca5a5; }
 .store-field-reject input { border-color: #ef4444 !important; }
+
+/* --- Retur, Reject & Mutasi (migration 0026): one transaction, three tabs.
+   Colours follow the stores' old form: Retur blue, Reject red, Mutasi green. --- */
+.sr-nav { display: flex; gap: 8px; margin-bottom: var(--space-3); }
+.sr-nav button { flex: 1; padding: 11px 6px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font-weight: 700; font-size: var(--text-sm); }
+.sr-nav button.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+.sr-tabs { display: flex; gap: 6px; margin: var(--space-3) 0 var(--space-2); }
+.sr-tab { flex: 1; padding: 11px 4px; border-radius: var(--radius); border: 1.5px solid var(--border); background: transparent; color: var(--text-muted); font-weight: 800; font-size: var(--text-sm); }
+.sr-tab .sr-count { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 9px; background: var(--surface-2); font-size: 11px; }
+.sr-tab.active.retur { background: var(--primary); border-color: var(--primary); color: #fff; }
+.sr-tab.active.reject { background: var(--danger); border-color: var(--danger); color: #fff; }
+.sr-tab.active.mutasi { background: var(--success); border-color: var(--success); color: #06210f; }
+.sr-tab.active .sr-count { background: rgba(255,255,255,.25); }
+.sr-hint { font-size: var(--text-xs); color: var(--text-muted); margin: 0 2px var(--space-2); line-height: 1.45; }
+.sr-hint.reject { color: #fca5a5; } .sr-hint.retur { color: #a5c4ff; } .sr-hint.mutasi { color: #86efac; }
+.sr-item { border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: var(--radius); padding: var(--space-3); margin-bottom: var(--space-2); background: var(--surface-2); }
+.sr-item.reject { border-left-color: var(--danger); } .sr-item.mutasi { border-left-color: var(--success); }
+.sr-item-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-weight: 800; }
+.sr-item-head button { border: none; background: var(--danger-soft); color: var(--danger); border-radius: var(--radius-sm); padding: 5px 10px; font-size: 12px; font-weight: 700; }
+.sr-info { font-size: var(--text-xs); color: var(--text-muted); margin: -4px 0 8px; }
+.sr-combo { position: relative; }
+.sr-combo-list { display: none; position: absolute; left: 0; right: 0; top: 100%; z-index: 30; max-height: 220px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); box-shadow: 0 8px 22px rgba(0,0,0,.4); }
+.sr-combo-item { padding: 10px 12px; font-size: var(--text-sm); border-bottom: 1px solid var(--border); cursor: pointer; }
+.sr-combo-item small { color: var(--text-muted); }
+.sr-combo-item:active, .sr-combo-item:hover { background: var(--surface-hover); }
+.sr-combo-empty { padding: 10px 12px; font-size: var(--text-sm); color: var(--text-faint); }
+.sr-empty { text-align: center; color: var(--text-muted); font-size: var(--text-sm); padding: 16px 8px; border: 1.5px dashed var(--border); border-radius: var(--radius); margin-bottom: var(--space-2); }
+.sr-add { width: 100%; padding: 11px; border-radius: var(--radius); border: 1.5px dashed var(--primary); background: transparent; color: var(--primary); font-weight: 800; margin-bottom: var(--space-2); }
+.sr-add.reject { border-color: var(--danger); color: var(--danger); } .sr-add.mutasi { border-color: var(--success); color: var(--success); }
+.sr-dest { background: var(--success-soft); border: 1px solid rgba(34,197,94,.35); border-radius: var(--radius); padding: 8px 12px 2px; margin-bottom: var(--space-2); }
+.sr-banner { background: var(--warning-soft); color: var(--warning); border-radius: var(--radius); padding: 10px 12px; font-size: var(--text-sm); display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: var(--space-2); }
+.sr-banner button { border: none; background: var(--warning); color: #241500; border-radius: var(--radius-sm); padding: 6px 10px; font-weight: 700; font-size: 12px; }
+.sr-sum { display: flex; gap: 8px; margin: var(--space-3) 0; }
+.sr-sum div { flex: 1; border-radius: var(--radius); padding: 10px 6px; text-align: center; }
+.sr-sum b { display: block; font-size: 1.25rem; } .sr-sum small { font-size: 11px; }
+.sr-sum .retur { background: var(--primary-soft); color: #a5c4ff; } .sr-sum .reject { background: var(--danger-soft); color: #fca5a5; } .sr-sum .mutasi { background: var(--success-soft); color: #86efac; }
+.sr-trx-row { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: var(--text-sm); }
+.sr-trx-row small { display: block; color: var(--text-muted); font-size: var(--text-xs); margin-top: 2px; }
+.sr-jb { display: inline-block; font-size: 10px; font-weight: 800; padding: 1px 7px; border-radius: 5px; margin-right: 4px; }
+.sr-jb.retur { background: var(--primary-soft); color: #a5c4ff; } .sr-jb.reject { background: var(--danger-soft); color: #fca5a5; } .sr-jb.mutasi { background: var(--success-soft); color: #86efac; }
+.sr-btn-row { display: flex; gap: 8px; margin-top: 10px; } .sr-btn-row > * { flex: 1; margin: 0 !important; }

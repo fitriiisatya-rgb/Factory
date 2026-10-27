@@ -195,6 +195,9 @@ final class ReturService
         if ($row['status'] !== 'waiting_admin_verification') {
             throw new ApiException(409, 'INVALID_RETUR_STATUS', 'Pengajuan ini sudah diproses sebelumnya');
         }
+        if (!ReturRepository::reportApproved($this->pdo, isset($row['store_report_id']) ? (int) $row['store_report_id'] : null)) {
+            throw new ApiException(409, 'WAITING_ATASAN', 'Laporan ini masih menunggu persetujuan Atasan toko');
+        }
 
         if (($row['jenis'] ?? 'retur') !== 'reject_toko') {
             $this->repo->markVerified($this->pdo, $returId, $adminUserId);
@@ -271,6 +274,9 @@ final class ReturService
         }
         if ($row['status'] !== 'waiting_admin_verification') {
             throw new ApiException(409, 'INVALID_RETUR_STATUS', 'Pengajuan ini sudah diproses sebelumnya');
+        }
+        if (!ReturRepository::reportApproved($this->pdo, isset($row['store_report_id']) ? (int) $row['store_report_id'] : null)) {
+            throw new ApiException(409, 'WAITING_ATASAN', 'Laporan ini masih menunggu persetujuan Atasan toko');
         }
         $this->repo->markRejected($this->pdo, $returId, $reason, $adminUserId);
         Audit::write($this->pdo, $requestId, $adminUserId, 'retur.rejected', 'retur_request', (string) $returId, 'ok', 1, 2, ['reason' => $reason]);

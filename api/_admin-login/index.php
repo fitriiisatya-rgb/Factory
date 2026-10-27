@@ -63,7 +63,7 @@ if ((bool) Config::get('SESSION_SECURE') && ($_SERVER['HTTPS'] ?? '') === '' && 
 
 Auth::bootSession();
 
-const ALLOWED_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING'];
+const ALLOWED_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING', 'ATASAN'];
 
 function esc(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 

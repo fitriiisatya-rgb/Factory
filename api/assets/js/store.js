@@ -595,39 +595,16 @@
   }
 
   // ===================================================================
-  // LAPOR BARANG (Reject di Toko + Retur)
+  // Riwayat rows for Reject di Toko / Retur items. The input form itself
+  // lives in store-report.js (Retur, Reject & Mutasi, migration 0026).
   // ===================================================================
-  // Lapor Barang: one menu, two kinds that MUST look different (staff kept
-  // mixing them up):
-  //   REJECT (red, ⚠️)  — rusak/jamur BEFORE expiry. Factory burden:
-  //                       replaced or deducted from the invoice.
-  //   RETUR  (grey, ↩️) — still fine, just unsold. Record only; the
-  //                       invoice stays the same.
-  var KONDISI_OPTIONS = [
-    ['jamur', 'Berjamur'], ['basi', 'Basi / bau / asam'], ['keras', 'Keras / kering'],
-    ['rusak', 'Rusak / penyok / bocor'], ['lainnya', 'Lainnya'],
-  ];
   function fmtRp(n) { return 'Rp' + Math.round(Number(n) || 0).toLocaleString('id-ID'); }
-  function todayLocal() {
-    var d = new Date();
-    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-  }
   function fmtTgl(s) {
     if (!s) return '-';
     var p = String(s).slice(0, 10).split('-');
     var bln = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
     return p.length === 3 ? (parseInt(p[2], 10) + ' ' + bln[parseInt(p[1], 10) - 1] + ' ' + p[0]) : String(s);
   }
-  function productOptionsHtml(selected) {
-    return '<option value="">Pilih produk...</option>' + LOOKUP_PRODUCTS.map(function (p) {
-      return '<option value="' + p.productId + '"' + (String(selected) === String(p.productId) ? ' selected' : '') + '>' + esc(p.name) + '</option>';
-    }).join('');
-  }
-  function productName(id) {
-    for (var i = 0; i < LOOKUP_PRODUCTS.length; i++) if (String(LOOKUP_PRODUCTS[i].productId) === String(id)) return LOOKUP_PRODUCTS[i].name;
-    return '';
-  }
-
   function laporStatusText(r) {
     if (r.jenis === 'reject_toko') {
       if (r.status === 'waiting_admin_verification') return 'Menunggu dicek pabrik';
@@ -649,244 +626,6 @@
       '</div></div>';
   }
 
-  function renderReturList(root) {
-    var state = { mode: 'list', draft: {} };
-    var listHolder = document.createElement('div');
-
-    function go(mode, draft) { state.mode = mode; if (draft) state.draft = draft; draw(); window.scrollTo(0, 0); }
-
-    function draw() {
-      root.innerHTML = '';
-      if (state.mode === 'choose') return drawChooser();
-      if (state.mode === 'reject') return drawRejectForm();
-      if (state.mode === 'retur') return drawReturForm();
-      if (state.mode === 'confirm') return drawConfirm();
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'driver-btn primary';
-      btn.style.marginBottom = '12px';
-      btn.textContent = '+ Lapor Barang Rusak / Tidak Laku';
-      btn.addEventListener('click', function () { go('choose', {}); });
-      root.appendChild(btn);
-      root.appendChild(sectionTitle('Laporan barang'));
-      root.appendChild(listHolder);
-      loadList();
-    }
-
-    function drawChooser() {
-      var w = document.createElement('div');
-      if (LOOKUP_PRODUCTS.length === 0) {
-        root.appendChild(card('<div class="store-field-hint">Belum ada barang yang diterima toko ini, jadi belum ada yang bisa dilaporkan.</div>'));
-        return;
-      }
-      w.innerHTML =
-        '<h3 class="lb-q-title">Barangnya kenapa?</h3><p class="lb-q-sub">Pilih salah satu. Jangan sampai tertukar.</p>' +
-        '<button type="button" class="lb-big rej" data-pick="reject"><span class="lb-big-ic">⚠️</span><span class="lb-big-t">RUSAK / JAMUR</span>' +
-        '<span class="lb-big-d">Barang <b>rusak, jamuran, basi, atau penyok</b> padahal <b>belum lewat tanggal kedaluwarsa</b>.</span>' +
-        '<span class="lb-tag">REJECT · ditanggung pabrik</span><span class="lb-ex">Contoh: roti tawar exp 4 hari, hari ke-2 sudah jamuran.</span></button>' +
-        '<button type="button" class="lb-big ret" data-pick="retur"><span class="lb-big-ic">↩️</span><span class="lb-big-t">TIDAK LAKU</span>' +
-        '<span class="lb-big-d">Barang <b>masih bagus</b>, hanya <b>tidak terjual</b> / sudah lewat masa jual.</span>' +
-        '<span class="lb-tag">RETUR · hanya dicatat</span><span class="lb-ex">Contoh: bollen sisa 3, tidak laku sampai sore.</span></button>' +
-        '<button type="button" class="driver-btn" data-pick="list" style="margin-top:4px;">Batal</button>';
-      w.querySelectorAll('[data-pick]').forEach(function (b) {
-        b.addEventListener('click', function () { go(b.dataset.pick, b.dataset.pick === 'list' ? {} : state.draft); });
-      });
-      root.appendChild(w);
-    }
-
-    function formShell(kind) {
-      var isRej = kind === 'reject';
-      var wrap = document.createElement('div');
-      wrap.className = 'driver-card lb-form ' + (isRej ? 'rej' : 'ret');
-      wrap.innerHTML = isRej
-        ? '<div class="lb-hdr rej"><span class="lb-hdr-ic">⚠️</span><div><b>REJECT — Rusak / Jamur</b><small>Ditanggung pabrik · bisa diganti / dipotong tagihan</small></div></div>'
-        : '<div class="lb-hdr ret"><span class="lb-hdr-ic">↩️</span><div><b>RETUR — Tidak Laku</b><small>Hanya dicatat · TIDAK memotong tagihan</small></div></div>';
-      return wrap;
-    }
-    function errorBox(wrap) {
-      var e = document.createElement('div');
-      e.className = 'store-field-error';
-      e.style.display = 'none';
-      wrap.appendChild(e);
-      return function (msg) { e.textContent = msg || ''; e.style.display = msg ? 'block' : 'none'; };
-    }
-
-    function drawRejectForm() {
-      var d = state.draft;
-      var wrap = formShell('reject');
-      var kondisiOpts = '<option value="">Pilih kondisi...</option>' + KONDISI_OPTIONS.map(function (k) {
-        return '<option value="' + k[0] + '"' + (d.kondisi === k[0] ? ' selected' : '') + '>' + esc(k[1]) + '</option>';
-      }).join('');
-      wrap.insertAdjacentHTML('beforeend',
-        '<div class="store-field"><label>Produk</label><select class="lb-product">' + productOptionsHtml(d.productId) + '</select></div>' +
-        '<div class="store-field"><label>Jumlah rusak (pcs)</label><input type="number" inputmode="decimal" min="0.01" step="0.01" class="lb-qty" value="' + (d.qty || '') + '"></div>' +
-        '<div class="store-field"><label>Kondisi</label><select class="lb-kondisi lb-req">' + kondisiOpts + '</select></div>' +
-        '<div class="store-field"><label>Tanggal kedaluwarsa di kemasan *</label><input type="date" class="lb-exp lb-req" value="' + (d.expDate || '') + '"></div>' +
-        '<div class="lb-expired-warn" hidden>Tanggal expired <b>sudah lewat</b>. Barang yang rusak setelah expired bukan Reject — itu <b>Retur</b>. <button type="button" class="lb-link" data-to-retur>Ganti ke Retur</button></div>' +
-        '<div class="store-field"><label>Catatan (opsional)</label><textarea class="lb-notes" rows="2">' + esc(d.notes || '') + '</textarea></div>');
-      var evidence = buildEvidenceField({ label: 'Foto barang rusak *', hint: 'Wajib. Usahakan jamur/kerusakan dan tanggal exp terlihat.', required: true });
-      evidence.element.classList.add('lb-photo-rej');
-      wrap.appendChild(evidence.element);
-      wrap.insertAdjacentHTML('beforeend', '<div class="lb-note rej">Pabrik akan cek foto. Kalau disetujui: <b>barang diganti</b> atau <b>tagihan dipotong</b>.</div>');
-      var showErr = errorBox(wrap);
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'driver-btn lb-btn-rej';
-      btn.textContent = 'Lanjut — cek ulang';
-      wrap.appendChild(btn);
-      var back = document.createElement('button');
-      back.type = 'button';
-      back.className = 'driver-btn';
-      back.style.marginTop = '8px';
-      back.textContent = 'Kembali';
-      back.addEventListener('click', function () { go('choose'); });
-      wrap.appendChild(back);
-
-      var expInput = wrap.querySelector('.lb-exp');
-      var warn = wrap.querySelector('.lb-expired-warn');
-      function checkExp() { warn.hidden = !(expInput.value && expInput.value < todayLocal()); }
-      expInput.addEventListener('change', checkExp);
-      checkExp();
-      function collect() {
-        return {
-          productId: wrap.querySelector('.lb-product').value,
-          qty: parseFloat(wrap.querySelector('.lb-qty').value),
-          kondisi: wrap.querySelector('.lb-kondisi').value,
-          expDate: expInput.value,
-          notes: wrap.querySelector('.lb-notes').value,
-          files: evidence.getFiles().slice(),
-        };
-      }
-      wrap.querySelector('[data-to-retur]').addEventListener('click', function () {
-        var c = collect();
-        go('retur', { productId: c.productId, qty: c.qty, reason: 'Lewat masa jual' });
-      });
-      btn.addEventListener('click', function () {
-        var c = collect();
-        if (!c.productId || !(c.qty > 0)) return showErr('Pilih produk dan isi jumlah.');
-        if (!c.kondisi) return showErr('Pilih kondisi barang.');
-        if (!c.expDate) return showErr('Isi tanggal kedaluwarsa yang tertulis di kemasan.');
-        if (c.expDate < todayLocal()) return showErr('Tanggal expired sudah lewat — laporkan sebagai Retur.');
-        if (c.files.length === 0) return showErr('Foto barang rusak wajib diunggah.');
-        showErr('');
-        go('confirm', c);
-      });
-      root.appendChild(wrap);
-    }
-
-    function drawConfirm() {
-      var d = state.draft;
-      var kondisiLabel = (KONDISI_OPTIONS.filter(function (k) { return k[0] === d.kondisi; })[0] || ['', d.kondisi])[1];
-      var w = document.createElement('div');
-      w.innerHTML =
-        '<div class="lb-sum">' +
-        '<div style="font-size:30px;">⚠️</div><div class="lb-sum-t">Yakin ini REJECT?</div>' +
-        '<div class="lb-sum-row"><span>Produk</span><b>' + esc(productName(d.productId)) + '</b></div>' +
-        '<div class="lb-sum-row"><span>Jumlah</span><b>' + fmtNum(d.qty) + ' pcs</b></div>' +
-        '<div class="lb-sum-row"><span>Kondisi</span><b>' + esc(kondisiLabel) + '</b></div>' +
-        '<div class="lb-sum-row"><span>Exp kemasan</span><b>' + esc(fmtTgl(d.expDate)) + '</b></div>' +
-        '<div class="lb-sum-row"><span>Foto</span><b>' + d.files.length + '</b></div>' +
-        '<p class="lb-sum-p">REJECT artinya barang <b>rusak sebelum kedaluwarsa</b>. Kalau barang <b>masih bagus tapi tidak laku</b>, pilih <b>RETUR</b>.</p>' +
-        '</div>';
-      var showErr = errorBox(w);
-      var yes = document.createElement('button');
-      yes.type = 'button';
-      yes.className = 'driver-btn lb-btn-rej';
-      yes.textContent = 'Ya, ini Reject (rusak)';
-      var no = document.createElement('button');
-      no.type = 'button';
-      no.className = 'driver-btn lb-btn-ret';
-      no.style.marginTop = '10px';
-      no.textContent = 'Bukan, ganti ke Retur';
-      w.appendChild(yes);
-      w.appendChild(no);
-      no.addEventListener('click', function () { go('retur', { productId: d.productId, qty: d.qty }); });
-      yes.addEventListener('click', function () {
-        yes.disabled = true;
-        yes.textContent = 'Mengirim...';
-        var form = new FormData();
-        form.append('retur', JSON.stringify({ jenis: 'reject_toko', productId: parseInt(d.productId, 10), qty: d.qty, kondisi: d.kondisi, expDate: d.expDate, returDate: todayLocal(), notes: d.notes || null }));
-        appendToForm(form, 'evidence[]', d.files);
-        postForm(apiPath('/retur'), form).then(function () {
-          if (window.Amor) Amor.toast('Laporan Reject terkirim. Pabrik akan mengecek.', 'success');
-          go('list', {});
-        }).catch(function (err) {
-          showErr(err.message);
-          yes.disabled = false;
-          yes.textContent = 'Ya, ini Reject (rusak)';
-        });
-      });
-      root.appendChild(w);
-    }
-
-    function drawReturForm() {
-      var d = state.draft;
-      var wrap = formShell('retur');
-      var reasons = ['Tidak laku', 'Lewat masa jual', 'Lainnya'];
-      wrap.insertAdjacentHTML('beforeend',
-        '<div class="store-field"><label>Produk</label><select class="lb-product">' + productOptionsHtml(d.productId) + '</select></div>' +
-        '<div class="store-field"><label>Jumlah (pcs)</label><input type="number" inputmode="decimal" min="0.01" step="0.01" class="lb-qty" value="' + (d.qty || '') + '"></div>' +
-        '<div class="store-field"><label>Alasan</label><select class="lb-reason">' + reasons.map(function (r) {
-          return '<option' + (d.reason === r ? ' selected' : '') + '>' + r + '</option>';
-        }).join('') + '</select></div>' +
-        '<div class="store-field"><label>Catatan (opsional)</label><textarea class="lb-notes" rows="2"></textarea></div>');
-      var evidence = buildEvidenceField({ label: 'Foto', hint: 'Wajib diunggah, minimal 1 foto.', required: true });
-      wrap.appendChild(evidence.element);
-      wrap.insertAdjacentHTML('beforeend', '<div class="lb-note ret">Retur bukan tanggungan pabrik. Tagihan <b>tetap</b>.<br>Barang rusak/jamur sebelum expired? <button type="button" class="lb-link" data-to-reject>Pakai REJECT</button></div>');
-      var showErr = errorBox(wrap);
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'driver-btn lb-btn-ret';
-      btn.textContent = 'Kirim Catatan Retur';
-      wrap.appendChild(btn);
-      var back = document.createElement('button');
-      back.type = 'button';
-      back.className = 'driver-btn';
-      back.style.marginTop = '8px';
-      back.textContent = 'Kembali';
-      back.addEventListener('click', function () { go('choose'); });
-      wrap.appendChild(back);
-      wrap.querySelector('[data-to-reject]').addEventListener('click', function () {
-        go('reject', { productId: wrap.querySelector('.lb-product').value, qty: parseFloat(wrap.querySelector('.lb-qty').value) || '' });
-      });
-      btn.addEventListener('click', function () {
-        var productId = parseInt(wrap.querySelector('.lb-product').value, 10);
-        var qty = parseFloat(wrap.querySelector('.lb-qty').value);
-        if (!productId || !(qty > 0)) return showErr('Pilih produk dan isi jumlah.');
-        if (evidence.getFiles().length === 0) return showErr('Foto wajib diunggah.');
-        showErr('');
-        btn.disabled = true;
-        btn.textContent = 'Mengirim...';
-        var form = new FormData();
-        form.append('retur', JSON.stringify({ jenis: 'retur', productId: productId, qty: qty, reason: wrap.querySelector('.lb-reason').value, returDate: todayLocal(), notes: wrap.querySelector('.lb-notes').value || null }));
-        appendToForm(form, 'evidence[]', evidence.getFiles());
-        postForm(apiPath('/retur'), form).then(function () {
-          if (window.Amor) Amor.toast('Catatan Retur terkirim.', 'success');
-          go('list', {});
-        }).catch(function (err) {
-          showErr(err.message);
-          btn.disabled = false;
-          btn.textContent = 'Kirim Catatan Retur';
-        });
-      });
-      root.appendChild(wrap);
-    }
-
-    function loadList() {
-      listHolder.innerHTML = '<div class="driver-empty">Memuat...</div>';
-      getJson(apiPath('/retur')).then(function (rows) {
-        listHolder.innerHTML = '';
-        if (!rows.length) { listHolder.appendChild(emptyState('Belum ada laporan.')); return; }
-        rows.forEach(function (r) {
-          var el = document.createElement('div');
-          el.innerHTML = laporItemHtml(r);
-          listHolder.appendChild(el.firstChild);
-        });
-      }).catch(function (err) { listHolder.innerHTML = ''; listHolder.appendChild(emptyState(err.message)); });
-    }
-    draw();
-  }
-
   // ===================================================================
   // MUTASI PRODUK
   // ===================================================================
@@ -899,75 +638,6 @@
   function mutasiBadge(status) {
     var m = MUTASI_STATUS_MAP[status] || ['', status];
     return '<span class="driver-badge ' + m[0] + '">' + esc(m[1]) + '</span>';
-  }
-
-  function buildMutasiForm(onSuccess) {
-    var wrap = document.createElement('div');
-    wrap.className = 'driver-card';
-    if (LOOKUP_PRODUCTS.length === 0) {
-      wrap.innerHTML = '<div class="driver-card-title" style="margin-bottom:6px;">Ajukan Mutasi</div>' +
-        '<div class="store-field-hint">Belum ada barang yang diterima toko ini, jadi belum ada yang bisa diajukan.</div>';
-      return wrap;
-    }
-    var productOptions = '<option value="">Pilih produk...</option>' + LOOKUP_PRODUCTS.map(function (p) {
-      return '<option value="' + p.productId + '">' + esc(p.name) + '</option>';
-    }).join('');
-    var storeOptions = '<option value="">Pilih toko tujuan...</option>' + LOOKUP_STORES.map(function (s) {
-      return '<option value="' + s.storeId + '">' + esc(s.name) + '</option>';
-    }).join('');
-    wrap.innerHTML =
-      '<div class="driver-card-title" style="margin-bottom:10px;">Ajukan Mutasi</div>' +
-      '<div class="store-field"><label>Toko Tujuan</label><select class="mt-dest-store">' + storeOptions + '</select></div>' +
-      '<div class="store-field"><label>Produk</label><select class="mt-product">' + productOptions + '</select></div>' +
-      '<div class="store-field"><label>Jumlah</label><input type="number" min="0.01" step="0.01" class="mt-qty"></div>' +
-      '<div class="store-field"><label>Catatan (opsional)</label><textarea class="mt-notes" rows="2"></textarea></div>';
-    var evidence = buildEvidenceField({ label: 'Foto Bukti', hint: 'Wajib diunggah, minimal 1 foto.', required: true });
-    wrap.appendChild(evidence.element);
-
-    var errBox = document.createElement('div');
-    errBox.className = 'store-field-error';
-    errBox.style.display = 'none';
-    wrap.appendChild(errBox);
-
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'driver-btn primary';
-    btn.textContent = 'Kirim Mutasi';
-    wrap.appendChild(btn);
-
-    btn.addEventListener('click', function () {
-      var destinationStoreId = parseInt(wrap.querySelector('.mt-dest-store').value, 10);
-      var productId = parseInt(wrap.querySelector('.mt-product').value, 10);
-      var qty = parseFloat(wrap.querySelector('.mt-qty').value);
-      if (!destinationStoreId || !productId || !qty || qty <= 0) {
-        errBox.textContent = 'Pilih toko tujuan, produk, dan isi jumlah.';
-        errBox.style.display = 'block';
-        return;
-      }
-      if (evidence.getFiles().length === 0) {
-        errBox.textContent = 'Foto bukti wajib diunggah saat mengajukan Mutasi.';
-        errBox.style.display = 'block';
-        return;
-      }
-      errBox.style.display = 'none';
-      btn.disabled = true;
-      btn.textContent = 'Mengirim...';
-      var payload = { destinationStoreId: destinationStoreId, productId: productId, qty: qty, notes: wrap.querySelector('.mt-notes').value || null };
-      var form = new FormData();
-      form.append('mutasi', JSON.stringify(payload));
-      appendToForm(form, 'evidence[]', evidence.getFiles());
-      postForm(apiPath('/mutasi'), form).then(function () {
-        if (window.Amor) Amor.toast('Pengajuan Mutasi terkirim.', 'success');
-        onSuccess();
-      }).catch(function (err) {
-        errBox.textContent = err.message;
-        errBox.style.display = 'block';
-        btn.disabled = false;
-        btn.textContent = 'Kirim Mutasi';
-      });
-    });
-
-    return wrap;
   }
 
   function buildMutasiConfirmInline(row, onSuccess) {
@@ -1017,25 +687,14 @@
   }
 
   function renderMutasiTab(root) {
-    var mode = 'incoming'; // incoming | create
     var listHolder = document.createElement('div');
 
     function draw() {
       root.innerHTML = '';
-      var subtabs = document.createElement('div');
-      subtabs.className = 'store-subtabs';
-      subtabs.innerHTML =
-        '<div class="store-subtab' + (mode === 'incoming' ? ' active' : '') + '" data-mode="incoming">Perlu Konfirmasi</div>' +
-        '<div class="store-subtab' + (mode === 'create' ? ' active' : '') + '" data-mode="create">Ajukan Mutasi</div>';
-      subtabs.querySelectorAll('.store-subtab').forEach(function (el) {
-        el.addEventListener('click', function () { mode = el.dataset.mode; draw(); if (mode === 'incoming') loadIncoming(); });
-      });
-      root.appendChild(subtabs);
-
-      if (mode === 'create') {
-        root.appendChild(buildMutasiForm(function () { mode = 'incoming'; draw(); loadIncoming(); }));
-        return;
-      }
+      var note = card('<div class="driver-card-title">Mutasi masuk dari toko lain</div>' +
+        '<div class="sr-hint" style="margin-top:4px">Konfirmasi jumlah yang benar-benar Anda terima. Untuk MENGIRIM mutasi ke toko lain, pakai menu ' +
+        '<a href="' + tabUrl('retur') + '">Retur &amp; Reject → tab Mutasi</a>.</div>');
+      root.appendChild(note);
       root.appendChild(listHolder);
       loadIncoming();
     }
@@ -1088,7 +747,7 @@
         return '<div class="driver-card-head"><div><div class="driver-card-title">' + esc(r.orderNo) + '</div>' +
           '<div class="driver-card-sub">Dibutuhkan: ' + esc(r.requiredDate || '-') + '</div></div>' + specialBadge(r.status) + '</div>';
       } },
-      { title: 'Lapor Barang (Reject & Retur)', path: '/retur', raw: true, render: laporItemHtml },
+      { title: 'Retur & Reject (per item)', path: '/retur', raw: true, render: laporItemHtml },
       { title: 'Mutasi Keluar', path: '/mutasi/outgoing', render: function (r) {
         return '<div class="driver-card-head"><div><div class="driver-card-title">' + esc(r.docNo) + '</div>' +
           '<div class="driver-card-sub">Ke: ' + esc(r.destinationStoreName || '-') + ' &middot; ' + esc(r.productName) + '</div></div>' + mutasiBadge(r.status) + '</div>';
@@ -1114,6 +773,12 @@
     });
   }
 
+  // Helpers shared with store-report.js (Retur, Reject & Mutasi form).
+  window.StoreKit = {
+    esc: esc, fmtNum: fmtNum, apiPath: apiPath, getJson: getJson, postForm: postForm, card: card,
+    emptyState: emptyState, buildEvidenceField: buildEvidenceField, appendToForm: appendToForm,
+  };
+
   // -----------------------------------------------------------------
   function render() {
     var root = document.getElementById('store-app');
@@ -1125,7 +790,7 @@
       if (window.STORE_FOCUS_ORDER_ID) renderKhususDetail(root, window.STORE_FOCUS_ORDER_ID);
       else renderKhususList(root);
     } else if (TAB === 'retur') {
-      renderReturList(root);
+      if (window.StoreReport) window.StoreReport.render(root);
     } else if (TAB === 'mutasi') {
       renderMutasiTab(root);
     } else if (TAB === 'riwayat') {

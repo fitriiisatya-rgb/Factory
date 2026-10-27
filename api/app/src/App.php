@@ -30,6 +30,7 @@ use Amor\Api\Controllers\StoreController;
 use Amor\Api\Controllers\IntegrationController;
 use Amor\Api\Controllers\StorePortalAdminController;
 use Amor\Api\Controllers\StorePortalController;
+use Amor\Api\Controllers\StoreReportController;
 use Amor\Api\Controllers\UserController;
 
 /**
@@ -239,6 +240,10 @@ final class App
         $router->post('/api/store/{token}/special-orders', [StorePortalController::class, 'specialOrderCreate']);
         $router->get('/api/store/{token}/special-orders/{orderId}', [StorePortalController::class, 'specialOrderDetail']);
         $router->get('/api/store/{token}/special-orders/{orderId}/attachments/{attachmentId}', [StorePortalController::class, 'specialOrderAttachment']);
+        $router->get('/api/store/{token}/reports', [StoreReportController::class, 'portalList']);
+        $router->post('/api/store/{token}/reports', [StoreReportController::class, 'portalCreate']);
+        $router->get('/api/store/{token}/reports/{id}', [StoreReportController::class, 'portalShow']);
+        $router->post('/api/store/{token}/reports/{id}', [StoreReportController::class, 'portalUpdate']);
         $router->get('/api/store/{token}/retur', [StorePortalController::class, 'returList']);
         $router->post('/api/store/{token}/retur', [StorePortalController::class, 'returCreate']);
         $router->get('/api/store/{token}/retur/{returId}', [StorePortalController::class, 'returDetail']);
@@ -271,6 +276,18 @@ final class App
         $router->post('/api/admin/runchise/stores/{id}', [RunchiseController::class, 'setStore']);
         $router->get('/api/admin/runchise/shipments/{shipmentId}', [RunchiseController::class, 'adminPreview']);
         $router->get('/api/admin/runchise/shipments/{shipmentId}/download', [RunchiseController::class, 'adminDownload']);
+        $router->get('/api/store-reports/pending', [StoreReportController::class, 'pending']);
+        $router->post('/api/store-reports/approve', [StoreReportController::class, 'approve']);
+        $router->get('/api/store-reports/validasi', [StoreReportController::class, 'validasiList']);
+        $router->post('/api/store-reports/validasi', [StoreReportController::class, 'validasi']);
+        $router->get('/api/store-reports/dashboard', [StoreReportController::class, 'dashboard']);
+        $router->get('/api/store-reports/export', [StoreReportController::class, 'export']);
+        $router->get('/api/store-reports/items/{type}/{id}/evidence', [StoreReportController::class, 'itemEvidence']);
+        $router->get('/api/store-reports/evidence/{type}/{id}', [StoreReportController::class, 'evidence']);
+        $router->get('/api/store-reports/{id}', [StoreReportController::class, 'show']);
+        $router->get('/api/reject-reasons', [StoreReportController::class, 'reasons']);
+        $router->post('/api/reject-reasons', [StoreReportController::class, 'reasonSave']);
+        $router->put('/api/reject-reasons/{id}', [StoreReportController::class, 'reasonSave']);
         $router->get('/api/admin/retur', [StorePortalAdminController::class, 'returList']);
         $router->get('/api/admin/retur/evidence/{id}', [StorePortalAdminController::class, 'returEvidence']);
         $router->get('/api/admin/retur/{id}', [StorePortalAdminController::class, 'returShow']);
@@ -290,6 +307,7 @@ final class App
         $router->put('/api/users/{id}/roles', [UserController::class, 'updateRoles']);
         $router->put('/api/users/{id}/divisions', [UserController::class, 'updateDivisionAccess']);
         $router->put('/api/users/{id}/factories', [UserController::class, 'updateFactoryAccess']);
+        $router->put('/api/users/{id}/stores', [UserController::class, 'updateStoreAccess']);
         $router->post('/api/users/{id}/reset-password', [UserController::class, 'resetPassword']);
         $router->post('/api/users/{id}/activate', [UserController::class, 'activate']);
         $router->post('/api/users/{id}/deactivate', [UserController::class, 'deactivate']);

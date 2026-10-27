@@ -753,6 +753,139 @@ runTest('RJT-18 Serah terima sebagian: produksi tanpa PO, FG langsung dapat yang
     expect($page['status'] === 200 && !preg_match('/SQLSTATE|Fatal error|Uncaught/', $page['body']), 'FG page must render with handovers');
 });
 
+runTest('RJT-19 Retur/Reject/Mutasi in one transaction: Atasan approval gate, edit while waiting, Admin validasi, dashboard scope, CSV export, A4/thermal print', function () use ($adminHttp, $adminCsrf, $pdo, $storeA, $storeB, $tokenA, $tokenB) {
+    $today = (new DateTimeImmutable('now', new DateTimeZone('Asia/Jakarta')))->format('Y-m-d');
+    $p1 = nextProduct();
+    $p2 = nextProduct();
+    $p3 = nextProduct();
+    $reason = $pdo->query('SELECT name FROM reject_reason WHERE active = 1 ORDER BY sort_order LIMIT 1')->fetchColumn();
+    expect($reason === 'Exp H-1 Berjamur', 'master reasons seeded by migration 0026, got ' . var_export($reason, true));
+    $send = function (string $token, array $report, array $photos, ?int $id = null): array {
+        $anon = new HttpInv($GLOBALS['baseUrl']);
+        $files = [];
+        foreach ($photos as $i) {
+            $files["evidence_{$i}[]"] = fakeEvidenceImage();
+        }
+        return $anon->requestMultipart('POST', "/api/store/{$token}/reports" . ($id ? "/{$id}" : ''), ['report' => json_encode($report)], $files, idemKey('srep'));
+    };
+    $items = [
+        ['jenis' => 'retur', 'productId' => (int) $p1['product_id'], 'qty' => 3],
+        ['jenis' => 'reject', 'productId' => (int) $p2['product_id'], 'qty' => 2, 'alasan' => $reason, 'expDate' => $today],
+        ['jenis' => 'mutasi', 'productId' => (int) $p3['product_id'], 'qty' => 4],
+    ];
+
+    // Validation: reject needs a photo, a reason, and must not be past expiry; mutasi needs a real other store.
+    $r = $send($tokenA, ['tanggal' => $today, 'destinationStoreId' => $storeB, 'items' => $items], []);
+    expect($r['status'] === 400 && $r['json']['code'] === 'EVIDENCE_REQUIRED', 'reject without photo refused: ' . $r['body']);
+    $bad = $items;
+    $bad[1]['expDate'] = '2020-01-01';
+    $r = $send($tokenA, ['tanggal' => $today, 'destinationStoreId' => $storeB, 'items' => $bad], [1]);
+    expect($r['status'] === 400 && $r['json']['code'] === 'ALREADY_EXPIRED', 'expired goods are a Retur: ' . $r['body']);
+    $r = $send($tokenA, ['tanggal' => $today, 'destinationStoreId' => $storeA, 'items' => $items], [1]);
+    expect($r['status'] === 400 && $r['json']['code'] === 'SAME_STORE', 'mutasi to own store refused: ' . $r['body']);
+
+    // Store A has no Atasan yet -> approved automatically, items reach Admin and store B at once.
+    $r = $send($tokenA, ['tanggal' => $today, 'destinationStoreId' => $storeB, 'items' => $items], [1]);
+    expect($r['status'] === 200, 'create transaction: ' . $r['body']);
+    $t1 = $r['json']['data'];
+    expect($t1['status'] === 'disetujui' && $t1['approvalMode'] === 'otomatis' && count($t1['items']) === 3, 'auto-approved with 3 items: ' . json_encode($t1));
+    expect(abs($t1['total'] - (3 * (float) $p1['harga'] + 2 * (float) $p2['harga'] + 4 * (float) $p3['harga'])) < 0.01, 'total = sum qty x harga');
+    $incomingB = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/store/{$tokenB}/mutasi/incoming")['json']['data'];
+    expect(count(array_filter($incomingB, static fn ($m) => $m['productName'] === $p3['name'])) === 1, 'store B sees the approved mutasi');
+
+    // Atasan for store A.
+    $u = 'atasan_' . substr(uniqid(), -6);
+    $cu = $adminHttp->request('POST', '/api/users', ['username' => $u, 'fullName' => 'Bu Atasan', 'password' => 'Atasan#2026x', 'passwordConfirm' => 'Atasan#2026x', 'roles' => ['ATASAN']], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('u')));
+    expect(in_array($cu['status'], [200, 201], true), 'create atasan: ' . $cu['body']);
+    $atasanId = (int) $cu['json']['data']['userId'];
+    $ps = $adminHttp->request('PUT', "/api/users/{$atasanId}/stores", ['storeIds' => [$storeA]], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('us')));
+    expect($ps['status'] === 200 && $ps['json']['data']['storeIds'] === [$storeA], 'assign store: ' . $ps['body']);
+    $at = new HttpInv($GLOBALS['baseUrl']);
+    $atCsrf = login($at, $u, 'Atasan#2026x');
+
+    // Now a transaction waits for the Atasan and is invisible downstream.
+    $r = $send($tokenA, ['tanggal' => $today, 'destinationStoreId' => $storeB, 'items' => $items], [1]);
+    expect($r['status'] === 200 && $r['json']['data']['status'] === 'menunggu_atasan', 'waits for atasan: ' . $r['body']);
+    $t2 = $r['json']['data'];
+    $rej2 = array_values(array_filter($t2['items'], static fn ($i) => $i['jenis'] === 'reject'))[0];
+    $val = $adminHttp->request('GET', '/api/store-reports/validasi?onlyWaiting=1')['json']['data']['items'];
+    expect(array_filter($val, static fn ($i) => $i['reportId'] === $t2['reportId']) === [], 'Admin must not see a transaction still waiting for the Atasan');
+    $early = adminPost($adminHttp, $adminCsrf, "/api/admin/retur/{$rej2['itemId']}/verify", ['tindakLanjut' => 'potong']);
+    expect($early['status'] === 409 && $early['json']['code'] === 'WAITING_ATASAN', 'no decision before approval: ' . $early['body']);
+    $incomingB2 = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/store/{$tokenB}/mutasi/incoming")['json']['data'];
+    expect(count($incomingB2) === count($incomingB), 'store B must not see a mutasi before the Atasan approves');
+
+    // Edit while waiting: change qty, drop the retur, keep the reject photo.
+    $edit = [
+        ['jenis' => 'reject', 'productId' => (int) $p2['product_id'], 'qty' => 5, 'alasan' => 'Tulisan bebas', 'itemType' => 'retur', 'itemId' => $rej2['itemId']],
+        ['jenis' => 'mutasi', 'productId' => (int) $p3['product_id'], 'qty' => 1],
+    ];
+    $r = $send($tokenA, ['tanggal' => $today, 'destinationStoreId' => $storeB, 'items' => $edit], [], $t2['reportId']);
+    expect($r['status'] === 200 && count($r['json']['data']['items']) === 2, 'edit: ' . $r['body']);
+    $kept = array_values(array_filter($r['json']['data']['items'], static fn ($i) => $i['jenis'] === 'reject'))[0];
+    expect($kept['itemId'] === $rej2['itemId'] && (float) $kept['qty'] === 5.0 && $kept['alasan'] === 'Tulisan bebas' && $kept['evidenceCount'] === 1, 'reject item updated in place, photo kept: ' . json_encode($kept));
+    expect((int) $pdo->query("SELECT COUNT(*) FROM retur_request WHERE store_report_id = {$t2['reportId']}")->fetchColumn() === 1, 'removed retur row deleted');
+    $other = $send($tokenB, ['tanggal' => $today, 'items' => $edit], [], $t2['reportId']);
+    expect($other['status'] === 404, 'another store cannot edit it');
+
+    // Atasan approves (only own stores).
+    $pend = $at->request('GET', '/api/store-reports/pending')['json']['data'];
+    expect(count($pend) === 1 && $pend[0]['reportId'] === $t2['reportId'], 'atasan sees the waiting transaction');
+    expect($adminHttp->request('GET', '/api/store-reports/pending')['status'] === 403, 'admin is not an atasan');
+    $ap = $at->request('POST', '/api/store-reports/approve', ['reportIds' => [$t2['reportId']]], array_merge(['X-CSRF-Token' => $atCsrf], idemKey('ap')));
+    expect($ap['status'] === 200 && $ap['json']['data']['updated'] === 1, 'approve: ' . $ap['body']);
+    $late = $send($tokenA, ['tanggal' => $today, 'destinationStoreId' => $storeB, 'items' => $edit], [], $t2['reportId']);
+    expect($late['status'] === 409 && $late['json']['code'] === 'ALREADY_APPROVED', 'no edit after approval: ' . $late['body']);
+
+    // Admin validasi: Sesuai -> potong issues the nota; Tidak Sesuai needs a note.
+    $val = $adminHttp->request('GET', '/api/store-reports/validasi?onlyWaiting=1&storeId=' . $storeA)['json']['data'];
+    $mine = array_values(array_filter($val['items'], static fn ($i) => $i['reportId'] === $t2['reportId']));
+    expect(count($mine) === 2, 'both approved items wait for validasi: ' . json_encode($mine));
+    $v = adminPost($adminHttp, $adminCsrf, '/api/store-reports/validasi', ['type' => 'retur', 'id' => $kept['itemId'], 'status' => 'sesuai', 'tindakLanjut' => 'potong']);
+    expect($v['status'] === 200, 'validasi reject: ' . $v['body']);
+    expect(notaFor($pdo, $kept['itemId']) !== null, 'a Sesuai reject issues a Nota Potongan');
+    $mut = array_values(array_filter($mine, static fn ($i) => $i['jenis'] === 'mutasi'))[0];
+    $nv = adminPost($adminHttp, $adminCsrf, '/api/store-reports/validasi', ['type' => 'mutasi', 'id' => $mut['itemId'], 'status' => 'tidak_sesuai', 'note' => '']);
+    expect($nv['status'] === 400 && $nv['json']['code'] === 'NOTE_REQUIRED', 'tidak sesuai needs a note');
+    $nv = adminPost($adminHttp, $adminCsrf, '/api/store-reports/validasi', ['type' => 'mutasi', 'id' => $mut['itemId'], 'status' => 'tidak_sesuai', 'note' => 'fisik hanya 0']);
+    expect($nv['status'] === 200, 'mutasi validasi: ' . $nv['body']);
+    $ret1 = array_values(array_filter($t1['items'], static fn ($i) => $i['jenis'] === 'retur'))[0];
+    $rv = adminPost($adminHttp, $adminCsrf, '/api/store-reports/validasi', ['type' => 'retur', 'id' => $ret1['itemId'], 'status' => 'tidak_sesuai', 'note' => 'barang tidak ada']);
+    expect($rv['status'] === 200, 'retur tidak sesuai: ' . $rv['body']);
+    expect($pdo->query("SELECT status FROM retur_request WHERE retur_request_id = {$ret1['itemId']}")->fetchColumn() === 'rejected', 'retur tidak sesuai = rejected record');
+
+    // Store history: search + per-kind totals + item status.
+    $hist = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/store/{$tokenA}/reports?from={$today}&to={$today}&q=" . rawurlencode(mb_substr($p2['name'], 0, 6)))['json']['data'];
+    expect(count($hist['list']) >= 2 && (float) $hist['ringkasan']['reject'] >= 7.0, 'history filter + totals: ' . json_encode($hist['ringkasan']));
+
+    // Dashboard: Admin sees all, Atasan only store A.
+    $dA = $adminHttp->request('GET', "/api/store-reports/dashboard?from={$today}&to={$today}")['json']['data'];
+    expect($dA['totalReject'] >= 7.0 && $dA['totalRetur'] >= 3.0 && $dA['topReject'] !== [], 'admin dashboard: ' . json_encode($dA));
+    $dB = $at->request('GET', "/api/store-reports/dashboard?from={$today}&to={$today}&storeId={$storeB}")['json']['data'];
+    expect((float) $dB['totalReject'] === 0.0 && (float) $dB['totalRetur'] === 0.0, 'atasan cannot read other stores');
+    $csv = $adminHttp->request('GET', "/api/store-reports/export?from={$today}&to={$today}&storeId={$storeA}");
+    expect($csv['status'] === 200 && str_contains($csv['body'], 'ID Transaksi') && str_contains($csv['body'], $t2['docNo']) && str_contains($csv['body'], 'Tidak Sesuai'), 'CSV export with the sheet columns');
+
+    // Print: A4 and thermal, own store only; admin + atasan print page.
+    $pa = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/_store/print.php?token={$tokenA}&id={$t1['reportId']}&format=a4");
+    expect($pa['status'] === 200 && str_contains($pa['body'], 'BUKTI RETUR / REJECT PRODUK') && str_contains($pa['body'], 'BUKTI MUTASI PRODUK') && str_contains($pa['body'], 'Pabrik Tujuan') && str_contains($pa['body'], 'Toko Tujuan') && str_contains($pa['body'], 'Tanda tangan penyerah'), 'A4 proof split per destination');
+    $pt = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/_store/print.php?token={$tokenA}&id={$t1['reportId']}&format=thermal");
+    expect($pt['status'] === 200 && str_contains($pt['body'], '80mm') && str_contains($pt['body'], 'TTD Penerima') && str_contains($pt['body'], 'window.print()'), 'thermal 80 mm proof prints by itself');
+    $pb = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/_store/print.php?token={$tokenB}&id={$t1['reportId']}&format=a4");
+    expect(!str_contains($pb['body'], $t1['docNo']), 'another store cannot print it');
+    $pp = $at->request('GET', "/api/_ui-preview/print-store-report.php?id={$t2['reportId']}&format=a4");
+    expect($pp['status'] === 200 && str_contains($pp['body'], 'Disetujui oleh Atasan: Bu Atasan'), 'atasan print shows the approval');
+    foreach (['validasi-toko', 'dashboard-retur', 'alasan-reject'] as $pg) {
+        $h = $adminHttp->request('GET', "/api/_ui-preview/?page={$pg}");
+        expect($h['status'] === 200 && !preg_match('/SQLSTATE|Fatal error|Uncaught|Warning:/', $h['body']), "page {$pg} renders");
+    }
+    $h = $at->request('GET', '/api/_ui-preview/?page=approval-toko');
+    expect($h['status'] === 200 && !preg_match('/SQLSTATE|Fatal error|Uncaught|Warning:/', $h['body']), 'approval page renders');
+    expect($at->request('GET', '/api/_ui-preview/?page=invoice')['status'] === 403, 'atasan cannot open invoices');
+    $portal = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/_store/index.php?token={$tokenA}&tab=retur");
+    expect(str_contains($portal['body'], 'STORE_REPORT_REASONS') && str_contains($portal['body'], 'Exp H-1 Berjamur') && str_contains($portal['body'], 'store-report.js'), 'portal form loads reasons + script');
+});
+
 $failed = array_filter($results, static fn ($ok) => !$ok);
 fwrite(STDOUT, "\n" . count($results) . ' tests, ' . count($failed) . " failed.\n");
 exit(count($failed) === 0 ? 0 : 1);

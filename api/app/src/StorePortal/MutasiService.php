@@ -130,6 +130,9 @@ final class MutasiService
         if ($row['status'] !== 'waiting_destination_confirmation') {
             throw new ApiException(409, 'INVALID_MUTASI_STATUS', 'Mutasi ini sudah dikonfirmasi atau diproses sebelumnya');
         }
+        if (!ReturRepository::reportApproved($this->pdo, isset($row['store_report_id']) ? (int) $row['store_report_id'] : null)) {
+            throw new ApiException(404, 'NOT_FOUND', 'Mutasi masuk tidak ditemukan untuk toko ini');
+        }
 
         $qtyReceived = isset($input['qtyReceived']) ? (float) $input['qtyReceived'] : -1.0;
         if ($qtyReceived < 0) {

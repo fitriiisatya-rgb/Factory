@@ -46,7 +46,9 @@ final class UserRepository
         $rolesByUser = $this->rolesForUsers($pdo, $userIds);
         $divisionsByUser = $this->divisionsForUsers($pdo, $userIds);
         $factoriesByUser = $this->factoriesForUsers($pdo, $userIds);
+        $storesByUser = $this->storesForUsers($pdo, $userIds);
         foreach ($rows as &$r) {
+            $r['store_ids'] = $storesByUser[(int) $r['user_id']] ?? [];
             $r['roles'] = $rolesByUser[(int) $r['user_id']] ?? [];
             $r['division_ids'] = $divisionsByUser[(int) $r['user_id']] ?? [];
             $r['factory_ids'] = $factoriesByUser[(int) $r['user_id']] ?? [];
@@ -65,6 +67,7 @@ final class UserRepository
         $row['roles'] = $this->rolesForUser($pdo, $userId);
         $row['division_ids'] = $this->divisionsForUser($pdo, $userId);
         $row['factory_ids'] = $this->factoriesForUser($pdo, $userId);
+        $row['store_ids'] = $this->storesForUsers($pdo, [$userId])[$userId] ?? [];
         return $row;
     }
 
@@ -317,6 +320,55 @@ final class UserRepository
         foreach ($factoryIds as $factoryId) {
             $stmt->execute([$userId, $factoryId]);
         }
+    }
+
+    /**
+     * ATASAN (Head Store) store scoping, migration 0026: the stores whose
+     * reports this user approves and sees on the Retur/Reject dashboard.
+     * @param int[] $userIds @return array<int,int[]> user_id => store_ids
+     */
+    public function storesForUsers(PDO $pdo, array $userIds): array
+    {
+        if ($userIds === []) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($userIds), '?'));
+        $stmt = $pdo->prepare("SELECT user_id, store_id FROM user_store_access WHERE user_id IN ({$placeholders}) ORDER BY store_id");
+        $stmt->execute($userIds);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[(int) $row['user_id']][] = (int) $row['store_id'];
+        }
+        return $out;
+    }
+
+    /** @param int[] $storeIds */
+    public function replaceStoreAccess(PDO $pdo, int $userId, array $storeIds): void
+    {
+        $pdo->prepare('DELETE FROM user_store_access WHERE user_id = ?')->execute([$userId]);
+        $stmt = $pdo->prepare('INSERT INTO user_store_access (user_id, store_id) VALUES (?, ?)');
+        foreach ($storeIds as $storeId) {
+            $stmt->execute([$userId, $storeId]);
+        }
+    }
+
+    /** @param int[] $storeIds @return int[] only active, real stores */
+    public function validStoreIds(PDO $pdo, array $storeIds): array
+    {
+        if ($storeIds === []) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($storeIds), '?'));
+        $stmt = $pdo->prepare("SELECT store_id FROM store WHERE store_id IN ({$placeholders}) AND canonical_name <> 'NON-OUTLET / PERORANGAN'");
+        $stmt->execute($storeIds);
+        return array_map('intval', array_column($stmt->fetchAll(), 'store_id'));
+    }
+
+    /** @return array<int,array{storeId:int,name:string}> */
+    public function allStores(PDO $pdo): array
+    {
+        $rows = $pdo->query("SELECT store_id, canonical_name FROM store WHERE active = 1 AND canonical_name <> 'NON-OUTLET / PERORANGAN' ORDER BY canonical_name")->fetchAll();
+        return array_map(static fn ($r) => ['storeId' => (int) $r['store_id'], 'name' => $r['canonical_name']], $rows);
     }
 
     /** @param int[] $divisionIds @return int[] only the ids that actually exist as non-FG production divisions */

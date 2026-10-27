@@ -46,6 +46,8 @@ $users = $service->listUsers($q !== '' ? $q : null, $active);
 $roles = $service->listRoles();
 $divisions = $service->listDivisions();
 $factories = $service->listFactories();
+$stores = $service->listStores();
+$storeNameById = array_column($stores, 'name', 'storeId');
 $divisionNameById = [];
 foreach ($divisions as $d) {
     $divisionNameById[$d['divisionId']] = $d['name'] . ' (' . $d['factoryName'] . ')';
@@ -110,7 +112,8 @@ foreach ($factories as $f) {
           <?php
             $assignedNames = array_merge(
                 array_map(static fn ($id) => $divisionNameById[$id] ?? "#{$id}", $u['divisionIds']),
-                array_map(static fn ($id) => 'Pabrik: ' . ($factoryNameById[$id] ?? "#{$id}"), $u['factoryIds'])
+                array_map(static fn ($id) => 'Pabrik: ' . ($factoryNameById[$id] ?? "#{$id}"), $u['factoryIds']),
+                array_map(static fn ($id) => 'Toko: ' . ($storeNameById[$id] ?? "#{$id}"), $u['storeIds'])
             );
           ?>
           <?= $assignedNames === [] ? '<span style="color:var(--text-faint);">Semua (belum ditugaskan)</span>' : ui_esc(implode(', ', $assignedNames)) ?>
@@ -124,7 +127,8 @@ foreach ($factories as $f) {
             data-fullname="<?= ui_esc($u['fullName']) ?>"
             data-roles="<?= ui_esc(implode(',', $u['roles'])) ?>"
             data-division-ids="<?= ui_esc(implode(',', $u['divisionIds'])) ?>"
-            data-factory-ids="<?= ui_esc(implode(',', $u['factoryIds'])) ?>">Edit</button>
+            data-factory-ids="<?= ui_esc(implode(',', $u['factoryIds'])) ?>"
+            data-store-ids="<?= ui_esc(implode(',', $u['storeIds'])) ?>">Edit</button>
           <button type="button" class="btn btn-secondary btn-sm" data-reset-password="<?= (int) $u['userId'] ?>" data-username="<?= ui_esc($u['username']) ?>">Reset Password</button>
           <?php if ($u['active']): ?>
           <button type="button" class="btn btn-danger btn-sm" data-confirm-action data-danger
@@ -152,7 +156,8 @@ foreach ($factories as $f) {
 <div id="user-modal-root"
      data-roles='<?= json_encode($roles, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>'
      data-divisions='<?= json_encode($divisions, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>'
-     data-factories='<?= json_encode($factories, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>'></div>
+     data-factories='<?= json_encode($factories, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>'
+     data-stores='<?= ui_esc(json_encode($stores, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)) ?>'></div>
 
 <script>window.AMOR = <?= json_encode(['csrfToken' => $ui['csrfToken'], 'userId' => $ui['userId'], 'username' => $ui['username']], JSON_UNESCAPED_SLASHES) ?>;</script>
 <script src="/api/assets/js/app.js?v=20261020-notif"></script>

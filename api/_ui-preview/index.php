@@ -52,6 +52,10 @@ $pages = [
     'invoice-detail' => ['title' => 'Invoice', 'subtitle' => 'Detail satu invoice.'],
     'retur-review' => ['title' => 'Retur (catatan)', 'subtitle' => 'Barang tidak laku — hanya dicatat, tanggungan toko, tidak memotong invoice.'],
     'mutasi-review' => ['title' => 'Mutasi Produk', 'subtitle' => 'Tinjau Mutasi antar toko dan putuskan kasus selisih.'],
+    'validasi-toko' => ['title' => 'Retur, Reject & Mutasi Toko', 'subtitle' => 'Validasi kesesuaian fisik & sistem, per item.'],
+    'approval-toko' => ['title' => 'Approval Retur & Reject', 'subtitle' => 'Setujui laporan toko binaan Anda.'],
+    'dashboard-retur' => ['title' => 'Dashboard Retur & Reject', 'subtitle' => 'Total, tren, dan produk terbanyak.'],
+    'alasan-reject' => ['title' => 'Master Alasan Reject', 'subtitle' => 'Daftar alasan yang dipilih toko saat input Reject.'],
     'master-data' => ['title' => 'Master Data', 'subtitle' => 'Produk, toko, divisi, dan pabrik.'],
     'laporan' => ['title' => 'Laporan', 'subtitle' => 'Ringkasan lintas tahap, dari PO sampai pengiriman.'],
     'riwayat' => ['title' => 'Riwayat', 'subtitle' => 'Riwayat input produksi dan FG akun ini.'],
@@ -110,6 +114,10 @@ $pageRoles = [
     'reject-toko' => ['ADMIN', 'PPIC'],
     'stok-sisa' => ['ADMIN', 'PPIC'],
     'mutasi-review' => ['ADMIN', 'PPIC'],
+    'validasi-toko' => ['ADMIN', 'PPIC'],
+    'alasan-reject' => ['ADMIN', 'PPIC'],
+    'approval-toko' => ['ATASAN'],
+    'dashboard-retur' => ['ADMIN', 'PPIC', 'ATASAN'],
     // Invoice generation is ADMIN-only end to end (InvoiceController's own
     // Auth::requireRole('ADMIN') gate) — hiding the nav link and the page
     // itself from any other role avoids a dead-end UI that would just
@@ -158,7 +166,8 @@ $activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order'
     : ((str_starts_with($page, 'pesanan-khusus-toko') || str_starts_with($page, 'pesanan-non-toko')) ? 'pesanan-toko'
     : (str_starts_with($page, 'produksi-') ? 'produksi'
     : (str_starts_with($page, 'fg-') && $page !== 'fg-packing' ? 'fg-packing'
-    : (str_starts_with($page, 'invoice') ? 'invoice' : $page))))));
+    : (str_starts_with($page, 'invoice') ? 'invoice'
+    : (in_array($page, ['reject-toko', 'retur-review', 'mutasi-review', 'alasan-reject'], true) ? 'validasi-toko' : $page)))))));
 
 // Shared date/factory selection every page can use as its default filter
 // state, so the topbar's date/factory chips stay meaningful app-wide.

@@ -121,6 +121,22 @@ final class UserController
         });
     }
 
+    public static function updateStoreAccess(Request $request): void
+    {
+        $actorId = Auth::requireRole('ADMIN');
+        $id = (int) $request->routeParams['id'];
+        $storeIds = $request->input('storeIds', []);
+        if (!is_array($storeIds)) {
+            throw new ApiException(400, 'INVALID_STORE_IDS', 'storeIds must be an array');
+        }
+
+        Idempotency::handle($request, 'PUT /api/users/{id}/stores', function (PDO $pdo) use ($request, $actorId, $id, $storeIds) {
+            $service = new UserService($pdo);
+            $dto = $service->updateStoreAccess($id, $storeIds, $actorId, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'user', 'recordKey' => (string) $id];
+        });
+    }
+
     public static function resetPassword(Request $request): void
     {
         $actorId = Auth::requireRole('ADMIN');
