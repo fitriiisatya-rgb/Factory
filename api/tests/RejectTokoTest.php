@@ -854,6 +854,10 @@ runTest('RJT-19 Retur/Reject/Mutasi in one transaction: Atasan approval gate, ed
     expect(in_array($bConfirm['status'], [404, 409], true), 'a cancelled mutasi can no longer be confirmed by the destination: ' . $bConfirm['body']);
     $again = adminPost($adminHttp, $adminCsrf, '/api/store-reports/validasi', ['type' => 'mutasi', 'id' => $mut['itemId'], 'status' => 'sesuai']);
     expect($again['status'] === 409 && $again['json']['code'] === 'MUTASI_CANCELLED', 'a cancelled mutasi stays cancelled');
+    $histAll = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/store/{$tokenA}/reports?from={$today}&to={$today}")['json']['data'];
+    $liveMutasi = (float) $pdo->query("SELECT COALESCE(SUM(m.qty_requested), 0) FROM mutasi_request m JOIN store_report sr ON sr.store_report_id = m.store_report_id
+        WHERE sr.store_id = {$storeA} AND sr.report_date = '{$today}' AND m.status <> 'cancelled'")->fetchColumn();
+    expect((float) $histAll['ringkasan']['mutasi'] === $liveMutasi, 'store history total leaves the cancelled mutasi out: ' . json_encode($histAll['ringkasan']) . " vs {$liveMutasi}");
     // The auto-approved mutasi (4 pcs): destination confirms, invoices are issued -> Admin can no longer cancel it.
     $mut1 = array_values(array_filter($t1['items'], static fn ($i) => $i['jenis'] === 'mutasi'))[0];
     $c1 = (new HttpInv($GLOBALS['baseUrl']))->requestMultipart('POST', "/api/store/{$tokenB}/mutasi/{$mut1['itemId']}/confirm", ['confirmation' => json_encode(['qtyReceived' => 4])], [], idemKey('mc'));

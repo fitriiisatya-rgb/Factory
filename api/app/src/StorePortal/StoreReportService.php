@@ -415,6 +415,10 @@ final class StoreReportService
                 }
             }
             foreach ($items as $it) {
+                // A mutasi Admin cancelled (Tidak Sesuai) never moved — same rule as the dashboard.
+                if ($it['jenis'] === 'mutasi' && $it['itemStatus'] === 'cancelled') {
+                    continue;
+                }
                 $sum[$it['jenis']] += $it['qty'];
             }
             $list[] = $this->reportDto($r, $items);
