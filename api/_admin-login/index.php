@@ -75,7 +75,9 @@ function esc(string $s): string { return htmlspecialchars($s, ENT_QUOTES); }
 function safeReturnUrl(?string $raw): ?string
 {
     $raw = (string) $raw;
-    if ($raw === '' || !str_starts_with($raw, '/api/_ui-preview/') || str_contains($raw, "\\") || preg_match('/[\r\n]/', $raw)) {
+    // "/" (and "/?page=…") is the same shell served from the domain root (index.php at the docroot).
+    $isShell = str_starts_with($raw, '/api/_ui-preview/') || $raw === '/' || str_starts_with($raw, '/?');
+    if ($raw === '' || !$isShell || str_contains($raw, "\\") || preg_match('/[\r\n]/', $raw)) {
         return null;
     }
     return $raw;

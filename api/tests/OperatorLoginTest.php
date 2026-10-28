@@ -257,8 +257,15 @@ runTest('OPLOGIN-04 Naming redirects to ?return= and the topbar shows "{role} ·
     expect(str_contains($page['body'], 'action=change_operator'), 'expected the (ganti) link');
 });
 
-runTest('OPLOGIN-05 ?return= only accepts /api/_ui-preview/ targets (no open redirect)', function () use ($baseUrl, $prodPass) {
-    foreach (['https://evil.example/', '//evil.example/x', '/api/_upgrade/'] as $bad) {
+runTest('OPLOGIN-05 ?return= only accepts the UI shell (/api/_ui-preview/ or the domain root "/") — no open redirect', function () use ($baseUrl, $prodPass) {
+    foreach (['/' => '/', '/?page=produksi' => '/?page=produksi'] as $good => $want) {
+        $h = new HttpOp($baseUrl);
+        $h->form('/_admin-login/', ['action' => 'login', 'username' => 'divisi_roti', 'password' => $prodPass, 'return' => $good]);
+        $prompt = $h->get('/_admin-login/');
+        $r = $h->form('/_admin-login/', ['action' => 'set_operator_name', 'operatorName' => 'Tes', 'csrf_token' => formCsrf($prompt['body']), 'return' => $good]);
+        expect($r['status'] === 302 && $r['location'] === $want, "expected redirect back to {$want}, got " . $r['location']);
+    }
+    foreach (['https://evil.example/', '//evil.example/x', '/api/_upgrade/', '/x', '/\\evil.example'] as $bad) {
         $h = new HttpOp($baseUrl);
         $h->form('/_admin-login/', ['action' => 'login', 'username' => 'divisi_roti', 'password' => $prodPass, 'return' => $bad]);
         $prompt = $h->get('/_admin-login/');
