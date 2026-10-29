@@ -107,7 +107,7 @@ final class ErrorMessages
     ];
 
     /** Words that mark a message as already Indonesian — those pass through unchanged. */
-    private const INDONESIAN_MARKERS = '/\b(tidak|wajib|sudah|belum|harus|hanya|untuk|pada|tersedia|ditemukan|silakan|melebihi|gagal|berhasil|dulu|bisa)\b/i';
+    private const INDONESIAN_MARKERS = '/\b(tidak|wajib|sudah|belum|harus|hanya|untuk|pada|tersedia|ditemukan|silakan|melebihi|gagal|berhasil|dulu|bisa|minimal|maksimal|pilih|isi|kosong|menunggu|bukan|tambahkan|rentang|ukuran)\b/i';
 
     public static function localize(int $status, string $code, string $message): string
     {

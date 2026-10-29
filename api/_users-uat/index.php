@@ -161,6 +161,6 @@ foreach ($factories as $f) {
 
 <script>window.AMOR = <?= json_encode(['csrfToken' => $ui['csrfToken'], 'userId' => $ui['userId'], 'username' => $ui['username']], JSON_UNESCAPED_SLASHES) ?>;</script>
 <script src="/api/assets/js/app.js?v=20261020-notif"></script>
-<script src="/api/assets/js/users.js?v=20261017-modal"></script>
+<script src="/api/assets/js/users.js?v=20261029-pass"></script>
 </body>
 </html>

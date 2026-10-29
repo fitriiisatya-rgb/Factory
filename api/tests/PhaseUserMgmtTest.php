@@ -335,6 +335,18 @@ runTest('UM-15 CSRF required for mutations', function () use ($adminHttp) {
     expect($noCsrf['json']['code'] === 'CSRF_TOKEN_INVALID', 'expected CSRF_TOKEN_INVALID code');
 });
 
+runTest('UM-15b a too-short password / missing role says so (not the generic "Data belum lengkap")', function () use ($adminHttp, $adminCsrf) {
+    $short = $adminHttp->request('POST', '/api/users', [
+        'username' => uniqueUsername('um_short'), 'fullName' => 'Short Pass', 'password' => 'abc1234', 'passwordConfirm' => 'abc1234', 'roles' => ['ADMIN'],
+    ], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('um-15b-short')));
+    expect($short['status'] === 400 && $short['json']['code'] === 'PASSWORD_TOO_SHORT', 'expected PASSWORD_TOO_SHORT, got ' . $short['body']);
+    expect($short['json']['message'] === 'Password minimal 10 karakter', 'expected the real reason, got ' . $short['json']['message']);
+    $noRole = $adminHttp->request('POST', '/api/users', [
+        'username' => uniqueUsername('um_norole'), 'fullName' => 'No Role', 'password' => 'Panjang12345', 'passwordConfirm' => 'Panjang12345', 'roles' => [],
+    ], array_merge(['X-CSRF-Token' => $adminCsrf], idemKey('um-15b-norole')));
+    expect($noRole['status'] === 400 && $noRole['json']['message'] === 'Pilih minimal satu peran', 'expected "Pilih minimal satu peran", got ' . $noRole['body']);
+});
+
 // ---------------------------------------------------------------------
 // UM-16
 // ---------------------------------------------------------------------

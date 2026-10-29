@@ -120,7 +120,7 @@
           : fieldHtml('Username', '<input type="text" id="uf-username" required autocomplete="off">'))
       + fieldHtml('Nama Lengkap', '<input type="text" id="uf-fullname" required value="' + (isEdit ? esc(existing.fullname) : '') + '">')
       + (isEdit ? '' :
-          fieldHtml('Password', '<input type="password" id="uf-password" required autocomplete="new-password">')
+          fieldHtml('Password (minimal 10 karakter)', '<input type="password" id="uf-password" required minlength="10" autocomplete="new-password">')
           + fieldHtml('Konfirmasi Password', '<input type="password" id="uf-password-confirm" required autocomplete="new-password">'))
       + '<div style="margin-bottom:12px;"><label style="display:block;margin-bottom:6px;">Peran</label>'
       + '<div id="uf-roles">' + roleCheckboxesHtml(isEdit ? existing.roles.split(',').filter(Boolean) : []) + '</div></div>'
@@ -204,7 +204,7 @@
   // Reset Password
   // -----------------------------------------------------------------
   function openResetPassword(userId, username) {
-    var body = fieldHtml('Password Baru', '<input type="password" id="rp-password" required autocomplete="new-password">')
+    var body = fieldHtml('Password Baru (minimal 10 karakter)', '<input type="password" id="rp-password" required minlength="10" autocomplete="new-password">')
       + fieldHtml('Konfirmasi Password Baru', '<input type="password" id="rp-password-confirm" required autocomplete="new-password">')
       + '<div id="rp-error" style="color:var(--danger);font-size:var(--text-sm);margin-bottom:8px;display:none;"></div>'
       + '<div class="modal-actions">'
