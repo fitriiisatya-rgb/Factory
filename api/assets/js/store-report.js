@@ -82,7 +82,7 @@
     // ---------------------------------------------------------------
     var form = K.card(
       '<div class="driver-card-title" style="margin-bottom:6px;">📦 Input Retur, Reject &amp; Mutasi</div>' +
-      '<div class="sr-banner" id="sr-edit" style="display:none"><span>✏️ Mengedit <b id="sr-edit-no"></b></span><button type="button" id="sr-edit-cancel">Batal Edit</button></div>' +
+      '<div class="sr-banner" id="sr-edit" style="display:none"><span>✏️ Mengedit <b id="sr-edit-no"></b> — saat disimpan, data lama langsung diganti.</span><button type="button" id="sr-edit-cancel">Batal Edit</button></div>' +
       '<div class="store-field"><label>Tanggal</label><input type="date" id="sr-date"></div>' +
       '<div class="sr-tabs">' +
       ['retur', 'reject', 'mutasi'].map(function (j) {
@@ -223,7 +223,7 @@
         blk.keptEvidence = data.evidenceCount || 0;
         if (blk.keptEvidence) {
           var kept = el.querySelector('.sr-ev-kept');
-          kept.textContent = '📷 ' + blk.keptEvidence + ' foto sudah tersimpan. Tambah foto baru bila perlu.';
+          kept.textContent = '📷 ' + blk.keptEvidence + ' foto sudah tersimpan. Pilih foto baru untuk menggantinya.';
           kept.style.display = 'block';
         }
         if (j === 'reject') {
@@ -300,8 +300,8 @@
         var dto = saved;
         var wasEdit = !!state.editing;
         resetForm();
-        if (wasEdit) { Amor.toast('Transaksi diperbarui.', 'success'); showView('riwayat'); return; }
-        if (dto) showResult(dto);
+        if (wasEdit) Amor.toast('Perubahan disimpan — data lama sudah diganti.', 'success');
+        if (dto) showResult(dto, wasEdit);
       });
     }
 
@@ -315,12 +315,14 @@
       if (r.status === 'disetujui') return r.approvalMode === 'otomatis' ? '✓ Langsung diteruskan ke pabrik (toko ini tanpa Atasan).' : '✓ Disetujui Atasan.';
       return '⏳ Menunggu persetujuan Atasan. Selama menunggu, transaksi masih bisa diedit di Riwayat Input.';
     }
-    function showResult(r) {
+    function showResult(r, edited) {
       state.last = r;
       resultView.innerHTML = '';
       var c = K.card(
-        '<div class="driver-card-title">✅ Data Tersimpan</div>' +
-        '<div class="driver-row" style="display:block">' + r.items.length + ' item tersimpan. ID Transaksi: <b>' + esc(r.docNo) + '</b></div>' +
+        '<div class="driver-card-title">✅ ' + (edited ? 'Perubahan Tersimpan' : 'Data Tersimpan') + '</div>' +
+        '<div class="driver-row" style="display:block">' + r.items.length + ' item tersimpan. ID Transaksi: <b>' + esc(r.docNo) + '</b>' +
+        (r.editCount ? ' · <b>Revisi ke-' + r.editCount + '</b>' : '') + '</div>' +
+        (edited ? '<div class="sr-hint">Cetak ulang bukti di bawah — cetakan lama tidak berlaku lagi.</div>' : '') +
         '<div class="sr-hint">' + esc(statusLine(r)) + '</div>' +
         '<a class="driver-btn primary" target="_blank" href="' + printUrl(r.reportId, 'a4') + '" style="display:block;text-align:center;margin-top:10px">🖨️ Cetak / Download Bukti (A4)</a>' +
         '<a class="driver-btn" target="_blank" href="' + printUrl(r.reportId, 'thermal') + '" style="display:block;text-align:center;margin-top:8px">🖨️ Cetak Thermal (80mm)</a>' +
@@ -374,7 +376,7 @@
           var waiting = r.status !== 'disetujui';
           var c = K.card(
             '<div class="driver-card-head"><div><div class="driver-card-title">' + esc(fmtTgl(r.tanggal)) + '</div>' +
-            '<div class="driver-card-sub">' + esc(r.docNo) + '</div></div>' +
+            '<div class="driver-card-sub">' + esc(r.docNo) + (r.editCount ? ' · Revisi ke-' + r.editCount : '') + '</div></div>' +
             '<span class="driver-badge ' + (waiting ? 'warning' : 'success') + '">' + (waiting ? '⏳ Menunggu Atasan' : '✓ Disetujui') + '</span></div>' +
             r.items.map(function (it) {
               var ket = [];
@@ -388,7 +390,7 @@
             }).join('') +
             '<div class="driver-row"><span>Total nilai</span><b>' + rp(r.total) + '</b></div>' +
             '<div class="sr-btn-row">' +
-            (waiting ? '<button type="button" class="driver-btn small" data-edit="1">✏️ Edit</button>' : '') +
+            (r.canEdit ? '<button type="button" class="driver-btn small" data-edit="1">✏️ Edit</button>' : '') +
             '<a class="driver-btn small primary" target="_blank" href="' + printUrl(r.reportId, 'a4') + '">🖨️ Cetak Ulang</a>' +
             '<a class="driver-btn small" target="_blank" href="' + printUrl(r.reportId, 'thermal') + '">🖨️ Thermal</a></div>'
           );
@@ -401,7 +403,7 @@
 
     function startEdit(reportId) {
       K.getJson(K.apiPath('/reports/' + reportId)).then(function (r) {
-        if (r.status !== 'menunggu_atasan') { Amor.toast('Transaksi sudah disetujui Atasan, tidak bisa diedit lagi.', 'warning'); loadRiwayat(); return; }
+        if (!r.canEdit) { Amor.toast('Transaksi sudah disetujui Atasan, tidak bisa diedit lagi.', 'warning'); loadRiwayat(); return; }
         resetForm();
         state.editing = r;
         form.querySelector('#sr-edit').style.display = 'flex';

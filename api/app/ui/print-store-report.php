@@ -103,6 +103,7 @@ function render_store_report_print(array $report, string $format, string $backUr
   <div>Toko: <?= $esc($report['storeName']) ?></div>
   <div>Tgl: <?= $esc($report['tanggal']) ?></div>
   <div class="xs">ID: <?= $esc($report['docNo']) ?></div>
+  <?php if (!empty($report['editCount'])): ?><div class="xs"><b>REVISI ke-<?= (int) $report['editCount'] ?></b> (<?= $esc($wib($report['updatedAt'])) ?>) — ganti cetakan lama</div><?php endif; ?>
   <div><?= $esc($isToko ? $tujuan : 'Pabrik: ' . $tujuan) ?></div>
   <hr>
   <?php foreach ($items as $i => $it): $total += $it['total']; ?>
@@ -124,6 +125,7 @@ function render_store_report_print(array $report, string $format, string $backUr
   <div>Toko: <?= $esc($report['storeName']) ?></div>
   <div>Tanggal: <?= $esc($report['tanggal']) ?></div>
   <div>ID Transaksi: <?= $esc($report['docNo']) ?></div>
+  <?php if (!empty($report['editCount'])): ?><div><b>REVISI ke-<?= (int) $report['editCount'] ?></b> · diubah <?= $esc($wib($report['updatedAt'])) ?> — cetakan ini menggantikan cetakan sebelumnya</div><?php endif; ?>
   <div><?= $esc($isToko ? 'Toko Tujuan: ' . substr($tujuan, 6) : 'Pabrik Tujuan: ' . $tujuan) ?></div>
   <hr>
   <?php foreach ($items as $i => $it): $total += $it['total']; ?>

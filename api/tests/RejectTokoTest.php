@@ -827,6 +827,15 @@ runTest('RJT-19 Retur/Reject/Mutasi in one transaction: Atasan approval gate, ed
     expect((int) $pdo->query("SELECT COUNT(*) FROM retur_request WHERE store_report_id = {$t2['reportId']}")->fetchColumn() === 1, 'removed retur row deleted');
     $other = $send($tokenB, ['tanggal' => $today, 'items' => $edit], [], $t2['reportId']);
     expect($other['status'] === 404, 'another store cannot edit it');
+    // Save again with a new photo: it replaces the old one; the reprint says which revision it is.
+    $r = $send($tokenA, ['tanggal' => $today, 'destinationStoreId' => $storeB, 'items' => $edit], [0], $t2['reportId']);
+    $kept = array_values(array_filter($r['json']['data']['items'] ?? [], static fn ($i) => $i['jenis'] === 'reject'))[0] ?? [];
+    expect($r['status'] === 200 && ($kept['evidenceCount'] ?? null) === 1, 'a new photo replaces the old one: ' . $r['body']);
+    expect($r['json']['data']['editCount'] === 2 && $r['json']['data']['canEdit'] === true, 'two edits counted, still editable while waiting: ' . json_encode([$r['json']['data']['editCount'], $r['json']['data']['canEdit']]));
+    $rp = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/_store/print.php?token={$tokenA}&id={$t2['reportId']}&format=a4");
+    expect($rp['status'] === 200 && str_contains($rp['body'], 'REVISI ke-2'), 'reprint shows the revision');
+    $rt = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/_store/print.php?token={$tokenA}&id={$t1['reportId']}&format=thermal");
+    expect($rt['status'] === 200 && !str_contains($rt['body'], 'REVISI'), 'an unedited transaction prints without a revision mark');
 
     // Atasan approves (only own stores).
     $pend = $at->request('GET', '/api/store-reports/pending')['json']['data'];
@@ -836,6 +845,8 @@ runTest('RJT-19 Retur/Reject/Mutasi in one transaction: Atasan approval gate, ed
     expect($ap['status'] === 200 && $ap['json']['data']['updated'] === 1, 'approve: ' . $ap['body']);
     $late = $send($tokenA, ['tanggal' => $today, 'destinationStoreId' => $storeB, 'items' => $edit], [], $t2['reportId']);
     expect($late['status'] === 409 && $late['json']['code'] === 'ALREADY_APPROVED', 'no edit after approval: ' . $late['body']);
+    $afterAp = (new HttpInv($GLOBALS['baseUrl']))->request('GET', "/api/store/{$tokenA}/reports/{$t2['reportId']}")['json']['data'];
+    expect($afterAp['canEdit'] === false, 'the portal hides Edit once approved');
 
     // Admin validasi: Sesuai -> potong issues the nota; Tidak Sesuai needs a note.
     $val = $adminHttp->request('GET', '/api/store-reports/validasi?onlyWaiting=1&storeId=' . $storeA)['json']['data'];

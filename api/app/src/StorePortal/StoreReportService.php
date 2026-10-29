@@ -308,6 +308,10 @@ final class StoreReportService
         if ($row['_type'] === 'mutasi') {
             $this->pdo->prepare('UPDATE mutasi_request SET product_id = ?, qty_requested = ?, request_notes = ?, destination_store_id = ?, version = version + 1, updated_at = UTC_TIMESTAMP() WHERE mutasi_request_id = ?')
                 ->execute([$it['productId'], $it['qty'], $it['notes'], (int) $destinationId, (int) $row['mutasi_request_id']]);
+            if ($evidence !== []) {
+                // New photos replace the previous ones.
+                $this->pdo->prepare("DELETE FROM mutasi_request_evidence WHERE mutasi_request_id = ? AND stage = 'request'")->execute([(int) $row['mutasi_request_id']]);
+            }
             foreach ($evidence as $ev) {
                 $this->mutasiRepo->insertEvidence($this->pdo, (int) $row['mutasi_request_id'], 'request', $ev['filePath'], $ev['mimeType'], $ev['fileSize'], $ev['originalName']);
             }
@@ -316,6 +320,10 @@ final class StoreReportService
         $isReject = $it['jenis'] === 'reject';
         $this->pdo->prepare('UPDATE retur_request SET product_id = ?, qty = ?, reason = ?, notes = ?, retur_date = ?, exp_date = ?, version = version + 1, updated_at = UTC_TIMESTAMP() WHERE retur_request_id = ?')
             ->execute([$it['productId'], $it['qty'], $it['alasan'] !== '' ? $it['alasan'] : 'Tidak laku', $it['notes'], $date, $isReject ? $it['expDate'] : null, (int) $row['retur_request_id']]);
+        if ($evidence !== []) {
+            // New photos replace the previous ones.
+            $this->pdo->prepare('DELETE FROM retur_request_evidence WHERE retur_request_id = ?')->execute([(int) $row['retur_request_id']]);
+        }
         foreach ($evidence as $ev) {
             $this->returRepo->insertEvidence($this->pdo, (int) $row['retur_request_id'], $ev['filePath'], $ev['mimeType'], $ev['fileSize'], $ev['originalName']);
         }
@@ -361,11 +369,11 @@ final class StoreReportService
     public function get(int $reportId, ?int $storeId = null): array
     {
         $st = $this->pdo->prepare(
-            'SELECT sr.*, s.canonical_name AS store_name, u.full_name AS approved_by_name
+            "SELECT sr.*, (SELECT COUNT(*) FROM audit_log a WHERE a.record_type = 'store_report' AND a.record_key = CAST(sr.store_report_id AS CHAR) AND a.action = 'store_report.updated') AS edit_count, s.canonical_name AS store_name, u.full_name AS approved_by_name
              FROM store_report sr
              INNER JOIN store s ON s.store_id = sr.store_id
              LEFT JOIN users u ON u.user_id = sr.approved_by
-             WHERE sr.store_report_id = ?'
+             WHERE sr.store_report_id = ?"
         );
         $st->execute([$reportId]);
         $r = $st->fetch();
@@ -379,11 +387,11 @@ final class StoreReportService
     /** Portal "Riwayat Input": this store's transactions, date range + product search, with per-kind totals. */
     public function listForStore(int $storeId, ?string $from, ?string $to, ?string $q): array
     {
-        $sql = 'SELECT sr.*, s.canonical_name AS store_name, u.full_name AS approved_by_name
+        $sql = "SELECT sr.*, (SELECT COUNT(*) FROM audit_log a WHERE a.record_type = 'store_report' AND a.record_key = CAST(sr.store_report_id AS CHAR) AND a.action = 'store_report.updated') AS edit_count, s.canonical_name AS store_name, u.full_name AS approved_by_name
                 FROM store_report sr
                 INNER JOIN store s ON s.store_id = sr.store_id
                 LEFT JOIN users u ON u.user_id = sr.approved_by
-                WHERE sr.store_id = ?';
+                WHERE sr.store_id = ?";
         $params = [$storeId];
         if ($from !== null && preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) {
             $sql .= ' AND sr.report_date >= ?';
@@ -776,6 +784,9 @@ final class StoreReportService
             'approvedByName' => $r['approved_by_name'] ?? null, 'approvedAt' => $r['approved_at'],
             'createdAt' => $r['created_at'], 'updatedAt' => $r['updated_at'], 'version' => (int) $r['version'],
             'destination' => $dest, 'total' => $total, 'items' => $items,
+            'editCount' => (int) ($r['edit_count'] ?? 0),
+            // The store may edit (replace) a transaction only while it waits for its Atasan.
+            'canEdit' => $r['status'] === 'menunggu_atasan',
         ];
     }
 }
