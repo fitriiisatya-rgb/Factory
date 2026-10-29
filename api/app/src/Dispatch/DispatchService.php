@@ -623,6 +623,9 @@ final class DispatchService
             'shippedAt' => $shipment['shipped_at'] ?? $shipment['created_at'],
             'driverUserId' => $shippedBy,
             'driverName' => $driverDisplayName,
+            // Masa adaptasi: Admin presses Kirim while a driver without an app account carries
+            // the goods — the surat jalan then leaves the Driver line blank to be written in.
+            'shippedByAdmin' => $driver !== null && !in_array('DRIVER', (array) ($driver['roles'] ?? []), true),
             'source' => $source,
             'items' => array_map(static fn ($l) => [
                 'lineId' => $l['lineId'],

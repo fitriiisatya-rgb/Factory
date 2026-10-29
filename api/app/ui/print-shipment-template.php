@@ -83,7 +83,7 @@ function ui_render_shipment_print_document(array $shipment, string $printedByNam
     <div><b>Sumber</b><?= ui_esc((string) $source['label']) ?><?= $source['orderNo'] ? ' &middot; ' . ui_esc((string) $source['orderNo']) : '' ?></div>
     <div><b>Metode Pengiriman</b><?= $source['deliveryMethod'] === 'EXTERNAL_COURIER' ? 'Kurir Eksternal' : 'Driver Internal' ?></div>
     <?php endif; ?>
-    <div><b><?= $isSpecial && $source['deliveryMethod'] === 'EXTERNAL_COURIER' ? 'Kurir' : 'Driver' ?></b><?= ui_esc((string) ($shipment['driverName'] ?? '-')) ?></div>
+    <div><b><?= $isSpecial && $source['deliveryMethod'] === 'EXTERNAL_COURIER' ? 'Kurir' : 'Driver' ?></b><?= !empty($shipment['shippedByAdmin']) && !($isSpecial && $source['deliveryMethod'] === 'EXTERNAL_COURIER') ? '<span style="display:inline-block;min-width:45mm;border-bottom:1px solid #000;">&nbsp;</span>' : ui_esc((string) ($shipment['driverName'] ?? '-')) ?></div>
     <div><b>Group Pengiriman</b><?= ui_esc((string) ($shipment['shipmentGroup'] ?? '-')) ?></div>
   </div>
 
