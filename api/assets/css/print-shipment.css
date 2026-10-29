@@ -46,3 +46,9 @@
      own @media print block, stated here for clarity of intent only. */
   .print-page { box-shadow: none; }
 }
+
+/* Kolom tulis tangan toko: Diterima Baik / Reject / Kurang + catatan */
+.print-table th.sj-write { width: 20mm; }
+.print-table td.sj-write { width: 20mm; height: 7mm; background: #fff; border-left: 1.5px solid #333; }
+.sj-store-note { margin-top: 4mm; font-size: 9.5pt; }
+.sj-store-note-lines { margin-top: 2mm; height: 16mm; border: 1px solid #999; border-radius: 2px; padding: 1.5mm 2mm; color: #555; }

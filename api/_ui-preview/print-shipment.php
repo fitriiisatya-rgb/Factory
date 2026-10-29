@@ -67,7 +67,7 @@ header('Content-Type: text/html; charset=utf-8');
 <meta name="robots" content="noindex,nofollow">
 <title>Surat Jalan SHP-<?= (int) $shipment['shipmentId'] ?></title>
 <link rel="stylesheet" href="/api/assets/css/print.css">
-<link rel="stylesheet" href="/api/assets/css/print-shipment.css">
+<link rel="stylesheet" href="/api/assets/css/print-shipment.css?v=20261029-sj">
 </head>
 <body class="print-doc">
 <div class="print-toolbar">

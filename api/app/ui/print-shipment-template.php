@@ -94,6 +94,9 @@ function ui_render_shipment_print_document(array $shipment, string $printedByNam
         <th>Nama Produk</th>
         <th>Divisi</th>
         <th class="num">Qty Kirim</th>
+        <th class="num sj-write">Diterima Baik</th>
+        <th class="num sj-write">Reject</th>
+        <th class="num sj-write">Kurang</th>
       </tr>
     </thead>
     <tbody>
@@ -103,6 +106,7 @@ function ui_render_shipment_print_document(array $shipment, string $printedByNam
         <td><?= ui_esc((string) $it['productName']) ?></td>
         <td><?= ui_esc((string) ($it['divisionName'] ?? '-')) ?></td>
         <td class="num"><?= ui_fmt_num((float) $it['qty']) ?></td>
+        <td class="sj-write"></td><td class="sj-write"></td><td class="sj-write"></td>
       </tr>
     <?php endforeach; ?>
     </tbody>
@@ -110,9 +114,16 @@ function ui_render_shipment_print_document(array $shipment, string $printedByNam
       <tr>
         <td colspan="3">Total <?= (int) $shipment['summary']['productCount'] ?> Produk</td>
         <td class="num"><?= ui_fmt_num((float) $shipment['summary']['totalQty']) ?> Pcs</td>
+        <td class="sj-write"></td><td class="sj-write"></td><td class="sj-write"></td>
       </tr>
     </tfoot>
   </table>
+  <!-- Diisi toko saat barang diterima (same three columns as the QR page and Admin's "Isi dari SJ"):
+       Diterima Baik + Reject + Kurang = Qty Kirim. -->
+  <div class="sj-store-note">
+    <b>Diisi toko:</b> Diterima Baik + Reject + Kurang = Qty Kirim. Tulis alasan reject / kurang di bawah ini.
+    <div class="sj-store-note-lines">Catatan toko:</div>
+  </div>
 
   <?php if ($shipment['status'] !== 'void'): ?>
   <div class="print-receipt-qr">

@@ -453,6 +453,7 @@ runTest('AFS-10 Tahap 1: Admin marks shipments "Diterima semua sesuai SJ" (own f
     expect(!readyHasDo($aCbd, $doId), 'not invoice-ready before confirmation');
     $sj = $leader->get("/api/_ui-preview/print-shipment.php?id={$sid}")['body'];
     expect(!str_contains($sj, 'Admin afs_admin_cbd'), 'surat jalan shipped by Admin must leave the Driver line blank, not print the Admin as driver');
+    expect(str_contains($sj, 'Diterima Baik') && str_contains($sj, 'Catatan toko'), 'surat jalan must carry the Diterima Baik / Reject / Kurang write-in columns');
     $list = $aCbd->get("/api/_ui-preview/index.php?page=konfirmasi-toko&tanggal={$day}");
     expect(str_contains($list['body'], 'Diterima semua sesuai SJ'), 'list page must offer the bulk button');
 
