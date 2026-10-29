@@ -49,3 +49,9 @@ dist/.stage/
 
 # Server-side backups and error logs (api/app/storage/)
 api/app/storage/
+
+# Android app build output and signing keys (never commit the keystore)
+android/build/
+*.p12
+*.jks
+*.keystore

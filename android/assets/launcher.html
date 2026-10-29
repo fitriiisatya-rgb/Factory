@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amor Factory</title>
+<style>
+  :root { --bg: #0a1846; --card: #13235e; --line: #2a3f86; --text: #f1f5ff; --muted: #a9b8e8; --accent: #3b82f6; --gold: #d4a017; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; padding: 28px 16px 40px; }
+  .head { text-align: center; margin-bottom: 22px; }
+  .head img { width: 92px; height: 92px; border-radius: 50%; background: #fff; padding: 6px; }
+  h1 { font-size: 24px; margin: 12px 0 4px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0; }
+  .q { font-weight: 700; margin: 22px 2px 10px; font-size: 15px; letter-spacing: .02em; color: var(--muted); text-transform: uppercase; }
+  button.role { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 12px; font: inherit; cursor: pointer; }
+  button.role:active { background: #1b2f78; }
+  .ic { font-size: 30px; width: 44px; text-align: center; flex: none; }
+  .t { font-weight: 700; font-size: 17px; display: block; }
+  .d { color: var(--muted); font-size: 13.5px; display: block; }
+  .toko { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: none; }
+  .toko.open { display: block; }
+  .toko p { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+  textarea { width: 100%; min-height: 84px; border-radius: 10px; border: 1px solid var(--line); background: #08113a; color: var(--text); padding: 10px; font: 14px/1.4 monospace; }
+  .go { width: 100%; margin-top: 10px; background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 14px; font: 700 16px system-ui, sans-serif; }
+  .err { color: #fca5a5; font-size: 14px; margin-top: 8px; display: none; }
+  .foot { text-align: center; color: var(--muted); font-size: 12.5px; margin-top: 26px; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <img src="amor-logo.png" alt="Amor Group">
+    <h1>Amor Factory</h1>
+    <p class="sub">Pilih sekali saja — HP ini akan mengingatnya.</p>
+  </div>
+
+  <div class="q">Anda siapa?</div>
+  <button class="role" data-url="https://factory.amorgroup.id/">
+    <span class="ic">🏭</span>
+    <span><span class="t">Divisi / FG / Admin / Atasan</span><span class="d">Login dengan username &amp; password pabrik</span></span>
+  </button>
+  <button class="role" data-url="https://factory.amorgroup.id/api/_driver-uat/">
+    <span class="ic">🚚</span>
+    <span><span class="t">Driver</span><span class="d">Login dengan akun driver</span></span>
+  </button>
+  <button class="role" id="btn-toko">
+    <span class="ic">🏪</span>
+    <span><span class="t">Toko / Bakery</span><span class="d">Pakai link Portal Bakery dari Admin (WA)</span></span>
+  </button>
+
+  <div class="toko" id="toko">
+    <p><b>Cara termudah:</b> buka link Portal Bakery toko Anda dari WA — HP akan membukanya di aplikasi ini dan mengingatnya.</p>
+    <p>Atau tempel (paste) link-nya di sini:</p>
+    <textarea id="link" placeholder="https://factory.amorgroup.id/api/_store/?token=..."></textarea>
+    <div class="err" id="err">Link tidak dikenali. Link Portal Bakery berisi "/api/_store/" dan "token=".</div>
+    <button class="go" id="go">Buka Portal Toko</button>
+  </div>
+
+  <p class="foot">Mau ganti peran nanti? Tekan lama ikon aplikasi → "Ganti peran / toko",<br>atau ketuk "Ganti peran / toko" di halaman login.</p>
+
+<script>
+  document.querySelectorAll('button.role[data-url]').forEach(function (b) {
+    b.addEventListener('click', function () { AmorApp.choose(b.getAttribute('data-url')); });
+  });
+  document.getElementById('btn-toko').addEventListener('click', function () {
+    document.getElementById('toko').classList.add('open');
+    document.getElementById('link').focus();
+  });
+  document.getElementById('go').addEventListener('click', function () {
+    var raw = document.getElementById('link').value.trim();
+    var m = raw.match(/https:\/\/factory\.amorgroup\.id\/api\/_store\/?\?(?:[^\s]*&)?token=([A-Za-z0-9_\-]+)/);
+    if (!m) { document.getElementById('err').style.display = 'block'; return; }
+    AmorApp.choose('https://factory.amorgroup.id/api/_store/?token=' + m[1]);
+  });
+</script>
+</body>
+</html>

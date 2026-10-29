@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "id.amorgroup.factory",
+      "sha256_cert_fingerprints": ["D1:1F:10:65:27:A7:F5:2E:1F:64:61:3D:61:3A:9C:E4:0A:A7:9B:AF:44:57:55:95:B0:38:63:3F:83:EF:09:BB"]
+    }
+  }
+]

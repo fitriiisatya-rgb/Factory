@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="switch_role"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_switch"
+        android:shortcutLongLabel="@string/shortcut_switch">
+        <intent
+            android:action="id.amorgroup.factory.SWITCH_ROLE"
+            android:targetPackage="id.amorgroup.factory"
+            android:targetClass="id.amorgroup.factory.MainActivity" />
+    </shortcut>
+</shortcuts>
