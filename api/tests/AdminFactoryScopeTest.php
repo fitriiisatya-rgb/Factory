@@ -519,6 +519,19 @@ runTest('AFS-12 Leader freezes "Email Surat Jalan ke Toko": Kirim sends nothing,
     $pdo->prepare('UPDATE store SET email = NULL WHERE store_id = ?')->execute([$store]);
 });
 
+runTest('AFS-13 Server-rendered pages stay scoped: Konfirmasi Toko list/detail and DO detail never show the other factory', function () use ($aKtg, $aCbd, $leader, $ktg, $cbd, $day, &$doId, &$shipments) {
+    $ids = static fn (string $html) => preg_match_all('/shipmentId=(\d+)/', $html, $m) ? array_values(array_unique(array_map('intval', $m[1]))) : [];
+    $ktgList = $ids($aKtg->get("/api/_ui-preview/index.php?page=konfirmasi-toko&tanggal={$day}")['body']);
+    expect(in_array($shipments[$ktg], $ktgList, true) && !in_array($shipments[$cbd], $ktgList, true), 'Admin KTG Konfirmasi Toko list: ' . json_encode($ktgList));
+    $leaderList = $ids($leader->get("/api/_ui-preview/index.php?page=konfirmasi-toko&tanggal={$day}")['body']);
+    expect(in_array($shipments[$cbd], $leaderList, true) && in_array($shipments[$ktg], $leaderList, true), 'Leader sees both: ' . json_encode($leaderList));
+    $other = $aKtg->get("/api/_ui-preview/index.php?page=konfirmasi-toko-detail&shipmentId={$shipments[$cbd]}")['body'];
+    expect(str_contains($other, 'pabrik lain') && !str_contains($other, 'Isi Penerimaan dari Surat Jalan'), 'Admin KTG must not open the Cibadak shipment detail');
+    $doPage = $aCbd->get("/api/_ui-preview/index.php?page=delivery-order-detail&doId={$doId}")['body'];
+    expect(str_contains($doPage, "SHP-{$shipments[$cbd]}") || str_contains($doPage, "id={$shipments[$cbd]}"), 'Admin CBD DO detail must list its own shipment');
+    expect(!str_contains($doPage, "SHP-{$shipments[$ktg]}") && !str_contains($doPage, "print-shipment.php?id={$shipments[$ktg]}"), 'Admin CBD DO detail must not list the Karangtengah shipment');
+});
+
 $failed = count(array_filter($results, static fn ($ok) => !$ok));
 fwrite(STDOUT, "\n" . count($results) . " tests, {$failed} failed.\n");
 exit($failed === 0 ? 0 : 1);

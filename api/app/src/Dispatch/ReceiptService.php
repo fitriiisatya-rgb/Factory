@@ -695,6 +695,11 @@ final class ReceiptService
     public function adminList(?string $tanggal, ?string $status): array
     {
         $rows = $this->repo->listForAdmin($this->pdo, $tanggal, $status);
+        // Admin Pabrik: only their own factory's deliveries — here, not in the controller, so the
+        // server-rendered Konfirmasi Toko page is scoped too.
+        if (\Amor\Api\Auth::isFactoryAdmin()) {
+            $rows = array_values(array_filter($rows, fn ($r) => \Amor\Api\AdminScope::visible(\Amor\Api\AdminScope::shipmentFactoryId($this->pdo, (int) $r['shipment_id']))));
+        }
         return array_map(static function ($r) {
             $isSpecial = ($r['source_type'] ?? null) === 'special_order_do';
             $isReplacement = ($r['source_type'] ?? null) === 'replacement_do';

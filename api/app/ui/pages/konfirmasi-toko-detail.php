@@ -28,6 +28,7 @@ $service = new DispatchService($pdo);
 $shipment = null;
 $viewError = null;
 try {
+    \Amor\Api\Auth::requireAdminFactory(\Amor\Api\AdminScope::shipmentFactoryId($pdo, $shipmentId));
     $shipment = $service->shipmentDetail($shipmentId, (int) $ui['userId'], true);
 } catch (\Throwable $e) {
     $viewError = $e->getMessage();

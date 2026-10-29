@@ -293,6 +293,11 @@ final class SpecialOrderService
     public function listOrders(array $filters): array
     {
         $rows = $this->repo->findOrders($this->pdo, $filters);
+        // Admin Pabrik: only orders with goods from their own factory (page and API alike).
+        if (\Amor\Api\Auth::isFactoryAdmin()) {
+            $scope = \Amor\Api\Auth::adminFactoryScope();
+            $rows = array_values(array_filter($rows, fn ($r) => array_intersect(\Amor\Api\AdminScope::specialOrderFactoryIds($this->pdo, (int) $r['special_order_id']), $scope) !== []));
+        }
         return array_map(fn ($r) => $this->buildOrderSummaryDto($r), $rows);
     }
 

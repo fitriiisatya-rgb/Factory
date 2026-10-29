@@ -36,12 +36,7 @@ final class ReplacementController
         Auth::requireRole(...self::DISPOSITION_ROLES);
         $tanggal = $request->query('tanggal');
         $service = new ReplacementService(Database::pdo());
-        $rows = $service->pendingDisposition($tanggal);
-        if (Auth::isFactoryAdmin()) {
-            $pdo = Database::pdo();
-            $rows = array_values(array_filter($rows, static fn ($r) => \Amor\Api\AdminScope::visible(\Amor\Api\AdminScope::shipmentFactoryId($pdo, (int) $r['shipmentId']))));
-        }
-        Response::json($rows);
+        Response::json($service->pendingDisposition($tanggal));
     }
 
     public static function disposeReject(Request $request): void
@@ -85,6 +80,7 @@ final class ReplacementController
     {
         Auth::requireRole(...self::DISPOSITION_ROLES);
         $id = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(\Amor\Api\AdminScope::replacementDemandFactoryId(Database::pdo(), $id));
         $service = new ReplacementService(Database::pdo());
         Response::json($service->getDemand($id));
     }
@@ -93,6 +89,7 @@ final class ReplacementController
     {
         $userId = Auth::requireRole(...self::PRODUCTION_ROLES);
         $id = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(\Amor\Api\AdminScope::replacementDemandFactoryId(Database::pdo(), $id));
         $aktual = (float) ($request->input('aktualProduksi') ?? 0);
         $reject = (float) ($request->input('rejectProduksi') ?? 0);
 
@@ -109,6 +106,7 @@ final class ReplacementController
     {
         $userId = Auth::requireRole(...self::FG_ROLES);
         $id = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(\Amor\Api\AdminScope::replacementDemandFactoryId(Database::pdo(), $id));
         $qty = (float) ($request->input('fgVerifiedQty') ?? 0);
 
         Idempotency::handle($request, 'POST /api/replacement-demands/{id}/verify-fg', function (PDO $pdo) use ($userId, $id, $qty, $request) {
@@ -122,6 +120,7 @@ final class ReplacementController
     {
         $userId = Auth::requireRole(...self::DO_ROLES);
         $id = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(\Amor\Api\AdminScope::replacementDemandFactoryId(Database::pdo(), $id));
 
         Idempotency::handle($request, 'POST /api/replacement-demands/{id}/do', function (PDO $pdo) use ($userId, $id, $request) {
             $service = new ReplacementDoService($pdo);
@@ -134,6 +133,7 @@ final class ReplacementController
     {
         Auth::requireRole(...self::DO_ROLES);
         $id = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(\Amor\Api\AdminScope::replacementDoFactoryId(Database::pdo(), $id));
         $service = new ReplacementDoService(Database::pdo());
         Response::json($service->getDo($id));
     }
@@ -142,6 +142,7 @@ final class ReplacementController
     {
         $userId = Auth::requireRole(...self::DO_ROLES);
         $id = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(\Amor\Api\AdminScope::replacementDoFactoryId(Database::pdo(), $id));
         $qtyRaw = $request->input('qty');
         $qty = $qtyRaw !== null && $qtyRaw !== '' ? (float) $qtyRaw : null;
 

@@ -10,6 +10,7 @@ $service = new SpecialOrderService($pdo);
 $order = null;
 $viewError = null;
 try {
+    \Amor\Api\AdminScope::requireAny(\Amor\Api\AdminScope::specialOrderFactoryIds($pdo, $id));
     $order = $service->getOrder($id);
 } catch (ApiException $e) {
     $viewError = $e->getMessage();

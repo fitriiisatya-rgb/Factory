@@ -45,6 +45,16 @@ final class ReplacementService
      */
     public function pendingDisposition(?string $tanggal): array
     {
+        $rows = $this->pendingDispositionAll($tanggal);
+        // Admin Pabrik: only rejects on their own factory's deliveries (page and API alike).
+        if (\Amor\Api\Auth::isFactoryAdmin()) {
+            $rows = array_values(array_filter($rows, fn ($r) => \Amor\Api\AdminScope::visible(\Amor\Api\AdminScope::shipmentFactoryId($this->pdo, (int) $r['shipmentId']))));
+        }
+        return $rows;
+    }
+
+    private function pendingDispositionAll(?string $tanggal): array
+    {
         return array_map(function ($r) {
             return [
                 'receiptItemId' => (int) $r['shipment_receipt_item_id'],

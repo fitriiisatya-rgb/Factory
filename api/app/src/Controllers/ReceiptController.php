@@ -121,12 +121,7 @@ final class ReceiptController
         $status = $request->query('status');
         $pdo = Database::pdo();
         $service = new ReceiptService($pdo);
-        $rows = $service->adminList($tanggal, $status);
-        if (Auth::isFactoryAdmin()) {
-            // Admin Pabrik: only deliveries from their own factory.
-            $rows = array_values(array_filter($rows, static fn ($r) => AdminScope::visible(AdminScope::shipmentFactoryId($pdo, (int) $r['shipmentId']))));
-        }
-        Response::json($rows);
+        Response::json($service->adminList($tanggal, $status));
     }
 
     /**

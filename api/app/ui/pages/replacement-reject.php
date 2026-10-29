@@ -28,7 +28,7 @@ if (array_intersect(['ADMIN', 'PPIC'], $ui['roles']) === []) {
 
 $service = new ReplacementService($pdo);
 $pending = $service->pendingDisposition(null);
-$demands = $service->listDemands([]);
+$demands = $service->listDemands(\Amor\Api\Auth::isFactoryAdmin() ? ['factoryId' => $uiFactoryId] : []);
 
 $statusLabels = [
     'need_production' => 'Perlu Produksi',

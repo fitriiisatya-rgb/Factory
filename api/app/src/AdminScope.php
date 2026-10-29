@@ -76,6 +76,22 @@ final class AdminScope
         return $f === false || $f === null ? null : (int) $f;
     }
 
+    public static function replacementDemandFactoryId(PDO $pdo, int $demandId): ?int
+    {
+        $st = $pdo->prepare('SELECT factory_id FROM replacement_demand WHERE replacement_demand_id = ?');
+        $st->execute([$demandId]);
+        $f = $st->fetchColumn();
+        return $f === false || $f === null ? null : (int) $f;
+    }
+
+    public static function replacementDoFactoryId(PDO $pdo, int $doId): ?int
+    {
+        $st = $pdo->prepare('SELECT factory_id FROM replacement_do WHERE replacement_do_id = ?');
+        $st->execute([$doId]);
+        $f = $st->fetchColumn();
+        return $f === false || $f === null ? null : (int) $f;
+    }
+
     public static function productFactoryId(PDO $pdo, int $productId): ?int
     {
         $st = $pdo->prepare('SELECT d.factory_id FROM product p INNER JOIN division d ON d.division_id = p.division_id WHERE p.product_id = ?');

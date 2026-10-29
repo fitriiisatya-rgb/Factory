@@ -43,12 +43,7 @@ final class SpecialOrderController
             'tanggal' => $request->query('tanggal'),
             'storeId' => $request->query('storeId') !== null ? (int) $request->query('storeId') : null,
         ], fn ($v) => $v !== null);
-        $orders = $service->listOrders($filters);
-        if (Auth::isFactoryAdmin()) {
-            $pdo = Database::pdo();
-            $orders = array_values(array_filter($orders, static fn ($o) => array_intersect(AdminScope::specialOrderFactoryIds($pdo, (int) $o['orderId']), Auth::adminFactoryScope()) !== []));
-        }
-        Response::json($orders);
+        Response::json($service->listOrders($filters));
     }
 
     public static function show(Request $request): void

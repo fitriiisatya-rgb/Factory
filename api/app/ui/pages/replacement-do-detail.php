@@ -33,6 +33,7 @@ $service = new ReplacementDoService($pdo);
 $do = null;
 $viewError = null;
 try {
+    \Amor\Api\Auth::requireAdminFactory(\Amor\Api\AdminScope::replacementDoFactoryId($pdo, $doId));
     $do = $service->getDo($doId);
 } catch (\Throwable $e) {
     $viewError = $e->getMessage();

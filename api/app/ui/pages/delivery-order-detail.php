@@ -12,6 +12,7 @@ $repo = new DoRepository();
 $do = null;
 $viewError = null;
 try {
+    \Amor\Api\AdminScope::requireAny(\Amor\Api\AdminScope::doFactoryIds($pdo, $doId));
     $do = $service->getDo($doId);
 } catch (\Throwable $e) {
     $viewError = $e->getMessage();
@@ -20,6 +21,10 @@ try {
 $shipments = [];
 if ($do !== null) {
     foreach ($repo->findShipmentsForDo($pdo, $doId) as $sh) {
+        // Admin Pabrik: the DO is shared, its shipments are per factory — show only their own.
+        if (!\Amor\Api\AdminScope::visible(isset($sh['factory_id']) ? (int) $sh['factory_id'] : null)) {
+            continue;
+        }
         $sh['items'] = $repo->findShipmentItems($pdo, (int) $sh['shipment_id']);
         $shipments[] = $sh;
     }
