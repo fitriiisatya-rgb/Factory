@@ -118,6 +118,9 @@ $emailStatus = $email['status'] ?? null;
     <?= ui_kpi_card(['label' => 'Tujuan', 'value' => (string) ($email['recipientEmail'] ?? '-'), 'icon' => 'user', 'color' => 'neutral', 'detail' => true]) ?>
     <?= ui_kpi_card(['label' => 'Percobaan', 'value' => (string) ($email['attemptCount'] ?? 0), 'icon' => 'chart', 'color' => 'neutral', 'detail' => true]) ?>
   </div>
+  <?php if ($emailStatus !== 'sent' && !\Amor\Api\System\StoreEmailSwitch::enabled($pdo)): ?>
+  <div class="alert alert-info" style="margin-top:var(--space-3);">Email surat jalan ke toko sedang <b>dibekukan</b> (masa adaptasi). Leader bisa mengaktifkannya lagi di Pengaturan.</div>
+  <?php endif; ?>
   <?php if ($emailStatus === 'sent'): ?>
   <p style="color:var(--text-faint);font-size:.85rem;margin-top:var(--space-3);">Pertama dikirim: <?= ui_esc(ui_fmt_datetime_id($email['sentAt'] ?? null)) ?></p>
   <?php elseif ($emailStatus === 'failed' && !empty($email['lastError'])): ?>

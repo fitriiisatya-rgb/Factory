@@ -28,6 +28,20 @@ final class SystemController
         Response::json($r);
     }
 
+    /** POST /api/admin/system/store-email — {enabled: bool}; freeze/unfreeze surat jalan emails to stores (Leader only). */
+    public static function storeEmail(Request $request): void
+    {
+        $userId = Auth::requireLeaderAdmin();
+        $enabled = filter_var($request->input('enabled'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        if ($enabled === null) {
+            throw new ApiException(400, 'INVALID_ENABLED', 'enabled harus true atau false');
+        }
+        $pdo = Database::pdo();
+        \Amor\Api\System\StoreEmailSwitch::set($pdo, $enabled);
+        Audit::write($pdo, $request->header('Idempotency-Key'), $userId, $enabled ? 'system.store_email.on' : 'system.store_email.off', 'master_setting', 'store_email_enabled', 'ok', null, null, ['enabled' => $enabled]);
+        Response::json(['enabled' => $enabled]);
+    }
+
     /** GET /api/admin/system/backup-download?name= — download one backup file. */
     public static function download(Request $request): void
     {

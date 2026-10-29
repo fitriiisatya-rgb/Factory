@@ -266,6 +266,7 @@ final class App
         $router->post('/api/admin/store-portal/{storeId}/issue', [StorePortalAdminController::class, 'tokenIssue']);
         $router->post('/api/admin/store-portal/{storeId}/revoke', [StorePortalAdminController::class, 'tokenRevoke']);
         $router->post('/api/admin/system/backups', [SystemController::class, 'backupNow']);
+        $router->post('/api/admin/system/store-email', [SystemController::class, 'storeEmail']);
         $router->get('/api/admin/system/backup-download', [SystemController::class, 'download']);
         $router->get('/api/admin/integration-keys', [IntegrationController::class, 'keyList']);
         $router->post('/api/admin/integration-keys', [IntegrationController::class, 'keyIssue']);

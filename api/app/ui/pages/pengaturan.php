@@ -25,6 +25,35 @@ declare(strict_types=1);
 </div>
 
 <?php if (in_array('ADMIN', $ui['roles'], true) && !\Amor\Api\Auth::isFactoryAdmin()): ?>
+<?php $storeEmailOn = \Amor\Api\System\StoreEmailSwitch::enabled($pdo); ?>
+<div class="card section">
+  <div class="card-head"><h2 class="card-title">Email Surat Jalan ke Toko</h2><?= ui_badge($storeEmailOn ? 'Aktif' : 'Dibekukan') ?></div>
+  <p style="color:var(--text-muted);font-size:var(--text-sm);">
+    <?= $storeEmailOn
+        ? 'Setiap kali Admin menekan Kirim, toko yang emailnya terisi menerima email surat jalan.'
+        : 'Masa adaptasi: email surat jalan ke toko TIDAK dikirim. Email toko di Master Data tetap tersimpan. Saat diaktifkan lagi, kiriman lama tidak dikirim ulang otomatis.' ?>
+    Notifikasi error ke Admin tidak terpengaruh.
+  </p>
+  <button type="button" class="btn <?= $storeEmailOn ? 'btn-secondary' : 'btn-primary' ?>" id="btn-store-email" data-enable="<?= $storeEmailOn ? '0' : '1' ?>"><?= $storeEmailOn ? 'Bekukan Email ke Toko' : 'Aktifkan Email ke Toko' ?></button>
+</div>
+<script>
+(function () {
+  var b = document.getElementById('btn-store-email');
+  b.addEventListener('click', async function () {
+    var on = b.dataset.enable === '1';
+    var ok = await Amor.confirmModal({
+      title: on ? 'Aktifkan email ke toko?' : 'Bekukan email ke toko?',
+      body: on ? 'Mulai kiriman berikutnya, toko yang emailnya terisi akan menerima email surat jalan.' : 'Kiriman berikutnya tidak akan mengirim email ke toko sampai diaktifkan lagi.',
+      confirmLabel: on ? 'Ya, Aktifkan' : 'Ya, Bekukan',
+    });
+    if (!ok) return;
+    try {
+      await Amor.apiFetch('/api/admin/system/store-email', { method: 'POST', body: { enabled: on } });
+      window.location.reload();
+    } catch (e) { Amor.toast(e.message, 'error'); }
+  });
+})();
+</script>
 <div class="card section">
   <div class="card-head"><h2 class="card-title">Sistem</h2></div>
   <p style="color:var(--text-muted);font-size:var(--text-sm);">Backup database (unduh untuk disimpan di luar server) dan catatan error.</p>

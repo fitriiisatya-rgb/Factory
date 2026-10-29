@@ -90,6 +90,9 @@ final class ShipmentEmailService
         $recipient = $store['email'] ?? null;
         $recipient = ($recipient !== null && trim($recipient) !== '') ? trim($recipient) : null;
 
+        if (!\Amor\Api\System\StoreEmailSwitch::enabled($pdo)) {
+            return $this->finish($outboxId, 'pending', $recipient, 'Email ke toko sedang dibekukan (masa adaptasi) — tidak dikirim.', $triggeredBy, $requestId, attempted: false);
+        }
         if (!self::mailEnabled()) {
             return $this->finish($outboxId, 'failed', $recipient, 'Sistem email belum dikonfigurasi di server', $triggeredBy, $requestId, attempted: false);
         }
@@ -137,7 +140,7 @@ final class ShipmentEmailService
             } else {
                 $this->repo->recordSkipped($pdo, $outboxId, $status, $recipient, $error);
             }
-            $action = $status === 'sent' ? 'shipment.email.sent' : ($status === 'no_email' ? 'shipment.email.skipped' : 'shipment.email.failed');
+            $action = $status === 'sent' ? 'shipment.email.sent' : (in_array($status, ['no_email', 'pending'], true) ? 'shipment.email.skipped' : 'shipment.email.failed');
             Audit::write(
                 $pdo, $requestId, $triggeredBy, $action, 'shipment_email_delivery', (string) $outboxId,
                 $status === 'sent' ? 'ok' : 'error', null, null, ['recipient' => $recipient, 'error' => $error]

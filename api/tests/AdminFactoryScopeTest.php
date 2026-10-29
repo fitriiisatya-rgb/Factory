@@ -496,6 +496,27 @@ runTest('AFS-11 Tahap 1: Admin fills one surat jalan with Reject — needs recei
     expect((float) $qty === 5.0, "invoice must bill the 5 good pcs, got {$qty}");
 });
 
+runTest('AFS-12 Leader freezes "Email Surat Jalan ke Toko": Kirim sends nothing, status stays Belum Dikirim; Admin pabrik cannot toggle', function () use ($leader, $aCbd, $pdo, $cbd, $cbdDiv, $store) {
+    expectDenied($aCbd->send('POST', '/api/admin/system/store-email', ['enabled' => false]), 'LEADER_ONLY', 'Admin pabrik toggles store email');
+    $off = $leader->send('POST', '/api/admin/system/store-email', ['enabled' => false]);
+    expect($off['status'] === 200 && $off['json']['data']['enabled'] === false, 'freeze: ' . $off['body']);
+    expect(str_contains($leader->get('/api/_ui-preview/index.php?page=pengaturan')['body'], 'Aktifkan Email ke Toko'), 'Pengaturan must show the frozen state');
+
+    $pdo->prepare("UPDATE store SET email = 'toko-b@example.test' WHERE store_id = ?")->execute([$store]);
+    [, $p5] = divisionAndProduct($pdo, $cbd, 5);
+    $day = (new DateTimeImmutable('+17 days', new DateTimeZone('UTC')))->format('Y-m-d');
+    [, $sid] = cbdShipment($leader, $aCbd, $pdo, $cbd, $cbdDiv, $store, $day, $p5, 2.0);
+    $row = $pdo->query("SELECT status, attempt_count, last_error FROM shipment_email_delivery WHERE shipment_id = {$sid}")->fetch();
+    expect($row['status'] === 'pending' && (int) $row['attempt_count'] === 0 && str_contains((string) $row['last_error'], 'dibekukan'), 'frozen email row: ' . json_encode($row));
+    $resend = $aCbd->send('POST', "/api/admin/shipments/{$sid}/email/resend", []);
+    expect(($resend['json']['data']['status'] ?? null) === 'pending', 'Kirim Ulang while frozen must not send: ' . $resend['body']);
+    expect(str_contains($aCbd->get("/api/_ui-preview/index.php?page=konfirmasi-toko-detail&shipmentId={$sid}")['body'], 'dibekukan'), 'detail page must say email is frozen');
+
+    $on = $leader->send('POST', '/api/admin/system/store-email', ['enabled' => true]);
+    expect($on['status'] === 200 && $on['json']['data']['enabled'] === true, 'unfreeze: ' . $on['body']);
+    $pdo->prepare('UPDATE store SET email = NULL WHERE store_id = ?')->execute([$store]);
+});
+
 $failed = count(array_filter($results, static fn ($ok) => !$ok));
 fwrite(STDOUT, "\n" . count($results) . " tests, {$failed} failed.\n");
 exit($failed === 0 ? 0 : 1);
