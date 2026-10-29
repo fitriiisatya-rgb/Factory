@@ -118,8 +118,19 @@ function report_row(string $label, string $left, string $leftVal, string $right,
 $omzetDateFrom = isset($_GET['omzetDateFrom']) && $_GET['omzetDateFrom'] !== '' ? (string) $_GET['omzetDateFrom'] : date('Y-m-01');
 $omzetDateTo = isset($_GET['omzetDateTo']) && $_GET['omzetDateTo'] !== '' ? (string) $_GET['omzetDateTo'] : date('Y-m-d');
 
-$omzetStmt = $pdo->prepare(
-    'SELECT s.store_id, s.canonical_name AS store_name, COUNT(*) AS invoice_count, SUM(i.total) AS total_omset
+// Admin Pabrik: every figure below counts only goods made by their own factory.
+$isFactoryAdmin = \Amor\Api\Auth::isFactoryAdmin();
+$omzetStmt = $pdo->prepare($isFactoryAdmin
+    ? 'SELECT s.store_id, s.canonical_name AS store_name, COUNT(DISTINCT i.invoice_id) AS invoice_count, SUM(it.subtotal) AS total_omset
+       FROM invoice i
+       INNER JOIN store s ON s.store_id = i.store_id
+       INNER JOIN invoice_item it ON it.invoice_id = i.invoice_id
+       LEFT JOIN product p ON p.product_id = it.product_id
+       LEFT JOIN division d ON d.division_id = COALESCE(it.division_id, p.division_id)
+       WHERE i.tanggal BETWEEN ? AND ? AND ' . \Amor\Api\Auth::adminFactorySql('d.factory_id') . '
+       GROUP BY s.store_id, s.canonical_name
+       ORDER BY total_omset DESC'
+    : 'SELECT s.store_id, s.canonical_name AS store_name, COUNT(*) AS invoice_count, SUM(i.total) AS total_omset
      FROM invoice i
      INNER JOIN store s ON s.store_id = i.store_id
      WHERE i.tanggal BETWEEN ? AND ?
@@ -132,8 +143,16 @@ $omzetRows = $omzetStmt->fetchAll();
 // Nota Potongan (migration 0021) reduce what a store owes. A nota counts in
 // the period of the invoice it credits (the goods' own period), or its own
 // date while that delivery is not invoiced yet.
-$notaStoreStmt = $pdo->prepare(
-    'SELECT n.store_id, COUNT(*) AS nota_count, SUM(n.total) AS nota_total
+$notaStoreStmt = $pdo->prepare($isFactoryAdmin
+    ? 'SELECT n.store_id, COUNT(DISTINCT n.nota_potongan_id) AS nota_count, SUM(ni.subtotal) AS nota_total
+       FROM nota_potongan n
+       INNER JOIN nota_potongan_item ni ON ni.nota_potongan_id = n.nota_potongan_id
+       INNER JOIN product p ON p.product_id = ni.product_id
+       INNER JOIN division d ON d.division_id = p.division_id
+       LEFT JOIN invoice i ON i.invoice_id = n.invoice_id
+       WHERE COALESCE(i.tanggal, n.tanggal) BETWEEN ? AND ? AND ' . \Amor\Api\Auth::adminFactorySql('d.factory_id') . '
+       GROUP BY n.store_id'
+    : 'SELECT n.store_id, COUNT(*) AS nota_count, SUM(n.total) AS nota_total
      FROM nota_potongan n
      LEFT JOIN invoice i ON i.invoice_id = n.invoice_id
      WHERE COALESCE(i.tanggal, n.tanggal) BETWEEN ? AND ?
@@ -170,7 +189,7 @@ $omzetFactoryStmt = $pdo->prepare(
      LEFT JOIN product p ON p.product_id = it.product_id
      LEFT JOIN division d ON d.division_id = COALESCE(it.division_id, p.division_id)
      LEFT JOIN factory f ON f.factory_id = d.factory_id
-     WHERE i.tanggal BETWEEN ? AND ?
+     WHERE i.tanggal BETWEEN ? AND ? AND " . \Amor\Api\Auth::adminFactorySql('d.factory_id') . "
      GROUP BY COALESCE(f.name, 'Tanpa Pabrik')
      ORDER BY total_omset DESC"
 );
@@ -184,7 +203,7 @@ $notaFactoryStmt = $pdo->prepare(
      LEFT JOIN product p ON p.product_id = it.product_id
      LEFT JOIN division d ON d.division_id = p.division_id
      LEFT JOIN factory f ON f.factory_id = d.factory_id
-     WHERE COALESCE(i.tanggal, n.tanggal) BETWEEN ? AND ?
+     WHERE COALESCE(i.tanggal, n.tanggal) BETWEEN ? AND ? AND " . \Amor\Api\Auth::adminFactorySql('d.factory_id') . "
      GROUP BY COALESCE(f.name, 'Tanpa Pabrik')"
 );
 $notaFactoryStmt->execute([$omzetDateFrom, $omzetDateTo]);
@@ -211,7 +230,7 @@ $nonTokoFactoryStmt = $pdo->prepare(
      LEFT JOIN division d ON d.division_id = it.division_id
      LEFT JOIN factory f ON f.factory_id = d.factory_id
      WHERE so.source_type = 'non_toko' AND so.status <> 'cancelled' AND {$nonTokoQty} > 0
-       AND so.required_date BETWEEN ? AND ?
+       AND so.required_date BETWEEN ? AND ? AND " . \Amor\Api\Auth::adminFactorySql('d.factory_id') . "
      GROUP BY COALESCE(f.name, 'Tanpa Pabrik')"
 );
 $nonTokoFactoryStmt->execute([$omzetDateFrom, $omzetDateTo]);
@@ -221,8 +240,9 @@ $nonTokoSourceStmt = $pdo->prepare(
      FROM special_order so
      INNER JOIN special_order_item it ON it.special_order_id = so.special_order_id
      LEFT JOIN ({$nonTokoShippedSql}) x ON x.special_order_item_id = it.special_order_item_id
+     LEFT JOIN division d ON d.division_id = it.division_id
      WHERE so.source_type = 'non_toko' AND so.status <> 'cancelled' AND {$nonTokoQty} > 0
-       AND so.required_date BETWEEN ? AND ?
+       AND so.required_date BETWEEN ? AND ? AND " . \Amor\Api\Auth::adminFactorySql('d.factory_id') . "
      GROUP BY so.non_store_source
      ORDER BY total_omset DESC"
 );
@@ -352,6 +372,9 @@ $omzetTotal = $omzetTokoTotal + $omzetNonTokoTotal;
 $flowDateFrom = isset($_GET['flowDateFrom']) && $_GET['flowDateFrom'] !== '' ? (string) $_GET['flowDateFrom'] : date('Y-m-01');
 $flowDateTo = isset($_GET['flowDateTo']) && $_GET['flowDateTo'] !== '' ? (string) $_GET['flowDateTo'] : date('Y-m-d');
 $flowFactoryId = isset($_GET['flowFactoryId']) && $_GET['flowFactoryId'] !== '' ? (int) $_GET['flowFactoryId'] : $uiFactoryId;
+if (\Amor\Api\Auth::isFactoryAdmin() && !in_array($flowFactoryId, \Amor\Api\Auth::adminFactoryScope(), true)) {
+    $flowFactoryId = $uiFactoryId;
+}
 $flowStmt = $pdo->prepare(
     "SELECT p.product_id, p.name AS product_name, d.name AS division_name,
             COALESCE(po.qty, 0) AS po_qty, COALESCE(sp.qty, 0) AS khusus_qty,
@@ -497,7 +520,9 @@ $returStmt = $pdo->prepare(
             SUM(CASE WHEN r.status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count
      FROM retur_request r
      INNER JOIN store s ON s.store_id = r.store_id
-     WHERE r.jenis = 'retur' AND r.retur_date BETWEEN ? AND ?
+     INNER JOIN product p ON p.product_id = r.product_id
+     LEFT JOIN division d ON d.division_id = p.division_id
+     WHERE r.jenis = 'retur' AND r.retur_date BETWEEN ? AND ? AND " . \Amor\Api\Auth::adminFactorySql('d.factory_id') . "
      GROUP BY s.store_id, s.canonical_name
      ORDER BY verified_qty DESC"
 );
@@ -514,7 +539,7 @@ $rejectStmt = $pdo->prepare(
      INNER JOIN shipment_receipt sr ON sr.shipment_receipt_id = sri.shipment_receipt_id
      INNER JOIN shipment sh ON sh.shipment_id = sr.shipment_id
      INNER JOIN store s ON s.store_id = sh.store_id
-     WHERE sh.tanggal BETWEEN ? AND ? AND sri.reject_qty > 0
+     WHERE sh.tanggal BETWEEN ? AND ? AND sri.reject_qty > 0 AND " . \Amor\Api\Auth::adminFactorySql('sh.factory_id') . "
      GROUP BY s.store_id, s.canonical_name
      ORDER BY reported_reject_qty DESC"
 );
@@ -533,7 +558,8 @@ $rejectTokoStmt = $pdo->prepare(
      FROM retur_request r
      INNER JOIN store s ON s.store_id = r.store_id
      INNER JOIN product p ON p.product_id = r.product_id
-     WHERE r.jenis = 'reject_toko' AND r.retur_date BETWEEN ? AND ?
+     LEFT JOIN division d ON d.division_id = p.division_id
+     WHERE r.jenis = 'reject_toko' AND r.retur_date BETWEEN ? AND ? AND " . \Amor\Api\Auth::adminFactorySql('d.factory_id') . "
      GROUP BY s.store_id, s.canonical_name
      ORDER BY verified_nilai DESC"
 );

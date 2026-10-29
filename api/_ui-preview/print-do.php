@@ -27,6 +27,7 @@ $doId = isset($_GET['doId']) ? (int) $_GET['doId'] : 0;
 $service = new DoService($ui['pdo']);
 
 try {
+    \Amor\Api\AdminScope::requireAny(\Amor\Api\AdminScope::doFactoryIds($ui['pdo'], $doId));
     $do = $service->getDo($doId);
 } catch (\Throwable $e) {
     http_response_code(200);

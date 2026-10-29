@@ -75,6 +75,9 @@ function ui_render_invoice_print_document(array $invoice, int $pageNum = 1, int 
       <div class="inv-info-row"><b>Atas Invoice</b><span><?= ui_esc((string) $reference['invoiceNo']) ?></span></div>
       <?php endif; ?>
       <?php if ($hasReference): ?>
+        <?php if (!empty($invoice['factory']['name'])): ?>
+        <div class="inv-info-row"><b>Pabrik</b><span><?= ui_esc((string) $invoice['factory']['name']) ?></span></div>
+        <?php endif; ?>
         <?php if (trim((string) ($reference['doNumber'] ?? '')) !== ''): ?>
         <div class="inv-info-row"><b>No. DO</b><span><?= ui_esc((string) $reference['doNumber']) ?></span></div>
         <?php endif; ?>

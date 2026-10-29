@@ -26,7 +26,7 @@ $to = (new \DateTimeImmutable('now', $tz))->format('Y-m-d');
   <div class="filter-bar" style="flex-wrap:wrap;gap:var(--space-2);">
     <label>Toko <select id="db-store"><option value="">Semua Toko</option>
       <?php foreach ($storeOpts as $s): ?><option value="<?= (int) $s['store_id'] ?>"><?= ui_esc($s['canonical_name']) ?></option><?php endforeach; ?></select></label>
-    <label>Pabrik <select id="db-factory"><option value="">Semua Pabrik</option>
+    <label>Pabrik <select id="db-factory"><?php if (!\Amor\Api\Auth::isFactoryAdmin()): ?><option value="">Semua Pabrik</option><?php endif; ?>
       <?php foreach ($factories as $f): ?><option value="<?= (int) $f['factory_id'] ?>"><?= ui_esc($f['name']) ?></option><?php endforeach; ?></select></label>
     <label>Dari <input type="date" id="db-from" value="<?= ui_esc($from) ?>"></label>
     <label>Sampai <input type="date" id="db-to" value="<?= ui_esc($to) ?>"></label>

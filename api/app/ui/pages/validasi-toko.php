@@ -20,7 +20,7 @@ $mutasiSelisih = (int) $pdo->query("SELECT COUNT(*) FROM mutasi_request WHERE st
 <div class="btn-group section" style="flex-wrap:wrap;">
   <a class="btn btn-secondary btn-sm" href="/api/_ui-preview/?page=dashboard-retur">📊 Dashboard Retur &amp; Reject</a>
   <a class="btn btn-secondary btn-sm" href="/api/_ui-preview/?page=mutasi-review&status=discrepancy">🔁 Selisih Mutasi<?= $mutasiSelisih > 0 ? ' (' . $mutasiSelisih . ')' : '' ?></a>
-  <a class="btn btn-secondary btn-sm" href="/api/_ui-preview/?page=alasan-reject">🗂 Master Alasan Reject</a>
+  <?php if (!\Amor\Api\Auth::isFactoryAdmin()): ?><a class="btn btn-secondary btn-sm" href="/api/_ui-preview/?page=alasan-reject">🗂 Master Alasan Reject</a><?php endif; ?>
   <a class="btn btn-secondary btn-sm" id="vt-export" href="#">⬇ Export Excel (CSV)</a>
 </div>
 <?php if ($waitingAtasan > 0): ?>
@@ -29,7 +29,7 @@ $mutasiSelisih = (int) $pdo->query("SELECT COUNT(*) FROM mutasi_request WHERE st
 
 <div class="card section">
   <div class="filter-bar" style="flex-wrap:wrap;gap:var(--space-2);">
-    <label>Pabrik <select id="vt-factory"><option value="">Semua Pabrik</option>
+    <label>Pabrik <select id="vt-factory"><?php if (!\Amor\Api\Auth::isFactoryAdmin()): ?><option value="">Semua Pabrik</option><?php endif; ?>
       <?php foreach ($factories as $f): ?><option value="<?= (int) $f['factory_id'] ?>"><?= ui_esc($f['name']) ?></option><?php endforeach; ?></select></label>
     <label>Jenis <select id="vt-jenis"><option value="">Semua Jenis</option><option value="retur">Retur</option><option value="reject">Reject</option><option value="mutasi">Mutasi</option></select></label>
     <label>Toko <select id="vt-store"><option value="">Semua Toko</option>

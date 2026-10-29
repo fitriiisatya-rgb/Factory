@@ -135,6 +135,17 @@ if (isset($pageRoles[$page]) && array_intersect($pageRoles[$page], $ui['roles'])
         . '</body></html>';
     exit;
 }
+// Admin Pabrik (Auth::adminFactoryScope): accounts, settings and integrations are Leader Admin only.
+if (\Amor\Api\Auth::isFactoryAdmin() && in_array($page, ['sistem', 'runchise', 'integrasi', 'alasan-reject'], true)) {
+    http_response_code(403);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Akses Ditolak</title></head>'
+        . '<body style="font-family:system-ui,sans-serif;max-width:640px;margin:4rem auto;padding:0 1.5rem;color:#1a1a1a;">'
+        . '<h1 style="font-size:1.25rem;">Khusus Leader Admin</h1>'
+        . '<p>Halaman ini hanya untuk Leader Admin. <a href="/api/_ui-preview/">Kembali</a></p>'
+        . '</body></html>';
+    exit;
+}
 if ($scopedPages !== null && !in_array($page, $scopedPages, true)) {
     http_response_code(403);
     header('Content-Type: text/html; charset=utf-8');
@@ -190,6 +201,15 @@ if ((!isset($_GET['factoryId']) || $_GET['factoryId'] === '') && $scopedPages !=
     if ($ownFactoryId !== null) {
         $uiFactoryId = (int) $ownFactoryId;
     }
+}
+// Admin Pabrik: always their own factory, and the factory picker offers only it.
+$adminFactoryScope = \Amor\Api\Auth::adminFactoryScope();
+if ($adminFactoryScope !== null) {
+    if (!in_array($uiFactoryId, $adminFactoryScope, true)) {
+        $uiFactoryId = (int) $adminFactoryScope[0];
+    }
+    $_GET['factoryId'] = (string) $uiFactoryId;
+    $factories = array_values(array_filter($factories, static fn ($f) => in_array((int) $f['factory_id'], $adminFactoryScope, true)));
 }
 $uiFactoryName = '-';
 foreach ($factories as $f) {

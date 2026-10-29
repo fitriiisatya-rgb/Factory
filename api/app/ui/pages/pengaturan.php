@@ -24,7 +24,7 @@ declare(strict_types=1);
   </div>
 </div>
 
-<?php if (in_array('ADMIN', $ui['roles'], true)): ?>
+<?php if (in_array('ADMIN', $ui['roles'], true) && !\Amor\Api\Auth::isFactoryAdmin()): ?>
 <div class="card section">
   <div class="card-head"><h2 class="card-title">Sistem</h2></div>
   <p style="color:var(--text-muted);font-size:var(--text-sm);">Backup database (unduh untuk disimpan di luar server) dan catatan error.</p>

@@ -39,8 +39,12 @@ $stores = $pdo->query('SELECT store_id, canonical_name, active FROM store WHERE 
       <td class="col-last-used">-</td>
       <td class="col-actions">
         <div style="display:flex;gap:var(--space-2);flex-wrap:wrap;">
+          <?php if (!\Amor\Api\Auth::isFactoryAdmin()): ?>
           <button type="button" class="btn btn-primary btn-sm btn-issue">Generate / Regenerate</button>
           <button type="button" class="btn btn-secondary btn-sm btn-revoke" disabled>Cabut (Revoke)</button>
+          <?php else: ?>
+          <span style="color:var(--text-muted);font-size:var(--text-sm);">Generate / cabut link: Leader Admin</span>
+          <?php endif; ?>
           <button type="button" class="btn btn-secondary btn-sm btn-history">Riwayat</button>
         </div>
       </td>
@@ -62,10 +66,10 @@ $stores = $pdo->query('SELECT store_id, canonical_name, active FROM store WHERE 
     var revokeBtn = tr.querySelector('.btn-revoke');
     if (status.hasActiveToken) {
       statusCell.innerHTML = '<span class="badge badge-success">Aktif sejak ' + (status.issuedAt || '-') + '</span>';
-      revokeBtn.disabled = false;
+      if (revokeBtn) revokeBtn.disabled = false;
     } else {
       statusCell.innerHTML = '<span class="badge badge-neutral">Belum ada link</span>';
-      revokeBtn.disabled = true;
+      if (revokeBtn) revokeBtn.disabled = true;
     }
     lastUsedCell.textContent = status.lastUsedAt || '-';
   }

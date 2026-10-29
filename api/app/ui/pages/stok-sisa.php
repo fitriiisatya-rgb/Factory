@@ -27,7 +27,7 @@ foreach ($rows as $r) {
     <input type="hidden" name="page" value="stok-sisa">
     <div class="field"><label>Pabrik</label>
       <select name="sisaFactoryId">
-        <option value="">Semua pabrik</option>
+        <?php if (!\Amor\Api\Auth::isFactoryAdmin()): ?><option value="">Semua pabrik</option><?php endif; ?>
         <?php foreach ($factories as $f): ?>
         <option value="<?= (int) $f['factory_id'] ?>" <?= $sisaFactory === (int) $f['factory_id'] ? 'selected' : '' ?>><?= ui_esc($f['name']) ?></option>
         <?php endforeach; ?>

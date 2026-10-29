@@ -81,11 +81,11 @@ if (!isset($tabs[$tab])) {
       <td>#<?= (int) $r['store_id'] ?></td>
       <td><?= ui_esc($r['canonical_name']) ?></td>
       <td>
-        <input type="email" class="store-email-input" style="width:220px;" placeholder="belum diisi" value="<?= ui_esc((string) ($r['email'] ?? '')) ?>">
+        <input type="email" class="store-email-input" style="width:220px;" placeholder="belum diisi" value="<?= ui_esc((string) ($r['email'] ?? '')) ?>"<?= \Amor\Api\Auth::isFactoryAdmin() ? ' readonly' : '' ?>>
       </td>
       <td><?= ui_esc((string) ($r['channel'] ?? '-')) ?></td>
       <td><?= (int) $r['active'] === 1 ? ui_badge('Aktif') : ui_badge('Nonaktif') ?></td>
-      <td><button type="button" class="btn btn-secondary btn-sm store-email-save">Simpan</button></td>
+      <td><?php if (!\Amor\Api\Auth::isFactoryAdmin()): ?><button type="button" class="btn btn-secondary btn-sm store-email-save">Simpan</button><?php else: ?><span style="color:var(--text-muted);font-size:var(--text-sm);">Leader Admin</span><?php endif; ?></td>
     </tr>
     <?php endforeach; endif; ?>
     </tbody>

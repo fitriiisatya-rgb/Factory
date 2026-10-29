@@ -45,6 +45,13 @@ $ui = [
     'csrfToken' => (string) ($_SESSION['csrf_token'] ?? ''),
 ];
 
+// Admin Pabrik (Auth::adminFactoryScope): every page and print view is pinned
+// to their own factory, whatever factoryId the link carries.
+$adminFactoryScopeUi = Auth::adminFactoryScope();
+if ($adminFactoryScopeUi !== null && !in_array((int) ($_GET['factoryId'] ?? 0), $adminFactoryScopeUi, true)) {
+    $_GET['factoryId'] = (string) $adminFactoryScopeUi[0];
+}
+
 // PHP fatals on a page end up in Pengaturan → Sistem instead of a blank
 // screen nobody reports.
 \Amor\Api\System\ErrorLog::registerFatalHandler();

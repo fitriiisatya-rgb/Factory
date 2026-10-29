@@ -27,6 +27,7 @@ $qrSizeClass = in_array($qrSize, ['35', '40', '50'], true) ? "sj-qr-{$qrSize}mm"
 $isAdmin = in_array('ADMIN', $ui['roles'], true);
 
 try {
+    \Amor\Api\Auth::requireAdminFactory(\Amor\Api\AdminScope::shipmentFactoryId($ui['pdo'], $shipmentId));
     $service = new DispatchService($ui['pdo']);
     $shipment = $service->shipmentDetail($shipmentId, $ui['userId'], $isAdmin);
 } catch (ApiException $e) {

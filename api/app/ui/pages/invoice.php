@@ -57,7 +57,7 @@ $defaultDateTo = date('Y-m-d');
   <?php endif; ?>
 </div>
 
-<details class="card section">
+<details class="card section"<?= \Amor\Api\Auth::isFactoryAdmin() ? ' style="display:none"' : '' ?>>
   <summary class="card-title" style="cursor:pointer;">Invoice per periode (manual, opsional)</summary>
   <div class="page-subtitle" style="margin:var(--space-2) 0 var(--space-4);">
     Menggabungkan semua pengiriman satu toko yang belum ditagih dalam rentang tanggal menjadi satu invoice. Biasanya tidak perlu — gunakan "Terbitkan Invoice per DO" di atas.
@@ -105,15 +105,16 @@ $defaultDateTo = date('Y-m-d');
 
 <div class="table-card section">
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>No. Invoice</th><th>Tanggal</th><th>Toko</th><th>Jenis</th><th class="num">Total</th><th class="num">Nota Potongan</th><th class="num">Bersih</th><th>Aksi</th></tr></thead>
+    <thead><tr><th>No. Invoice</th><th>Tanggal</th><th>Toko</th><th>Pabrik</th><th>Jenis</th><th class="num">Total</th><th class="num">Nota Potongan</th><th class="num">Bersih</th><th>Aksi</th></tr></thead>
     <tbody>
     <?php if ($invoices === []): ?>
-    <tr><td colspan="8"><?= ui_empty_state('Belum ada invoice', 'Gunakan form di atas untuk membuat invoice baru dari data pengiriman yang sudah dikonfirmasi.') ?></td></tr>
+    <tr><td colspan="9"><?= ui_empty_state('Belum ada invoice', 'Gunakan form di atas untuk membuat invoice baru dari data pengiriman yang sudah dikonfirmasi.') ?></td></tr>
     <?php else: foreach ($invoices as $inv): ?>
     <tr>
       <td><a href="/api/_ui-preview/?page=invoice-detail&invoiceId=<?= (int) $inv['invoiceId'] ?>"><?= ui_esc($inv['invoiceNo']) ?></a></td>
       <td><?= ui_esc($inv['tanggal']) ?></td>
       <td><?= ui_esc($inv['storeName']) ?></td>
+      <td><?= ui_esc($inv['factoryName'] ?? '-') ?></td>
       <td><?= ui_esc($kindLabels[$inv['sourceKind']] ?? 'Periode') ?></td>
       <td class="num"><?= ui_fmt_money($inv['total']) ?></td>
       <td class="num"><?= $inv['notaTotal'] > 0 ? '&minus;' . ui_fmt_money($inv['notaTotal']) : '-' ?></td>

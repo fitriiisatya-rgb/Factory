@@ -101,7 +101,8 @@ function ui_nav_items_secondary(array $roles = []): array
         $items[] = ['key' => 'laporan', 'label' => 'Laporan', 'icon' => 'chart'];
         $items[] = ['key' => 'master-data', 'label' => 'Master Data', 'icon' => 'database'];
     }
-    if (in_array('ADMIN', $roles, true)) {
+    // Admin Pabrik (Auth::adminFactoryScope) cannot manage accounts — Leader Admin only.
+    if (in_array('ADMIN', $roles, true) && !\Amor\Api\Auth::isFactoryAdmin()) {
         $items[] = ['key' => 'kelola-user', 'label' => 'Kelola User', 'icon' => 'user', 'href' => '/api/_users-uat/'];
     }
     $items[] = ['key' => 'pengaturan', 'label' => 'Pengaturan', 'icon' => 'settings'];

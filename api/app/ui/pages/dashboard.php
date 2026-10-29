@@ -36,7 +36,8 @@ $sisaPcs = array_sum(array_column($sisaRows, 'sisa'));
 </div>
 <?php endif; ?>
 <?php
-$rejectTokoWaiting = (int) $pdo->query("SELECT COUNT(*) FROM retur_request WHERE jenis = 'reject_toko' AND status = 'waiting_admin_verification'")->fetchColumn();
+$rejectTokoWaiting = (int) $pdo->query("SELECT COUNT(*) FROM retur_request r INNER JOIN product p ON p.product_id = r.product_id LEFT JOIN division dv ON dv.division_id = p.division_id
+    WHERE r.jenis = 'reject_toko' AND r.status = 'waiting_admin_verification' AND " . \Amor\Api\Auth::adminFactorySql('dv.factory_id'))->fetchColumn();
 ?>
 <?php if ($rejectTokoWaiting > 0): ?>
 <div class="alert alert-danger" style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap;">

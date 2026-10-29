@@ -48,13 +48,21 @@ $unconfirmed = (int) $one(
     "SELECT COUNT(*) FROM shipment s LEFT JOIN shipment_receipt r ON r.shipment_id = s.shipment_id
      WHERE s.status = 'active' AND r.shipment_id IS NULL AND s.factory_id = ? AND s.tanggal BETWEEN DATE_SUB(?, INTERVAL 7 DAY) AND ?", [$fid, $d, $d]);
 // Same list the "Reject saat Terima" page shows as waiting for a decision.
-$discrepancy = count((new \Amor\Api\Replacement\ReplacementService($pdo))->pendingDisposition(null));
-$rejectToko = (int) $one("SELECT COUNT(*) FROM retur_request WHERE jenis = 'reject_toko' AND status = 'waiting_admin_verification'", []);
-$retur = (int) $one("SELECT COUNT(*) FROM retur_request WHERE jenis = 'retur' AND status = 'waiting_admin_verification'", []);
+// Admin Pabrik: counts below cover only their own factory's goods (mutasi stays shared).
+$isFactoryAdmin = \Amor\Api\Auth::isFactoryAdmin();
+$discrepancy = count(array_filter(
+    (new \Amor\Api\Replacement\ReplacementService($pdo))->pendingDisposition(null),
+    static fn ($r) => \Amor\Api\AdminScope::visible(\Amor\Api\AdminScope::shipmentFactoryId($pdo, (int) $r['shipmentId']))
+));
+$returCountSql = "SELECT COUNT(*) FROM retur_request r INNER JOIN product p ON p.product_id = r.product_id LEFT JOIN division dv ON dv.division_id = p.division_id
+    WHERE r.jenis = ? AND r.status = 'waiting_admin_verification' AND " . \Amor\Api\Auth::adminFactorySql('dv.factory_id');
+$rejectToko = (int) $one($returCountSql, ['reject_toko']);
+$retur = (int) $one($returCountSql, ['retur']);
 $mutasi = (int) $one("SELECT COUNT(*) FROM mutasi_request WHERE status = 'discrepancy'", []);
-$sisa = array_sum(array_column((new \Amor\Api\Fg\StokSisaService($pdo))->list(null), 'sisa'));
+$sisa = array_sum(array_column((new \Amor\Api\Fg\StokSisaService($pdo))->list($isFactoryAdmin ? $fid : null), 'sisa'));
 
-$isAdmin = in_array('ADMIN', $ui['roles'], true);
+// Backups / error log are the Leader Admin's (an Admin Pabrik has no Sistem page).
+$isAdmin = in_array('ADMIN', $ui['roles'], true) && !$isFactoryAdmin;
 $errors24 = ErrorLog::countSince(time() - 86400);
 $lastBackup = (new BackupService($pdo))->list()[0] ?? null;
 $backupAgeH = $lastBackup !== null ? (time() - $lastBackup['mtime']) / 3600 : null;
