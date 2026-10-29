@@ -29,12 +29,12 @@ require_once __DIR__ . '/../app/ui/labels.php';
 
 use Amor\Api\Users\UserService;
 
-if (!in_array('ADMIN', $ui['roles'], true)) {
+if (!in_array('ADMIN', $ui['roles'], true) || \Amor\Api\Auth::isFactoryAdmin()) {
     http_response_code(200);
     header('Content-Type: text/html; charset=utf-8');
     echo '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<title>Akses ditolak</title></head><body style="font-family:sans-serif;max-width:420px;margin:3rem auto;padding:0 1rem;">'
-        . '<h1>Akses ditolak</h1><p>Halaman ini hanya untuk akun dengan peran Admin.</p></body></html>';
+        . '<h1>Akses ditolak</h1><p>Halaman ini hanya untuk Leader Admin.</p></body></html>';
     exit;
 }
 

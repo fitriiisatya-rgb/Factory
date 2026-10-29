@@ -207,6 +207,10 @@ final class Auth
     {
         self::requireAuth();
         $roles = self::currentRoles();
+        if (self::isFactoryAdmin() && !in_array('PPIC', $roles, true)) {
+            self::requireAdminFactory(self::divisionFactoryId($divisionId));
+            return;
+        }
         if (array_intersect(['ADMIN', 'PPIC'], $roles) !== []) {
             return;
         }
@@ -231,6 +235,10 @@ final class Auth
     {
         self::requireAuth();
         $roles = self::currentRoles();
+        if (self::isFactoryAdmin() && !in_array('PPIC', $roles, true)) {
+            self::requireAdminFactory($factoryId);
+            return;
+        }
         if (array_intersect(['ADMIN', 'PPIC'], $roles) !== []) {
             return;
         }
@@ -241,6 +249,72 @@ final class Auth
         if (!in_array($factoryId, $assigned, true)) {
             throw new ApiException(403, 'FACTORY_ACCESS_DENIED', 'You are not assigned to this factory');
         }
+    }
+
+    /**
+     * Admin per pabrik: an ADMIN account with factory assignments
+     * (user_factory_access) is an Admin Pabrik (Admin Cibadak / Admin
+     * Karangtengah) — limited to those factories' operations, master data
+     * read-only. An ADMIN without assignments is the Leader Admin: everything,
+     * exactly as before (so existing ADMIN accounts keep full access).
+     *
+     * @return int[]|null factories this ADMIN is limited to; null = not limited (Leader Admin, or not an ADMIN)
+     */
+    public static function adminFactoryScope(): ?array
+    {
+        if (!in_array('ADMIN', self::currentRoles(), true)) {
+            return null;
+        }
+        $ids = self::currentFactoryIds();
+        return $ids === [] ? null : $ids;
+    }
+
+    public static function isFactoryAdmin(): bool
+    {
+        return self::adminFactoryScope() !== null;
+    }
+
+    /**
+     * Leader-only actions (accounts, master data, settings, integrations).
+     * $alsoAllowed keeps other roles that already had the action (e.g. PPIC on products).
+     */
+    public static function requireLeaderAdmin(string ...$alsoAllowed): int
+    {
+        $userId = self::requireRole('ADMIN', ...$alsoAllowed);
+        if (self::isFactoryAdmin() && array_intersect($alsoAllowed, self::currentRoles()) === []) {
+            throw new ApiException(403, 'LEADER_ONLY', 'Hanya Leader Admin yang bisa melakukan ini.');
+        }
+        return $userId;
+    }
+
+    /** No-op unless the caller is an Admin Pabrik; then the factory must be one of theirs. */
+    public static function requireAdminFactory(?int $factoryId): void
+    {
+        $scope = self::adminFactoryScope();
+        if ($scope === null) {
+            return;
+        }
+        if ($factoryId === null || !in_array($factoryId, $scope, true)) {
+            throw new ApiException(403, 'FACTORY_ACCESS_DENIED', 'Data ini milik pabrik lain — hanya bisa dibuka Admin pabrik tersebut atau Leader Admin.');
+        }
+    }
+
+    /**
+     * SQL condition limiting a factory column to this Admin Pabrik's factories
+     * ("1=1" for everyone else). $column is a trusted literal, never user input.
+     */
+    public static function adminFactorySql(string $column): string
+    {
+        $scope = self::adminFactoryScope();
+        return $scope === null ? '1=1' : $column . ' IN (' . implode(',', array_map('intval', $scope)) . ')';
+    }
+
+    private static function divisionFactoryId(int $divisionId): ?int
+    {
+        $st = Database::pdo()->prepare('SELECT factory_id FROM division WHERE division_id = ?');
+        $st->execute([$divisionId]);
+        $f = $st->fetchColumn();
+        return $f === false ? null : (int) $f;
     }
 
     public static function me(): array

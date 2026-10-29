@@ -61,13 +61,13 @@ if (Auth::currentUserId() === null) {
 }
 
 try {
-    Auth::requireRole('ADMIN');
+    Auth::requireLeaderAdmin();
 } catch (ApiException $e) {
     http_response_code(200);
     header('Content-Type: text/html; charset=utf-8');
     echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Akses ditolak</title></head><body '
         . 'style="font-family:sans-serif;max-width:640px;margin:2rem auto;"><h1>Akses ditolak</h1>'
-        . '<p>Halaman ini hanya untuk ADMIN.</p></body></html>';
+        . '<p>Halaman ini hanya untuk Leader Admin.</p></body></html>';
     exit;
 }
 

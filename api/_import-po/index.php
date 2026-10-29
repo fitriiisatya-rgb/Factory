@@ -269,6 +269,10 @@ if ($action === 'unskip_product' && isset($_SESSION['po_staged'])) {
 // self-contained transaction (product + product_legacy_code +
 // product_alias + audit_log) — see PoResolver::createProductFromUnresolved()
 // for exactly what it validates and writes. Never fuzzy, never silent.
+if ($action === 'create_new_product_from_import' && \Amor\Api\Auth::isFactoryAdmin()) {
+    $actionResult = ['ok' => false, 'title' => 'Khusus Leader Admin', 'message' => 'Hanya Leader Admin yang bisa menambah produk baru. Pilih "Lewati" untuk baris ini, lalu minta Leader Admin menambahkan produknya di Master Data.'];
+    $action = '';
+}
 if ($action === 'create_new_product_from_import' && isset($_SESSION['po_staged'])) {
     $rawCode = (string) ($_POST['rawCode'] ?? '');
     $rawName = (string) ($_POST['rawName'] ?? '');
@@ -350,6 +354,10 @@ if ($action === 'confirm_import' && isset($_SESSION['po_staged'])) {
     }
 }
 
+if ($action === 'disable' && \Amor\Api\Auth::isFactoryAdmin()) {
+    $actionResult = ['ok' => false, 'title' => 'Khusus Leader Admin', 'message' => 'Hanya Leader Admin yang bisa menonaktifkan halaman ini.'];
+    $action = '';
+}
 if ($action === 'disable') {
     @file_put_contents($markerFile, 'disabled at ' . gmdate('c') . ' by ' . $resolvedByLabel . "\n");
     importPoSimplePage('Import PO wizard dinonaktifkan', '<p style="color:var(--success);font-weight:700;">Sudah dinonaktifkan.</p>'

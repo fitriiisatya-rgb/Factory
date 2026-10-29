@@ -35,7 +35,7 @@ final class MigrationController
 
     private static function index(Request $request, string $kind): void
     {
-        Auth::requireRole('ADMIN');
+        Auth::requireLeaderAdmin();
         $repo = new MigrationMapRepository();
         $rows = $repo->findAll(Database::pdo(), $kind, $request->query('status'), $request->query('q'));
         Response::json($rows);
@@ -53,7 +53,7 @@ final class MigrationController
 
     private static function resolve(Request $request, string $kind): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         $id = (int) $request->routeParams['id'];
         $targetId = $request->input('targetId');
         if ($targetId === null) {
@@ -89,7 +89,7 @@ final class MigrationController
 
     private static function flagConflict(Request $request, string $kind): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         $id = (int) $request->routeParams['id'];
         $notes = trim((string) $request->input('notes', ''));
         if ($notes === '') {

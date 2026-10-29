@@ -44,6 +44,7 @@ final class PoController
         if ($batch === null) {
             throw new ApiException(404, 'NOT_FOUND', 'PO batch not found');
         }
+        Auth::requireAdminFactory((int) $batch['factory_id']);
         $lines = $repo->findCurrent($pdo, $batch['tanggal'], (int) $batch['factory_id'], null, null, 'all');
         Response::json(['batch' => $batch, 'lines' => $lines]);
     }

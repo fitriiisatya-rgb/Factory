@@ -67,6 +67,29 @@ final class Request
         return $_SERVER[$key] ?? null;
     }
 
+    /**
+     * Admin Pabrik (Auth::adminFactoryScope): a factoryId of another factory
+     * is refused, and a request that names none is pinned to the admin's own
+     * factory — so every list that already filters by factoryId is limited
+     * to that factory without each endpoint having to remember it.
+     *
+     * @param int[] $scope
+     */
+    public function applyAdminFactoryScope(array $scope): void
+    {
+        foreach ([$this->query['factoryId'] ?? null, $this->body['factoryId'] ?? null] as $v) {
+            if ($v !== null && $v !== '' && !in_array((int) $v, $scope, true)) {
+                throw new ApiException(403, 'FACTORY_ACCESS_DENIED', 'Data ini milik pabrik lain — hanya bisa dibuka Admin pabrik tersebut atau Leader Admin.');
+            }
+        }
+        if (($this->query['factoryId'] ?? '') === '') {
+            $this->query['factoryId'] = (string) $scope[0];
+        }
+        if (array_key_exists('factoryId', $this->body) && ($this->body['factoryId'] === '' || $this->body['factoryId'] === null)) {
+            $this->body['factoryId'] = $scope[0];
+        }
+    }
+
     public function query(string $key, ?string $default = null): ?string
     {
         return $this->query[$key] ?? $default;

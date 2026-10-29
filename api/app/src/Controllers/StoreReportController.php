@@ -248,7 +248,7 @@ final class StoreReportController
     /** POST /api/reject-reasons {name, sortOrder, active} — PUT /api/reject-reasons/{id} */
     public static function reasonSave(Request $request): void
     {
-        $userId = Auth::requireRole(...self::WRITE_ROLES);
+        $userId = Auth::requireLeaderAdmin();
         $id = isset($request->routeParams['id']) ? (int) $request->routeParams['id'] : null;
         $name = (string) $request->input('name', '');
         $sort = (int) $request->input('sortOrder', 0);

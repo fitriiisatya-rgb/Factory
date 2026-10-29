@@ -44,7 +44,7 @@ final class ProductController
 
     public static function create(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN', 'PPIC');
+        $userId = Auth::requireLeaderAdmin('PPIC');
 
         $name = trim((string) $request->input('name', ''));
         if ($name === '') {
@@ -76,7 +76,7 @@ final class ProductController
 
     public static function update(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN', 'PPIC');
+        $userId = Auth::requireLeaderAdmin('PPIC');
         $id = (int) $request->routeParams['id'];
 
         $version = $request->input('version');
@@ -110,7 +110,7 @@ final class ProductController
 
     public static function addAlias(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN', 'PPIC');
+        $userId = Auth::requireLeaderAdmin('PPIC');
         $productId = (int) $request->routeParams['id'];
         $rawName = trim((string) $request->input('rawName', ''));
         if ($rawName === '') {

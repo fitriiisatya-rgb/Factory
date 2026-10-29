@@ -18,7 +18,7 @@ final class SystemController
     /** POST /api/admin/system/backups — take a backup now. */
     public static function backupNow(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         try {
             $r = (new BackupService(Database::pdo()))->run();
         } catch (\RuntimeException $e) {
@@ -31,7 +31,7 @@ final class SystemController
     /** GET /api/admin/system/backup-download?name= — download one backup file. */
     public static function download(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         $name = (string) $request->query('name', '');
         $path = (new BackupService(Database::pdo()))->path($name);
         if ($path === null) {

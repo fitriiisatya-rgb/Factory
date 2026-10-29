@@ -39,7 +39,7 @@ final class StoreController
 
     public static function create(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
 
         $name = trim((string) $request->input('canonicalName', ''));
         if ($name === '') {
@@ -63,7 +63,7 @@ final class StoreController
 
     public static function update(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         $id = (int) $request->routeParams['id'];
 
         $version = $request->input('version');
@@ -110,7 +110,7 @@ final class StoreController
 
     public static function addAlias(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         $storeId = (int) $request->routeParams['id'];
         $rawName = trim((string) $request->input('rawName', ''));
         if ($rawName === '') {

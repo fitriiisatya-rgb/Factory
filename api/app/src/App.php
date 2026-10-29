@@ -328,6 +328,12 @@ final class App
             Csrf::verify($request);
         }
 
+        // Admin Pabrik: pin/limit factoryId centrally (see Request::applyAdminFactoryScope).
+        $adminScope = Auth::adminFactoryScope();
+        if ($adminScope !== null) {
+            $request->applyAdminFactoryScope($adminScope);
+        }
+
         $router->dispatch($request);
     }
 }

@@ -243,6 +243,11 @@ final class PoImporter
             throw new \RuntimeException("Factory '{$factoryName}' not found — Phase 0 seeding must run first.");
         }
         $factoryId = (int) $factoryId;
+        // Admin Pabrik: a PO file of the other factory is refused (Leader Admin / PPIC unaffected).
+        $adminScope = \Amor\Api\Auth::adminFactoryScope();
+        if ($adminScope !== null && !in_array('PPIC', \Amor\Api\Auth::currentRoles(), true) && !in_array($factoryId, $adminScope, true)) {
+            throw new \Amor\Api\ApiException(403, 'FACTORY_ACCESS_DENIED', "File PO ini untuk pabrik {$factoryName}. Hanya Admin {$factoryName} atau Leader Admin yang bisa mengupload-nya.");
+        }
 
         // Preview must never write — including creating the po_batch row —
         // so only import() (stageUnresolved=true, always called inside a

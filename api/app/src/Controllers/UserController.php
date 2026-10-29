@@ -23,7 +23,7 @@ final class UserController
 {
     public static function index(Request $request): void
     {
-        Auth::requireRole('ADMIN');
+        Auth::requireLeaderAdmin();
         $service = new UserService(Database::pdo());
         $q = $request->query('q');
         $activeParam = $request->query('active');
@@ -38,7 +38,7 @@ final class UserController
 
     public static function create(Request $request): void
     {
-        $actorId = Auth::requireRole('ADMIN');
+        $actorId = Auth::requireLeaderAdmin();
         $username = (string) $request->input('username', '');
         $fullName = (string) $request->input('fullName', '');
         $password = (string) $request->input('password', '');
@@ -62,7 +62,7 @@ final class UserController
 
     public static function update(Request $request): void
     {
-        $actorId = Auth::requireRole('ADMIN');
+        $actorId = Auth::requireLeaderAdmin();
         $id = (int) $request->routeParams['id'];
         $fullName = (string) $request->input('fullName', '');
 
@@ -75,7 +75,7 @@ final class UserController
 
     public static function updateRoles(Request $request): void
     {
-        $actorId = Auth::requireRole('ADMIN');
+        $actorId = Auth::requireLeaderAdmin();
         $id = (int) $request->routeParams['id'];
         $roles = $request->input('roles', []);
         if (!is_array($roles)) {
@@ -91,7 +91,7 @@ final class UserController
 
     public static function updateDivisionAccess(Request $request): void
     {
-        $actorId = Auth::requireRole('ADMIN');
+        $actorId = Auth::requireLeaderAdmin();
         $id = (int) $request->routeParams['id'];
         $divisionIds = $request->input('divisionIds', []);
         if (!is_array($divisionIds)) {
@@ -107,7 +107,7 @@ final class UserController
 
     public static function updateFactoryAccess(Request $request): void
     {
-        $actorId = Auth::requireRole('ADMIN');
+        $actorId = Auth::requireLeaderAdmin();
         $id = (int) $request->routeParams['id'];
         $factoryIds = $request->input('factoryIds', []);
         if (!is_array($factoryIds)) {
@@ -123,7 +123,7 @@ final class UserController
 
     public static function updateStoreAccess(Request $request): void
     {
-        $actorId = Auth::requireRole('ADMIN');
+        $actorId = Auth::requireLeaderAdmin();
         $id = (int) $request->routeParams['id'];
         $storeIds = $request->input('storeIds', []);
         if (!is_array($storeIds)) {
@@ -139,7 +139,7 @@ final class UserController
 
     public static function resetPassword(Request $request): void
     {
-        $actorId = Auth::requireRole('ADMIN');
+        $actorId = Auth::requireLeaderAdmin();
         $id = (int) $request->routeParams['id'];
         $password = (string) $request->input('password', '');
         $passwordConfirm = (string) $request->input('passwordConfirm', '');
@@ -163,7 +163,7 @@ final class UserController
 
     private static function setActive(Request $request, bool $active): void
     {
-        $actorId = Auth::requireRole('ADMIN');
+        $actorId = Auth::requireLeaderAdmin();
         $id = (int) $request->routeParams['id'];
         $endpoint = $active ? 'POST /api/users/{id}/activate' : 'POST /api/users/{id}/deactivate';
 

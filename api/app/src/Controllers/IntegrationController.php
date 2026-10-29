@@ -20,21 +20,21 @@ final class IntegrationController
 {
     public static function keyList(Request $request): void
     {
-        Auth::requireRole('ADMIN');
+        Auth::requireLeaderAdmin();
         Response::json((new IntegrationKeyService(Database::pdo()))->list());
     }
 
     /** POST — returns the raw key ONCE. */
     public static function keyIssue(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         $service = new IntegrationKeyService(Database::pdo());
         Response::json($service->issue((string) $request->input('name', ''), $userId, $request->header('Idempotency-Key')));
     }
 
     public static function keyRevoke(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         $service = new IntegrationKeyService(Database::pdo());
         Response::json($service->revoke((int) $request->routeParams['id'], $userId, $request->header('Idempotency-Key')));
     }

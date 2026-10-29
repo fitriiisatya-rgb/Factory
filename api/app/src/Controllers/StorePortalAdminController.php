@@ -58,7 +58,7 @@ final class StorePortalAdminController
     /** POST — covers BOTH "Generate" (no active token yet) and "Regenerate" (one already exists) — see StorePortalService::issueToken()'s own docblock for why this is one action. Returns the raw token/portal URL ONCE. */
     public static function tokenIssue(Request $request): void
     {
-        $userId = Auth::requireRole(...self::ADMIN_ROLES);
+        $userId = Auth::requireLeaderAdmin();
         $storeId = (int) $request->routeParams['storeId'];
         Idempotency::handle($request, 'POST /api/admin/store-portal/{storeId}/issue', function (PDO $pdo) use ($userId, $storeId, $request) {
             $service = new StorePortalService($pdo);
@@ -69,7 +69,7 @@ final class StorePortalAdminController
 
     public static function tokenRevoke(Request $request): void
     {
-        $userId = Auth::requireRole(...self::ADMIN_ROLES);
+        $userId = Auth::requireLeaderAdmin();
         $storeId = (int) $request->routeParams['storeId'];
         Idempotency::handle($request, 'POST /api/admin/store-portal/{storeId}/revoke', function (PDO $pdo) use ($userId, $storeId, $request) {
             $service = new StorePortalService($pdo);

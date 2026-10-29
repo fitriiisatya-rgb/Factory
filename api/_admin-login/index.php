@@ -285,7 +285,7 @@ function finishLogin(?string $return): void
         exit;
     }
     header('Content-Type: text/html; charset=utf-8');
-    if (in_array('ADMIN', Auth::currentRoles(), true)) {
+    if (in_array('ADMIN', Auth::currentRoles(), true) && !Auth::isFactoryAdmin()) {
         renderLoggedIn(esc((string) $_SESSION['username']));
         exit;
     }
@@ -381,7 +381,7 @@ if ($action === 'change_operator' || Auth::needsOperatorName()) {
         exit;
     }
 }
-if (in_array('ADMIN', Auth::currentRoles(), true) && $return === null) {
+if (in_array('ADMIN', Auth::currentRoles(), true) && !Auth::isFactoryAdmin() && $return === null) {
     renderLoggedIn(esc((string) $_SESSION['username']));
     exit;
 }

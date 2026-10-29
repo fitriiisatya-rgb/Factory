@@ -65,13 +65,13 @@ final class RunchiseController
 
     public static function mapping(Request $request): void
     {
-        Auth::requireRole('ADMIN');
+        Auth::requireLeaderAdmin();
         Response::json((new RunchiseMappingService(Database::pdo()))->overview());
     }
 
     public static function uploadCatalog(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         // The page reads the chosen .csv in the browser and posts its text.
         $text = (string) $request->input('csv', '');
         if (trim($text) === '') {
@@ -85,7 +85,7 @@ final class RunchiseController
 
     public static function setProduct(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         $mode = $request->input('mode');
         Response::json((new RunchiseMappingService(Database::pdo()))->setProduct(
             (int) $request->routeParams['id'], $mode !== null && $mode !== '' ? (string) $mode : null,
@@ -95,7 +95,7 @@ final class RunchiseController
 
     public static function setStore(Request $request): void
     {
-        $userId = Auth::requireRole('ADMIN');
+        $userId = Auth::requireLeaderAdmin();
         $loc = $request->input('location');
         Response::json((new RunchiseMappingService(Database::pdo()))->setStore(
             (int) $request->routeParams['id'], $loc !== null ? (string) $loc : null, $userId, $request->header('Idempotency-Key')
