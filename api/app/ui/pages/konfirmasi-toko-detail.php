@@ -180,7 +180,8 @@ $sjLines = (new \Amor\Api\Dispatch\ReceiptService($pdo))->getPortalShipmentDetai
   <?php endif; ?>
 
   <?php if ($evidenceCount > 0): ?>
-  <h3 class="card-title" style="margin:var(--space-4) 0 var(--space-2);">Bukti Foto</h3>
+  <?php $byAdmin = str_starts_with((string) ($receipt['note'] ?? ''), 'Diisi Admin dari surat jalan'); ?>
+  <h3 class="card-title" style="margin:var(--space-4) 0 var(--space-2);"><?= $byAdmin ? 'Foto Surat Jalan (diunggah Admin)' : 'Bukti Foto dari Toko' ?></h3>
   <div class="evidence-thumb-grid">
     <?php foreach ($receipt['evidence'] as $ev): ?>
     <a href="/api/admin/receipts/evidence/<?= (int) $ev['evidenceId'] ?>" rel="noopener" class="evidence-thumb" data-lightbox="image">
@@ -188,7 +189,7 @@ $sjLines = (new \Amor\Api\Dispatch\ReceiptService($pdo))->getPortalShipmentDetai
     </a>
     <?php endforeach; ?>
   </div>
-  <p style="color:var(--text-faint);font-size:.8rem;margin-top:6px;">Bukti foto dari toko (Portal) atau foto surat jalan bertanda tangan yang diunggah Admin saat mengisi penerimaan. Tidak bisa diganti setelah disimpan.</p>
+  <p style="color:var(--text-faint);font-size:.8rem;margin-top:6px;"><?= $byAdmin ? 'Foto surat jalan bertanda tangan toko, diunggah Admin saat mengisi penerimaan. Tidak bisa diganti setelah disimpan.' : 'Bukti foto diunggah oleh toko saat konfirmasi penerimaan. Admin hanya dapat melihat, tidak dapat mengunggah atau mengganti bukti foto ini.' ?></p>
   <?php else: ?>
   <h3 class="card-title" style="margin:var(--space-4) 0 var(--space-2);">Bukti Foto:</h3>
   <p style="color:var(--text-faint);">

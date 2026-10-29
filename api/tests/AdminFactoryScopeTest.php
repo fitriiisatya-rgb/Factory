@@ -484,6 +484,8 @@ runTest('AFS-11 Tahap 1: Admin fills one surat jalan with Reject — needs recei
     $audit = $pdo->query("SELECT user_id FROM audit_log WHERE action = 'receipt.confirmed' AND record_key = '{$rc['shipment_receipt_id']}'")->fetchColumn();
     expect($audit !== false && $audit !== null, 'audit must name the Admin who filled it');
     expect(!readyHasDo($aCbd, $doId), 'discrepancy waits for Verifikasi');
+    $after = $aCbd->get("/api/_ui-preview/index.php?page=konfirmasi-toko-detail&shipmentId={$sid}")['body'];
+    expect(str_contains($after, 'Foto Surat Jalan (diunggah Admin)') && !str_contains($after, 'Bukti Foto dari Toko'), 'photo heading must say the Admin uploaded the surat jalan');
 
     $v = $aCbd->send('POST', "/api/admin/receipts/{$rc['shipment_receipt_id']}/verify", []);
     expect($v['status'] === 200, 'verify: ' . $v['body']);
