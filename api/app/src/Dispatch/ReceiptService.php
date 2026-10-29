@@ -581,6 +581,58 @@ final class ReceiptService
      */
     public function confirmReceiptForStorePortal(int $storeId, int $shipmentId, ?string $receiverName, ?string $note, array $items, array $evidenceFiles, ?string $requestId): array
     {
+        return $this->confirmForStore($storeId, $shipmentId, $receiverName, $note, $items, $evidenceFiles, $requestId, null);
+    }
+
+    /**
+     * Tahap 1 (toko belum memakai Portal): Admin mengisi konfirmasi
+     * penerimaan dari surat jalan kertas yang sudah ditandatangani toko.
+     * Same math/evidence rules as the Portal — Reject/Kurang still needs a
+     * photo, here the photo of the signed surat jalan. Once the store uses
+     * the Portal, whichever side confirms first wins (the other gets the
+     * existing receipt back).
+     */
+    public function confirmReceiptByAdmin(int $shipmentId, int $adminUserId, ?string $receiverName, ?string $note, array $items, array $evidenceFiles, ?string $requestId): array
+    {
+        $shipment = $this->doRepo->findShipmentById($this->pdo, $shipmentId);
+        if ($shipment === null || $shipment['status'] !== 'active') {
+            throw new ApiException(404, 'NOT_FOUND', 'Pengiriman tidak ditemukan');
+        }
+        if ($receiverName === null || trim($receiverName) === '') {
+            throw new ApiException(400, 'RECEIVER_REQUIRED', 'Isi nama penerima di toko (yang tanda tangan di surat jalan).');
+        }
+        $note = trim('Diisi Admin dari surat jalan. ' . (string) $note);
+        return $this->confirmForStore((int) $shipment['store_id'], $shipmentId, $receiverName, $note, $items, $evidenceFiles, $requestId, $adminUserId);
+    }
+
+    /**
+     * Tahap 1, banyak sekaligus: surat jalan yang kembali tanpa catatan
+     * reject/kurang — every line received good as shipped. Shipments
+     * already confirmed are skipped (reported back, never overwritten).
+     *
+     * @param int[] $shipmentIds
+     * @return array{confirmed:int[],skipped:int[]}
+     */
+    public function confirmAllGoodByAdmin(array $shipmentIds, int $adminUserId, string $receiverName, ?string $requestId): array
+    {
+        $out = ['confirmed' => [], 'skipped' => []];
+        foreach (array_values(array_unique(array_map('intval', $shipmentIds))) as $shipmentId) {
+            $shipment = $this->doRepo->findShipmentById($this->pdo, $shipmentId);
+            if ($shipment === null || $shipment['status'] !== 'active' || $this->repo->findReceiptForShipment($this->pdo, $shipmentId) !== null) {
+                $out['skipped'][] = $shipmentId;
+                continue;
+            }
+            \Amor\Api\Auth::requireAdminFactory($shipment['factory_id'] !== null ? (int) $shipment['factory_id'] : null);
+            $items = array_map(static fn ($l) => ['shipmentItemId' => $l['lineId'], 'receivedGood' => $l['qtyShipped'], 'reject' => 0, 'shortage' => 0],
+                $this->lineResolver->linesForShipment($this->pdo, $shipment));
+            $this->confirmReceiptByAdmin($shipmentId, $adminUserId, $receiverName, 'Diterima semua sesuai surat jalan.', $items, [], $requestId);
+            $out['confirmed'][] = $shipmentId;
+        }
+        return $out;
+    }
+
+    private function confirmForStore(int $storeId, int $shipmentId, ?string $receiverName, ?string $note, array $items, array $evidenceFiles, ?string $requestId, ?int $adminUserId): array
+    {
         $shipment = $this->doRepo->findShipmentById($this->pdo, $shipmentId);
         if ($shipment === null || $shipment['status'] !== 'active' || (int) $shipment['store_id'] !== $storeId) {
             throw new ApiException(404, 'NOT_FOUND', 'Pengiriman tidak ditemukan untuk toko ini');
@@ -622,12 +674,12 @@ final class ReceiptService
         // actor" discipline as every other public receipt path in this
         // file; storeId is captured in the payload summary instead.
         Audit::write(
-            $this->pdo, $requestId, null, 'receipt.confirmed', 'shipment_receipt', (string) $receiptId,
-            'ok', null, null, ['shipmentId' => $shipmentId, 'storeId' => $storeId, 'status' => $status, 'receiverName' => $receiverName, 'via' => 'store_portal']
+            $this->pdo, $requestId, $adminUserId, 'receipt.confirmed', 'shipment_receipt', (string) $receiptId,
+            'ok', null, null, ['shipmentId' => $shipmentId, 'storeId' => $storeId, 'status' => $status, 'receiverName' => $receiverName, 'via' => $adminUserId === null ? 'store_portal' : 'admin_surat_jalan']
         );
 
         if ($sourceType === 'replacement_do') {
-            (new ReplacementService($this->pdo))->recordReceiptOutcome($shipmentId, null, $requestId);
+            (new ReplacementService($this->pdo))->recordReceiptOutcome($shipmentId, $adminUserId, $requestId);
         }
 
         $created = $this->repo->findReceiptForShipment($this->pdo, $shipmentId);

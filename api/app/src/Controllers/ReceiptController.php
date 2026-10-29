@@ -129,6 +129,51 @@ final class ReceiptController
         Response::json($rows);
     }
 
+    /**
+     * POST /api/admin/shipments/{shipmentId}/confirm — Tahap 1: Admin isi
+     * konfirmasi penerimaan dari surat jalan bertanda tangan toko
+     * (multipart: receiverName, note, items JSON, evidence[] = foto SJ).
+     */
+    public static function adminConfirm(Request $request): void
+    {
+        $userId = Auth::requireRole('ADMIN');
+        $shipmentId = (int) $request->routeParams['shipmentId'];
+        Auth::requireAdminFactory(AdminScope::shipmentFactoryId(Database::pdo(), $shipmentId));
+        $receiverName = $request->input('receiverName') !== null ? (string) $request->input('receiverName') : null;
+        $note = $request->input('note') !== null ? (string) $request->input('note') : null;
+        $itemsRaw = $request->input('items', []);
+        $items = is_string($itemsRaw) ? (array) (json_decode($itemsRaw, true) ?? []) : (array) $itemsRaw;
+        $evidenceFiles = EvidenceUploader::validateAndStore($request->fileField('evidence'));
+
+        try {
+            Idempotency::handle($request, 'POST /api/admin/shipments/{shipmentId}/confirm', function (PDO $pdo) use ($userId, $shipmentId, $receiverName, $note, $items, $evidenceFiles, $request) {
+                $dto = (new ReceiptService($pdo))->confirmReceiptByAdmin($shipmentId, $userId, $receiverName, $note, $items, $evidenceFiles, $request->header('Idempotency-Key'));
+                return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'shipment_receipt', 'recordKey' => (string) $shipmentId];
+            });
+        } catch (\Throwable $e) {
+            EvidenceUploader::deleteStoredFiles($evidenceFiles);
+            throw $e;
+        }
+    }
+
+    /** POST /api/admin/shipments/confirm-all-good — {shipmentIds:[...], receiverName} */
+    public static function adminConfirmAllGood(Request $request): void
+    {
+        $userId = Auth::requireRole('ADMIN');
+        $ids = $request->input('shipmentIds', []);
+        if (!is_array($ids) || $ids === []) {
+            throw new ApiException(400, 'NO_SHIPMENTS', 'Centang dulu pengiriman yang surat jalannya sudah kembali.');
+        }
+        $receiverName = trim((string) $request->input('receiverName', ''));
+        if ($receiverName === '') {
+            throw new ApiException(400, 'RECEIVER_REQUIRED', 'Isi nama penerima di toko (atau "Sesuai TTD surat jalan").');
+        }
+        Idempotency::handle($request, 'POST /api/admin/shipments/confirm-all-good', function (PDO $pdo) use ($userId, $ids, $receiverName, $request) {
+            $dto = (new ReceiptService($pdo))->confirmAllGoodByAdmin($ids, $userId, $receiverName, $request->header('Idempotency-Key'));
+            return ['status' => 200, 'envelope' => ['ok' => true, 'data' => $dto], 'recordType' => 'shipment_receipt', 'recordKey' => 'bulk-' . count($dto['confirmed'])];
+        });
+    }
+
     public static function adminVerify(Request $request): void
     {
         $userId = Auth::requireRole('ADMIN');

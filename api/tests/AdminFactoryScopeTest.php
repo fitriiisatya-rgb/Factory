@@ -80,6 +80,8 @@ final class HttpAfs
         curl_setopt_array($ch, [
             CURLOPT_CUSTOMREQUEST => 'POST',
             CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_COOKIEJAR => $this->cookieJar,
+            CURLOPT_COOKIEFILE => $this->cookieJar,
             CURLOPT_HTTPHEADER => $hdrLines,
             CURLOPT_POSTFIELDS => $fields,
         ]);
@@ -100,6 +102,11 @@ final class Actor
     public function get(string $path): array
     {
         return $this->http->request('GET', $path);
+    }
+
+    public function sendForm(string $path, array $fields, array $files = []): array
+    {
+        return $this->http->requestMultipart($path, $fields, $files, ['X-CSRF-Token' => $this->csrf] + idemKey('afs'));
     }
 
     public function send(string $method, string $path, array $body): array
@@ -417,6 +424,74 @@ runTest('AFS-09 UI pages render for Admin pabrik and Leader; Leader-only pages a
     expect($aKtg->get("/api/_ui-preview/print-shipment.php?id={$GLOBALS['shipments'][$GLOBALS['cbd']]}")['status'] === 403, 'Admin KTG must not print the Cibadak surat jalan');
     $other = $page($aKtg, "page=invoice-detail&invoiceId={$cbdInvoiceId}");
     expect(str_contains($other['body'], 'pabrik lain') || $other['status'] === 403, 'Admin KTG must not see the Cibadak invoice page');
+});
+
+/** One Cibadak-only DO for $store on $tanggal, shipped by Admin CBD; returns [doId, shipmentId]. */
+function cbdShipment(Actor $leader, Actor $aCbd, PDO $pdo, int $cbd, int $div, int $store, string $tanggal, int $productId, float $qty): array
+{
+    stockUp($leader, $pdo, $cbd, $div, $tanggal, $store, $productId, $qty);
+    $c = $leader->send('POST', '/api/do', ['tanggal' => $tanggal, 'storeId' => $store]);
+    expect($c['status'] === 200, 'DO create failed: ' . $c['body']);
+    $doId = (int) $c['json']['data']['doId'];
+    $v = $aCbd->get("/api/do/{$doId}")['json']['data']['version'];
+    $s = $aCbd->send('POST', "/api/do/{$doId}/ship", ['expectedVersion' => $v, 'items' => [['productId' => $productId, 'actualQty' => $qty]]]);
+    expect($s['status'] === 200, 'ship failed: ' . $s['body']);
+    return [$doId, (int) $s['json']['data']['shipmentId']];
+}
+function readyHasDo(Actor $a, int $doId): bool
+{
+    foreach ($a->get('/api/invoices/ready')['json']['data']['deliveries'] ?? [] as $d) {
+        if ($d['kind'] === 'do' && (int) $d['refId'] === $doId) return true;
+    }
+    return false;
+}
+
+runTest('AFS-10 Tahap 1: Admin marks shipments "Diterima semua sesuai SJ" (own factory only) and the invoice becomes ready', function () use ($leader, $aKtg, $aCbd, $pdo, $cbd, $cbdDiv, $store) {
+    [, $p2] = divisionAndProduct($pdo, $cbd, 1);
+    $day = (new DateTimeImmutable('+15 days', new DateTimeZone('UTC')))->format('Y-m-d');
+    [$doId, $sid] = cbdShipment($leader, $aCbd, $pdo, $cbd, $cbdDiv, $store, $day, $p2, 5.0);
+    expect(!readyHasDo($aCbd, $doId), 'not invoice-ready before confirmation');
+    $list = $aCbd->get("/api/_ui-preview/index.php?page=konfirmasi-toko&tanggal={$day}");
+    expect(str_contains($list['body'], 'Diterima semua sesuai SJ'), 'list page must offer the bulk button');
+
+    expectDenied($aKtg->send('POST', '/api/admin/shipments/confirm-all-good', ['shipmentIds' => [$sid], 'receiverName' => 'x']), 'FACTORY_ACCESS_DENIED', 'Admin KTG confirms Cibadak shipment');
+    $r = $aCbd->send('POST', '/api/admin/shipments/confirm-all-good', ['shipmentIds' => [$sid], 'receiverName' => 'Sesuai TTD surat jalan']);
+    expect($r['status'] === 200 && $r['json']['data']['confirmed'] === [$sid], 'bulk confirm: ' . $r['body']);
+    $again = $aCbd->send('POST', '/api/admin/shipments/confirm-all-good', ['shipmentIds' => [$sid], 'receiverName' => 'Sesuai TTD surat jalan']);
+    expect($again['json']['data']['skipped'] === [$sid], 'second confirm must be skipped: ' . $again['body']);
+    $st = $pdo->query("SELECT status FROM shipment_receipt WHERE shipment_id = {$sid}")->fetchColumn();
+    expect($st === 'confirmed_ok', "receipt status {$st}");
+    expect(readyHasDo($aCbd, $doId), 'invoice must be ready after Admin confirmation');
+});
+
+runTest('AFS-11 Tahap 1: Admin fills one surat jalan with Reject — needs receiver name and SJ photo, then Verifikasi makes it invoice-ready', function () use ($leader, $aCbd, $pdo, $cbd, $cbdDiv, $store) {
+    [, $p3] = divisionAndProduct($pdo, $cbd, 2);
+    $day = (new DateTimeImmutable('+16 days', new DateTimeZone('UTC')))->format('Y-m-d');
+    [$doId, $sid] = cbdShipment($leader, $aCbd, $pdo, $cbd, $cbdDiv, $store, $day, $p3, 6.0);
+    $page = $aCbd->get("/api/_ui-preview/index.php?page=konfirmasi-toko-detail&shipmentId={$sid}");
+    expect(str_contains($page['body'], 'Isi Penerimaan dari Surat Jalan'), 'detail page must offer the SJ form');
+    $lineId = (int) $pdo->query("SELECT shipment_item_id FROM shipment_item WHERE shipment_id = {$sid}")->fetchColumn();
+    $items = json_encode([['shipmentItemId' => $lineId, 'receivedGood' => 5, 'reject' => 1, 'shortage' => 0]]);
+
+    $noName = $aCbd->sendForm("/api/admin/shipments/{$sid}/confirm", ['items' => $items]);
+    expect($noName['status'] === 400 && code($noName) === 'RECEIVER_REQUIRED', 'receiver required: ' . $noName['body']);
+    $noPhoto = $aCbd->sendForm("/api/admin/shipments/{$sid}/confirm", ['items' => $items, 'receiverName' => 'Bu Sari']);
+    expect($noPhoto['status'] === 400 && code($noPhoto) === 'EVIDENCE_REQUIRED', 'photo required: ' . $noPhoto['body']);
+    $ok = $aCbd->sendForm("/api/admin/shipments/{$sid}/confirm", ['items' => $items, 'receiverName' => 'Bu Sari', 'note' => '1 penyok'], ['evidence[]' => fakeEvidenceImage()]);
+    expect($ok['status'] === 200, 'confirm with photo: ' . $ok['body']);
+    $rc = $pdo->query("SELECT shipment_receipt_id, status, note FROM shipment_receipt WHERE shipment_id = {$sid}")->fetch();
+    expect($rc['status'] === 'confirmed_discrepancy' && str_contains((string) $rc['note'], 'Diisi Admin dari surat jalan'), 'receipt: ' . json_encode($rc));
+    $audit = $pdo->query("SELECT user_id FROM audit_log WHERE action = 'receipt.confirmed' AND record_key = '{$rc['shipment_receipt_id']}'")->fetchColumn();
+    expect($audit !== false && $audit !== null, 'audit must name the Admin who filled it');
+    expect(!readyHasDo($aCbd, $doId), 'discrepancy waits for Verifikasi');
+
+    $v = $aCbd->send('POST', "/api/admin/receipts/{$rc['shipment_receipt_id']}/verify", []);
+    expect($v['status'] === 200, 'verify: ' . $v['body']);
+    expect(readyHasDo($aCbd, $doId), 'invoice ready after Verifikasi');
+    $g = $aCbd->send('POST', '/api/invoices/generate-ready', []);
+    $inv = array_values(array_filter($g['json']['data']['invoices'] ?? [], static fn ($i) => $i['sourceKind'] === 'do'));
+    $qty = $pdo->query('SELECT SUM(qty_invoice) FROM invoice_item WHERE invoice_id = ' . (int) ($inv[0]['invoiceId'] ?? 0))->fetchColumn();
+    expect((float) $qty === 5.0, "invoice must bill the 5 good pcs, got {$qty}");
 });
 
 $failed = count(array_filter($results, static fn ($ok) => !$ok));

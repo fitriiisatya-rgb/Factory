@@ -169,6 +169,8 @@ final class App
         // ReceiptController::adminEvidence()'s own docblock).
         $router->get('/api/admin/receipts', [ReceiptController::class, 'adminList']);
         $router->post('/api/admin/receipts/{id}/verify', [ReceiptController::class, 'adminVerify']);
+        $router->post('/api/admin/shipments/confirm-all-good', [ReceiptController::class, 'adminConfirmAllGood']);
+        $router->post('/api/admin/shipments/{shipmentId}/confirm', [ReceiptController::class, 'adminConfirm']);
         $router->get('/api/admin/receipts/evidence/{id}', [ReceiptController::class, 'adminEvidence']);
 
         // Phase 5.5 finalization — automatic Bakery email / Digital Surat
