@@ -36,7 +36,7 @@ final class InvoiceController
     /** GET — read-only computation of what a generate() call would produce, never writes anything. */
     public static function preview(Request $request): void
     {
-        Auth::requireRole(...self::ADMIN_ROLES);
+        Auth::requireLeaderAdmin();
         $storeId = (int) $request->query('storeId');
         $dateFrom = (string) $request->query('dateFrom');
         $dateTo = (string) $request->query('dateTo');
@@ -46,7 +46,7 @@ final class InvoiceController
 
     public static function generate(Request $request): void
     {
-        $userId = Auth::requireRole(...self::ADMIN_ROLES);
+        $userId = Auth::requireLeaderAdmin();
         $storeId = (int) $request->input('storeId');
         $dateFrom = (string) $request->input('dateFrom');
         $dateTo = (string) $request->input('dateTo');

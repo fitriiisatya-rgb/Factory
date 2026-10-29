@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Amor\Api\Controllers;
 
+use Amor\Api\AdminScope;
 use Amor\Api\ApiException;
 use Amor\Api\Auth;
 use Amor\Api\Database;
@@ -42,13 +43,19 @@ final class SpecialOrderController
             'tanggal' => $request->query('tanggal'),
             'storeId' => $request->query('storeId') !== null ? (int) $request->query('storeId') : null,
         ], fn ($v) => $v !== null);
-        Response::json($service->listOrders($filters));
+        $orders = $service->listOrders($filters);
+        if (Auth::isFactoryAdmin()) {
+            $pdo = Database::pdo();
+            $orders = array_values(array_filter($orders, static fn ($o) => array_intersect(AdminScope::specialOrderFactoryIds($pdo, (int) $o['orderId']), Auth::adminFactoryScope()) !== []));
+        }
+        Response::json($orders);
     }
 
     public static function show(Request $request): void
     {
         Auth::requireAuth();
         $id = (int) $request->routeParams['id'];
+        AdminScope::requireAny(AdminScope::specialOrderFactoryIds(Database::pdo(), $id));
         $service = new SpecialOrderService(Database::pdo());
         Response::json($service->getOrder($id));
     }
@@ -73,6 +80,7 @@ final class SpecialOrderController
         if ($attachment === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Lampiran tidak ditemukan');
         }
+        AdminScope::requireAny(AdminScope::specialOrderFactoryIds(Database::pdo(), (int) $attachment['special_order_id']));
         $path = EvidenceUploader::absolutePath($attachment['file_path'], 'special-order-attachment');
         if (!is_file($path)) {
             throw new ApiException(404, 'NOT_FOUND', 'Berkas lampiran tidak ditemukan di server');
@@ -105,6 +113,7 @@ final class SpecialOrderController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        AdminScope::requireAny(AdminScope::specialOrderFactoryIds(Database::pdo(), $id));
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
 
         Idempotency::handle($request, 'POST /api/special-orders/{id}/confirm', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion) {
@@ -118,6 +127,7 @@ final class SpecialOrderController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        AdminScope::requireAny(AdminScope::specialOrderFactoryIds(Database::pdo(), $id));
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
 
         Idempotency::handle($request, 'POST /api/special-orders/{id}/send-to-production', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion) {
@@ -131,6 +141,7 @@ final class SpecialOrderController
     {
         $userId = Auth::requireRole(...self::STATUS_UPDATE_ROLES);
         $id = (int) $request->routeParams['id'];
+        AdminScope::requireAny(AdminScope::specialOrderFactoryIds(Database::pdo(), $id));
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
         $newStatus = (string) ($request->input('status') ?? '');
 
@@ -151,6 +162,7 @@ final class SpecialOrderController
     {
         $userId = Auth::requireRole(...self::STATUS_UPDATE_ROLES);
         $id = (int) $request->routeParams['id'];
+        AdminScope::requireAny(AdminScope::specialOrderFactoryIds(Database::pdo(), $id));
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
         $items = (array) $request->input('items', []);
 
@@ -167,6 +179,7 @@ final class SpecialOrderController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        AdminScope::requireAll(AdminScope::specialOrderFactoryIds(Database::pdo(), $id), 'Pesanan ini berisi barang dari 2 pabrik — pembatalannya hanya oleh Leader Admin.');
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
         $reason = (string) ($request->input('reason') ?? '');
 
@@ -212,6 +225,7 @@ final class SpecialOrderController
         // FG accounts verify special-order FG too (their FG Sumber Khusus page); scope is checked per item in the service.
         $userId = Auth::requireRole('ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING');
         $itemId = (int) $request->routeParams['itemId'];
+        Auth::requireAdminFactory(AdminScope::specialOrderItemFactoryId(Database::pdo(), $itemId));
         $qty = (float) ($request->input('fgVerifiedQty') ?? 0);
 
         Idempotency::handle($request, 'POST /api/special-orders/items/{itemId}/verify-fg', function (PDO $pdo) use ($request, $userId, $itemId, $qty) {
@@ -226,6 +240,7 @@ final class SpecialOrderController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $itemId = (int) $request->routeParams['itemId'];
+        Auth::requireAdminFactory(AdminScope::specialOrderItemFactoryId(Database::pdo(), $itemId));
         $qty = (float) ($request->input('qty') ?? 0);
 
         Idempotency::handle($request, 'POST /api/special-orders/items/{itemId}/allocate-fg', function (PDO $pdo) use ($request, $userId, $itemId, $qty) {
@@ -240,6 +255,10 @@ final class SpecialOrderController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        $af = Database::pdo()->prepare('SELECT factory_id FROM special_order_fg_allocation WHERE special_order_fg_allocation_id = ?');
+        $af->execute([$id]);
+        $afId = $af->fetchColumn();
+        Auth::requireAdminFactory($afId !== false && $afId !== null ? (int) $afId : null);
 
         Idempotency::handle($request, 'POST /api/special-order-fg-allocations/{id}/release', function (PDO $pdo) use ($request, $userId, $id) {
             $service = new SpecialOrderFgAllocationService($pdo);

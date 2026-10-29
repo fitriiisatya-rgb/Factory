@@ -68,6 +68,10 @@ final class NotaPotonganService
         )->execute([$invoiceId]);
     }
 
+    /** Factory of a nota: a Reject di Toko nota follows its product; a Mutasi nota has none (visible to every admin). */
+    private const NOTA_FACTORY_SQL = '(SELECT d.factory_id FROM retur_request r2 INNER JOIN product p2 ON p2.product_id = r2.product_id
+        INNER JOIN division d ON d.division_id = p2.division_id WHERE r2.retur_request_id = n.retur_request_id)';
+
     /** @return array<int,array> newest first */
     public function list(?int $storeId, ?string $dateFrom, ?string $dateTo): array
     {
@@ -80,6 +84,9 @@ final class NotaPotonganService
         if ($storeId !== null) { $sql .= ' AND n.store_id = ?'; $params[] = $storeId; }
         if ($dateFrom !== null) { $sql .= ' AND n.tanggal >= ?'; $params[] = $dateFrom; }
         if ($dateTo !== null) { $sql .= ' AND n.tanggal <= ?'; $params[] = $dateTo; }
+        if (\Amor\Api\Auth::isFactoryAdmin()) {
+            $sql .= ' AND (n.retur_request_id IS NULL OR ' . \Amor\Api\Auth::adminFactorySql(self::NOTA_FACTORY_SQL) . ')';
+        }
         $sql .= ' ORDER BY n.tanggal DESC, n.nota_potongan_id DESC';
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
@@ -105,6 +112,12 @@ final class NotaPotonganService
         $n = $stmt->fetch();
         if ($n === false) {
             throw new ApiException(404, 'NOT_FOUND', 'Nota potongan tidak ditemukan');
+        }
+        if ($n['retur_request_id'] !== null) {
+            $f = $this->pdo->prepare('SELECT ' . str_replace('n.retur_request_id', '?', self::NOTA_FACTORY_SQL));
+            $f->execute([(int) $n['retur_request_id']]);
+            $fid = $f->fetchColumn();
+            \Amor\Api\AdminScope::requireAny($fid !== false && $fid !== null ? [(int) $fid] : [], true);
         }
         $items = $this->pdo->prepare(
             'SELECT it.*, p.name AS product_name FROM nota_potongan_item it

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Amor\Api\Controllers;
 
+use Amor\Api\AdminScope;
 use Amor\Api\ApiException;
 use Amor\Api\Auth;
 use Amor\Api\Database;
@@ -101,6 +102,7 @@ final class ReceiptController
         if ($evidence === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Bukti foto tidak ditemukan');
         }
+        Auth::requireAdminFactory(AdminScope::receiptFactoryId(Database::pdo(), (int) $evidence['shipment_receipt_id']));
         $path = EvidenceUploader::absolutePath($evidence['file_path']);
         if (!is_file($path)) {
             throw new ApiException(404, 'NOT_FOUND', 'Berkas bukti foto tidak ditemukan di server');
@@ -117,14 +119,21 @@ final class ReceiptController
         Auth::requireRole('ADMIN');
         $tanggal = $request->query('tanggal');
         $status = $request->query('status');
-        $service = new ReceiptService(Database::pdo());
-        Response::json($service->adminList($tanggal, $status));
+        $pdo = Database::pdo();
+        $service = new ReceiptService($pdo);
+        $rows = $service->adminList($tanggal, $status);
+        if (Auth::isFactoryAdmin()) {
+            // Admin Pabrik: only deliveries from their own factory.
+            $rows = array_values(array_filter($rows, static fn ($r) => AdminScope::visible(AdminScope::shipmentFactoryId($pdo, (int) $r['shipmentId']))));
+        }
+        Response::json($rows);
     }
 
     public static function adminVerify(Request $request): void
     {
         $userId = Auth::requireRole('ADMIN');
         $receiptId = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(AdminScope::receiptFactoryId(Database::pdo(), $receiptId));
 
         Idempotency::handle($request, 'POST /api/admin/receipts/{id}/verify', function (PDO $pdo) use ($userId, $receiptId, $request) {
             $service = new ReceiptService($pdo);

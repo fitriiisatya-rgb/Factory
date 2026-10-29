@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Amor\Api\Controllers;
 
+use Amor\Api\AdminScope;
 use Amor\Api\ApiException;
 use Amor\Api\Auth;
 use Amor\Api\Database;
@@ -194,6 +195,11 @@ final class StoreReportController
         if ($scope !== null && !in_array($dto['storeId'], $scope, true)) {
             throw new ApiException(404, 'NOT_FOUND', 'Transaksi tidak ditemukan');
         }
+        if (Auth::isFactoryAdmin()) {
+            // Admin Pabrik: own factory's retur/reject + every mutasi.
+            $dto['items'] = array_values(array_filter($dto['items'], static fn ($it) => $it['jenis'] === 'mutasi'
+                || AdminScope::visible(AdminScope::productFactoryId($pdo, (int) $it['productId']))));
+        }
         Response::json($dto);
     }
 
@@ -207,6 +213,9 @@ final class StoreReportController
             $st = $pdo->prepare('SELECT e.mutasi_request_evidence_id AS id, e.stage, m.source_store_id AS store_id FROM mutasi_request_evidence e INNER JOIN mutasi_request m ON m.mutasi_request_id = e.mutasi_request_id WHERE e.mutasi_request_id = ? ORDER BY e.mutasi_request_evidence_id');
         } else {
             $st = $pdo->prepare("SELECT e.retur_request_evidence_id AS id, 'request' AS stage, r.store_id FROM retur_request_evidence e INNER JOIN retur_request r ON r.retur_request_id = e.retur_request_id WHERE e.retur_request_id = ? ORDER BY e.retur_request_evidence_id");
+        }
+        if ($type !== 'mutasi') {
+            self::guardReturFactory($pdo, $id);
         }
         $st->execute([$id]);
         $rows = array_values(array_filter($st->fetchAll(), static fn ($r) => $scope === null || in_array((int) $r['store_id'], $scope, true)));
@@ -231,7 +240,21 @@ final class StoreReportController
         if (!$ev || ($scope !== null && !in_array((int) $ev['owner_store_id'], $scope, true))) {
             throw new ApiException(404, 'NOT_FOUND', 'Bukti foto tidak ditemukan');
         }
+        if ($type !== 'mutasi') {
+            self::guardReturFactory($pdo, (int) $ev['retur_request_id']);
+        }
         StorePortalAdminController::streamEvidence($ev, $ctx);
+    }
+
+    /** Admin Pabrik: a retur / reject belongs to the factory of its product. */
+    private static function guardReturFactory(PDO $pdo, int $returId): void
+    {
+        $st = $pdo->prepare('SELECT product_id FROM retur_request WHERE retur_request_id = ?');
+        $st->execute([$returId]);
+        $productId = $st->fetchColumn();
+        if ($productId !== false) {
+            AdminScope::requireAny(array_filter([AdminScope::productFactoryId($pdo, (int) $productId)]));
+        }
     }
 
     // ------------------------------------------------------------------

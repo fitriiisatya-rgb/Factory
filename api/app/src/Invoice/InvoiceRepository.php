@@ -149,7 +149,7 @@ final class InvoiceRepository
             ? "AND EXISTS (SELECT 1 FROM special_order_do sod WHERE sod.special_order_do_id = sh.special_order_do_id AND sod.source_type = 'toko_khusus')"
             : '';
         $rows = $pdo->query(
-            "SELECT sh.{$column} AS ref_id, sh.store_id,
+            "SELECT sh.{$column} AS ref_id, sh.store_id, sh.factory_id,
                     SUM(CASE WHEN sr.status IN ('confirmed_ok','verified') THEN 1 ELSE 0 END) AS ok_count,
                     SUM(CASE WHEN sr.status IN ('confirmed_ok','verified') THEN 0 ELSE 1 END) AS waiting_count
              FROM shipment sh
@@ -157,15 +157,17 @@ final class InvoiceRepository
              WHERE sh.status = 'active' AND sh.{$column} IS NOT NULL
                AND sh.shipment_id NOT IN (SELECT shipment_id FROM invoice_shipment)
                {$billable}
-             GROUP BY sh.{$column}, sh.store_id
+             GROUP BY sh.{$column}, sh.store_id, sh.factory_id
              HAVING ok_count > 0 AND waiting_count = 0
-             ORDER BY MIN(sh.tanggal), sh.{$column}"
+             ORDER BY MIN(sh.tanggal), sh.{$column}, sh.factory_id"
         )->fetchAll();
-        return array_map(static fn ($r) => ['refId' => (int) $r['ref_id'], 'storeId' => (int) $r['store_id']], $rows);
+        // One invoice per delivery PER FACTORY: a DO holding both factories' goods is billed as two invoices.
+        return array_map(static fn ($r) => ['refId' => (int) $r['ref_id'], 'storeId' => (int) $r['store_id'],
+            'factoryId' => $r['factory_id'] !== null ? (int) $r['factory_id'] : null], $rows);
     }
 
     /** @return array<int,array{shipment_id:int,tanggal:string}> not-yet-invoiced confirmed shipments of one DO for one store */
-    public function findDeliveryShipments(PDO $pdo, string $column, int $refId, int $storeId): array
+    public function findDeliveryShipments(PDO $pdo, string $column, int $refId, int $storeId, ?int $factoryId = null): array
     {
         $stmt = $pdo->prepare(
             "SELECT sh.shipment_id, sh.tanggal FROM shipment sh
@@ -173,9 +175,10 @@ final class InvoiceRepository
              WHERE sh.{$column} = ? AND sh.store_id = ? AND sh.status = 'active'
                AND sr.status IN ('confirmed_ok','verified')
                AND sh.shipment_id NOT IN (SELECT shipment_id FROM invoice_shipment)
+               AND sh.factory_id <=> ?
              ORDER BY sh.tanggal, sh.shipment_id"
         );
-        $stmt->execute([$refId, $storeId]);
+        $stmt->execute([$refId, $storeId, $factoryId]);
         return $stmt->fetchAll();
     }
 
@@ -366,7 +369,11 @@ final class InvoiceRepository
     public function listAll(PDO $pdo, ?int $storeId, ?string $dateFrom, ?string $dateTo): array
     {
         $sql = 'SELECT i.invoice_id, i.invoice_no, i.tanggal, i.store_id, i.total, i.source_kind, i.created_at, s.canonical_name AS store_name,
-                       (SELECT COALESCE(SUM(n.total), 0) FROM nota_potongan n WHERE n.invoice_id = i.invoice_id) AS nota_total
+                       (SELECT COALESCE(SUM(n.total), 0) FROM nota_potongan n WHERE n.invoice_id = i.invoice_id) AS nota_total,
+                       (SELECT GROUP_CONCAT(DISTINCT sh.factory_id) FROM invoice_shipment ish INNER JOIN shipment sh ON sh.shipment_id = ish.shipment_id
+                         WHERE ish.invoice_id = i.invoice_id) AS factory_ids,
+                       (SELECT GROUP_CONCAT(DISTINCT f.name SEPARATOR \' + \') FROM invoice_shipment ish INNER JOIN shipment sh ON sh.shipment_id = ish.shipment_id
+                         INNER JOIN factory f ON f.factory_id = sh.factory_id WHERE ish.invoice_id = i.invoice_id) AS factory_name
                 FROM invoice i INNER JOIN store s ON s.store_id = i.store_id WHERE 1=1';
         $params = [];
         if ($storeId !== null) { $sql .= ' AND i.store_id = ?'; $params[] = $storeId; }

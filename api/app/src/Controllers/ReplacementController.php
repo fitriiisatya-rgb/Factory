@@ -36,13 +36,23 @@ final class ReplacementController
         Auth::requireRole(...self::DISPOSITION_ROLES);
         $tanggal = $request->query('tanggal');
         $service = new ReplacementService(Database::pdo());
-        Response::json($service->pendingDisposition($tanggal));
+        $rows = $service->pendingDisposition($tanggal);
+        if (Auth::isFactoryAdmin()) {
+            $pdo = Database::pdo();
+            $rows = array_values(array_filter($rows, static fn ($r) => \Amor\Api\AdminScope::visible(\Amor\Api\AdminScope::shipmentFactoryId($pdo, (int) $r['shipmentId']))));
+        }
+        Response::json($rows);
     }
 
     public static function disposeReject(Request $request): void
     {
         $userId = Auth::requireRole(...self::DISPOSITION_ROLES);
         $receiptItemId = (int) $request->routeParams['id'];
+        $ri = Database::pdo()->prepare('SELECT sh.factory_id FROM shipment_receipt_item sri INNER JOIN shipment_receipt sr ON sr.shipment_receipt_id = sri.shipment_receipt_id
+            INNER JOIN shipment sh ON sh.shipment_id = sr.shipment_id WHERE sri.shipment_receipt_item_id = ?');
+        $ri->execute([$receiptItemId]);
+        $riF = $ri->fetchColumn();
+        Auth::requireAdminFactory($riF !== false && $riF !== null ? (int) $riF : null);
         $disposition = (string) $request->input('disposition', '');
         $approvedQty = (float) ($request->input('approvedQty') ?? 0);
         $reason = $request->input('reason') !== null ? (string) $request->input('reason') : null;

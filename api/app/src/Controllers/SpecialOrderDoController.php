@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Amor\Api\Controllers;
 
+use Amor\Api\AdminScope;
 use Amor\Api\ApiException;
 use Amor\Api\Auth;
 use Amor\Api\Database;
@@ -50,6 +51,7 @@ final class SpecialOrderDoController
     {
         Auth::requireAuth();
         $id = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(AdminScope::specialOrderDoFactoryId(Database::pdo(), $id));
         $service = new SpecialOrderDoService(Database::pdo());
         Response::json($service->getDo($id));
     }
@@ -100,6 +102,7 @@ final class SpecialOrderDoController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(AdminScope::specialOrderDoFactoryId(Database::pdo(), $id));
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
         $reason = (string) ($request->input('reason') ?? '');
 
@@ -114,6 +117,7 @@ final class SpecialOrderDoController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(AdminScope::specialOrderDoFactoryId(Database::pdo(), $id));
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
         $method = (string) ($request->input('deliveryMethod') ?? '');
         $provider = $request->input('courierProvider');
@@ -155,6 +159,7 @@ final class SpecialOrderDoController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        Auth::requireAdminFactory(AdminScope::specialOrderDoFactoryId(Database::pdo(), $id));
         $items = $request->input('items');
         $note = $request->input('handoverNote');
 

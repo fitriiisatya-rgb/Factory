@@ -558,6 +558,7 @@ final class StoreReportService
         if ($row === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Item tidak ditemukan');
         }
+        \Amor\Api\AdminScope::requireAny(array_filter([\Amor\Api\AdminScope::productFactoryId($this->pdo, (int) $row['product_id'])]));
         $this->pdo->prepare('UPDATE retur_request SET validasi_status = ?, validasi_note = ?, validasi_by = ?, validasi_at = UTC_TIMESTAMP() WHERE retur_request_id = ?')
             ->execute([$status, $status === 'tidak_sesuai' ? $note : null, $adminUserId, $id]);
         $svc = new ReturService($this->pdo);
@@ -718,7 +719,13 @@ final class StoreReportService
             $rows = array_merge($rows, $st->fetchAll());
         }
         if ($jenis === null || $jenis === '' || $jenis === 'mutasi') {
+            // Mutasi between stores belongs to no factory: an Admin Pabrik sees all of them.
+            $pinnedFactory = $f['factoryId'] ?? null;
+            if (\Amor\Api\Auth::isFactoryAdmin()) {
+                unset($f['factoryId']);
+            }
             [$w, $p] = $common('mr', 'COALESCE(sr.report_date, DATE(mr.created_at))', 'mr.source_store_id');
+            $f['factoryId'] = $pinnedFactory;
             $st = $this->pdo->prepare(
                 "SELECT 'mutasi' AS item_type, mr.mutasi_request_id AS item_id, mr.doc_no, mr.store_report_id, sr.doc_no AS report_no, sr.status AS report_status,
                         COALESCE(sr.report_date, DATE(mr.created_at)) AS tanggal, mr.source_store_id AS store_id, s.canonical_name AS store_name,

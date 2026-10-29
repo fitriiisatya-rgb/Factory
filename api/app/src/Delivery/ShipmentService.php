@@ -229,6 +229,8 @@ final class ShipmentService
             }
             if ($shipmentFactoryId === null) {
                 $shipmentFactoryId = $factoryId;
+                // Admin Pabrik ships only their own factory's goods.
+                \Amor\Api\Auth::requireAdminFactory($factoryId);
             } elseif ($factoryId !== $shipmentFactoryId) {
                 throw new ApiException(400, 'MIXED_FACTORY_SHIPMENT', 'A single shipment cannot mix products from different factories — create a separate shipment per factory');
             }

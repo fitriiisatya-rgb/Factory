@@ -53,7 +53,10 @@ final class DoService
     public function loadPreview(string $tanggal, int $storeId): array
     {
         $store = $this->requireStore($storeId);
-        $demand = $this->targets->storeDemandByProduct($this->pdo, $tanggal, $storeId);
+        $demand = array_filter(
+            $this->targets->storeDemandByProduct($this->pdo, $tanggal, $storeId),
+            static fn ($d) => \Amor\Api\AdminScope::visible(isset($d['factoryId']) ? (int) $d['factoryId'] : null)
+        );
         return [
             'tanggal' => $tanggal,
             'storeId' => $storeId,
@@ -373,7 +376,7 @@ final class DoService
             $last = $lastShipment[$doId] ?? null;
             return [
                 'doId' => $doId,
-                'docNo' => $do['doc_no'],
+                'docNo' => $this->scopedDocNo((string) $do['doc_no']),
                 'tanggal' => $do['tanggal'],
                 'storeId' => (int) $do['store_id'],
                 'storeName' => $do['store_name'],
@@ -386,6 +389,17 @@ final class DoService
                 'lastShipmentGroup' => $last['shipment_group'] ?? null,
             ];
         }, $doRows);
+    }
+
+    /** An Admin Pabrik's surat jalan carries its factory code: DO/KRM/012/X/2026-CBD. */
+    private function scopedDocNo(string $docNo): string
+    {
+        $scope = \Amor\Api\Auth::adminFactoryScope();
+        if ($scope === null || count($scope) !== 1 || $docNo === '') {
+            return $docNo;
+        }
+        $factory = $this->repo->findFactory($this->pdo, $scope[0]);
+        return $factory !== null && !empty($factory['code']) ? $docNo . '-' . $factory['code'] : $docNo;
     }
 
     private function buildDoDto(array $do, array $storeish): array
@@ -428,6 +442,10 @@ final class DoService
             // never affects $shippedByProduct/shipment logic, which reads
             // straight from the repository, not from this filtered list.
             if ($planned <= 0.0001 && $shippedQty <= 0.0001) {
+                continue;
+            }
+            // Admin Pabrik: the DO is shared by both factories; show only this admin's lines.
+            if (!\Amor\Api\AdminScope::visible($item['factory_id'] !== null ? (int) $item['factory_id'] : null)) {
                 continue;
             }
             $visibleCount++;
@@ -493,7 +511,7 @@ final class DoService
 
         return [
             'doId' => $doId,
-            'docNo' => $do['doc_no'],
+            'docNo' => $this->scopedDocNo((string) $do['doc_no']),
             'tanggal' => $tanggal,
             'storeId' => (int) $do['store_id'],
             'storeName' => $storeName,

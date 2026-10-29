@@ -40,6 +40,7 @@ final class ShipmentEmailController
     {
         $userId = Auth::requireRole('ADMIN');
         $shipmentId = (int) $request->routeParams['shipmentId'];
+        Auth::requireAdminFactory(\Amor\Api\AdminScope::shipmentFactoryId(Database::pdo(), $shipmentId));
 
         $requestId = Idempotency::requireKey($request);
         $fingerprint = Idempotency::fingerprint($request);

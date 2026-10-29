@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Amor\Api\Controllers;
 
+use Amor\Api\AdminScope;
 use Amor\Api\ApiException;
 use Amor\Api\Auth;
 use Amor\Api\Database;
@@ -54,17 +55,29 @@ final class DoController
             Response::json($service->listDosForFactory($tanggal, $factoryId));
             return;
         }
-        Response::json($service->listDos(
+        $list = $service->listDos(
             $tanggal,
             $request->query('storeId') !== null ? (int) $request->query('storeId') : null,
             $request->query('status')
-        ));
+        );
+        if (Auth::isFactoryAdmin()) {
+            $pdo = Database::pdo();
+            $list = array_values(array_filter($list, static fn ($d) => array_intersect(AdminScope::doFactoryIds($pdo, (int) $d['doId']), Auth::adminFactoryScope()) !== []));
+        }
+        Response::json($list);
+    }
+
+    /** Admin Pabrik: the DO must hold some of their factory's goods (no-op for everyone else). */
+    private static function guardDo(int $doId): void
+    {
+        AdminScope::requireAny(AdminScope::doFactoryIds(Database::pdo(), $doId));
     }
 
     public static function show(Request $request): void
     {
         Auth::requireAuth();
         $id = (int) $request->routeParams['id'];
+        self::guardDo($id);
         $service = new DoService(Database::pdo());
         Response::json($service->getDo($id));
     }
@@ -75,9 +88,13 @@ final class DoController
         $id = (int) $request->routeParams['id'];
         $pdo = Database::pdo();
         $repo = new DoRepository();
+        self::guardDo($id);
         $shipments = $repo->findShipmentsForDo($pdo, $id);
         $out = [];
         foreach ($shipments as $sh) {
+            if (!AdminScope::visible(isset($sh['factory_id']) ? (int) $sh['factory_id'] : null)) {
+                continue;
+            }
             $sh['items'] = $repo->findShipmentItems($pdo, (int) $sh['shipment_id']);
             $out[] = $sh;
         }
@@ -92,7 +109,8 @@ final class DoController
 
         $sql = "SELECT h.* FROM audit_log h
                 INNER JOIN delivery_order o ON CAST(h.record_key AS UNSIGNED) = o.delivery_order_id
-                WHERE h.record_type = 'delivery_order'";
+                WHERE h.record_type = 'delivery_order'
+                  AND " . (Auth::isFactoryAdmin() ? 'EXISTS (SELECT 1 FROM delivery_order_item oi INNER JOIN product p ON p.product_id = oi.product_id INNER JOIN division d ON d.division_id = p.division_id WHERE oi.delivery_order_id = o.delivery_order_id AND ' . Auth::adminFactorySql('d.factory_id') . ')' : '1=1');
         $params = [];
         if ($request->query('date') !== null) {
             $sql .= ' AND o.tanggal = ?';
@@ -149,6 +167,7 @@ final class DoController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        self::guardDo($id);
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
 
         Idempotency::handle($request, 'POST /api/do/{id}/preprint', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion) {
@@ -162,6 +181,7 @@ final class DoController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        self::guardDo($id);
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
 
         Idempotency::handle($request, 'POST /api/do/{id}/refresh-po', function (PDO $pdo) use ($request, $userId, $id, $expectedVersion) {
@@ -175,6 +195,7 @@ final class DoController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        AdminScope::requireAll(AdminScope::doFactoryIds(Database::pdo(), $id), 'DO ini berisi barang dari 2 pabrik — pembatalannya hanya oleh Leader Admin.');
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
         $reason = (string) $request->input('reason', '');
 
@@ -189,6 +210,7 @@ final class DoController
     {
         Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        self::guardDo($id);
         $items = (array) $request->input('items', []);
         $service = new ShipmentService(Database::pdo());
         Response::json($service->preview($id, $items));
@@ -212,6 +234,7 @@ final class DoController
     {
         $userId = Auth::requireRole(...self::EDITOR_ROLES);
         $id = (int) $request->routeParams['id'];
+        self::guardDo($id);
         $expectedVersion = self::requireInt($request->input('expectedVersion'), 'expectedVersion');
         $shipmentGroup = (string) $request->input('shipmentGroup', 'MAIN');
         $items = (array) $request->input('items', []);

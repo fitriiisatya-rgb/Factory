@@ -51,6 +51,7 @@ final class RunchiseController
     {
         Auth::requireRole('ADMIN');
         $shipmentId = (int) $request->routeParams['shipmentId'];
+        Auth::requireAdminFactory(\Amor\Api\AdminScope::shipmentFactoryId(Database::pdo(), $shipmentId));
         Response::json(self::publicPreview((new RunchiseExportService(Database::pdo()))->build(self::storeOf($shipmentId), $shipmentId)));
     }
 
@@ -58,6 +59,7 @@ final class RunchiseController
     {
         $userId = Auth::requireRole('ADMIN');
         $shipmentId = (int) $request->routeParams['shipmentId'];
+        Auth::requireAdminFactory(\Amor\Api\AdminScope::shipmentFactoryId(Database::pdo(), $shipmentId));
         $me = Auth::me();
         $who = 'Admin ' . (($me['fullName'] ?? '') !== '' ? $me['fullName'] : $me['username']);
         self::sendFile(self::storeOf($shipmentId), $shipmentId, $who, $userId, $request);

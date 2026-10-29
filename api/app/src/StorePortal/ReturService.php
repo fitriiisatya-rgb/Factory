@@ -165,7 +165,16 @@ final class ReturService
             $jenis = null;
         }
         $rows = $this->repo->listForAdmin($this->pdo, $status, $jenis);
+        if (\Amor\Api\Auth::isFactoryAdmin()) {
+            $rows = array_values(array_filter($rows, fn ($r) => \Amor\Api\AdminScope::visible(\Amor\Api\AdminScope::productFactoryId($this->pdo, (int) $r['product_id']))));
+        }
         return array_map(fn ($r) => $this->buildSummaryDto($r), $rows);
+    }
+
+    /** Admin Pabrik: a retur / reject belongs to the factory of its product. */
+    private function guardFactory(array $row): void
+    {
+        \Amor\Api\AdminScope::requireAny(array_filter([\Amor\Api\AdminScope::productFactoryId($this->pdo, (int) $row['product_id'])]));
     }
 
     public function getForAdmin(int $returId): array
@@ -174,6 +183,7 @@ final class ReturService
         if ($row === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Pengajuan retur tidak ditemukan');
         }
+        $this->guardFactory($row);
         return $this->buildDto($row);
     }
 
@@ -192,6 +202,7 @@ final class ReturService
         if ($row === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Pengajuan retur tidak ditemukan');
         }
+        $this->guardFactory($row);
         if ($row['status'] !== 'waiting_admin_verification') {
             throw new ApiException(409, 'INVALID_RETUR_STATUS', 'Pengajuan ini sudah diproses sebelumnya');
         }
@@ -249,6 +260,7 @@ final class ReturService
         if ($row === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Pengajuan tidak ditemukan');
         }
+        $this->guardFactory($row);
         if (($row['jenis'] ?? '') !== 'reject_toko' || $row['status'] !== 'verified') {
             throw new ApiException(409, 'INVALID_RETUR_STATUS', 'Nota potongan hanya untuk Reject di Toko yang sudah disetujui');
         }
@@ -272,6 +284,7 @@ final class ReturService
         if ($row === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Pengajuan retur tidak ditemukan');
         }
+        $this->guardFactory($row);
         if ($row['status'] !== 'waiting_admin_verification') {
             throw new ApiException(409, 'INVALID_RETUR_STATUS', 'Pengajuan ini sudah diproses sebelumnya');
         }

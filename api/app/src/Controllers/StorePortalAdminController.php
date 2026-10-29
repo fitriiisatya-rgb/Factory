@@ -147,6 +147,8 @@ final class StorePortalAdminController
         if ($evidence === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Bukti foto tidak ditemukan');
         }
+        $retur = $repo->findById(Database::pdo(), (int) $evidence['retur_request_id']);
+        \Amor\Api\AdminScope::requireAny($retur !== null ? array_filter([\Amor\Api\AdminScope::productFactoryId(Database::pdo(), (int) $retur['product_id'])]) : []);
         self::streamEvidence($evidence, 'retur-evidence');
     }
 

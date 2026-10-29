@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Amor\Api\Invoice;
 
+use Amor\Api\AdminScope;
 use Amor\Api\ApiException;
 use Amor\Api\Audit;
 use Amor\Api\Repositories\StoreRepository;
@@ -142,7 +143,10 @@ final class InvoiceService
         $deliveries = [];
         foreach (['do' => 'delivery_order_id', 'do_khusus' => 'special_order_do_id'] as $kind => $col) {
             foreach ($this->repo->findReadyDeliveries($this->pdo, $col) as $d) {
-                $deliveries[] = $d + ['kind' => $kind, 'docNo' => $this->deliveryDocNo($kind, $d['refId']), 'storeName' => $this->storeName($d['storeId'])];
+                if (!AdminScope::visible($d['factoryId'])) {
+                    continue;
+                }
+                $deliveries[] = $d + ['kind' => $kind, 'docNo' => $this->deliveryDocNo($kind, $d['refId'], $d['factoryId']), 'storeName' => $this->storeName($d['storeId'])];
             }
         }
         $mi = array_map(fn ($m) => ['mutasiId' => (int) $m['mutasi_request_id'], 'docNo' => $m['doc_no'], 'storeName' => $this->storeName((int) $m['destination_store_id'])], $this->repo->findMutasiReadyForInvoice($this->pdo));
@@ -165,7 +169,11 @@ final class InvoiceService
         $invoices = [];
         foreach (['do' => 'delivery_order_id', 'do_khusus' => 'special_order_do_id'] as $kind => $col) {
             foreach ($this->repo->findReadyDeliveries($pdo, $col) as $d) {
-                $ships = $this->repo->findDeliveryShipments($pdo, $col, $d['refId'], $d['storeId']);
+                // Admin Pabrik issues only their own factory's invoices.
+                if (!AdminScope::visible($d['factoryId'])) {
+                    continue;
+                }
+                $ships = $this->repo->findDeliveryShipments($pdo, $col, $d['refId'], $d['storeId'], $d['factoryId']);
                 $ids = array_map(static fn ($r) => (int) $r['shipment_id'], $ships);
                 $lines = $kind === 'do_khusus'
                     ? $this->specialOrderLines($ids)
@@ -180,7 +188,7 @@ final class InvoiceService
                 }
                 (new NotaPotonganService($pdo))->linkPendingToInvoice($invoiceId);
                 Audit::write($pdo, $requestId, $adminUserId, 'invoice.generated', 'invoice', (string) $invoiceId, 'ok', null, null,
-                    ['kind' => $kind, 'refId' => $d['refId'], 'storeId' => $d['storeId'], 'total' => $lines['total'], 'shipmentCount' => count($ids)]);
+                    ['kind' => $kind, 'refId' => $d['refId'], 'storeId' => $d['storeId'], 'factoryId' => $d['factoryId'], 'total' => $lines['total'], 'shipmentCount' => count($ids)]);
                 $invoices[] = $this->listRow($invoiceId);
             }
         }
@@ -204,6 +212,7 @@ final class InvoiceService
     /** @throws ApiException 404 NOT_FOUND */
     public function getDetail(int $invoiceId): array
     {
+        AdminScope::requireAny(AdminScope::invoiceFactoryIds($this->pdo, $invoiceId), true);
         return $this->buildDetailDto($this->pdo, $invoiceId);
     }
 
@@ -219,8 +228,19 @@ final class InvoiceService
             'total' => (float) $r['total'],
             'notaTotal' => (float) ($r['nota_total'] ?? 0),
             'sourceKind' => (string) ($r['source_kind'] ?? 'periode'),
+            'factoryName' => $r['factory_name'] !== null ? (string) $r['factory_name'] : null,
             'createdAt' => (string) $r['created_at'],
-        ], $this->repo->listAll($this->pdo, $storeId, $dateFrom, $dateTo));
+        ], array_values(array_filter(
+            $this->repo->listAll($this->pdo, $storeId, $dateFrom, $dateTo),
+            // Admin Pabrik: own factory's invoices + mutasi invoices (no factory).
+            static function ($r): bool {
+                $scope = \Amor\Api\Auth::adminFactoryScope();
+                if ($scope === null || $r['factory_ids'] === null || $r['factory_ids'] === '') {
+                    return true;
+                }
+                return array_intersect(array_map('intval', explode(',', (string) $r['factory_ids'])), $scope) !== [];
+            }
+        )));
     }
 
     /**
@@ -238,6 +258,7 @@ final class InvoiceService
         if ($existing === null) {
             throw new ApiException(404, 'NOT_FOUND', 'Invoice tidak ditemukan');
         }
+        AdminScope::requireAny(AdminScope::invoiceFactoryIds($this->pdo, $invoiceId), true);
 
         // Notas against this invoice stay valid; they re-link automatically
         // when their delivery is invoiced again.
@@ -377,14 +398,21 @@ final class InvoiceService
             'storeName' => (string) $r['store_name'], 'total' => (float) $r['total'], 'sourceKind' => (string) $r['source_kind']];
     }
 
-    private function deliveryDocNo(string $kind, int $refId): string
+    private function deliveryDocNo(string $kind, int $refId, ?int $factoryId = null): string
     {
         $sql = $kind === 'do'
             ? 'SELECT doc_no FROM delivery_order WHERE delivery_order_id = ?'
             : 'SELECT doc_no FROM special_order_do WHERE special_order_do_id = ?';
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([$refId]);
-        return (string) ($stmt->fetchColumn() ?: '#' . $refId);
+        $docNo = (string) ($stmt->fetchColumn() ?: '#' . $refId);
+        if ($factoryId !== null) {
+            $code = $this->pdo->prepare('SELECT code FROM factory WHERE factory_id = ?');
+            $code->execute([$factoryId]);
+            $c = (string) ($code->fetchColumn() ?: '');
+            $docNo .= $c !== '' ? '-' . $c : '';
+        }
+        return $docNo;
     }
 
     private function storeName(int $storeId): string
@@ -418,6 +446,22 @@ final class InvoiceService
         $notas = $this->repo->findNotasForInvoice($pdo, $invoiceId);
         $notaTotal = array_sum(array_map(static fn ($n) => (float) $n['total'], $notas));
 
+        // Invoices are per factory: name it, and suffix the DO number with its code (DO/KRM/012/X/2026-CBD).
+        $factoryIds = AdminScope::invoiceFactoryIds($pdo, $invoiceId);
+        $factory = null;
+        if (count($factoryIds) === 1) {
+            $fs = $pdo->prepare('SELECT factory_id, code, name FROM factory WHERE factory_id = ?');
+            $fs->execute([$factoryIds[0]]);
+            $factory = $fs->fetch() ?: null;
+            if ($factory !== null) {
+                foreach ($shipments as &$sh) {
+                    if (!empty($sh['do_doc_no'])) {
+                        $sh['do_doc_no'] .= '-' . $factory['code'];
+                    }
+                }
+                unset($sh);
+            }
+        }
         $reference = [];
         $doNos = array_values(array_unique(array_filter(array_map(static fn ($sh) => $sh['do_doc_no'], $shipments))));
         if (count($shipments) === 1) {
@@ -431,6 +475,7 @@ final class InvoiceService
             'invoiceNumber' => (string) $invoice['invoice_no'],
             'invoiceDate' => (string) $invoice['tanggal'],
             'customer' => ['storeName' => (string) $invoice['store_name'], 'storeId' => (int) $invoice['store_id'], 'storeEmail' => $invoice['store_email']],
+            'factory' => $factory !== null ? ['factoryId' => (int) $factory['factory_id'], 'code' => (string) $factory['code'], 'name' => (string) $factory['name']] : null,
             'reference' => $reference,
             'items' => array_map(static fn ($it) => [
                 'productId' => $it['product_id'] !== null ? (int) $it['product_id'] : null,
