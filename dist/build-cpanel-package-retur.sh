@@ -264,7 +264,8 @@ grep -qF "unset(\$_SESSION['operator_name']);" "$STAGE/api/app/src/Auth.php" || 
 
 echo "--- sanity: confirm every ADMIN-only tool still carries its OWN ADMIN role check (login widening must not widen them) ---"
 for tool in _upgrade _import-po _production-uat _fg-uat _do-uat; do
-  grep -qF "requireRole('ADMIN')" "$STAGE/api/$tool/index.php" || { echo "REFUSING TO BUILD: api/$tool/index.php lost its ADMIN role check."; exit 1; }
+  # requireLeaderAdmin() is requireRole('ADMIN') plus the Admin Pabrik refusal (stricter).
+  grep -qE "requireRole\('ADMIN'\)|Auth::requireLeaderAdmin\(\)" "$STAGE/api/$tool/index.php" || { echo "REFUSING TO BUILD: api/$tool/index.php lost its ADMIN role check."; exit 1; }
 done
 grep -qF "in_array('ADMIN', \$ui['roles'], true)" "$STAGE/api/_users-uat/index.php" || { echo "REFUSING TO BUILD: api/_users-uat/index.php lost its ADMIN role check."; exit 1; }
 
