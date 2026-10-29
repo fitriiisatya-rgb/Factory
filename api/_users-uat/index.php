@@ -107,7 +107,10 @@ foreach ($factories as $f) {
       <tr data-user-row="<?= (int) $u['userId'] ?>">
         <td><?= ui_esc($u['username']) ?></td>
         <td><?= ui_esc($u['fullName']) ?></td>
-        <td><?= $u['roles'] === [] ? '<span style="color:var(--text-faint);">-</span>' : ui_esc(implode(', ', $u['roles'])) ?></td>
+        <td><?= $u['roles'] === [] ? '<span style="color:var(--text-faint);">-</span>' : ui_esc(implode(', ', $u['roles'])) ?>
+          <?php if (in_array('ADMIN', $u['roles'], true)): ?><br><span class="badge <?= $u['factoryIds'] === [] ? 'badge-success' : 'badge-info' ?>"><?= $u['factoryIds'] === []
+              ? 'Leader Admin (semua pabrik)'
+              : ui_esc('Admin ' . implode(' + ', array_map(static fn ($id) => $factoryNameById[$id] ?? "#{$id}", $u['factoryIds']))) ?></span><?php endif; ?></td>
         <td style="font-size:var(--text-sm);color:var(--text-muted);">
           <?php
             $assignedNames = array_merge(
@@ -161,6 +164,6 @@ foreach ($factories as $f) {
 
 <script>window.AMOR = <?= json_encode(['csrfToken' => $ui['csrfToken'], 'userId' => $ui['userId'], 'username' => $ui['username']], JSON_UNESCAPED_SLASHES) ?>;</script>
 <script src="/api/assets/js/app.js?v=20261020-notif"></script>
-<script src="/api/assets/js/users.js?v=20261029-pass"></script>
+<script src="/api/assets/js/users.js?v=20261029-pabrik"></script>
 </body>
 </html>

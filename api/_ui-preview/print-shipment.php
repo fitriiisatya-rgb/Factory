@@ -30,6 +30,18 @@ try {
     \Amor\Api\Auth::requireAdminFactory(\Amor\Api\AdminScope::shipmentFactoryId($ui['pdo'], $shipmentId));
     $service = new DispatchService($ui['pdo']);
     $shipment = $service->shipmentDetail($shipmentId, $ui['userId'], $isAdmin);
+    // One surat jalan = one factory's goods. When the DO holds both factories'
+    // goods (or an Admin Pabrik prints it), the DO no carries the factory code
+    // so the store can tell the two surat jalan of one DO apart.
+    $sjFactory = $ui['pdo']->prepare(
+        'SELECT f.code, sh.delivery_order_id FROM shipment sh INNER JOIN factory f ON f.factory_id = sh.factory_id WHERE sh.shipment_id = ?'
+    );
+    $sjFactory->execute([$shipmentId]);
+    $sjFactory = $sjFactory->fetch();
+    if ($sjFactory && !empty($shipment['docNo']) && $sjFactory['delivery_order_id'] !== null && !str_ends_with((string) $shipment['docNo'], '-' . $sjFactory['code'])
+        && (\Amor\Api\Auth::isFactoryAdmin() || count(\Amor\Api\AdminScope::doFactoryIds($ui['pdo'], (int) $sjFactory['delivery_order_id'])) > 1)) {
+        $shipment['docNo'] .= '-' . $sjFactory['code'];
+    }
 } catch (ApiException $e) {
     http_response_code($e->status);
     header('Content-Type: text/html; charset=utf-8');
