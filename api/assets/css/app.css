@@ -468,6 +468,12 @@ table.data-table { width: 100%; border-collapse: collapse; min-width: 640px; }
 .data-table td.num, .data-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .data-table tbody tr:last-child td { border-bottom: none; }
 .row-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+/* On a <td>, flex would pull the cell out of the table row (buttons then spill over the
+   next rows); keep it a table cell and lay the buttons out inline instead. */
+td.row-actions { display: table-cell; white-space: normal; min-width: 150px; }
+td.row-actions > a, td.row-actions > button, td.row-actions > details > summary { display: inline-flex; }
+td.row-actions > a, td.row-actions > button, td.row-actions > details, td.row-actions > form { vertical-align: top; margin: 2px 4px 2px 0; }
+td.row-actions > details, td.row-actions > form { display: inline-block; }
 
 .empty-state { padding: var(--space-6) var(--space-4); text-align: center; color: var(--text-muted); }
 .empty-state .empty-icon { font-size: 2rem; margin-bottom: var(--space-2); opacity: .6; }
