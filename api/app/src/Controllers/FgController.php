@@ -34,7 +34,8 @@ final class FgController
     // are now subject to the SAME Auth::requireFactoryAccess() default-deny
     // gate inside FgService, so neither can reach a factory without an
     // explicit assignment.
-    private const EDITOR_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING'];
+    // Division (PRODUCTION) logins only submit production; FG verification + packing is FG_PACKING / office only.
+    private const EDITOR_ROLES = ['ADMIN', 'PPIC', 'FG_PACKING'];
     // Reopen is restricted, same rationale as Production Phase 3.
     private const REOPEN_ROLES = ['ADMIN', 'PPIC'];
 

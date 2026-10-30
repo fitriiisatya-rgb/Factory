@@ -28,7 +28,7 @@ final class ReplacementController
 {
     private const DISPOSITION_ROLES = ['ADMIN', 'PPIC'];
     private const PRODUCTION_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION'];
-    private const FG_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING'];
+    private const FG_ROLES = ['ADMIN', 'PPIC', 'FG_PACKING'];
     private const DO_ROLES = ['ADMIN', 'PPIC', 'PRODUCTION'];
 
     public static function pendingDisposition(Request $request): void

@@ -354,6 +354,13 @@ runTest('PDFG-01 (ACCESS-01) a PRODUCTION user with ZERO division assignments is
     expect($r['status'] === 403 && $r['json']['code'] === 'NO_DIVISION_ASSIGNMENT', "expected 403 NO_DIVISION_ASSIGNMENT for an unassigned PRODUCTION user, got {$r['status']}: " . json_encode($r['json']));
 });
 
+runTest('PDFG-01b a division (PRODUCTION) login can never write FG: FG create/save/submit are FG_PACKING/office only', function () use ($httpProdScoped, $csrfProdScoped, $tanggal, $karangtengahId) {
+    foreach ([['POST', '/api/fg', ['date' => $tanggal, 'factoryId' => $karangtengahId]], ['PATCH', '/api/fg/1', ['expectedVersion' => 1]], ['POST', '/api/fg/1/submit', ['expectedVersion' => 1]]] as [$m, $u, $b]) {
+        $r = $httpProdScoped->request($m, $u, $b, ['X-CSRF-Token' => $csrfProdScoped, 'Idempotency-Key' => 'pdfg-01b-' . md5($m . $u)]);
+        expect($r['status'] === 403, "expected 403 for PRODUCTION on {$m} {$u}, got {$r['status']}: " . json_encode($r['json']));
+    }
+});
+
 runTest('PDFG-02 admin assigns pdfg_production_scoped to Basic ONLY', function () use ($http, $csrf, $prodScopedUserId, $basicDivId) {
     $r = $http->request('PUT', "/api/users/{$prodScopedUserId}/divisions", ['divisionIds' => [$basicDivId]], array_merge(['X-CSRF-Token' => $csrf], idemKey('pdfg-02')));
     expect($r['status'] === 200, "expected 200, got {$r['status']}: " . json_encode($r['json']));

@@ -218,7 +218,7 @@ final class SpecialOrderController
     public static function verifyItemFg(Request $request): void
     {
         // FG accounts verify special-order FG too (their FG Sumber Khusus page); scope is checked per item in the service.
-        $userId = Auth::requireRole('ADMIN', 'PPIC', 'PRODUCTION', 'FG_PACKING');
+        $userId = Auth::requireRole('ADMIN', 'PPIC', 'FG_PACKING');
         $itemId = (int) $request->routeParams['itemId'];
         Auth::requireAdminFactory(AdminScope::specialOrderItemFactoryId(Database::pdo(), $itemId));
         $qty = (float) ($request->input('fgVerifiedQty') ?? 0);
