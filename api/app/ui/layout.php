@@ -75,10 +75,6 @@ function ui_nav_items(array $roles = []): array
     $scoped = $roles !== [] ? ui_role_scoped_pages($roles) : null;
     if ($scoped !== null) {
         $items = array_values(array_filter($items, static fn ($i) => in_array($i['key'], $scoped, true)));
-        // Division accounts: their own division's FG summary (read-only).
-        if (in_array('fg-ringkasan', $scoped, true) && !in_array('FG_PACKING', $roles, true)) {
-            $items[] = ['key' => 'fg-ringkasan', 'label' => 'Ringkasan FG', 'icon' => 'chart'];
-        }
         if (in_array('riwayat', $scoped, true)) {
             $items[] = ['key' => 'riwayat', 'label' => 'Riwayat', 'icon' => 'clock'];
         }
@@ -125,9 +121,9 @@ function ui_role_scoped_pages(array $roles): ?array
         return null;
     }
     $byRole = [
-        // No FG & Packing for division logins: FG is entered by the FG
-        // accounts (fg_ktg / fg_cbd). Divisions keep the read-only Ringkasan FG.
-        'PRODUCTION' => ['produksi', 'produksi-demand', 'produksi-task-per-divisi', 'replacement-do-detail', 'fg-ringkasan', 'riwayat'],
+        // Division logins only submit production: no FG & Packing, no Ringkasan FG.
+        // FG verification + packing belong to the FG accounts (fg_ktg / fg_cbd).
+        'PRODUCTION' => ['produksi', 'produksi-demand', 'produksi-task-per-divisi', 'replacement-do-detail', 'riwayat'],
         'FG_PACKING' => ['fg-packing', 'fg-khusus-non-toko', 'riwayat'],
         'ATASAN' => ['approval-toko', 'dashboard-retur'],
     ];

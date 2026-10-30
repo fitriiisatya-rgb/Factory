@@ -382,7 +382,7 @@ runTest('OPLOGIN-13 A fresh login in the same browser never inherits the previou
     expect(($me['status'] === 200 && array_key_exists('operatorName', $me['json']['data'] ?? []) && $me['json']['data']['operatorName'] === null), 'expected the old name (Siti) cleared on login');
 });
 
-runTest('OPLOGIN-14 Sidebar: ADMIN gets "Kelola User" -> /api/_users-uat/; a production account sees Produksi + Ringkasan FG, no FG & Packing', function () use ($baseUrl, $adminUser, $adminPass, $prod) {
+runTest('OPLOGIN-14 Sidebar: ADMIN gets "Kelola User" -> /api/_users-uat/; a production account sees only Produksi + Riwayat (no FG menus)', function () use ($baseUrl, $adminUser, $adminPass, $prod) {
     $a = new HttpOp($baseUrl);
     $a->form('/_admin-login/', ['action' => 'login', 'username' => $adminUser, 'password' => $adminPass]);
     $page = $a->get('/api/_ui-preview/?page=dashboard');
@@ -395,7 +395,7 @@ runTest('OPLOGIN-14 Sidebar: ADMIN gets "Kelola User" -> /api/_users-uat/; a pro
     expect(!str_contains($pp['body'], '_users-uat'), 'production account must not see Kelola User');
     expect(!str_contains($pp['body'], '?page=laporan') && !str_contains($pp['body'], '?page=master-data') && !str_contains($pp['body'], '?page=invoice'), 'production account nav must not link Laporan/Master Data/Invoice');
     expect(!str_contains($pp['body'], '?page=fg-packing'), 'division login must not see FG & Packing (FG accounts enter FG)');
-    expect(str_contains($pp['body'], '?page=fg-ringkasan'), 'expected the read-only Ringkasan FG in the production nav');
+    expect(!str_contains($pp['body'], '?page=fg-ringkasan'), 'division login must not see Ringkasan FG either');
     $users = $prod->get('/_users-uat/');
     expect($users['status'] === 403 || str_contains($users['body'], 'Akses ditolak'), 'the users tool itself must still deny a production account');
 });
