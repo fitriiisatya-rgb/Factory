@@ -434,9 +434,9 @@ runTest('UI-16 redesigned DO print page renders with the correct watermark', fun
     // shipment_item — api/_driver-uat/print-shipment.php /
     // api/_ui-preview/print-shipment.php). This title must never say
     // "Surat Jalan" any more; it is now unambiguously planning-level.
-    expect(str_contains($r['body'], 'DRAFT DELIVERY ORDER') || str_contains($r['body'], 'RENCANA PENGIRIMAN'), 'expected the unambiguous planning-level print document title');
+    expect(str_contains($r['body'], '>DELIVERY ORDER<'), 'expected the DELIVERY ORDER print document title');
     expect(!str_contains($r['body'], '<title>Surat Jalan'), 'expected the Draft DO print tab title to never claim to be Surat Jalan any more');
-    expect(str_contains($r['body'], 'DRAFT'), 'expected a DRAFT watermark for a freshly-created DO');
+    expect(str_contains($r['body'], 'Status: <strong>DRAFT'), 'expected the DRAFT status for a freshly-created DO');
 });
 
 runTest('UI-17 print stylesheet forces a white background regardless of dark mode', function () use ($http) {

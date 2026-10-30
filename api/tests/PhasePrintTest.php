@@ -225,7 +225,7 @@ function locationIdForFactory(PDO $pdo, int $factoryId): int
     return $id !== false ? (int) $id : 0;
 }
 
-runTest('PRINT-01 draft DO print renders with the DRAFT watermark', function () use ($http, $csrf, $pdo, $karangtengahId, $storeA) {
+runTest('PRINT-01 draft DO print renders as a signable DELIVERY ORDER (status DRAFT, no stamp, write-in columns)', function () use ($http, $csrf, $pdo, $karangtengahId, $storeA) {
     $tanggal = '2026-08-01';
     $p = nextProduct();
     seedStorePo($pdo, $tanggal, $karangtengahId, $storeA, [$p['product_id'] => ['poAwal' => 9.0]]);
@@ -233,11 +233,12 @@ runTest('PRINT-01 draft DO print renders with the DRAFT watermark', function () 
     $doId = $create['json']['data']['doId'];
     $r = $http->request('GET', "/_ui-preview/print-do.php?doId={$doId}");
     expect($r['status'] === 200, "expected 200, got {$r['status']}");
-    expect(str_contains($r['body'], 'DRAFT'), 'expected the DRAFT watermark text');
-    expect(str_contains($r['body'], 'Delivery Order') || str_contains($r['body'], 'DELIVERY ORDER'), 'expected the document title');
+    expect(str_contains($r['body'], 'Status: <strong>DRAFT'), 'expected the DRAFT status text');
+    expect(!str_contains($r['body'], 'print-watermark'), 'an open DO travels with the goods: no stamp across the page');
+    expect(str_contains($r['body'], 'DELIVERY ORDER') && str_contains($r['body'], 'Diterima Baik') && str_contains($r['body'], 'Catatan toko'), 'expected the DO title and the store write-in columns');
 });
 
-runTest('PRINT-02 preprinted DO print renders with the PREPRINT watermark', function () use ($http, $csrf, $pdo, $karangtengahId, $storeA) {
+runTest('PRINT-02 preprinted DO print shows the PREPRINT status', function () use ($http, $csrf, $pdo, $karangtengahId, $storeA) {
     $tanggal = '2026-08-02';
     $p = nextProduct();
     seedStorePo($pdo, $tanggal, $karangtengahId, $storeA, [$p['product_id'] => ['poAwal' => 6.0]]);
@@ -246,7 +247,7 @@ runTest('PRINT-02 preprinted DO print renders with the PREPRINT watermark', func
     $http->request('POST', "/api/do/{$doId}/preprint", ['expectedVersion' => 1], array_merge(['X-CSRF-Token' => $csrf], idemKey('print02-pp')));
     $r = $http->request('GET', "/_ui-preview/print-do.php?doId={$doId}");
     expect($r['status'] === 200, "expected 200, got {$r['status']}");
-    expect(str_contains($r['body'], 'PREPRINT'), 'expected the PREPRINT watermark text');
+    expect(str_contains($r['body'], 'Status: <strong>PREPRINT'), 'expected the PREPRINT status text');
 });
 
 runTest('PRINT-03 the printed DO number matches the real doc_no', function () use ($http, $csrf, $pdo, $karangtengahId, $storeA) {
@@ -327,14 +328,14 @@ runTest('PRINT-07 partial shipment print shows cumulative shipped correctly', fu
     expect(str_contains($r['body'], 'PREPRINT') === false || str_contains($r['body'], 'DRAFT') || true, 'sanity noop'); // status text itself checked in PRINT-08
 });
 
-runTest('PRINT-08 watermark matches DO status for every lifecycle state', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeA) {
+runTest('PRINT-08 only a cancelled DO is stamped; open DOs show their status without a stamp', function () use ($http, $csrf, $pdo, $karangtengahId, $rotiBollenDivId, $storeA) {
     // Draft
     $tDraft = '2026-08-08';
     $pDraft = nextProduct();
     seedStorePo($pdo, $tDraft, $karangtengahId, $storeA, [$pDraft['product_id'] => ['poAwal' => 2.0]]);
     $cDraft = $http->request('POST', '/api/do', ['tanggal' => $tDraft, 'storeId' => $storeA], array_merge(['X-CSRF-Token' => $csrf], idemKey('print08a')));
     $rDraft = $http->request('GET', '/_ui-preview/print-do.php?doId=' . $cDraft['json']['data']['doId']);
-    expect(str_contains($rDraft['body'], 'print-watermark">DRAFT'), 'expected DRAFT watermark for a draft DO');
+    expect(!str_contains($rDraft['body'], 'print-watermark') && str_contains($rDraft['body'], 'Status: <strong>DRAFT'), 'expected no stamp but DRAFT status for a draft DO');
 
     // Cancelled
     $tCancel = '2026-08-09';
@@ -419,8 +420,8 @@ runTest('SJ-01 Draft DO print still prints ALL planned DO items, with an unambig
     $doId = $create['json']['data']['doId'];
     $r = $http->request('GET', "/_ui-preview/print-do.php?doId={$doId}");
     expect($r['status'] === 200, "expected 200, got {$r['status']}");
-    expect(str_contains($r['body'], 'DRAFT DELIVERY ORDER') || str_contains($r['body'], 'RENCANA PENGIRIMAN'),
-        'expected the unambiguous planning-level document title');
+    expect(str_contains($r['body'], '>DELIVERY ORDER<'),
+        'expected the DELIVERY ORDER title (never Surat Jalan — that is the per-shipment document)');
     expect(!str_contains($r['body'], '<title>Surat Jalan'), 'expected the browser tab title to never claim to be Surat Jalan any more');
     expect(str_contains($r['body'], (string) $p1['name']) && str_contains($r['body'], (string) $p2['name']),
         'expected BOTH planned products to still print on the Draft DO — this document never narrows to one shipment');

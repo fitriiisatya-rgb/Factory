@@ -76,8 +76,10 @@ function ui_print_factory_label(array $do, array $factoryNamesById): string
 function ui_print_status(string $status): array
 {
     return [
-        'draft' => ['watermark' => 'DRAFT', 'label' => 'DRAFT'],
-        'preprinted' => ['watermark' => 'PREPRINT', 'label' => 'PREPRINT'],
+        // The DO travels with the goods and gets signed (masa adaptasi), so open DOs carry no
+        // stamp across the page; only a cancelled DO is stamped so it can never be used.
+        'draft' => ['watermark' => null, 'label' => 'DRAFT'],
+        'preprinted' => ['watermark' => null, 'label' => 'PREPRINT'],
         'shipped' => ['watermark' => null, 'label' => 'TERKIRIM'],
         'cancelled' => ['watermark' => 'DIBATALKAN', 'label' => 'DIBATALKAN'],
     ][$status] ?? ['watermark' => null, 'label' => strtoupper($status)];
@@ -109,16 +111,13 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
       <img class="print-brand-mark" src="/api/assets/img/amor-logo.png" alt="Amor" width="40" height="40">
       <div>
         <div class="print-brand-name">Amorcakes &amp; Bakery</div>
-        <?php /* Real-UAT naming fix: this document prints every PLANNED DO
-                 item (a store's Draft DO can hold far more than any one
-                 shipment ever carries) — it is a planning/picking
-                 document, never the actual proof-of-goods a Driver
-                 carries. Calling it "Surat Jalan" was the exact ambiguity
-                 that caused a real UAT report; that document is now
-                 api/app/ui/print-shipment-template.php, sourced from
-                 shipment_item only. This title must never say "Surat
-                 Jalan" again. */ ?>
-        <div class="print-doc-title">DRAFT DELIVERY ORDER / RENCANA PENGIRIMAN</div>
+        <?php /* Owner decision (Oct 2026): the DO printed right after Generate is the
+                 document that goes with the goods and is signed by the store — same
+                 write-in columns as the Surat Jalan (Diterima Baik / Reject / Kurang).
+                 It lists every DO line at its DO qty; the per-shipment Surat Jalan
+                 (print-shipment-template.php) is still the one that shows only what
+                 one Kirim carried. Never titled "Surat Jalan" to keep the two apart. */ ?>
+        <div class="print-doc-title">DELIVERY ORDER</div>
         <?php if ($bagian !== null): ?>
         <div style="margin-top:6px;padding:5px 10px;border:2px solid #000;border-radius:6px;font-weight:800;font-size:14px;display:inline-block;">BAGIAN: <?= ui_esc(mb_strtoupper($bagian)) ?></div>
         <?php endif; ?>
@@ -134,18 +133,19 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
     <div><b>Tanggal</b><?= ui_esc((string) $do['tanggal']) ?></div>
     <div><b>Toko</b><?= ui_esc((string) $do['storeName']) ?></div>
     <div><b>Pabrik</b><?= ui_esc($factoryLabel) ?></div>
-    <div><b>Status</b><?= ui_esc($status['label']) ?></div>
+    <div><b>Driver</b><span class="do-write-line">&nbsp;</span></div>
   </div>
 
-  <table class="print-table">
+  <table class="print-table do-table">
     <thead>
       <tr>
         <th style="width:22px;">No</th>
         <th>Produk</th>
         <th>Divisi</th>
-        <th class="num">Qty Rencana</th>
-        <th class="num">Sudah Dikirim</th>
-        <th class="num">Sisa</th>
+        <th class="num">Dikirim</th>
+        <th class="num do-write">Diterima Baik</th>
+        <th class="num do-write">Reject</th>
+        <th class="num do-write">Kurang</th>
       </tr>
     </thead>
     <tbody>
@@ -155,8 +155,7 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
         <td><?= ui_esc((string) $it['productName']) ?></td>
         <td><?= ui_esc((string) $it['divisionName']) ?></td>
         <td class="num"><?= ui_fmt_num((float) $it['plannedQty']) ?></td>
-        <td class="num"><?= ui_fmt_num((float) $it['alreadyShippedQty']) ?></td>
-        <td class="num"><?= ui_fmt_num((float) $it['remainingToShip']) ?></td>
+        <td class="do-write"></td><td class="do-write"></td><td class="do-write"></td>
       </tr>
     <?php endforeach; ?>
     </tbody>
@@ -164,11 +163,14 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
       <tr>
         <td colspan="3">Total</td>
         <td class="num"><?= ui_fmt_num((float) $do['summary']['totalPlanned']) ?></td>
-        <td class="num"><?= ui_fmt_num((float) $do['summary']['totalShipped']) ?></td>
-        <td class="num"><?= ui_fmt_num((float) $do['summary']['totalRemaining']) ?></td>
+        <td class="do-write"></td><td class="do-write"></td><td class="do-write"></td>
       </tr>
     </tfoot>
   </table>
+  <div class="do-store-note">
+    <b>Diisi toko:</b> Diterima Baik + Reject + Kurang = Dikirim. Kalau jumlah yang dimuat berbeda dari kolom Dikirim, coret dan tulis angka sebenarnya.
+    <div class="do-store-note-box">Catatan toko (alasan reject / kurang):</div>
+  </div>
 
   <?php if ($otherNote !== null): ?>
   <div style="margin-top:6px;font-size:11px;"><?= ui_esc($otherNote) ?></div>
@@ -187,8 +189,8 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
 
   <div class="print-sign-grid">
     <div class="print-sign-box"><div class="print-sign-line">Disiapkan Oleh</div></div>
-    <div class="print-sign-box"><div class="print-sign-line">Driver / Pengirim</div></div>
-    <div class="print-sign-box"><div class="print-sign-line">Diterima Oleh</div></div>
+    <div class="print-sign-box"><div class="print-sign-line">Driver / Pengirim (nama &amp; ttd)</div></div>
+    <div class="print-sign-box"><div class="print-sign-line">Diterima Oleh Toko (nama &amp; ttd)</div></div>
   </div>
 
   <div class="print-footer-note">

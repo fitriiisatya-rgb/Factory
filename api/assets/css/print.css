@@ -95,3 +95,11 @@ table.print-table tfoot td { font-weight: 700; background: #fafafa; border-top: 
   }
   .print-page:last-child { page-break-after: auto; }
 }
+
+/* DO: write-in columns for the store (Diterima Baik / Reject / Kurang) + catatan toko */
+table.print-table th.do-write { width: 19mm; }
+table.print-table td.do-write { width: 19mm; border-left: 1.5px solid #333; }
+table.print-table.do-table th, table.print-table.do-table td { padding: 4px 6px; line-height: 1.25; }
+.do-write-line { display: inline-block; min-width: 40mm; border-bottom: 1px solid #000; }
+.do-store-note { margin: 3mm 0 2mm; font-size: 10px; position: relative; z-index: 1; }
+.do-store-note-box { margin-top: 1.5mm; height: 11mm; border: 1px solid #999; border-radius: 2px; padding: 1.5mm 2mm; color: #555; }
