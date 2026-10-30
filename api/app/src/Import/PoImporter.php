@@ -17,6 +17,8 @@ use PDO;
 final class PoImporter
 {
     private const FACTORY_NAME_BY_CODE = ['karangtengah' => 'Karangtengah', 'cibadak' => 'Cibadak'];
+    /** Looked up by code, so renaming a factory in Master Data never breaks PO upload. */
+    private const FACTORY_CODE_BY_LAYOUT = ['karangtengah' => 'KTG', 'cibadak' => 'CBD'];
 
     private PoResolver $resolver;
     private PoRepository $repo;
@@ -236,8 +238,8 @@ final class PoImporter
         $parsed = PoFileParser::parseAuto($rows);
         $factory = $parsed['factory'];
         $factoryName = self::FACTORY_NAME_BY_CODE[$factory];
-        $stmt = $this->pdo->prepare('SELECT factory_id FROM factory WHERE name = ?');
-        $stmt->execute([$factoryName]);
+        $stmt = $this->pdo->prepare('SELECT factory_id FROM factory WHERE code = ?');
+        $stmt->execute([self::FACTORY_CODE_BY_LAYOUT[$factory]]);
         $factoryId = $stmt->fetchColumn();
         if ($factoryId === false) {
             throw new \RuntimeException("Factory '{$factoryName}' not found — Phase 0 seeding must run first.");

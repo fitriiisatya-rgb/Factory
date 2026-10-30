@@ -48,7 +48,7 @@ final class ProductRepository
             $stmt->execute([$name, $kategori, $divisionId, $hpp, $harga, $aktif ? 1 : 0]);
         } catch (PDOException $e) {
             if ((int) $e->getCode() === 23000) {
-                throw new ApiException(409, 'DUPLICATE_PRODUCT_NAME', 'A product with this name already exists', [
+                throw new ApiException(409, 'DUPLICATE_PRODUCT_NAME', 'Nama produk ini sudah ada.', [
                     'hint' => 'Use POST /api/products/{id}/aliases if this is meant to be an alias of an existing product',
                 ]);
             }
@@ -92,7 +92,7 @@ final class ProductRepository
             Versioning::update($pdo, 'product', 'product_id', $id, $expectedVersion, implode(', ', $set), $params);
         } catch (PDOException $e) {
             if ((int) $e->getCode() === 23000) {
-                throw new ApiException(409, 'DUPLICATE_PRODUCT_NAME', 'A product with this name already exists');
+                throw new ApiException(409, 'DUPLICATE_PRODUCT_NAME', 'Nama produk ini sudah ada.');
             }
             throw $e;
         }

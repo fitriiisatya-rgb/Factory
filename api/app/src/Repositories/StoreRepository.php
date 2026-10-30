@@ -63,7 +63,7 @@ final class StoreRepository
             $stmt->execute([$canonicalName, $channel]);
         } catch (PDOException $e) {
             if ((int) $e->getCode() === 23000) {
-                throw new ApiException(409, 'DUPLICATE_STORE_NAME', 'A store with this canonical name already exists');
+                throw new ApiException(409, 'DUPLICATE_STORE_NAME', 'Nama toko ini sudah ada.');
             }
             throw $e;
         }
@@ -95,7 +95,7 @@ final class StoreRepository
             Versioning::update($pdo, 'store', 'store_id', $id, $expectedVersion, implode(', ', $set), $params);
         } catch (PDOException $e) {
             if ((int) $e->getCode() === 23000) {
-                throw new ApiException(409, 'DUPLICATE_STORE_NAME', 'A store with this canonical name already exists');
+                throw new ApiException(409, 'DUPLICATE_STORE_NAME', 'Nama toko ini sudah ada.');
             }
             throw $e;
         }

@@ -166,7 +166,7 @@ fi
 
 echo ""
 if [ $INV_RESULT -eq 0 ]; then echo "Reject di Toko suite (RJT-01..14): PASSED"; else echo "Reject di Toko suite (RJT-01..14): FAILED"; fi
-if [ $AFS_RESULT -eq 0 ]; then echo "Admin per pabrik suite (AFS-01..14): PASSED"; else echo "Admin per pabrik suite (AFS-01..14): FAILED"; fi
+if [ $AFS_RESULT -eq 0 ]; then echo "Admin per pabrik suite (AFS-01..15): PASSED"; else echo "Admin per pabrik suite (AFS-01..15): FAILED"; fi
 if [ $REGRESSION_RESULT -eq 0 ]; then echo "Full prior regression (Operator Login + Invoice + Bakery Portal + Phase 0-5.5 + UI + Print + Production/FG rework): PASSED"; else echo "Full prior regression (Operator Login + Invoice + Bakery Portal + Phase 0-5.5 + UI + Print + Production/FG rework): FAILED"; fi
 
 if [ $INV_RESULT -eq 0 ] && [ $AFS_RESULT -eq 0 ] && [ $REGRESSION_RESULT -eq 0 ]; then

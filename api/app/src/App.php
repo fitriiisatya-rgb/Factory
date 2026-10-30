@@ -27,6 +27,7 @@ use Amor\Api\Controllers\ReplacementController;
 use Amor\Api\Controllers\SpecialOrderController;
 use Amor\Api\Controllers\SpecialOrderDoController;
 use Amor\Api\Controllers\StoreController;
+use Amor\Api\Controllers\MasterDataController;
 use Amor\Api\Controllers\IntegrationController;
 use Amor\Api\Controllers\StorePortalAdminController;
 use Amor\Api\Controllers\StorePortalController;
@@ -71,6 +72,16 @@ final class App
         $router->post('/api/stores', [StoreController::class, 'create']);
         $router->put('/api/stores/{id}', [StoreController::class, 'update']);
         $router->post('/api/stores/{id}/aliases', [StoreController::class, 'addAlias']);
+        $router->delete('/api/products/{id}', [MasterDataController::class, 'deleteProduct']);
+        $router->delete('/api/stores/{id}', [MasterDataController::class, 'deleteStore']);
+        $router->delete('/api/divisions/{id}', [MasterDataController::class, 'deleteDivision']);
+        $router->delete('/api/factories/{id}', [MasterDataController::class, 'deleteFactory']);
+        $router->post('/api/divisions', [MasterDataController::class, 'createDivision']);
+        $router->put('/api/divisions/{id}', [MasterDataController::class, 'updateDivision']);
+        $router->post('/api/factories', [MasterDataController::class, 'createFactory']);
+        $router->put('/api/factories/{id}', [MasterDataController::class, 'updateFactory']);
+        $router->put('/api/store-aliases/{id}', [MasterDataController::class, 'updateStoreAlias']);
+        $router->delete('/api/store-aliases/{id}', [MasterDataController::class, 'deleteStoreAlias']);
 
         $router->get('/api/po', [PoController::class, 'index']);
         $router->get('/api/po/current', [PoController::class, 'current']);

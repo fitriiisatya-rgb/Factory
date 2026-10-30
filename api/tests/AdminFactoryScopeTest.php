@@ -563,6 +563,59 @@ runTest('AFS-14 Kirim tanpa menunggu FG (Leader switch): Kirim before FG, FG ent
     expect($leader->send('POST', '/api/admin/system/ship-before-fg', ['enabled' => false])['status'] === 200, 'Leader switches back');
 });
 
+runTest('AFS-15 Master Data: Leader adds / edits / deletes; used records refuse delete; Admin pabrik read-only; Harga shown', function () use ($leader, $aCbd, $pdo, $cbd, $cbdDiv, $store) {
+    // Produk: add, edit harga, delete while unused
+    $c = $leader->send('POST', '/api/products', ['name' => 'AFS PRODUK BARU ' . uniqid(), 'divisionId' => $cbdDiv, 'harga' => 12000]);
+    expect($c['status'] === 201, 'add product: ' . $c['body']);
+    $pid = (int) $c['json']['data']['product_id'];
+    $u = $leader->send('PUT', "/api/products/{$pid}", ['version' => $c['json']['data']['version'], 'harga' => 13500]);
+    expect($u['status'] === 200 && (float) $u['json']['data']['harga'] === 13500.0, 'edit harga: ' . $u['body']);
+    $page = $leader->get('/api/_ui-preview/index.php?page=master-data&tab=produk&q=AFS+PRODUK+BARU')['body'];
+    expect(str_contains($page, 'Rp13.500') && str_contains($page, 'Tambah Produk') && str_contains($page, 'md-delete'), 'produk tab must show Harga and Tambah/Edit/Hapus for Leader');
+    expectDenied($aCbd->send('DELETE', "/api/products/{$pid}", []), 'LEADER_ONLY', 'Admin pabrik deletes product');
+    $cbdPage = $aCbd->get('/api/_ui-preview/index.php?page=master-data&tab=produk')['body'];
+    expect(!str_contains($cbdPage, 'Tambah Produk') && !str_contains($cbdPage, 'md-delete') && str_contains($cbdPage, 'Harga'), 'Admin pabrik sees Harga but no add/edit/delete');
+    expect($leader->send('DELETE', "/api/products/{$pid}", [])['status'] === 200, 'delete unused product');
+    expect($pdo->query("SELECT COUNT(*) FROM product WHERE product_id = {$pid}")->fetchColumn() == 0, 'product row gone');
+
+    // A product already shipped cannot be deleted
+    $used = (int) $pdo->query('SELECT si.product_id FROM shipment_item si LIMIT 1')->fetchColumn();
+    $r = $leader->send('DELETE', "/api/products/{$used}", []);
+    expect($r['status'] === 409 && code($r) === 'MASTER_IN_USE' && str_contains($r['json']['message'], 'Nonaktifkan'), 'used product must refuse delete: ' . $r['body']);
+    $r = $leader->send('DELETE', "/api/stores/{$store}", []);
+    expect($r['status'] === 409 && code($r) === 'MASTER_IN_USE', 'used store must refuse delete: ' . $r['body']);
+
+    // Toko + alias: add, edit, delete
+    $st = $leader->send('POST', '/api/stores', ['canonicalName' => 'AFS TOKO BARU ' . uniqid()]);
+    expect($st['status'] === 201, 'add store: ' . $st['body']);
+    $sid = (int) $st['json']['data']['store_id'];
+    $al = $leader->send('POST', "/api/stores/{$sid}/aliases", ['rawName' => 'afs alias ' . uniqid()]);
+    expect($al['status'] === 201, 'add alias: ' . $al['body']);
+    $aid = (int) $al['json']['data']['storeAliasId'];
+    expect($leader->send('PUT', "/api/store-aliases/{$aid}", ['rawName' => 'afs alias edit ' . uniqid(), 'storeId' => $sid, 'factoryHint' => 'cibadak'])['status'] === 200, 'edit alias');
+    expect($leader->send('DELETE', "/api/store-aliases/{$aid}", [])['status'] === 200, 'delete alias');
+    $v = (int) $pdo->query("SELECT version FROM store WHERE store_id = {$sid}")->fetchColumn();
+    expect($leader->send('PUT', "/api/stores/{$sid}", ['version' => $v, 'canonicalName' => 'AFS TOKO EDIT ' . uniqid(), 'active' => false])['status'] === 200, 'edit store');
+    expect($leader->send('DELETE', "/api/stores/{$sid}", [])['status'] === 200, 'delete unused store (with its aliases)');
+
+    // Divisi: add, rename, delete; protected and used ones refuse
+    $d = $leader->send('POST', '/api/divisions', ['name' => 'AFS Divisi ' . uniqid(), 'factoryId' => $cbd]);
+    expect($d['status'] === 200, 'add division: ' . $d['body']);
+    $did = (int) $d['json']['data']['division_id'];
+    expect($leader->send('PUT', "/api/divisions/{$did}", ['name' => 'AFS Divisi Ganti ' . uniqid()])['status'] === 200, 'rename division');
+    expect($leader->send('DELETE', "/api/divisions/{$did}", [])['status'] === 200, 'delete unused division');
+    $r = $leader->send('DELETE', "/api/divisions/{$cbdDiv}", []);
+    expect($r['status'] === 409 && code($r) === 'MASTER_IN_USE', 'division with products must refuse delete: ' . $r['body']);
+
+    // Pabrik: rename keeps the code (PO import looks up by code), used factory refuses delete
+    $name = $pdo->query("SELECT name FROM factory WHERE factory_id = {$cbd}")->fetchColumn();
+    expect($leader->send('PUT', "/api/factories/{$cbd}", ['name' => $name . ' X'])['status'] === 200, 'rename factory');
+    expect($pdo->query("SELECT code FROM factory WHERE factory_id = {$cbd}")->fetchColumn() === 'CBD', 'factory code unchanged');
+    expect($leader->send('PUT', "/api/factories/{$cbd}", ['name' => $name])['status'] === 200, 'rename factory back');
+    $r = $leader->send('DELETE', "/api/factories/{$cbd}", []);
+    expect($r['status'] === 409 && code($r) === 'MASTER_IN_USE', 'used factory must refuse delete');
+});
+
 $failed = count(array_filter($results, static fn ($ok) => !$ok));
 fwrite(STDOUT, "\n" . count($results) . " tests, {$failed} failed.\n");
 exit($failed === 0 ? 0 : 1);
