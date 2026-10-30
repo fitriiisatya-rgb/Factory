@@ -17,6 +17,18 @@ $ready = $service->readySummary();
 $readyInvoiceCount = count($ready['deliveries']) + count($ready['mutasiInvoices']);
 $readyNotaCount = count($ready['mutasiNotas']);
 
+// DOs already sent (Konfirmasi KIRIM) whose receipt is still missing or has
+// an unverified selisih: not billable yet, so point Admin to Konfirmasi Toko.
+$scope = \Amor\Api\Auth::adminFactoryScope();
+$waiting = $pdo->query(
+    "SELECT COUNT(DISTINCT sh.delivery_order_id) FROM shipment sh
+     LEFT JOIN shipment_receipt sr ON sr.shipment_id = sh.shipment_id
+     WHERE sh.status = 'active' AND sh.delivery_order_id IS NOT NULL
+       AND (sr.shipment_receipt_id IS NULL OR sr.status = 'confirmed_discrepancy')"
+    . ($scope === null ? '' : ' AND sh.factory_id IN (' . implode(',', array_map('intval', $scope)) . ')')
+)->fetchColumn();
+$waiting = (int) $waiting;
+
 $kpi = ['count' => count($invoices), 'total' => 0.0, 'nota' => 0.0];
 foreach ($invoices as $inv) {
     $kpi['total'] += $inv['total'];
@@ -54,6 +66,10 @@ $defaultDateTo = date('Y-m-d');
       </tbody>
     </table></div>
     <button type="button" class="btn btn-primary" id="btn-generate-ready" style="margin-top:var(--space-3);">Terbitkan semua (<?= $readyInvoiceCount ?> invoice<?= $readyNotaCount > 0 ? ', ' . $readyNotaCount . ' nota' : '' ?>)</button>
+  <?php endif; ?>
+  <?php if ($waiting > 0): ?>
+    <div class="alert alert-info" style="margin-top:var(--space-3);"><b><?= $waiting ?> DO</b> sudah dikirim tapi penerimaannya belum dikonfirmasi / selisihnya belum diverifikasi, jadi belum bisa ditagih.
+      Isi dulu di <a href="/api/_ui-preview/?page=konfirmasi-toko">Konfirmasi Toko</a> (Diterima semua sesuai SJ, atau Isi dari SJ), lalu kembali ke sini.</div>
   <?php endif; ?>
 </div>
 

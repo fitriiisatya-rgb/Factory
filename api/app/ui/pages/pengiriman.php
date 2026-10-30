@@ -47,6 +47,7 @@ if ($doIdParam !== null) {
       <?php if ($shipBeforeFg): ?>
       <div class="alert alert-info" style="margin-bottom:var(--space-3);">Masa adaptasi: <b>Kirim tanpa menunggu FG</b> aktif. Isi Qty Kirim = jumlah yang benar-benar dimuat. Hasil packing FG dicocokkan nanti di <a href="/api/_ui-preview/?page=rekonsiliasi-kirim">Rekonsiliasi Kirim vs FG</a>.</div>
       <?php endif; ?>
+      <p style="color:var(--text-muted);font-size:var(--text-sm);margin-bottom:var(--space-2);">Qty Kirim sudah terisi sesuai Sisa DO<?= $shipBeforeFg ? '' : ' (dibatasi stok FG yang siap)' ?>. Ubah hanya baris yang dimuat tidak sesuai; isi 0 untuk produk yang tidak ikut dikirim.</p>
       <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Produk</th><th class="num">Sisa DO</th><th class="num">Stok FG Pabrik</th><th class="num">Siap untuk Toko Ini</th><th class="num">Qty Kirim</th><th>Catatan</th></tr></thead>
         <tbody>
@@ -65,7 +66,7 @@ if ($doIdParam !== null) {
           <td class="num"><?= ui_fmt_num($available) ?></td>
           <td class="num"><?= $storeReady === null ? '-' : ui_fmt_num($storeReady) ?></td>
           <td class="num"><input type="number" step="0.01" min="0" max="<?= ui_num_input($max) ?>" style="width:6rem;text-align:right;"
-              data-product-id="<?= (int) $it['productId'] ?>" data-max="<?= ui_num_input($max) ?>" data-field="qty" value="0" <?= $disabled ? 'disabled title="FG belum tersedia untuk toko ini"' : '' ?>></td>
+              data-product-id="<?= (int) $it['productId'] ?>" data-max="<?= ui_num_input($max) ?>" data-field="qty" value="<?= $disabled ? '0' : ui_num_input($max) ?>" <?= $disabled ? 'disabled title="FG belum tersedia untuk toko ini"' : '' ?>></td>
           <td><input type="text" style="width:8rem;" data-product-id="<?= (int) $it['productId'] ?>" data-field="notes" <?= $disabled ? 'disabled' : '' ?>></td>
         </tr>
         <?php endforeach; ?>

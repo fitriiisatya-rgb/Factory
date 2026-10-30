@@ -177,7 +177,7 @@ $activeNav = (str_starts_with($page, 'delivery-order') || $page === 'rekonsilias
     : (str_starts_with($page, 'replacement-') ? 'replacement-reject'
     : ((str_starts_with($page, 'pesanan-khusus-toko') || str_starts_with($page, 'pesanan-non-toko')) ? 'pesanan-toko'
     : (str_starts_with($page, 'produksi-') ? 'produksi'
-    : (str_starts_with($page, 'fg-') && $page !== 'fg-packing' ? 'fg-packing'
+    : (str_starts_with($page, 'fg-') && !in_array($page, ['fg-packing', 'fg-ringkasan'], true) ? 'fg-packing'
     : (str_starts_with($page, 'invoice') ? 'invoice'
     : (in_array($page, ['reject-toko', 'retur-review', 'mutasi-review', 'alasan-reject'], true) ? 'validasi-toko' : $page)))))));
 

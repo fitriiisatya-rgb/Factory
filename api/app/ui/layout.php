@@ -125,7 +125,9 @@ function ui_role_scoped_pages(array $roles): ?array
         return null;
     }
     $byRole = [
-        'PRODUCTION' => ['produksi', 'produksi-demand', 'produksi-task-per-divisi', 'fg-packing', 'fg-khusus-non-toko', 'replacement-do-detail', 'fg-ringkasan', 'riwayat'],
+        // No FG & Packing for division logins: FG is entered by the FG
+        // accounts (fg_ktg / fg_cbd). Divisions keep the read-only Ringkasan FG.
+        'PRODUCTION' => ['produksi', 'produksi-demand', 'produksi-task-per-divisi', 'replacement-do-detail', 'fg-ringkasan', 'riwayat'],
         'FG_PACKING' => ['fg-packing', 'fg-khusus-non-toko', 'riwayat'],
         'ATASAN' => ['approval-toko', 'dashboard-retur'],
     ];
