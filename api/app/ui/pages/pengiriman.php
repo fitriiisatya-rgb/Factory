@@ -133,7 +133,7 @@ if ($doIdParam !== null) {
         var group = document.getElementById('ship-group').value;
         var ok = await Amor.confirmModal({
           title: 'Konfirmasi KIRIM',
-          body: 'Grup ' + group + ' &middot; ' + items.length + ' produk &middot; total qty ' + totalQty + '. Stok FG akan berkurang setelah pengiriman dikonfirmasi.',
+          body: 'Grup ' + group + ' · ' + items.length + ' produk · total qty ' + totalQty + '. Stok FG akan berkurang setelah pengiriman dikonfirmasi.',
           confirmLabel: 'Ya, KIRIM',
         });
         if (!ok) return;
