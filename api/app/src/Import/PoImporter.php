@@ -363,10 +363,12 @@ final class PoImporter
                 $storeResolution = $this->resolver->resolveStore($s['toko']);
                 if ($storeResolution['status'] !== 'resolved') {
                     $storeUnresolved++;
-                    $uniqueStoreNamesUnresolved[mb_strtolower(trim($s['toko']))] = true;
-                    if (count($unresolvedStoreSamples) < 25) {
+                    $storeKey = mb_strtolower(trim($s['toko']));
+                    // One row per store name (a store appears once per product line in the file).
+                    if (!isset($uniqueStoreNamesUnresolved[$storeKey]) && count($unresolvedStoreSamples) < 50) {
                         $unresolvedStoreSamples[] = $s['toko'];
                     }
+                    $uniqueStoreNamesUnresolved[$storeKey] = true;
                     if ($stageUnresolved) {
                         $this->resolver->stageUnresolvedStore(
                             $s['toko'],

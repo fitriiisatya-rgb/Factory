@@ -232,21 +232,52 @@ if ($action === 'resolve_product_alias' && isset($_SESSION['po_staged'])) {
 if ($action === 'resolve_store_alias' && isset($_SESSION['po_staged'])) {
     $rawName = (string) ($_POST['rawName'] ?? '');
     $targetName = trim((string) ($_POST['targetStoreName'] ?? ''));
+    $targetStoreId = (int) ($_POST['targetStoreId'] ?? 0);
     try {
-        if ($targetName === '') {
-            throw new \InvalidArgumentException('Nama toko tujuan wajib diisi.');
-        }
-        $stmt = $pdo->prepare('SELECT store_id FROM store WHERE UPPER(canonical_name) = UPPER(?)');
-        $stmt->execute([$targetName]);
-        $storeId = $stmt->fetchColumn();
-        if ($storeId === false) {
-            throw new \InvalidArgumentException("Tidak ada toko bernama persis '{$targetName}' — cek ejaannya (harus sama persis dengan yang sudah ada di Master Toko).");
+        if ($targetStoreId > 0) {
+            // Picked from the list of existing stores.
+            $stmt = $pdo->prepare('SELECT store_id, canonical_name FROM store WHERE store_id = ?');
+            $stmt->execute([$targetStoreId]);
+            $picked = $stmt->fetch();
+            if ($picked === false) {
+                throw new \InvalidArgumentException('Toko yang dipilih tidak ditemukan.');
+            }
+            $storeId = $picked['store_id'];
+            $targetName = $picked['canonical_name'];
+        } else {
+            if ($targetName === '') {
+                throw new \InvalidArgumentException('Pilih toko tujuan dulu.');
+            }
+            $stmt = $pdo->prepare('SELECT store_id FROM store WHERE UPPER(canonical_name) = UPPER(?)');
+            $stmt->execute([$targetName]);
+            $storeId = $stmt->fetchColumn();
+            if ($storeId === false) {
+                throw new \InvalidArgumentException("Tidak ada toko bernama persis '{$targetName}' — cek ejaannya (harus sama persis dengan yang sudah ada di Master Toko).");
+            }
         }
         $alias = $storeRepo->addAlias($pdo, (int) $storeId, $rawName, null);
         Audit::write($pdo, null, $userId, 'po.store_alias.create', 'store_alias', (string) $alias['storeAliasId'], 'ok', null, 1, $alias);
         $actionResult = ['ok' => true, 'title' => 'Alias toko dibuat', 'message' => "'{$rawName}' sekarang mengarah ke toko '{$targetName}'. Preview akan diperbarui."];
     } catch (\Throwable $e) {
         $actionResult = ['ok' => false, 'title' => 'Gagal membuat alias toko', 'message' => $e->getMessage()];
+    }
+}
+
+// Leader Admin: the name in the file is a genuinely new bakery — add it to Master Toko as is.
+if ($action === 'create_store_from_import' && isset($_SESSION['po_staged'])) {
+    $rawName = trim((string) ($_POST['rawName'] ?? ''));
+    try {
+        if (\Amor\Api\Auth::isFactoryAdmin()) {
+            throw new \InvalidArgumentException('Hanya Leader Admin yang bisa menambah toko baru. Pilih toko yang sudah ada, atau minta Leader Admin menambahkannya.');
+        }
+        if ($rawName === '') {
+            throw new \InvalidArgumentException('Nama toko kosong.');
+        }
+        $store = $storeRepo->create($pdo, $rawName, null);
+        Audit::write($pdo, null, $userId, 'po.store.create', 'store', (string) $store['store_id'], 'ok', null, 1, $store);
+        $actionResult = ['ok' => true, 'title' => 'Toko baru ditambahkan', 'message' => "'{$rawName}' ditambahkan ke Master Data Toko. Jangan lupa buatkan link Portal Bakery-nya nanti. Preview akan diperbarui."];
+    } catch (\Throwable $e) {
+        $actionResult = ['ok' => false, 'title' => 'Gagal menambah toko', 'message' => $e->getMessage()];
     }
 }
 
@@ -642,23 +673,39 @@ ui_page_head($ui, 'pesanan-toko', 'Import / Revisi PO Toko', 'Upload PO Awal ata
   dilewati oleh admin.</p>
   <?php endif; ?>
 
-  <?php if ($plan['storeResolution']['unresolved'] > 0): ?>
+  <?php if ($plan['storeResolution']['unresolved'] > 0):
+    $allStores = $pdo->query("SELECT store_id, canonical_name FROM store WHERE active = 1 AND canonical_name <> 'NON-OUTLET / PERORANGAN' ORDER BY canonical_name")->fetchAll();
+    $isLeader = !\Amor\Api\Auth::isFactoryAdmin(); ?>
   <h3 class="card-title" style="margin:var(--space-4) 0 4px;">Toko belum terpetakan</h3>
+  <p style="color:var(--text-muted);font-size:var(--text-sm);margin:0 0 var(--space-2);">Nama toko di file tidak cocok dengan Master Data. Kalau tokonya sudah ada (beda tulisan saja): pilih tokonya → <b>Petakan</b>. Sekali saja — upload berikutnya otomatis dikenali.<?= $isLeader ? ' Kalau ini toko yang benar-benar baru: <b>Tambah sebagai toko baru</b>.' : ' Kalau toko benar-benar baru, minta Leader Admin menambahkannya.' ?></p>
   <div class="table-scroll"><table class="data-table">
-    <thead><tr><th>Nama di File</th><th>Petakan ke Toko</th></tr></thead>
+    <thead><tr><th>Nama di File</th><th>Toko yang sudah ada</th><?= $isLeader ? '<th>Toko baru</th>' : '' ?></tr></thead>
     <tbody>
     <?php foreach ($plan['storeResolution']['samples'] as $rawStoreName): ?>
     <tr>
-      <td><?= ui_esc($rawStoreName) ?></td>
+      <td><b><?= ui_esc($rawStoreName) ?></b></td>
       <td>
         <form method="post" style="display:flex;gap:var(--space-2);">
           <input type="hidden" name="csrf" value="<?= ui_esc($csrfToken) ?>">
           <input type="hidden" name="action" value="resolve_store_alias">
           <input type="hidden" name="rawName" value="<?= ui_esc($rawStoreName) ?>">
-          <input type="text" name="targetStoreName" placeholder="Nama toko yang sudah ada">
-          <button type="submit" class="btn btn-secondary btn-sm">Buat Alias</button>
+          <select name="targetStoreId" required style="min-width:240px;">
+            <option value="">— pilih toko —</option>
+            <?php foreach ($allStores as $st): ?><option value="<?= (int) $st['store_id'] ?>"><?= ui_esc($st['canonical_name']) ?></option><?php endforeach; ?>
+          </select>
+          <button type="submit" class="btn btn-secondary btn-sm">Petakan</button>
         </form>
       </td>
+      <?php if ($isLeader): ?>
+      <td>
+        <form method="post" onsubmit="return confirm('Tambahkan \'' + <?= ui_esc((string) json_encode($rawStoreName, JSON_UNESCAPED_UNICODE)) ?> + '\' sebagai toko baru di Master Data?');">
+          <input type="hidden" name="csrf" value="<?= ui_esc($csrfToken) ?>">
+          <input type="hidden" name="action" value="create_store_from_import">
+          <input type="hidden" name="rawName" value="<?= ui_esc($rawStoreName) ?>">
+          <button type="submit" class="btn btn-secondary btn-sm">Tambah sebagai toko baru</button>
+        </form>
+      </td>
+      <?php endif; ?>
     </tr>
     <?php endforeach; ?>
     </tbody>
