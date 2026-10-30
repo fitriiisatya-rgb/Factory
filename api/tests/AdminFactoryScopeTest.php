@@ -575,6 +575,10 @@ runTest('AFS-15 Master Data: Leader adds / edits / deletes; used records refuse 
     expectDenied($aCbd->send('DELETE', "/api/products/{$pid}", []), 'LEADER_ONLY', 'Admin pabrik deletes product');
     $cbdPage = $aCbd->get('/api/_ui-preview/index.php?page=master-data&tab=produk')['body'];
     expect(!str_contains($cbdPage, 'Tambah Produk') && !str_contains($cbdPage, 'md-delete') && str_contains($cbdPage, 'Harga'), 'Admin pabrik sees Harga but no add/edit/delete');
+    $kat = (string) $pdo->query("SELECT kategori FROM product WHERE kategori IS NOT NULL AND kategori <> '' LIMIT 1")->fetchColumn();
+    $other = (string) $pdo->query('SELECT name FROM product WHERE kategori <> ' . $pdo->quote($kat) . ' LIMIT 1')->fetchColumn();
+    $filtered = $leader->get('/api/_ui-preview/index.php?page=master-data&tab=produk&kategori=' . urlencode($kat))['body'];
+    expect(str_contains($filtered, 'Semua kategori') && ($other === '' || !str_contains($filtered, htmlspecialchars($other))), 'kategori filter must hide other categories');
     expect($leader->send('DELETE', "/api/products/{$pid}", [])['status'] === 200, 'delete unused product');
     expect($pdo->query("SELECT COUNT(*) FROM product WHERE product_id = {$pid}")->fetchColumn() == 0, 'product row gone');
 

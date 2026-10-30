@@ -13,6 +13,8 @@ declare(strict_types=1);
 
 $tab = (string) ($_GET['tab'] ?? 'produk');
 $searchTerm = trim((string) ($_GET['q'] ?? ''));
+$kategoriFilter = trim((string) ($_GET['kategori'] ?? ''));
+$divisiFilter = (int) ($_GET['divisi'] ?? 0);
 $tabs = ['produk' => 'Produk', 'toko' => 'Toko', 'alias-toko' => 'Alias Toko', 'divisi' => 'Divisi', 'pabrik' => 'Pabrik'];
 if (!isset($tabs[$tab])) {
     $tab = 'produk';
@@ -35,6 +37,10 @@ $actions = static fn (array $r): string => '<td style="white-space:nowrap;"><but
   <form method="get" style="display:flex;gap:var(--space-3);align-items:flex-end;margin-left:auto;">
     <input type="hidden" name="page" value="master-data">
     <input type="hidden" name="tab" value="<?= ui_esc($tab) ?>">
+    <?php if ($tab === 'produk'): $kategoriOptions = $pdo->query("SELECT DISTINCT kategori FROM product WHERE kategori IS NOT NULL AND kategori <> '' ORDER BY kategori")->fetchAll(PDO::FETCH_COLUMN); ?>
+    <div class="field"><label>Kategori</label><select name="kategori" onchange="this.form.submit()"><option value="">Semua kategori</option><?php foreach ($kategoriOptions as $k): ?><option value="<?= ui_esc($k) ?>" <?= $kategoriFilter === $k ? 'selected' : '' ?>><?= ui_esc($k) ?></option><?php endforeach; ?></select></div>
+    <div class="field"><label>Divisi</label><select name="divisi" onchange="this.form.submit()"><option value="">Semua divisi</option><?php foreach ($divisionOptions as $d): ?><option value="<?= (int) $d['division_id'] ?>" <?= $divisiFilter === (int) $d['division_id'] ? 'selected' : '' ?>><?= ui_esc($d['name'] . ' (' . $d['factory_name'] . ')') ?></option><?php endforeach; ?></select></div>
+    <?php endif; ?>
     <div class="field"><label>Cari</label><input type="text" name="q" value="<?= ui_esc($searchTerm) ?>"></div>
     <button type="submit" class="btn btn-secondary">Cari</button>
     <?php if ($canEdit): ?><button type="button" class="btn btn-primary" id="md-add"><?= $addLabels[$tab] ?></button><?php endif; ?>
@@ -49,6 +55,8 @@ $actions = static fn (array $r): string => '<td style="white-space:nowrap;"><but
   $sql = 'SELECT p.product_id, p.name, p.kategori, p.aktif, p.harga, p.hpp, p.version, p.division_id, d.name AS division_name FROM product p LEFT JOIN division d ON d.division_id = p.division_id WHERE 1=1';
   $params = [];
   if ($searchTerm !== '') { $sql .= ' AND p.name LIKE ?'; $params[] = '%' . $searchTerm . '%'; }
+  if ($kategoriFilter !== '') { $sql .= ' AND p.kategori = ?'; $params[] = $kategoriFilter; }
+  if ($divisiFilter > 0) { $sql .= ' AND p.division_id = ?'; $params[] = $divisiFilter; }
   $sql .= ' ORDER BY p.name LIMIT 300';
   $stmt = $pdo->prepare($sql); $stmt->execute($params); $rows = $stmt->fetchAll();
   ?>
