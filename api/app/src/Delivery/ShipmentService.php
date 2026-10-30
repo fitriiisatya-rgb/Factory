@@ -151,10 +151,12 @@ final class ShipmentService
             if ($requested > $remaining + 0.0001) {
                 $errors[] = 'EXCEEDS_REMAINING';
             }
-            if ($requested > $available + 0.0001) {
+            // Masa adaptasi "Kirim tanpa menunggu FG": only the DO's remaining qty caps Kirim.
+            $shipBeforeFg = \Amor\Api\System\ShipBeforeFgSwitch::enabled($this->pdo);
+            if (!$shipBeforeFg && $requested > $available + 0.0001) {
                 $errors[] = 'EXCEEDS_AVAILABLE';
             }
-            if ($storeReady !== null && $requested > $storeReady + 0.0001) {
+            if (!$shipBeforeFg && $storeReady !== null && $requested > $storeReady + 0.0001) {
                 $errors[] = 'EXCEEDS_STORE_READY';
             }
             if ($errors !== []) {
@@ -168,7 +170,7 @@ final class ShipmentService
                 'remainingToShip' => $remaining,
                 'fgAvailable' => $available,
                 'storeReady' => $storeReady,
-                'maxShippable' => max(0.0, min($remaining, $available, $storeReady ?? PHP_FLOAT_MAX)),
+                'maxShippable' => $shipBeforeFg ? $remaining : max(0.0, min($remaining, $available, $storeReady ?? PHP_FLOAT_MAX)),
                 'errors' => $errors,
             ];
         }
@@ -259,7 +261,8 @@ final class ShipmentService
             $physical = $balanceRow !== null ? (float) $balanceRow['qty_on_hand'] : 0.0;
             $reservedForSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
             $trueFree = max(0.0, $physical - $reservedForSpecial);
-            if ($requested > $trueFree + 0.0001) {
+            $shipBeforeFg = \Amor\Api\System\ShipBeforeFgSwitch::enabled($this->pdo);
+            if (!$shipBeforeFg && $requested > $trueFree + 0.0001) {
                 throw new ApiException(409, 'INSUFFICIENT_FG_AVAILABLE', "Product {$productId}: requested {$requested} exceeds FG available {$trueFree} (physical {$physical}, reserved for special/non-regular orders {$reservedForSpecial})");
             }
 
@@ -292,7 +295,7 @@ final class ShipmentService
             // (this read correctly sees the OLD state, and submit() will
             // see ship()'s result once it runs) — never a hybrid.
             $unallocatedStoreId = $this->fg->unallocatedStoreId($this->pdo);
-            if ($this->repo->hasAnyStoreAllocation($this->pdo, $productId, $factoryId, $unallocatedStoreId, true)) {
+            if (!$shipBeforeFg && $this->repo->hasAnyStoreAllocation($this->pdo, $productId, $factoryId, $unallocatedStoreId, true)) {
                 $this->repo->lockStoreFgBalance($this->pdo, (int) $do['store_id'], $productId, $locationId);
                 // forUpdate=true on BOTH reads below — see
                 // DoRepository::sumPackedForStore()'s own docblock: a

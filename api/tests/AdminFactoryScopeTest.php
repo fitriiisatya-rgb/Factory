@@ -533,6 +533,36 @@ runTest('AFS-13 Server-rendered pages stay scoped: Konfirmasi Toko list/detail a
     expect(!str_contains($doPage, "SHP-{$shipments[$ktg]}") && !str_contains($doPage, "print-shipment.php?id={$shipments[$ktg]}"), 'Admin CBD DO detail must not list the Karangtengah shipment');
 });
 
+runTest('AFS-14 Kirim tanpa menunggu FG (Leader switch): Kirim before FG, FG enters its own result, Rekonsiliasi shows the difference', function () use ($leader, $aCbd, $pdo, $cbd, $cbdDiv, $store) {
+    [, $p6] = divisionAndProduct($pdo, $cbd, 6);
+    $day = (new DateTimeImmutable('+18 days', new DateTimeZone('UTC')))->format('Y-m-d');
+    seedStorePo($pdo, $day, $cbd, $store, $p6, 5.0);
+    $c = $leader->send('POST', '/api/production', ['tanggal' => $day, 'divisionId' => $cbdDiv]);
+    $s = $leader->send('PATCH', "/api/production/{$c['json']['data']['productionRunId']}", ['expectedVersion' => $c['json']['data']['version'], 'items' => [['productId' => $p6, 'actualQty' => 5]]]);
+    expect($leader->send('POST', "/api/production/{$c['json']['data']['productionRunId']}/submit", ['expectedVersion' => $s['json']['data']['version']])['status'] === 200, 'production submit');
+    $do = $leader->send('POST', '/api/do', ['tanggal' => $day, 'storeId' => $store]);
+    expect($do['status'] === 200, 'DO can be generated before FG: ' . $do['body']);
+    $doId = (int) $do['json']['data']['doId'];
+    $ship = static fn () => $aCbd->send('POST', "/api/do/{$doId}/ship", ['expectedVersion' => $aCbd->get("/api/do/{$doId}")['json']['data']['version'], 'items' => [['productId' => $p6, 'actualQty' => 5]]]);
+
+    $blocked = $ship();
+    expect($blocked['status'] === 409, 'without the switch Kirim must wait for FG: ' . $blocked['body']);
+    expectDenied($aCbd->send('POST', '/api/admin/system/ship-before-fg', ['enabled' => true]), 'LEADER_ONLY', 'Admin pabrik toggles ship-before-fg');
+    expect($leader->send('POST', '/api/admin/system/ship-before-fg', ['enabled' => true])['status'] === 200, 'Leader enables ship-before-fg');
+    $ok = $ship();
+    expect($ok['status'] === 200, 'Kirim before FG must pass with the switch on: ' . $ok['body']);
+
+    // FG enters its own (smaller) real result afterwards.
+    $f = $leader->send('POST', '/api/fg', ['tanggal' => $day, 'factoryId' => $cbd]);
+    $fs = $leader->send('PATCH', "/api/fg/{$f['json']['data']['fgBatchId']}", ['expectedVersion' => $f['json']['data']['version'], 'items' => [['productId' => $p6, 'fgVerified' => 4, 'packed' => 4]]]);
+    $sub = $leader->send('POST', "/api/fg/{$f['json']['data']['fgBatchId']}/submit", ['expectedVersion' => $fs['json']['data']['version']]);
+    expect($sub['status'] === 200, 'FG submits its own result after Kirim: ' . $sub['body']);
+
+    $page = $aCbd->get("/api/_ui-preview/index.php?page=rekonsiliasi-kirim&tanggal={$day}")['body'];
+    expect(str_contains($page, 'Kirim lebih dari packing FG') && str_contains($page, '+1'), 'Rekonsiliasi must flag Kirim 5 vs FG 4');
+    expect($leader->send('POST', '/api/admin/system/ship-before-fg', ['enabled' => false])['status'] === 200, 'Leader switches back');
+});
+
 $failed = count(array_filter($results, static fn ($ok) => !$ok));
 fwrite(STDOUT, "\n" . count($results) . " tests, {$failed} failed.\n");
 exit($failed === 0 ? 0 : 1);

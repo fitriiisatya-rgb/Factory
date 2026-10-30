@@ -42,6 +42,20 @@ final class SystemController
         Response::json(['enabled' => $enabled]);
     }
 
+    /** POST /api/admin/system/ship-before-fg — {enabled: bool}; masa adaptasi "Kirim tanpa menunggu FG" (Leader only). */
+    public static function shipBeforeFg(Request $request): void
+    {
+        $userId = Auth::requireLeaderAdmin();
+        $enabled = filter_var($request->input('enabled'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        if ($enabled === null) {
+            throw new ApiException(400, 'INVALID_ENABLED', 'enabled harus true atau false');
+        }
+        $pdo = Database::pdo();
+        \Amor\Api\System\ShipBeforeFgSwitch::set($pdo, $enabled);
+        Audit::write($pdo, $request->header('Idempotency-Key'), $userId, $enabled ? 'system.ship_before_fg.on' : 'system.ship_before_fg.off', 'master_setting', 'ship_before_fg', 'ok', null, null, ['enabled' => $enabled]);
+        Response::json(['enabled' => $enabled]);
+    }
+
     /** GET /api/admin/system/backup-download?name= — download one backup file. */
     public static function download(Request $request): void
     {

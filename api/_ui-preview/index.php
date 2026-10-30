@@ -38,6 +38,7 @@ $pages = [
     'delivery-order-detail' => ['title' => 'Delivery Order', 'subtitle' => 'Detail dokumen dan pengiriman bertahap.'],
     'delivery-order-khusus-non-toko' => ['title' => 'DO Pesanan Khusus / Non-Toko', 'subtitle' => 'DO terpisah per sumber untuk Pesanan Khusus Toko dan Pesanan Non-Toko.'],
     'delivery-order-khusus-non-toko-detail' => ['title' => 'DO Pesanan Khusus / Non-Toko', 'subtitle' => 'Detail satu DO khusus/non-toko.'],
+    'rekonsiliasi-kirim' => ['title' => 'Rekonsiliasi Kirim vs FG', 'subtitle' => 'Masa adaptasi: yang di-Kirim Admin dibandingkan dengan hasil packing FG dan penerimaan toko.'],
     'pengiriman' => ['title' => 'Pengiriman', 'subtitle' => 'Kelola pengiriman aktual dan pengiriman bertahap.'],
     'konfirmasi-toko' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Tinjau konfirmasi penerimaan barang dari toko dan verifikasi selisih.'],
     'konfirmasi-toko-detail' => ['title' => 'Konfirmasi Toko', 'subtitle' => 'Detail konfirmasi penerimaan satu pengiriman.'],
@@ -171,7 +172,7 @@ if (\Amor\Api\Auth::needsOperatorName()) {
     exit;
 }
 
-$activeNav = str_starts_with($page, 'delivery-order') ? 'delivery-order'
+$activeNav = (str_starts_with($page, 'delivery-order') || $page === 'rekonsiliasi-kirim') ? 'delivery-order'
     : (str_starts_with($page, 'konfirmasi-toko') ? 'konfirmasi-toko'
     : (str_starts_with($page, 'replacement-') ? 'replacement-reject'
     : ((str_starts_with($page, 'pesanan-khusus-toko') || str_starts_with($page, 'pesanan-non-toko')) ? 'pesanan-toko'

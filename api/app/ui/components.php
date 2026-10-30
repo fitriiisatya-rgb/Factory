@@ -230,6 +230,7 @@ function ui_do_tabs(string $active, string $tanggal, int $factoryId): string
     $tabs = [
         'delivery-order' => 'DO Toko (Reguler)',
         'delivery-order-khusus-non-toko' => 'DO Pesanan Khusus / Non-Toko',
+        'rekonsiliasi-kirim' => 'Rekonsiliasi Kirim vs FG',
     ];
     $html = '<div class="filter-bar"><div class="btn-group">';
     foreach ($tabs as $key => $label) {

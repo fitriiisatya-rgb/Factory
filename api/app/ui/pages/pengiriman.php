@@ -43,6 +43,10 @@ if ($doIdParam !== null) {
         </select>
       </div>
 
+      <?php $shipBeforeFg = \Amor\Api\System\ShipBeforeFgSwitch::enabled($pdo); ?>
+      <?php if ($shipBeforeFg): ?>
+      <div class="alert alert-info" style="margin-bottom:var(--space-3);">Masa adaptasi: <b>Kirim tanpa menunggu FG</b> aktif. Isi Qty Kirim = jumlah yang benar-benar dimuat. Hasil packing FG dicocokkan nanti di <a href="/api/_ui-preview/?page=rekonsiliasi-kirim">Rekonsiliasi Kirim vs FG</a>.</div>
+      <?php endif; ?>
       <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Produk</th><th class="num">Sisa DO</th><th class="num">Stok FG Pabrik</th><th class="num">Siap untuk Toko Ini</th><th class="num">Qty Kirim</th><th>Catatan</th></tr></thead>
         <tbody>
@@ -52,7 +56,7 @@ if ($doIdParam !== null) {
           // (still Per Produk) — unrestricted by store, never "0 ready"
           // (DoRepository::hasAnyStoreAllocation()'s own docblock).
           $storeReady = $it['storeReady'] !== null ? (float) $it['storeReady'] : null;
-          $max = min((float) $it['remainingToShip'], $available, $storeReady ?? PHP_FLOAT_MAX);
+          $max = $shipBeforeFg ? (float) $it['remainingToShip'] : min((float) $it['remainingToShip'], $available, $storeReady ?? PHP_FLOAT_MAX);
           $disabled = $max <= 0.0001;
         ?>
         <tr<?= $disabled ? ' style="opacity:.5;"' : '' ?>>

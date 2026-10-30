@@ -54,6 +54,34 @@ declare(strict_types=1);
   });
 })();
 </script>
+<?php $shipFirstOn = \Amor\Api\System\ShipBeforeFgSwitch::enabled($pdo); ?>
+<div class="card section">
+  <div class="card-head"><h2 class="card-title">Kirim tanpa menunggu FG</h2><?= ui_badge($shipFirstOn ? 'Aktif' : 'Nonaktif') ?></div>
+  <p style="color:var(--text-muted);font-size:var(--text-sm);">
+    <?= $shipFirstOn
+        ? 'Masa adaptasi: Admin boleh menekan Kirim sebelum FG selesai menginput di sistem (batasnya hanya sisa DO). FG tetap menginput hasil packing aslinya. Selisihnya dicocokkan di Delivery Order → Rekonsiliasi Kirim vs FG. Stok FG di sistem bisa minus sampai FG selesai menginput.'
+        : 'Aturan normal: Kirim hanya sebanyak yang sudah dipacking FG di sistem. Aktifkan selama masa adaptasi bila Admin perlu mengirim lebih dulu.' ?>
+  </p>
+  <button type="button" class="btn <?= $shipFirstOn ? 'btn-secondary' : 'btn-primary' ?>" id="btn-ship-first" data-enable="<?= $shipFirstOn ? '0' : '1' ?>"><?= $shipFirstOn ? 'Kembalikan ke Aturan Normal' : 'Aktifkan Kirim tanpa menunggu FG' ?></button>
+</div>
+<script>
+(function () {
+  var b = document.getElementById('btn-ship-first');
+  b.addEventListener('click', async function () {
+    var on = b.dataset.enable === '1';
+    var ok = await Amor.confirmModal({
+      title: on ? 'Aktifkan Kirim tanpa menunggu FG?' : 'Kembalikan ke aturan normal?',
+      body: on ? 'Admin bisa Kirim sebelum FG menginput. Jangan lupa cek Rekonsiliasi Kirim vs FG setiap hari.' : 'Kirim kembali dibatasi oleh hasil packing FG di sistem.',
+      confirmLabel: on ? 'Ya, Aktifkan' : 'Ya, Kembalikan',
+    });
+    if (!ok) return;
+    try {
+      await Amor.apiFetch('/api/admin/system/ship-before-fg', { method: 'POST', body: { enabled: on } });
+      window.location.reload();
+    } catch (e) { Amor.toast(e.message, 'error'); }
+  });
+})();
+</script>
 <div class="card section">
   <div class="card-head"><h2 class="card-title">Sistem</h2></div>
   <p style="color:var(--text-muted);font-size:var(--text-sm);">Backup database (unduh untuk disimpan di luar server) dan catatan error.</p>

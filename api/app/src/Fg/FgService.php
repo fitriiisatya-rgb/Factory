@@ -782,7 +782,10 @@ final class FgService
                 $physical = $balanceRow !== null ? (float) $balanceRow['qty_on_hand'] : 0.0;
                 $reservedSpecial = $this->allocRepo->sumActiveAllocatedForProductFactory($this->pdo, $productId, $factoryId);
                 $newPhysical = $physical + $delta;
-                if ($newPhysical < $reservedSpecial - 0.0001) {
+                // Masa adaptasi "Kirim tanpa menunggu FG": stock may already be negative from
+                // Kirim-before-FG; only a real special-order reservation still blocks a correction.
+                $shipFirst = \Amor\Api\System\ShipBeforeFgSwitch::enabled($this->pdo) && $reservedSpecial < 0.0001;
+                if (!$shipFirst && $newPhysical < $reservedSpecial - 0.0001) {
                     $maxDown = max(0.0, $physical - $reservedSpecial);
                     $productName = $items[$productId]['product_name'];
                     throw new ApiException(
@@ -824,7 +827,9 @@ final class FgService
             // row even after genuinely waiting on the lock above.
             $storePacked = $this->doRepo->sumPackedForStore($this->pdo, $pair['storeId'], $pair['productId'], $factoryId, $batchId, true);
             $storeShipped = $this->doRepo->sumShippedForStore($this->pdo, $pair['storeId'], $pair['productId'], $factoryId, true);
-            if ($storePacked < $storeShipped - 0.0001) {
+            // Masa adaptasi "Kirim tanpa menunggu FG": FG enters its own real result even when
+            // Admin already shipped more; the difference shows on Rekonsiliasi Kirim vs FG.
+            if ($storePacked < $storeShipped - 0.0001 && !\Amor\Api\System\ShipBeforeFgSwitch::enabled($this->pdo)) {
                 $store = $this->doRepo->findStore($this->pdo, $pair['storeId']);
                 $storeName = $store['canonical_name'] ?? "Toko #{$pair['storeId']}";
                 $productName = $items[$pair['productId']]['product_name'] ?? "Produk #{$pair['productId']}";
