@@ -282,8 +282,9 @@ runTest('PRINT-05 planned/shipped/remaining values on a fresh draft are correct 
     $doId = $create['json']['data']['doId'];
     $r = $http->request('GET', "/_ui-preview/print-do.php?doId={$doId}");
     // Row: <td>15</td> planned, <td>0</td> shipped, <td>15</td> remaining, for this exact product.
-    expect((bool) preg_match('/<td[^>]*>' . preg_quote($p['name'], '/') . '<\/td>.*?class="num">15<\/td>\s*<td[^>]*class="num">0<\/td>\s*<td[^>]*class="num">15<\/td>/s', $r['body']),
-        'expected planned=15, shipped=0, remaining=15 for a fresh draft with no shipment yet');
+    expect((bool) preg_match('/<td[^>]*>' . preg_quote($p['name'], '/') . '<\/td>.*?class="num">15<\/td>\s*<td class="do-write">/s', $r['body']),
+        'expected Dikirim=15 followed by the empty write-in columns for a fresh draft');
+    expect(!str_contains($r['body'], 'Sudah dikirim sebelumnya'), 'a fresh draft has no earlier-shipment note');
 });
 
 runTest('PRINT-06 draft/preprint print never alters stock (still zero shipment_out ledger rows)', function () use ($http, $csrf, $pdo, $karangtengahId, $storeA) {
@@ -323,8 +324,10 @@ runTest('PRINT-07 partial shipment print shows cumulative shipped correctly', fu
 
     $r = $http->request('GET', "/_ui-preview/print-do.php?doId={$doId}");
     // planned=5, shipped=2, remaining=3
-    expect((bool) preg_match('/<td[^>]*>' . preg_quote($p['name'], '/') . '<\/td>.*?class="num">5<\/td>\s*<td[^>]*class="num">2<\/td>\s*<td[^>]*class="num">3<\/td>/s', $r['body']),
-        'expected planned=5, shipped=2 (cumulative), remaining=3 printed for a partial shipment');
+    expect((bool) preg_match('/<td[^>]*>' . preg_quote($p['name'], '/') . '<\/td>.*?class="num">5<\/td>/s', $r['body']),
+        'expected the DO qty (5) on the line');
+    expect(str_contains($r['body'], 'Sudah dikirim sebelumnya:</b> 2 dari 5 pcs') && str_contains($r['body'], 'terkirim 2, sisa 3'),
+        'expected the cumulative shipped (2) and remaining (3) printed for a partial shipment');
     expect(str_contains($r['body'], 'PREPRINT') === false || str_contains($r['body'], 'DRAFT') || true, 'sanity noop'); // status text itself checked in PRINT-08
 });
 

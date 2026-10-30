@@ -167,6 +167,14 @@ function ui_render_do_print_document(array $do, string $factoryLabel, string $pr
       </tr>
     </tfoot>
   </table>
+  <?php if ((float) $do['summary']['totalShipped'] > 0.0001): ?>
+  <div class="do-store-note"><b>Sudah dikirim sebelumnya:</b> <?= ui_fmt_num((float) $do['summary']['totalShipped']) ?> dari <?= ui_fmt_num((float) $do['summary']['totalPlanned']) ?> pcs — sisa <?= ui_fmt_num((float) $do['summary']['totalRemaining']) ?> pcs<?php
+    $partial = array_filter($do['items'], static fn ($it) => (float) $it['alreadyShippedQty'] > 0.0001);
+    if ($partial !== []) {
+        echo ' (' . ui_esc(implode('; ', array_map(static fn ($it) => $it['productName'] . ': terkirim ' . ui_fmt_num((float) $it['alreadyShippedQty']) . ', sisa ' . ui_fmt_num((float) $it['remainingToShip']), $partial))) . ')';
+    }
+  ?>. Rincian per pengiriman ada di Surat Jalan masing-masing.</div>
+  <?php endif; ?>
   <div class="do-store-note">
     <b>Diisi toko:</b> Diterima Baik + Reject + Kurang = Dikirim. Kalau jumlah yang dimuat berbeda dari kolom Dikirim, coret dan tulis angka sebenarnya.
     <div class="do-store-note-box">Catatan toko (alasan reject / kurang):</div>
