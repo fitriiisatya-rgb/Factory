@@ -224,6 +224,7 @@ ui_page_head($ui, $activeNav, $pages[$page]['title'], $pages[$page]['subtitle'],
     'tanggal' => $uiTanggal,
     'factoryId' => $uiFactoryId,
     'factoryName' => $uiFactoryName,
+    'factories' => $factories,
 ]);
 
 $pageFile = __DIR__ . '/../app/ui/pages/' . $page . '.php';

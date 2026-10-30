@@ -213,7 +213,14 @@ function ui_page_head(array $ui, string $active, string $title, string $subtitle
         <?php if (isset($topbarCtx['tanggal'])): ?>
         <span class="select-pill"><?= ui_icon('calendar') ?> <?= ui_esc($topbarCtx['tanggal']) ?></span>
         <?php endif; ?>
-        <?php if (isset($topbarCtx['factoryName'])): ?>
+        <?php if (isset($topbarCtx['factoryName']) && count($topbarCtx['factories'] ?? []) > 1): ?>
+        <?php /* Leader Admin: all factories; this only picks which one the page shows. */ ?>
+        <select class="select-pill" title="Akses: semua pabrik. Pilih pabrik yang ditampilkan di halaman ini." onchange="location.href=location.pathname+'?'+location.search.slice(1).split('&').filter(function(x){return x&&x.indexOf('factoryId=')!==0;}).concat('factoryId='+this.value).join('&');">
+          <?php foreach ($topbarCtx['factories'] as $f): ?>
+          <option value="<?= (int) $f['factory_id'] ?>" <?= (int) $f['factory_id'] === (int) ($topbarCtx['factoryId'] ?? 0) ? 'selected' : '' ?>>Pabrik: <?= ui_esc($f['name']) ?></option>
+          <?php endforeach; ?>
+        </select>
+        <?php elseif (isset($topbarCtx['factoryName'])): ?>
         <span class="select-pill"><?= ui_icon('building') ?> <?= ui_esc($topbarCtx['factoryName']) ?></span>
         <?php endif; ?>
         <button type="button" class="icon-btn" data-action="toggle-theme" title="Ganti tema (segera: mode terang)"><?= ui_icon('moon') ?></button>
