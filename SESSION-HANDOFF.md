@@ -1,78 +1,248 @@
 # SESSION HANDOFF — Amor Factory System
 
-**Purpose of this file:** this is a continuity document for whichever Claude
-Code session/account picks up this project next. Read this file FIRST, in
-full, before doing anything else. It is written to let a fresh session with
-zero prior context resume exactly where the last one stopped, without
-re-deriving decisions that have already been made and validated. This is a
-full rewrite (not an incremental patch) — it supersedes any earlier version
-of this file you may find in git history.
-
-Written: 2026-09-21. Last commit at time of writing: `dc09a61`.
+**Read this file first, in full.** It lets a fresh Claude Code session (or a
+human) resume this project without re-deriving decisions already made.
+Rewritten 2026-11-14. It supersedes the 2026-09-21 version (still in git
+history). **Part A** is the current state and what happened since September;
+**Part B** keeps the long-lived conventions and gotchas from the earlier
+handoff (they remain valid). If this file disagrees with the repo, trust the
+repo (`git log`, `git status`, the files).
 
 ---
 
-## 1. What this project is
+# PART A — Current state
 
-**Amor Factory System** — a from-scratch PHP/MySQL rebuild of the internal
-ERP used by **CV. Amor Group / Amor Cakes & Bakery**, replacing a legacy
-Google Apps Script (Code.gs) + Google Sheets system. Built incrementally in
-strictly ordered **phases**, each phase fast-tracked, tested, packaged for
-cPanel shared hosting, and delivered before the next phase begins.
+## A1. What this is, and how to work with the user
 
-- **Repo**: `fitriiisatya-rgb/Factory` (GitHub)
-- **Branch**: `claude/amor-factory-pricing-ui-final-6vv3q9` — ALL work goes
-  here. Do not create a different branch unless explicitly instructed.
-- **Working directory in the container**: `/home/user/Factory`
-- **Deployment target**: cPanel shared hosting. Domain docroot is
-  `public_html/factory/` (NOT `public_html/` itself), domain
-  `factory.amorgroup.id`, `api/` is a real subdirectory of that docroot.
-  Absolutely no Composer/vendor directory, no SSH/CLI access assumed for
-  the client, no ability to run `composer install` on the server — every
-  migration/upgrade is done through a web UI (`api/_upgrade/`).
-- **Language/tone for user-facing text**: Bahasa Indonesia, non-technical,
-  for every UI label, error message, and README aimed at the client. Code
-  comments and internal docs (including this file) are in English.
-- **The user** communicates in Indonesian, works with multiple Claude Code
-  accounts/sessions on this same project over time (hence this handoff
-  file's existence, and their habit of asking for it to be refreshed and
-  resent after a burst of work), and does real cPanel UAT personally —
-  meaning bugs that only manifest on a real Apache server (not `php -S`)
-  are a real, recurring risk class for this project (see §7 gotcha #1).
-  **The user reports real UAT bugs in a highly detailed, structured
-  format** (exact scenario, real product/quantity numbers, exact required
-  fix behavior, exact required test names, exact required deployment
-  procedure, exact required closing wording) — read their request in full
-  before starting; it is usually a complete spec, not a vague bug report.
+**Amor Factory System**: PHP 8.3 + MariaDB rebuild of the internal ERP of CV.
+Amor Group / Amor Cakes & Bakery (replaces a Google Apps Script + Sheets
+system). Flow: PO toko → Produksi (per divisi) → serah terima → FG verifikasi
+& packing → Delivery Order → Pengiriman → Konfirmasi penerimaan toko →
+Invoice (plus Retur/Reject/Mutasi toko, Pesanan Khusus/Non-Toko, Stok Sisa).
 
-## 2. Current exact state (verify before trusting anything below)
+- **Repo**: `fitriiisatya-rgb/Factory`. **Working branch**:
+  `claude/gracious-heisenberg-m16irt` (all work goes here; the older
+  `claude/amor-factory-pricing-ui-final-6vv3q9` named in the Sep handoff is
+  no longer the active one). There is **no `master`/`main` branch on the
+  remote**. The user once wrote "di master" and it was never resolved — ask
+  which branch they mean before merging or pushing anywhere else.
+- **Deploy**: cPanel shared hosting, docroot `public_html/factory`, zip root
+  is `api/`, domain `factory.amorgroup.id`. No Composer, no SSH for the
+  client. The user extracts a zip over the live folder; migrations run from
+  the web UI `api/_upgrade/`. Most patches since September are files-only
+  (no migration).
+- **User style**: writes Indonesian, short messages, often screenshots. All
+  user-facing text (UI, errors, guides) in Bahasa Indonesia, non-technical;
+  code and internal docs in English. The user asks for "zip", "kirim ulang
+  zip", "beresin dulu semua" — they expect a built, tested, dated zip sent
+  via SendUserFile, and they confirm with "sudah extract". They also expect
+  you to push back on weak ideas (user preference: critical, no empty
+  validation, label confidence on uncertain facts).
+- **Real-server bugs are a recurring class**: `php -S` ignores `.htaccess`
+  (Part B gotcha #1). Cache is another: twice the user said "sudah extract
+  tapi tidak berubah" — once the old `print.css` was still live (diagnosed by
+  having them paste the file). Bump asset `?v=` versions when CSS/JS change
+  (`ADMIN_ASSET_VERSION` in `api/app/ui/layout.php`, `print.css?v=` in print
+  pages).
 
-```
-git log --oneline -10
-dc09a61 Add Driver Portal UX + shipment tracing patch
-280d754 Add Phase 4 FG production source refresh patch
-b21cf99 Rewrite session handoff into one coherent document (again)
-9b4a827 Update session handoff with the new User Management module
-0930baf Add ADMIN User / Driver Account Management module
-52d476f Rewrite session handoff as one coherent document
-a183518 Update session handoff with the real-Apache asset bug and fix
-bb3a5a9 Fix Phase 5.5 real-cPanel deployment bug: public assets under deny-all api/app/
-a1fce14 Add session handoff document for continuity across account switches
-ac07251 Fix Phase 5.5: multi-factory departure claim->shipment mapping
-```
+## A2. Repo / git state at time of writing
 
-`git status` is clean (nothing uncommitted) as of this writing. Everything
-through `dc09a61` is already **pushed** to
-`origin/claude/amor-factory-pricing-ui-final-6vv3q9`.
+Last feature commit before this handoff: `1fd877a Division logins: remove
+Ringkasan FG; menus are Produksi, Riwayat, Pengaturan only`. Branch pushed to
+origin. `git log --oneline -15` to confirm. 245+ commits total.
+Commit trailer for NEW commits: use whatever the new session's own system
+reminder specifies (Co-Authored-By + Claude-Session URL); never reuse an old
+session URL. Never put a model identifier in commit messages or code.
 
-**First thing to do in a new session**: run `git log --oneline -10` and
-`git status` yourself to confirm this is still accurate — do not assume
-nothing changed between sessions. If the log has commits beyond `dc09a61`,
-someone (another session, or you in a prior turn you don't remember) has
-already continued past this document — read those commit messages before
-doing anything else.
+## A3. Accounts and roles (current model)
 
-## 3. Phase history (what exists, in order)
+- **Leader Admin** = role ADMIN with **no** `user_factory_access` rows. Sees
+  both factories and every Leader-only page (Master Data, Kelola User,
+  Pengaturan switches, Laporan, import PO). The header factory pill is a
+  switcher for Leader.
+- **Admin Pabrik** (e.g. Admin Karangtengah = `admin_ktg`, Admin Cibadak =
+  `admin_cbd`) = role ADMIN **plus exactly one factory row**. Everything is
+  pinned to that factory server-side (`Auth::adminFactoryScope()`,
+  `Auth::isFactoryAdmin()`, `Auth::requireLeaderAdmin()`,
+  `Auth::requireAdminFactory()`, `AdminScope` helpers). Filters live in the
+  services, not only controllers, because UI pages call services directly.
+  Suite: `api/tests/AdminFactoryScopeTest.php` (AFS-01..15).
+- **Divisi (7 shared logins, e.g. `divisi_bolu`)** = role PRODUCTION +
+  division access. **They only submit production data** (and press "Serahkan
+  ke FG"). Menus: **Produksi, Riwayat, Pengaturan**. They can NOT write FG:
+  FG create/save/submit, special-order FG verify and replacement FG verify
+  require ADMIN/PPIC/FG_PACKING (FgController, SpecialOrderController,
+  ReplacementController). Layout allow-list: `ui_role_scoped_pages()` in
+  `api/app/ui/layout.php`; page gate: `$pageRoles` in
+  `api/_ui-preview/index.php`. Test: PDFG-01b. Consequence: a division can't
+  see whether FG received its handover (only FG/Admin can) — the user chose
+  this ("jangan sampai campur"); revisit only if they complain.
+- **FG accounts** `fg_ktg` / `fg_cbd` = FG_PACKING with one factory: FG
+  verifikasi + packing, FG Sumber Khusus.
+- Driver (own portal `_driver-uat`), Toko (public QR portal `_receive`, plus
+  store portal), Atasan (approval of Retur/Reject/Mutasi).
+- Live users known: two Leader accounts (display names include "Admin1" and
+  "Adminofc"). **The Admin1 password should be changed** (it was shared in
+  chat earlier). Never print passwords/tokens.
+
+## A4. What was built after the Sep-21 handoff (migrations 0008–0026)
+
+Source: migration names + commit log (names are authoritative; the one-line
+descriptions for older items are from commit messages — medium confidence on
+fine detail). Open the migration or its dist README for specifics.
+
+| Mig | Topic |
+|---|---|
+| 0008 | Store receipt photo evidence |
+| 0009 | Shipment email to stores (outbox) |
+| 0010 | Special (Khusus) / Non-Toko orders and their production routing |
+| 0011–0015 | Production task per division, production flow completion (+0013 repair), division/FG rework, per-store packing submission |
+| 0016 | Replacement Reject (reject on receipt → replacement DO) |
+| 0017 | Permanent Bakery Portal (admin tokens for stores) |
+| 0018 | **Real Invoice generation** (Phase 6 done): one invoice per DO per factory |
+| 0019 | Shared division login + operator name |
+| 0020 | Reject di Toko (Lapor Barang red/grey, Admin potong/ganti, invoice deduction) |
+| 0021 | Nota Potongan |
+| 0022 | finhub integration (admin-managed API keys, read-only shipment/receipt feed; see `api/INTEGRASI-FINHUB.md`) |
+| 0023 | Invoice special lines |
+| 0024 | Runchise "Impor Stok Masuk" CSV per surat jalan |
+| 0025 | Production before PO, partial handover to FG (serah terima), FG stock position |
+| 0026 | Retur/Reject/Mutasi toko per transaction with Atasan approval |
+
+Other shipped things: Hari Ini checklist, daily DB backup + error log,
+phone-friendly layouts for divisi/FG/driver/toko, Riwayat page, FG Ringkasan
+dashboard (Admin/FG only now), Print DO per divisi, Stok Sisa (sell surplus
+non-toko / kirim susulan), omset per pabrik and Non-Toko omset, tutorial PDFs
+per role (+ videos, in `dist/tutorial/`), an Android WebView APK (`android/`,
+signing key was rotated on 2026-10-29 after the first key was briefly
+downloadable — **never commit or upload key files; `*.p12` is gitignored**).
+
+## A5. Latest work (2026-10-29 → 2026-11-14) — "masa adaptasi" and cleanups
+
+**Context**: the user wants a staged rollout. Weeks 1–2: the system runs from
+production through invoice using **Admin only** (no drivers, no stores). From
+about week 3 (date to be announced by the user) drivers and stores join.
+
+1. **Admin per pabrik** (see A3), with tests and a regression.
+2. **Admin fills receipts from the signed surat jalan** (Konfirmasi Toko):
+   `ReceiptService::confirmReceiptByAdmin` / `confirmAllGoodByAdmin`, audit
+   `via=admin_surat_jalan`, note prefixed "Diisi Admin dari surat jalan."
+   Needs a receiver name. Pages: `konfirmasi-toko.php` (checkboxes + "Diterima
+   semua sesuai SJ"), `konfirmasi-toko-detail.php` ("Isi dari SJ").
+3. **Switches** (Pengaturan, Leader only; stored in `master_setting`):
+   - `store_email_enabled` (missing = on). **Currently frozen on live**:
+     emails to stores stay `pending` ("dibekukan"). Turn on at go-live.
+   - `ship_before_fg` (missing = off). **Currently ON on live**: Admin may
+     press Kirim without waiting for FG; FG still enters its own result;
+     reconcile afterwards on **Rekonsiliasi Kirim vs FG**
+     (`ReconciliationService::forDay`, page `rekonsiliasi-kirim.php`).
+     Turn OFF at go-live so FG availability limits Kirim again.
+4. **Pengiriman**: Qty Kirim is now **prefilled with Sisa DO** (capped by
+   FG/store-ready when the switch is off); Admin edits only exceptions, 0 for
+   products not loaded. Risk: Admin can confirm without checking; the
+   safety nets are Rekonsiliasi and the Kurang column on receipt. The
+   Konfirmasi KIRIM dialog text had a literal `&middot;` (modal body is
+   plain text) — fixed with a real "·".
+5. **QR per DO** stays active; it only works after Konfirmasi KIRIM creates a
+   shipment ("Belum Dikirim" before that).
+6. **Cetak**: surat jalan per shipment (blank driver line when Admin pressed
+   Kirim, write-in columns Diterima Baik/Reject/Kurang + catatan toko) and a
+   real "DELIVERY ORDER" print (`ui_render_do_print_document`) with Dikirim +
+   write-in columns + signatures; "Sudah dikirim sebelumnya" note.
+7. **Invoice**: one per DO per factory via Invoice → "Terbitkan semua"
+   (`POST /api/invoices/generate-ready`). Ready only when every shipment of
+   the DO+factory has a receipt `confirmed_ok` or `verified`
+   (`confirmed_discrepancy` waits for Verifikasi Selisih). The Invoice page
+   now shows how many DOs were sent but are waiting for receipt confirmation,
+   linking to Konfirmasi Toko.
+8. **Master Data** (Leader only): add/edit/delete on every tab (products incl.
+   Harga column, stores, divisions, factories, store aliases), delete blocked
+   with `MASTER_IN_USE` when referenced (hint: set Nonaktif), protected
+   records (NON-OUTLET store, Cake & Custom and verification divisions), filters
+   Kategori/Divisi on products. Explicit DELETE routes (a generic
+   `/api/{entity}/{id}` would shadow others).
+9. **Import PO** (`api/_import-po`): unresolved store rows block import
+   (`UNRESOLVED_ROWS`); the wizard now has a store dropdown for "Petakan" and
+   "Tambah sebagai toko baru". Store resolution order: `store_alias.raw_name`
+   → UPPER(`canonical_name`) → `migration_store_map`.
+10. UI: overlapping "Aksi" buttons fixed (`td.row-actions` in `app.css`);
+    header factory switcher for Leader (note: global `URL` is shadowed in
+    pages — build query strings manually, `new URL` fails).
+11. Divisi menu cleanup (A3): FG & Packing and Ringkasan FG removed from
+    division logins; server-side write block on FG endpoints.
+
+**Guides**: per-role tutorial PDFs live in `dist/tutorial/`. Masa-adaptasi
+guides for Admin Karangtengah/Cibadak were produced in the session scratchpad
+(not committed; rebuilt by scripts that no longer exist) — **regenerate if
+needed; they predate several UI changes** (prefilled Qty Kirim, divisi menus).
+A "Panduan Leader Admin" PDF was offered but never requested.
+
+## A6. Live state and what to verify
+
+- Last zip sent: `amor-factory-2026-10-30-divisi-produksi-saja.zip` (= current
+  `dist/amor-factory-retur-toko.zip` content at that commit). The user said
+  "sudah extract". **Not yet verified on live**: divisi_bolu shows only
+  Produksi/Riwayat/Pengaturan; Pengiriman Qty prefilled; Konfirmasi KIRIM
+  dialog shows "·"; Invoice page shows the waiting-DO hint. Cache ⇒ hard
+  refresh. Also confirm `print.css` contains `do-write` and `app.css` has
+  `td.row-actions` (earlier extraction once did not take effect).
+- Advise deleting zips from the server after extracting. Never upload key
+  files to `public_html`.
+- Write to live only when the user explicitly asks (live DB, live files).
+  Don't keep downloaded live backups.
+
+## A7. Go-live checklist for week 3 (drivers + stores)
+
+1. Pengaturan → turn **Kirim tanpa menunggu FG OFF**.
+2. Pengaturan → turn **email ke toko ON** (check each store has an email in
+   Master Data → Toko).
+3. Drivers claim from the pool; stop Admin pressing Kirim for them. Admin
+   stops filling receipts from SJ; stores confirm via QR; Admin verifies
+   selisih.
+4. Re-issue/refresh the tutorials (driver, toko, FG) and train drivers/stores.
+5. Keep Rekonsiliasi as a daily check while FG/Kirim figures settle.
+
+## A8. Running tests and building (recipes)
+
+- Full regression: `bash api/tests/run-reject-toko.sh` (~40 min; cascades
+  through the chain). `RJT_ONLY=1 bash api/tests/run-reject-toko.sh` = RJT +
+  AFS only (~few min). Targeted: `run-operator-login.sh`,
+  `run-production-division-fg-rework.sh`, `run-phase4-fg-packing.sh`,
+  `run-special-order.sh`, `run-ui-preview.sh`, `run-phase5-do-shipment.sh`,
+  `run-print-preview.sh`. Each `run-*.sh` boots its own disposable MariaDB.
+  **Do not build a zip while a regression is running.**
+- Build the deliverable: `find api/uploads -type f ! -name .htaccess -delete
+  && bash dist/build-cpanel-package-retur.sh` → `dist/amor-factory-retur-toko.zip`;
+  copy to a dated name before sending. The build script sanity-checks (php -l,
+  no `config.php`, migration guards); it accepts `requireRole('ADMIN')` or
+  `Auth::requireLeaderAdmin()` in gated controllers.
+- For ad-hoc browser checks, run `php -S 127.0.0.1:PORT -t <api root>
+  <api root>/tests/_ui_router.php` against a disposable DB and drive it with
+  Playwright (preinstalled; see Part B gotcha #10). Workers sometimes restart
+  and kill the DB/server — restart them.
+
+## A9. Open items and risks (most important first)
+
+1. **Branch target unresolved** ("di master" — no such branch). Ask.
+2. **Security hygiene still pending on the user's side**: change the Admin1
+   password; revoke the finhub API key that was exposed in chat (Pengaturan/finhub
+   admin page → revoke, issue a new one); the Android keystore password
+   lives only in a past session's scratchpad (treat as possibly lost).
+3. **Prefilled Qty Kirim** raises the chance of "sent on paper but not
+   loaded". Watch Rekonsiliasi; consider requiring a confirm checkbox if it
+   becomes a real problem (not built).
+4. Division accounts can't see handover/FG status (A3). Possible follow-up:
+   a read-only "diterima FG?" badge on the Produksi page only.
+5. Masa-adaptasi PDFs are stale (A5). Email freeze and ship-before-FG are
+   **temporary switches** — remember to flip them at go-live (A7).
+6. Phase 7+/receivables (Piutang/Payment), GPS/route optimization, payroll,
+   SSO/email invites remain explicitly out of scope unless the user says so.
+
+---
+
+# PART B — Long-lived conventions and gotchas (from the Sep-21 handoff; still valid)
+
+## B1. Phase history 0–5.5 (original build order; still accurate for those phases)
 
 Each phase = one self-contained MySQL/PHP module + API + a manual UAT wizard
 under `api/_xxx-uat/` + an automated test suite + a cPanel ZIP package + a
@@ -94,17 +264,9 @@ the project's core safety net.
 | 5.5 | Dispatch Pool / Driver Claim / Store Receipt Confirmation — sits between Phase 5 (DO/Shipment) and the not-yet-built Phase 6 (Invoice). Drivers claim delivery tasks from an open pool, build a manual route, confirm departure (the ONLY point stock decreases here too — reuses `ShipmentService::ship()`, never duplicates stock logic), stores scan a QR to confirm receipt (good/reject/shortage qty). Admin verifies discrepancies. Two post-delivery bug fixes (multi-factory mapping, real-Apache asset path — see prior handoff versions in git history for full writeups), then two further real-UAT patches: a driver-account gap (§ User Mgmt row below) and, most recently, a Driver Portal UX + tracing patch (see §5.2). | 0007 | `DispatchService`, `DepartureService`, `ReceiptService`, `api/_driver-uat/`, `api/_receive/` |
 | User Mgmt | ADMIN User / Driver Account Management — the missing piece for real Phase 5.5 UAT (needed a way to create DRIVER accounts without phpMyAdmin/manual SQL). Create/edit/deactivate/reactivate/reset-password/change-roles for any user, with a "never zero active ADMIN" safeguard. **Files-only, no migration** — `users.active`/`username` UNIQUE/`password_hash`/`roles`+`user_roles` M:N all already existed since 0001. | — (none) | `Users\UserService`, `Users\UserRepository`, `api/_users-uat/` |
 
-**Most recent work (2026-09-21, see §5 for full writeups): the Driver
-Portal UX + Shipment Tracing patch** (commit `dc09a61`) is the newest
-thing done. Just before it, the **Phase 4 FG Production Source Refresh
-patch** (commit `280d754`) fixed a real UAT bug where an existing FG batch
-had no safe way to resync after its source Production was resubmitted.
-**Phase 6 (Invoice business logic/generation) has NOT been started** —
-only its print/preview UI exists, with mock data, no real transactional
-logic. Do not start Phase 6 business logic without explicit user
-instruction.
+**Everything after Phase 5.5 is summarised in Part A (§A4).** Phase 6 (Invoice) HAS since been built (migration 0018) — ignore any older statement here that it has not.
 
-## 4. Architecture & conventions — READ THIS before writing any code
+## B2. Architecture & conventions — READ THIS before writing any code
 
 These are load-bearing conventions established and validated across every
 phase. Breaking them will look like it works locally and then fail a
@@ -173,7 +335,7 @@ real server or in the real browser.
    recently — the FG Production Source Refresh patch, where
    `fg_batch_source.source_version` and `fg_item.production_actual_snapshot`
    had existed since migrations 0001/0005 and just weren't being refreshed
-   correctly by the application code (see §5.1). **Files-only patches with
+   correctly by the application code (see (Sep-2026 patch notes, see git history)). **Files-only patches with
    zero schema change are now the norm for bug-fix/UX work in this
    project** — always audit before assuming a new migration is needed.
 
@@ -192,7 +354,7 @@ real server or in the real browser.
    a `production_in` row from inside `Fg\FgService::submit()` — no other
    code path is allowed to write a stock movement. A **source-refresh /
    resync action must write ZERO stock_ledger rows** — this was the core
-   safety invariant of the Phase 4 FG Source Refresh patch (§5.1) and is
+   safety invariant of the Phase 4 FG Source Refresh patch ((Sep-2026 patch notes, see git history)) and is
    the same discipline any future "refresh"/"resync" feature must follow:
    refreshing a *snapshot* of upstream data is always safe; only an
    explicit submit/ship action may ever move stock.
@@ -213,7 +375,7 @@ real server or in the real browser.
     ITS CSS available on every page that calls it — `driver.css` did NOT
     load `app.css`'s `.modal-backdrop`/`.modal`/`.toast` rules, so the
     confirm dialog rendered completely unstyled on the whole Driver
-    Portal** (see §5.2). When adding a new shared JS behavior, check
+    Portal** (see (Sep-2026 patch notes, see git history)). When adding a new shared JS behavior, check
     whether every CSS bundle that will use it actually defines its
     classes — don't assume a shared JS file implies shared CSS coverage.
 
@@ -243,152 +405,9 @@ real server or in the real browser.
     OBJECT (`{title, body, ...}`), never a raw string** — a raw string
     silently falls back to the generic "Konfirmasi"/"Lanjutkan?" text with
     no error (this was a second, independent bug found in the same
-    real-UAT report — see §5.2).
+    real-UAT report — see (Sep-2026 patch notes, see git history)).
 
-## 5. Most recent work
-
-### 5.1 Phase 4 FG Production Source Refresh patch (commit `280d754`)
-
-**Real UAT report**: Production Run for 2026-09-05 (Karangtengah, Roti &
-Bollen) was edited and resubmitted (BOLLEN KOMBINASI actual 0→2, version
-8→11) AFTER an FG batch already existed for that date. The FG page
-correctly detected and displayed the "Ketidaksesuaian Sumber Produksi"
-mismatch warning, but had **no way to actually resync** — the prominent
-"4. Muat Produksi Submitted" button only re-displayed the existing batch,
-never refreshed it, and the "Filter Divisi Sumber" was (correctly, but
-confusingly) preview-only and had no effect once a batch existed.
-
-**Root cause, audited not guessed**: two compounding issues. (a) A pure
-UX/wiring gap — the button did nothing useful on an existing batch. (b) A
-real logic bug in `FgService::refreshSource()` (the underlying,
-buried, checkbox-triggered refresh mechanism): a guard meant to protect
-operator-entered `fgVerified` data (`if ($existingItems[$productId]['qty']
-<= 0.0001)`) was ALSO mistakenly gating the unrelated, always-safe
-`production_actual_snapshot` update — so the snapshot froze forever the
-moment any FG Verified value was entered, even though `source_version`
-kept updating, meaning the mismatch WARNING could later disappear while
-the underlying NUMBER stayed stale.
-
-**Fix**: `refreshSource()` now always refreshes the snapshot (safe,
-derived data) while never touching `fgVerified`/`packed_qty`. Added a
-standalone `refreshProductionSource()` method + `POST
-/api/fg/{id}/refresh-source` route + controller action — a dedicated,
-one-click "Refresh Produksi Terbaru" action that needs only the batch id
-+ `expectedVersion`, writes **zero `stock_ledger` rows**, and reports back
-which items changed (`refreshChangedSnapshots`) and which are now blocking
-(`verifiedExceedsProductionBlocking`, when a refreshed-down snapshot is
-now below an already-entered `fgVerified`). Added a `submit()`-time
-pre-flight check (`FG_EXCEEDS_PRODUCTION`, 409) so a lowered snapshot can
-NEVER silently let stock post beyond it — `fgVerified` itself is NEVER
-auto-reduced; an admin must lower it manually before submit will proceed.
-
-UI: both `api/_fg-uat/index.php` (the OLDER plain-HTML wizard — confirmed
-via exact label matching to be what real cPanel UAT is actually using)
-and the modern `api/app/ui/pages/fg-packing.php` got a "Refresh Produksi
-Terbaru" button (inside the mismatch warning, plus a standalone version
-when no mismatch exists yet), a red "Diblokir untuk Submit" panel, and the
-"Filter Divisi Sumber" is now disabled/relabeled "TIDAK BERLAKU" once a
-batch already exists for that date/factory.
-
-**No schema change** — `fg_batch_source.source_version` and
-`fg_item.production_actual_snapshot` already existed since migrations
-0001/0005. Tests: `FG-R01..R11` added to `Phase4FgPackingTest.php`
-(45/45 total incl. pre-existing P4-01..32/P4-VAR01..04, all green).
-Package: `dist/amor-factory-api-phase4-fg-source-refresh-patch.zip`.
-Closing wording used: "PHASE 4 FG PRODUCTION SOURCE REFRESH PATCH READY
-FOR REAL CPANEL UAT / NO STOCK REPOST ON SOURCE REFRESH / PHASE 5 / 5.5
-BUSINESS LOGIC UNCHANGED / NOT production ready."
-
-### 5.2 Driver Portal UX + Shipment Tracing patch (commit `dc09a61`) — most recent
-
-**Real UAT report**: DO `DO/KRM/004/IX/2026`, Bakery Abdul Gani, Driver A
-claimed AVOCADO RING=5 + BOLLEN KOMBINASI=2, confirmed departure
-successfully (core shipment creation worked), but several UX/display
-problems surfaced:
-
-1. **Confirm-departure dialog broken** — rendered at the bottom-left,
-   unstyled, and appeared stacked ~3 times.
-2. **Success screen** was generic, no real Shipment ID/time shown.
-3. **"Rute Saya" showed 0 produk / 0 pcs after departure**, even though
-   the shipment just created had 2 products / 7 pcs.
-4. **Riwayat cards were not clickable** — no shipment tracing possible.
-5. Raw DB timestamp format shown instead of Indonesian/Asia-Jakarta.
-6. No visible Driver Logout.
-
-**Root causes, all audited (see §4 rules 11/13 for the general lessons)**:
-(1) `driver.css` never loaded `app.css`'s `.modal-backdrop`/`.modal`/
-`.toast` CSS at all (driver pages deliberately never load the full admin
-`app.css`), so the shared `Amor.confirmModal()` dialog rendered as plain
-unstyled HTML flowing in normal document position — never a real overlay.
-The stop-detail page's own click handler also had zero guard against
-repeat clicks, and — a third, independently-found bug — it called
-`confirmModal('some string')` instead of `confirmModal({title:...,
-body:...})`, so the real confirmation text was silently replaced by the
-generic fallback the whole time. (3) `DispatchService::myRoute()` computed
-a route stop's `productCount`/`totalQty` by summing only **ACTIVE**
-`dispatch_claim` rows. `confirmDeparture()` always resolves every touched
-claim to a terminal `'departed'` status with `active_qty` reset to 0 (by
-design — a resolved claim must never be double-counted or re-released),
-so once every claim for a stop had departed, summing "active" claims for
-that stop correctly read 0 — even though the real shipment held the true
-quantities.
-
-**Fixes**:
-- `Amor.confirmModal()` (`api/assets/js/app.js`) gained a singleton
-  open-guard and an optional `onConfirm` async mode (see §4 rule 13).
-  `driver.css` got the missing CSS ported in (self-contained copy, driver
-  pages still never load the full `app.css`). The stop-detail page's
-  click handler now passes a proper options object with the exact
-  required title/message/summary, and uses `onConfirm` so the actual
-  `POST /api/dispatch/departures` call happens while the dialog shows
-  "Memproses..." and blocks repeat clicks.
-- `DispatchService::myRoute()`: a DEPARTED stop's totals now come from a
-  new `DispatchRepository::findDepartedTotalsForDriver()` query
-  (aggregates real `shipment_item` rows per store/driver/date) instead of
-  the now-zeroed active claims. A NOT-yet-departed stop keeps using live
-  active-claim totals, unchanged. Verified: claim 5/ship 3 correctly shows
-  3 on the route (never the original claim qty); two shipments under one
-  DO aggregate correctly (2 produk/9 pcs, not double-counted or lost).
-- New read-only, driver-scoped **Shipment Detail** page:
-  `GET /api/dispatch/shipments/{id}` (`DispatchService::shipmentDetail()`)
-  + `api/_driver-uat/shipment.php`. Authorization: non-admin caller may
-  only open a shipment where `shipment.shipped_by === requestingUserId`
-  — 403 `FORBIDDEN` otherwise, with NO data payload leaked. Shows header
-  (store/shipment id "SHP-{id}"/DO/driver/group/factory/status), product
-  table from real `shipment_item` qty (never the original claim qty —
-  "shipment is the dispatch truth after departure"), a receipt trace
-  section (from `shipment_receipt`/`shipment_receipt_item`, showing
-  "Belum Dikonfirmasi" when none exists yet), and a simple timeline
-  (Driver Claim → Berangkat → Konfirmasi Toko → Diverifikasi Admin) built
-  ONLY from data that actually exists — nothing invented.
-- Riwayat cards (`driver.js` `renderRiwayat`) are now clickable, showing
-  real product-count/qty totals sourced from an extended
-  `findShipmentHistoryForDriver()` query (batched correlated subquery, no
-  N+1), and link to the new Detail Pengiriman page.
-- New `ui_fmt_datetime_id()` (PHP, `api/app/ui/bootstrap.php`) and
-  `fmtDateTimeId()` (JS, `driver.js`) convert a stored UTC timestamp to
-  Asia/Jakarta display format ("21 Sep 2026 · 10:20") — **display only**,
-  nothing stored changes.
-- Driver Logout button added to the topbar, reusing the EXISTING
-  `POST /api/auth/logout` endpoint (no new backend mechanism).
-
-**No schema change.** Tests: `DPT-05, DPT-07..19` added to
-`Phase55DispatchReceiptTest.php` (31/31 total incl. pre-existing
-P55-01..23/MF01-02, all green) — PLUS a genuine headless-Chromium
-Playwright run (not just code review) against a live disposable server,
-verifying `DPT-01..04/06` (exactly one centered `.modal-backdrop` after 3
-rapid clicks, correct title/message, `position:fixed`, Batal closes
-cleanly with no shipment created, confirm button disables with
-"Memproses..." immediately, success screen shows real `SHP-{id}` +
-totals). See §7.10 for the exact reusable recipe (chromium binary path,
-the docroot-router gotcha it also hit).
-
-Package: `dist/amor-factory-driver-ux-tracing-patch.zip`. Closing wording
-used: "DRIVER PORTAL CONFIRMATION / ROUTE SUMMARY / SHIPMENT TRACING PATCH
-READY FOR REAL CPANEL UAT / PHASE 5.5 BUSINESS LOGIC UNCHANGED / NO STOCK
-LOGIC CHANGE / NOT production ready."
-
-## 6. Directory map
+## B3. Directory map (as of Sep 2026 — new pages/services since then are listed in §A4/§A5; `ls` is ground truth)
 
 ```
 api/
@@ -492,7 +511,7 @@ dist/
   *.zip                              The actual deliverables sent to the user
 ```
 
-## 7. Known gotchas — things that will bite you if you don't know them
+## B4. Known gotchas — things that will bite you if you don't know them
 
 1. **`php -S` (used by every `run-*.sh` and older `dist/validate-*.sh`)
    IGNORES `.htaccess` ENTIRELY.** `.htaccess`-dependent behavior (deny-all
@@ -612,94 +631,25 @@ dist/
       pre-installed globally in this container, at
       `/opt/node22/lib/node_modules/playwright`).
 
-## 8. What is explicitly NOT built yet (respect these boundaries)
 
-- **Phase 6 — Invoice business logic/generation.** Only the print/preview
-  UI exists (`api/app/ui/print-invoice-template.php` + a mock fixture) —
-  there is NO real invoice creation, no invoiceable-quantity computation,
-  no linkage from confirmed shipments/receipts to an actual invoice
-  record. Phase 5.5's receipt confirmation records reject/shortage qty
-  specifically so a future Phase 6 can compute `invoiceable_qty`, but that
-  computation does not exist yet.
-- **Piutang (receivables) / Payment.** Schema tables were pre-declared in
-  migration 0001 but no business logic exists.
-- **Phase 7 — physical Retur/Reject full lifecycle.** Not implemented.
-- **GPS tracking, route optimization, driver payroll, Google Maps
-  integration.** Explicitly out of scope per direct user instruction —
-  do not build these even if it seems like a natural extension of the
-  driver route feature.
-- **Email invitations, self-service forgot-password, SSO, full HR
-  employee profiles.** Explicitly excluded from the User Management
-  module's scope per direct user instruction.
-- **Push notifications, exportable receipt history, route maps** on the
-  Driver Portal — explicitly named as out of scope for the Driver UX
-  patch (§5.2).
+## B5. Resuming in a new session
 
-## 9. How to resume work in a new session
-
-1. Confirm repo access to `fitriiisatya-rgb/Factory` is available (use
-   `add_repo` tool if not already attached).
-2. `git fetch origin claude/amor-factory-pricing-ui-final-6vv3q9 && git
-   checkout claude/amor-factory-pricing-ui-final-6vv3q9` (or clone fresh —
-   check whether the container already has a working copy at
-   `/home/user/Factory`).
-3. Run `git log --oneline -10` and `git status` to confirm this handoff
-   doc (§2) is still accurate — if not, read whatever commits came after
-   `dc09a61` before doing anything else.
-4. Re-run the latest regression to build confidence in the new environment
-   before changing anything:
-   ```
-   bash api/tests/run-user-mgmt.sh
-   ```
-   This cascades through the ENTIRE regression chain (User Mgmt → Phase
-   5.5 [now incl. DPT-05/07..19] → Phase 0-5 → UI/Print/Invoice) and
-   should print all-green. Separately also run
-   `bash api/tests/run-phase4-fg-packing.sh` (now incl. FG-R01..11) since
-   it isn't cascaded into the User Mgmt chain. If either doesn't come back
-   green, something changed — investigate before proceeding with new work.
-5. If the user reports something broken specifically on the REAL server
-   (not locally), suspect a `.htaccess`-dependent issue FIRST (gotcha #1).
-   If they report a broken-looking DIALOG/MODAL or other clearly visual
-   JS/CSS issue, suspect a missing-CSS-for-shared-JS-component issue
-   SECOND (§4 rule 11/13, §5.2) — check whether the page's own CSS bundle
-   actually defines the classes the shared JS component needs, and
-   consider a real Playwright browser check (§7.10), not just re-running
-   the existing `php -S`-based API test suites (which test data/logic
-   correctness, not rendered appearance).
-6. If the user wants a fresh, comprehensive version of this handoff file
-   resent (they've asked for this more than once, in Indonesian — "update
-   dan kirim lagi handoff" or similar), do a **full rewrite** (not another
-   stacked addendum section) that folds every change since the last
-   version directly into the relevant sections (phase table, architecture
-   rules, directory map, gotchas), the same way this version folded in the
-   FG Source Refresh and Driver UX patches. Then commit, push, and send
-   the file directly via SendUserFile as well, so it's available even
-   before the new session/account re-clones the repo.
-7. Wait for the user's next instruction. If they ask to continue "the next
-   phase," it is very likely **Phase 6 (Invoice business logic)** given the
-   sequencing so far, but confirm scope with them first rather than
-   assuming — Phase 6 was explicitly deferred by the user earlier and no
-   message has yet greenlit starting it. The user's pattern so far has
-   been to send further **real-UAT bug/UX reports** on already-shipped
-   phases before greenlighting a new phase — treat a new detailed report
-   in the same highly-structured format (§1) as the most likely next
-   message, not necessarily "start Phase 6."
-8. Read the delivered README files under `dist/` if you need to understand
-   exactly what was told to the client for any given phase — they are the
-   ground truth for what the client believes is deployed/working.
-
-## 10. Git commit attribution note
-
-Commits in this project end with a `Co-Authored-By: Claude ... <noreply@
-anthropic.com>` and a `Claude-Session: https://claude.ai/code/session_...`
-line. **A new session has its OWN session URL**, supplied via its own
-system reminder at the start of that session — use whatever that new
-session's reminder specifies for any NEW commits, never reuse a URL you see
-in past commit history (those refer to whichever session made that
-specific commit, not to you).
+1. Attach the repo if needed (`add_repo`), `git fetch origin
+   claude/gracious-heisenberg-m16irt && git checkout` it (or use the existing
+   `/home/user/Factory` copy). `git log --oneline -10`, `git status`.
+2. Skim `git log` since the date at the top of this file; read commit
+   messages before touching anything.
+3. Run a targeted regression for the area you will change (A8) before and
+   after. If the user reports something broken only on live, suspect
+   `.htaccess`/cache first (A1, B gotcha #1).
+4. Wait for the user's instruction. Their usual next message is a screenshot
+   or a short Indonesian bug/UX report; treat it as the spec, reproduce it,
+   fix, test, build a dated zip, send it, and ask them to confirm
+   ("sudah extract") and verify on live.
+5. If asked to refresh this handoff, do a full rewrite folding changes into
+   the sections (not a stacked addendum), commit, push, and also send it via
+   SendUserFile.
 
 ---
 
-**If anything in this document conflicts with what you observe in the
-actual repo state, trust the repo — this document describes intent and
-history, but `git log`/`git status`/the actual files are ground truth.**
+**If anything here conflicts with the actual repo state, trust the repo.**
