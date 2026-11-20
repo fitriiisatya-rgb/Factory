@@ -2,7 +2,7 @@
 
 **Read this file first, in full.** It lets a fresh Claude Code session (or a
 human) resume this project without re-deriving decisions already made.
-Rewritten 2026-11-14. It supersedes the 2026-09-21 version (still in git
+Rewritten 2026-11-14, updated 2026-11-20 (§A10: legacy GAS lineage + AMORA 1.9 APK). It supersedes the 2026-09-21 version (still in git
 history). **Part A** is the current state and what happened since September;
 **Part B** keeps the long-lived conventions and gotchas from the earlier
 handoff (they remain valid). If this file disagrees with the repo, trust the
@@ -23,8 +23,8 @@ Invoice (plus Retur/Reject/Mutasi toko, Pesanan Khusus/Non-Toko, Stok Sisa).
 - **Repo**: `fitriiisatya-rgb/Factory`. **Working branch**:
   `claude/gracious-heisenberg-m16irt` (all work goes here; the older
   `claude/amor-factory-pricing-ui-final-6vv3q9` named in the Sep handoff is
-  no longer the active one). There is **no `master`/`main` branch on the
-  remote**. The user once wrote "di master" and it was never resolved — ask
+  no longer the active one; it and `po-revision-ks60px` are ancestors of the
+  active branch). There is **no `master`/`main` branch on the remote**. The user once wrote "di master" and it was never resolved — ask
   which branch they mean before merging or pushing anywhere else.
 - **Deploy**: cPanel shared hosting, docroot `public_html/factory`, zip root
   is `api/`, domain `factory.amorgroup.id`. No Composer, no SSH for the
@@ -237,6 +237,75 @@ A "Panduan Leader Admin" PDF was offered but never requested.
    **temporary switches** — remember to flip them at go-live (A7).
 6. Phase 7+/receivables (Piutang/Payment), GPS/route optimization, payroll,
    SSO/email invites remain explicitly out of scope unless the user says so.
+
+## A10. Two external inputs folded in (2026-11-20)
+
+**(a) A second handoff, written in another session, about a "GAS + single-file
+HTML" app** (branch name given: `claude/quirky-clarke-pnc27r`, last commit
+`822cf08`). Checked against this repo (high confidence — git facts):
+
+- That is **not a separate project**. `822cf08` (2026-09-09, "Fix closed-item
+  lifecycle, PO delete consistency…") is the tip of
+  `origin/claude/amor-factory-po-revision-ks60px` and is an **ancestor** of
+  the current branch (HEAD is 230 commits ahead). It is the original
+  Google-Apps-Script + Google-Sheets system that the PHP/MariaDB rebuild
+  (this project) replaces. The other handoff's claim "the PHP project is a
+  different project on a different branch" is wrong; the PHP rebuild simply
+  came after, in the same repo. `claude/quirky-clarke-pnc27r` does not exist
+  on origin (likely a local-only branch name there).
+- Legacy pieces that still live in this repo: `backend/Code.gs` (GAS backend,
+  ~1,468 lines) and `backend/Code.legacy.gs` (kept verbatim for the
+  race-condition repro test — do not delete), the node test suites under
+  `tests/` (`run-tests.js`, `uat-*.js`, `backend/*.test.js`, see
+  `tests/README.md`), and the single-file frontend, which has been **moved to
+  `legacy-frontend-backup/amorcakes-manufacturing-v5-slate(2).html`** (rollback
+  copy, see that folder's README). Consequence (verified today): running
+  `cd tests && node run-tests.js` now fails with ENOENT because it still looks
+  for the HTML at the repo root. Fix only if the user wants the legacy suites
+  alive (copy/symlink the HTML back or point the harness at
+  `legacy-frontend-backup/`); the PHP regression (§A8) is the active safety net.
+- The legacy handoff's conventions (LockService + try/finally on every GAS
+  write, `requestId` idempotency + `expectedVersion` optimistic lock, never
+  re-add a remote reset endpoint, don't call `arsipkanData()` unless asked)
+  mirror what the PHP rebuild does (Part B2 rules 2–3) — useful only if the
+  GAS system is ever touched again. Nothing in it is active work; its own §4
+  says no task was left open. Its test claims (404 frontend / 108 backend)
+  are as recorded in its commit message, not re-run here.
+- Is the GAS system still in use? Unknown (the legacy handoff itself says it
+  has no evidence of a live deployment). The PHP rebuild is what runs on
+  `factory.amorgroup.id`.
+
+**(b) APK `amora.apk` supplied by the user — "AMORA" 1.9** (uploaded file,
+inspected statically only; not installed or run). It is a **newer, different
+app from `android/` in this repo**:
+
+| | repo `android/` | uploaded AMORA APK |
+|---|---|---|
+| package | `id.amorgroup.factory`, v1.0 (versionCode 1) | `id.amorgroup.amora`, version 1.9 |
+| shell | WebView → `factory.amorgroup.id`; role picker | same WebView lineage (same `MainActivity`/`Bridge` design, Factory login/driver/toko-link endpoints) **plus** an in-app **Updater** that downloads `https://factory.amorgroup.id/app/amora.apk` (permission `REQUEST_INSTALL_PACKAGES`) |
+| extras | `launcher.html`, `offline.html`, `amor-logo.png` | launcher titled "AMORA" with "Masuk dengan username & password", "Masuk dengan link toko", **"Buka Kas saja"**; asset `kas-theme.js` (recolours **AmorCash** green → denim blue without touching that site, "same mapping as amorcash-tema-denim"); `amor-cakes-logo.png`; app shortcuts |
+| deep links | `/api/_store/` on factory.amorgroup.id | same (`autoVerify`, `pathPrefix=/api/_store/`) |
+
+So AMORA = Factory app + AmorCash ("Kas") in one shell. Its **source is not in
+this repo** (repo still holds only the 1.0 Factory-only source) and
+`/app/amora.apk` is not produced by any `dist/` script — the update channel is
+a manually uploaded file on the server. If the user wants AMORA maintained
+from here, get the source (and the **same keystore** — see `android/README.md`:
+a different key forces uninstall and breaks `assetlinks.json`) before changing
+anything; do not rebuild from `android/` and ship it over AMORA (different
+package id = a second app, not an update). The APK is signed with an APK v2
+block (a signature block is present); I could not extract the certificate
+fingerprint here (no `apksigner`), so compare it with `assetlinks.json` before
+trusting a rebuild. Not committed to git (binary, and keys/APKs stay out of
+the repo).
+
+**(c) What "this computer" had:** the repo working tree was clean at HEAD
+`05d77e8`/pushed; remote branches are only `gracious-heisenberg-m16irt` (active),
+`pricing-ui-final-6vv3q9` (tip 2026-10-08, ancestor of HEAD, 120 behind) and
+`po-revision-ks60px` (tip 2026-09-09, ancestor, 230 behind). Both older
+branches are fully contained in the active one; nothing to merge from them.
+That also answers the earlier "di master" question partly: there is no master,
+and all history lives in the active branch.
 
 ---
 
